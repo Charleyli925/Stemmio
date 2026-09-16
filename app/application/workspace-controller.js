@@ -1007,8 +1007,11 @@ export class WorkspaceController {
           canvas: versionWorkflow.canvas,
           files: versionWorkflow.files,
           currentSurface: {
-            commit: ({ context }) => (
-              this.#workbenchNavigationWorkflow?.commitCurrentVersionAuthority({ context })
+            commit: ({ context, currentSurfaceCommitScope }) => (
+              this.#workbenchNavigationWorkflow?.commitCurrentVersionAuthority({
+                context,
+                currentSurfaceCommitScope,
+              })
               || Promise.resolve(rejected(
                 "WORKBENCH_NAVIGATION_UNAVAILABLE",
                 "当前稿导航暂时不可用。",

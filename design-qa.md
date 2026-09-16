@@ -3548,6 +3548,17 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 
 final result: passed
 
+### P1 follow-up — created-history current-draft recovery
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, color, spacing or layout changed; the established direct history Preview, disabled Edit, absent top banner and complete disabled-aware More menu remain unchanged.
+- The recovery path now carries the verified Working Copy/OpenTarget identity and reuses the active navigation transaction when the newly published current authority commits its tab. Public navigation commands still use FIFO admission; no busy insertion, detached async commit or timeout workaround was introduced.
+- The durable creation operation already protects the replaced current source before it writes its receipt. Opening that exact receipt therefore validates its full workspace/HTML/Hash tuple and performs the managed transition without re-draining bytes that the same creation operation intentionally superseded.
+- Deterministic evidence: the navigation/version workflow suites pass 134/134, including an admitted current-draft recovery with another navigation queued behind it, stale transaction-scope rejection, full OpenTarget forwarding and no second drain.
+- Rebuilt source Electron evidence: both “click the same project current row” and “close the active history tab” recover after an injected created-workspace read failure, select the unique current-draft tab, release a later new-tab/current-tab round trip and retain exactly two versions from one create request. Both cases pass without retry.
+- Boundary: synthetic source Electron evidence on the managed project fixture; no private real-HTML corpus, packaged app or installed app was used for this behavior-only repair.
+
+follow-up result: passed
+
 ## 2026-09-16 — Transient tab display handoff
 
 - Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.

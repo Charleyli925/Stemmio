@@ -722,7 +722,11 @@ export class WorkspaceController {
   loadPreservedDrafts(): Promise<VersionWorkflowOutcome<{ context: ProjectContext; entries: import("./version-workflow.js").PreservedDraftSummary[] }>>;
   restorePreservedDraft(input: { recoveryId: string }): Promise<VersionWorkflowOutcome<import("./version-workflow.js").CurrentVersionResult>>;
   exportHtml(input?: { suggestedName?: string; saveVersion?: boolean }): Promise<VersionWorkflowOutcome>;
-  openCreatedHistoryVersion(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
+  openCreatedHistoryVersion(input: {
+    operationId: string;
+    context?: ProjectContext | null;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome>;
   queryHistoryCreation(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
   ensureRegistered(
     input?: RegistrationInput,

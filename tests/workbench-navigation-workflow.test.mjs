@@ -90,6 +90,17 @@ function projectSnapshot(project, epoch, options = {}) {
       documentId: project.documentId,
       epoch,
       sourcePath: `/managed/${project.projectId}.html`,
+      openTarget: {
+        projectId: project.projectId,
+        documentId: project.documentId,
+        projectRootPath: `/managed/${project.projectId}`,
+        targetKind: "working-copy",
+        workingCopyId: `work_${project.projectId}`,
+        versionId: "ver_0001",
+        exactSourcePath: `/managed/${project.projectId}.html`,
+        sourceSha256: `sha256:${"a".repeat(64)}`,
+        sessionEpoch: epoch,
+      },
     },
     project: {
       hydration: {
@@ -170,10 +181,11 @@ function fixture({
       };
       return Promise.resolve({ status: "succeeded", value: { versionId: version.id } });
     },
-    returnToCurrent({ context }) {
+    returnToCurrent({ context, currentSurfaceCommitScope = null }) {
       calls.push(`current:${context.projectId}`);
       if (onReturnToCurrent) return onReturnToCurrent({
         context,
+        currentSurfaceCommitScope,
         publishCurrent() {
           snapshot = {
             ...snapshot,
@@ -856,6 +868,57 @@ test("历史创建打开会在当前稿标签被关闭后重建唯一当前页",
     tab.kind === "document" && tab.projectId === A.projectId && tab.documentId === A.documentId
   )).length, 1);
   assert.deepEqual(harness.calls.filter((call) => call.startsWith("current:")), []);
+});
+
+test("历史创建恢复在外层导航事务内提交当前稿并释放后续导航", async () => {
+  const releaseCommit = deferred();
+  let workflow;
+  let observedScope = null;
+  const harness = fixture({
+    returnToCurrent: async ({ context, currentSurfaceCommitScope, publishCurrent }) => {
+      observedScope = currentSurfaceCommitScope;
+      assert.equal(context.workingCopyId, `work_${A.projectId}`);
+      publishCurrent();
+      await releaseCommit.promise;
+      return workflow.commitCurrentVersionAuthority({
+        context,
+        title: A.name,
+        currentSurfaceCommitScope,
+      });
+    },
+  });
+  workflow = harness.workflow;
+  assert.equal((await workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+
+  const returning = workflow.activateTab(`document:${A.projectId}:${A.documentId}`);
+  await nextTurn();
+  const queued = workflow.createSettings();
+  await nextTurn();
+  assert.equal(harness.navigation.snapshot.phase, "preparing");
+  assert.ok(observedScope);
+
+  releaseCommit.resolve();
+  assert.equal((await returning).status, "succeeded");
+  assert.equal((await queued).status, "succeeded");
+  assert.equal(
+    harness.tabs.resolveTab(harness.tabs.snapshot.activeTabId)?.kind,
+    "settings",
+  );
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => (
+    tab.kind === "document"
+    && tab.projectId === A.projectId
+    && tab.documentId === A.documentId
+  )).length, 1);
+  assert.equal(harness.navigation.snapshot.phase, "idle");
+
+  const stale = await workflow.commitCurrentVersionAuthority({
+    context: harness.controller.getSnapshot().projectSession,
+    currentSurfaceCommitScope: Object.freeze({}),
+  });
+  assert.equal(stale.code, "WORKBENCH_NAVIGATION_SCOPE_STALE");
 });
 
 test("external admission completes only after the correlated application and terminal settlement", async () => {

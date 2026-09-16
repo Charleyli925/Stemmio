@@ -40,6 +40,7 @@ export class WorkbenchNavigationWorkflow {
   commitCurrentVersionAuthority(input: {
     context: import("./project-session.js").ProjectContext;
     title?: string;
+    currentSurfaceCommitScope?: object | null;
   }): Promise<WorkbenchNavigationOutcome>;
   createStart(): Promise<WorkbenchNavigationOutcome>;
   createSettings(): Promise<WorkbenchNavigationOutcome>;
