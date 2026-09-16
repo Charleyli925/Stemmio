@@ -81,7 +81,7 @@ test("长期规则入口打开唯一规则标签并保留 HTML 画布", async ()
     await expect(rulesEntry).not.toContainText("PROJECT.md");
 
     await rulesEntry.click();
-    const rulesTab = launched.page.getByRole("tab", { name: "长期规则", exact: true });
+    const rulesTab = launched.page.getByRole("tab", { name: /· 长期规则$/u });
     await expect(rulesTab).toHaveAttribute("aria-selected", "true");
     const editor = launched.page.getByRole("textbox", { name: "长期规则内容" });
     await expect(editor).toBeVisible();
@@ -136,7 +136,7 @@ test("长期规则入口打开唯一规则标签并保留 HTML 画布", async ()
     await cdp.detach();
 
     await rulesEntry.click();
-    await expect(launched.page.getByRole("tab", { name: "长期规则", exact: true }))
+    await expect(launched.page.getByRole("tab", { name: /· 长期规则$/u }))
       .toHaveCount(1);
     await expect.poll(() => retainedEditorDocumentToken(launched.page)).toBe(beforeDocumentToken);
 
@@ -649,7 +649,7 @@ test("automatic update actions keep the sidebar product geometry and split About
     })).toBeVisible();
     const availableGeometry = await captureSidebarProduct();
 
-    await sidebar.getByRole("button", { name: "源页", exact: true }).click();
+    await sidebar.getByRole("button", { name: "Stemmio", exact: true }).click();
     await expect(launched.page.getByRole("dialog", { name: "源页" }))
       .toBeVisible();
     await expect(launched.page.getByRole("dialog", { name: "源页" })
@@ -666,7 +666,7 @@ test("automatic update actions keep the sidebar product geometry and split About
     await aboutDialog.getByRole("button", { name: "关闭关于源页" }).press("Escape");
     await expect(launched.page.locator("dialog.about-dialog[open]"))
       .toHaveCount(0);
-    await expect(sidebar.getByRole("button", { name: "源页", exact: true })).toBeFocused();
+    await expect(sidebar.getByRole("button", { name: "Stemmio", exact: true })).toBeFocused();
 
     await sidebar.getByRole("button", { name: "设置", exact: true }).click();
     const settings = launched.page.locator(".workbench-settings-page");
@@ -743,23 +743,27 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     const moreMenu = launched.page.getByRole("menu", { name: "更多操作" });
     await expect(moreMenu).toBeVisible();
     expect(await moreMenu.evaluate((element) => element.parentElement === document.body)).toBe(true);
-    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示" })).toBeVisible();
-    await expect(moreMenu.getByRole("menuitem", { name: "在默认浏览器中打开" })).toBeVisible();
+    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeVisible();
+    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "导出当前 HTML…" })).toBeVisible();
     const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存为新版本", exact: true });
     await expect(saveVersionItem).toBeVisible();
+    await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }))
+      .toHaveAttribute("aria-disabled", "true");
     await expect(saveVersionItem).toBeFocused();
     await launched.page.keyboard.press("Tab");
     await expect(moreMenu).toHaveCount(0);
-    await expect(moreButton).toBeFocused();
+    await expect(moreButton).not.toBeFocused();
 
     await moreButton.click();
     await expect(moreMenu).toBeVisible();
     await expect(saveVersionItem).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
-    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示" })).toBeFocused();
+    await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
-    await expect(moreMenu.getByRole("menuitem", { name: "在默认浏览器中打开" })).toBeFocused();
+    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeFocused();
+    await launched.page.keyboard.press("ArrowDown");
+    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeFocused();
     await launched.page.keyboard.press("Escape");
     await expect(moreMenu).toHaveCount(0);
     await expect(moreButton).toBeFocused();
