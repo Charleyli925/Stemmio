@@ -410,7 +410,11 @@ export class WorkspaceController {
   activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number }): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchStartTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchSettingsTab(): Promise<WorkbenchNavigationOutcome>;
-  createWorkbenchProjectRulesTab(project?: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createWorkbenchProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createWorkbenchHistoryTab(
+    project: { projectId: string; documentId: string; title: string },
+    version: { id?: string; versionId?: string; ordinal: number; label?: string; versionLabel?: string; displayFileName?: string },
+  ): Promise<WorkbenchNavigationOutcome>;
   closeWorkbenchTab(tabId: string): Promise<WorkbenchNavigationOutcome>;
   openRegisteredWorkbenchProject(input: {
     projectId: string;
@@ -718,7 +722,11 @@ export class WorkspaceController {
   loadPreservedDrafts(): Promise<VersionWorkflowOutcome<{ context: ProjectContext; entries: import("./version-workflow.js").PreservedDraftSummary[] }>>;
   restorePreservedDraft(input: { recoveryId: string }): Promise<VersionWorkflowOutcome<import("./version-workflow.js").CurrentVersionResult>>;
   exportHtml(input?: { suggestedName?: string; saveVersion?: boolean }): Promise<VersionWorkflowOutcome>;
-  openCreatedHistoryVersion(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
+  openCreatedHistoryVersion(input: {
+    operationId: string;
+    context?: ProjectContext | null;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome>;
   queryHistoryCreation(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
   ensureRegistered(
     input?: RegistrationInput,

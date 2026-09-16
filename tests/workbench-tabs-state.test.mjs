@@ -11,10 +11,11 @@ import {
 } from "../desktop/workbench-tabs-state.mjs";
 
 const valid = {
-  version: 1,
+  version: 2,
   activeTabId: "document:project_alpha:doc_alpha",
   tabs: [{
     tabId: "document:project_alpha:doc_alpha",
+    kind: "document",
     projectId: "project_alpha",
     documentId: "doc_alpha",
   }],
@@ -32,11 +33,41 @@ test("workbench tab persistence accepts presentation identity and rejects author
 test("workbench tab persistence accepts many identity-only tabs", () => {
   const tabs = Array.from({ length: 2_048 }, (_, index) => ({
     tabId: `document:project_many_${index}:doc_many_${index}`,
+    kind: "document",
     projectId: `project_many_${index}`,
     documentId: `doc_many_${index}`,
   }));
-  const state = { version: 1, activeTabId: tabs.at(-1).tabId, tabs };
+  const state = { version: 2, activeTabId: tabs.at(-1).tabId, tabs };
   assert.deepEqual(normalizeWorkbenchTabsState(state), state);
+});
+
+test("workbench tab persistence migrates legacy document tabs and accepts project surfaces", () => {
+  const legacy = {
+    version: 1,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [{
+      tabId: "document:project_alpha:doc_alpha",
+      projectId: "project_alpha",
+      documentId: "doc_alpha",
+    }],
+  };
+  assert.deepEqual(normalizeWorkbenchTabsState(legacy), valid);
+  const surfaces = {
+    version: 2,
+    activeTabId: "history:project_alpha:doc_alpha",
+    tabs: [
+      valid.tabs[0],
+      { tabId: "project-rules:project_alpha:doc_alpha", kind: "project-rules", projectId: "project_alpha", documentId: "doc_alpha" },
+      { tabId: "history:project_alpha:doc_alpha", kind: "history", projectId: "project_alpha", documentId: "doc_alpha", versionId: "ver_0003", versionOrdinal: 3 },
+    ],
+  };
+  assert.deepEqual(normalizeWorkbenchTabsState(surfaces), surfaces);
+  assert.equal(normalizeWorkbenchTabsState({
+    ...surfaces,
+    tabs: surfaces.tabs.map((tab) => tab.kind === "history"
+      ? { ...tab, displayFileName: "private-name.html" }
+      : tab),
+  }), null);
 });
 
 test("workbench tab state is atomically written and malformed state fails visibly closed", async () => {

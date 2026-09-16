@@ -2,9 +2,14 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-const VERSION = 1;
+const VERSION = 2;
+const LEGACY_VERSION = 1;
 const EXACT_ROOT_KEYS = new Set(["version", "activeTabId", "tabs"]);
-const EXACT_TAB_KEYS = new Set(["tabId", "projectId", "documentId"]);
+const LEGACY_TAB_KEYS = new Set(["tabId", "projectId", "documentId"]);
+const EXACT_TAB_KEYS = new Set([
+  "tabId", "kind", "projectId", "documentId",
+  "versionId", "versionOrdinal",
+]);
 
 function cleanString(value, pattern, maxLength) {
   if (typeof value !== "string" || !value || value.length > maxLength || !pattern.test(value)) {
@@ -16,26 +21,37 @@ function cleanString(value, pattern, maxLength) {
 export function normalizeWorkbenchTabsState(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (Object.keys(value).some((key) => !EXACT_ROOT_KEYS.has(key))) return null;
-  if (value.version !== VERSION || !Array.isArray(value.tabs)) {
+  if (![LEGACY_VERSION, VERSION].includes(value.version) || !Array.isArray(value.tabs)) {
     return null;
   }
   const tabs = [];
   const tabIds = new Set();
-  const documentIds = new Set();
+  const surfaceIds = new Set();
   for (const candidate of value.tabs) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-    if (Object.keys(candidate).some((key) => !EXACT_TAB_KEYS.has(key))) return null;
+    const allowedKeys = value.version === LEGACY_VERSION ? LEGACY_TAB_KEYS : EXACT_TAB_KEYS;
+    if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) return null;
+    const kind = value.version === LEGACY_VERSION ? "document" : String(candidate.kind || "");
+    if (!["document", "project-rules", "history"].includes(kind)) return null;
     const tabId = cleanString(candidate.tabId, /^[A-Za-z0-9:_-]+$/u, 240);
     const projectId = cleanString(candidate.projectId, /^project_[A-Za-z0-9_-]+$/u, 180);
     const documentId = cleanString(candidate.documentId, /^doc_[A-Za-z0-9_-]+$/u, 180);
-    const documentKey = `${projectId}\u0000${documentId}`;
+    const surfaceKey = `${kind}\u0000${projectId}\u0000${documentId}`;
     if (
       !tabId || !projectId || !documentId
-      || tabIds.has(tabId) || documentIds.has(documentKey)
+      || tabIds.has(tabId) || surfaceIds.has(surfaceKey)
     ) return null;
+    let history = {};
+    if (kind === "history") {
+      const versionId = cleanString(candidate.versionId, /^[A-Za-z0-9_-]+$/u, 180);
+      const versionOrdinal = Number(candidate.versionOrdinal);
+      if (!versionId || !Number.isInteger(versionOrdinal) || versionOrdinal < 1) return null;
+      history = { versionId, versionOrdinal };
+    } else if (["versionId", "versionOrdinal"]
+      .some((key) => Object.hasOwn(candidate, key))) return null;
     tabIds.add(tabId);
-    documentIds.add(documentKey);
-    tabs.push(Object.freeze({ tabId, projectId, documentId }));
+    surfaceIds.add(surfaceKey);
+    tabs.push(Object.freeze({ tabId, kind, projectId, documentId, ...history }));
   }
   const activeTabId = value.activeTabId === null
     ? null

@@ -29,10 +29,33 @@ export class WorkbenchNavigationWorkflow {
   });
   openProject(input?: Record<string, unknown>): Promise<WorkbenchNavigationOutcome>;
   activateTab(tabId: string, input?: { deadlineMs?: number; intentKind?: string }): Promise<WorkbenchNavigationOutcome>;
-  openRegisteredProject(input: { projectId: string; documentId: string; title: string; status?: WorkbenchTabStatus }): Promise<WorkbenchNavigationOutcome>;
+  openRegisteredProject(input: {
+    projectId: string;
+    documentId: string;
+    title: string;
+    status?: WorkbenchTabStatus;
+    force?: boolean;
+    committedVersionTransitionFailure?: { code?: string; reason?: string };
+  }): Promise<WorkbenchNavigationOutcome>;
+  commitCurrentVersionAuthority(input: {
+    context: import("./project-session.js").ProjectContext;
+    title?: string;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<WorkbenchNavigationOutcome>;
   createStart(): Promise<WorkbenchNavigationOutcome>;
   createSettings(): Promise<WorkbenchNavigationOutcome>;
-  createProjectRules(project?: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createProjectRules(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createHistory(
+    project: { projectId: string; documentId: string; title: string },
+    version: {
+      id?: string;
+      versionId?: string;
+      ordinal: number;
+      label?: string;
+      versionLabel?: string;
+      displayFileName?: string;
+    },
+  ): Promise<WorkbenchNavigationOutcome>;
   closeTab(tabId: string): Promise<WorkbenchNavigationOutcome>;
   acceptExternalProject(input: { requestId: string; sourcePath?: string }): Promise<WorkbenchNavigationOutcome>;
   confirmOpen(input?: Record<string, unknown>): Promise<WorkbenchNavigationOutcome>;
