@@ -101,6 +101,10 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   managed path，等待期间形成的较新 queued write 也必须连同 epoch 改绑，随后只向新路径写入最新 HTML。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
+- `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
+  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并用定向错误变异证明
+  实现文件确实在 TypeScript program 内、错误字段类型必须报错；不打开全仓
+  `checkJs`。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`
   与既有 Session owner 直接验证
   hydration generation fence、accepted-result FIFO、drain 后 native input 延后与恢复、
