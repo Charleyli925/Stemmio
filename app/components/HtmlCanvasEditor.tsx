@@ -418,10 +418,22 @@ function reconcileAllocatedLineBreakIds(
 function directStructureBlockedMessage(
   decision: Pick<DirectStructurePolicyDecision, "reason" | "message">,
 ): string {
-  const reason = decision.reason;
+  const reason = String(decision.reason || "");
+  const isRuntimeDivergence = reason.includes("runtime-subtree-diverged")
+    || reason.includes("runtime-source-proof")
+    || reason.includes("runtime-subtree-proof")
+    || reason.includes("runtime-generated");
+  if (isRuntimeDivergence) return "当前页面内容发生变化，暂时不能执行。";
   if (reason.startsWith("copy-")) return "暂不支持复制这类内容。可复制独立正文、标题、列表项或简单引用。";
-  if (reason.startsWith("move-")) return "只能在同一组内容内调整相邻顺序。";
-  if (reason.startsWith("delete-")) return "暂不支持删除这类结构，当前源码位置无法可靠恢复。";
+  if (
+    reason === "move-cross-parent"
+    || reason === "move-non-adjacent"
+    || reason === "move-cycle"
+    || reason === "move-anchor-invalid"
+    || reason === "move-destination-invalid"
+  ) return "不能跨组或跨位置移动。";
+  if (reason.startsWith("move-")) return "这个对象不在直接编辑支持范围内。";
+  if (reason.startsWith("delete-")) return "这个对象不在直接编辑支持范围内。";
   if (reason === "direct-html-insert-unsupported") return "暂不提供直接插入任意 HTML。";
   return "暂不支持这个结构操作。";
 }
@@ -3384,6 +3396,21 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       setMoveAvailability({ up: false, down: false });
       return;
     }
+    const sourceIndex = sourceIndexRef.current;
+    const logicalSelection = sourceIndex && element.isConnected
+      ? selectionForElement(
+        element,
+        sourceIndex,
+        selectedSourceSelectionRef.current ?? undefined,
+      )
+      : selectedSourceSelectionRef.current;
+    const sourceAvailability = enableReorderRef.current
+      ? sourceMoveAvailability(sourceIndex, logicalSelection)
+      : { up: false, down: false };
+    if (!sourceAvailability.up && !sourceAvailability.down) {
+      setMoveAvailability(sourceAvailability);
+      return;
+    }
     const runtimeDecision = runtimeStructureTargetAssessment(
       "move",
       element,
@@ -3393,19 +3420,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       setMoveAvailability({ up: false, down: false });
       return;
     }
-    const sourceIndex = sourceIndexRef.current;
-    const logicalSelection = sourceIndex && element.isConnected
-      ? selectionForElement(
-        element,
-        sourceIndex,
-        selectedSourceSelectionRef.current ?? undefined,
-      )
-      : selectedSourceSelectionRef.current;
-    setMoveAvailability(
-      enableReorderRef.current
-        ? sourceMoveAvailability(sourceIndex, logicalSelection)
-        : { up: false, down: false },
-    );
+    setMoveAvailability(sourceAvailability);
   }, [nativeEditOwnsSelectedTarget, runtimeStructureTargetAssessment]);
 
   const updateOverlayPosition = useCallback((

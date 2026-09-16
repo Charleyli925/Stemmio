@@ -70,6 +70,13 @@ import {
   createCapabilityManifestDraft,
 } from "./real-html/capability-manifest-draft.mjs";
 import {
+  REAL_HTML_DISCOVERY_STAGES,
+  createDiscoveryTrace,
+  markDiscoveryStage,
+  recordDiscoveryFailure,
+  recordDiscoveryObservation,
+} from "./real-html/discovery-diagnostics.mjs";
+import {
   evaluateContinuityChain,
   evaluateStaleCandidateFence,
   runtimeProjectionStale,
@@ -167,6 +174,11 @@ const report = {
   minimumOrdinaryContinuityChecksPerFile: 3,
   minimumAuthoredElementCoverage: 0.6,
   minimumDynamicContinuityCyclesPerFile: 3,
+  discoveryDiagnostics: {
+    schemaVersion: 1,
+    stages: Object.values(REAL_HTML_DISCOVERY_STAGES),
+    firstFailureOnlyFor: "each file keeps the first observed discovery failure; later failures remain in failures",
+  },
   inputAuthority: "Real mouse/keyboard for fixed text flows; native color controls use bounded input/change event injection and are labeled per behavior row",
   categories: {
     A: "文字编辑",
@@ -314,6 +326,58 @@ function errorDetails(error) {
     ...(details && Object.keys(details).length > 0 ? { details } : {}),
     ...(oracle ? { oracle } : {}),
   };
+}
+
+async function runDiscoveryStage(trace, stage, preconditions, action) {
+  markDiscoveryStage(trace, stage, preconditions);
+  try {
+    return await action();
+  } catch (cause) {
+    // Keep the context on the in-memory error so an outer boundary can record
+    // the precise first stage without serializing a private stack or path.
+    if (cause && typeof cause === "object") {
+      try {
+        cause.discoveryStage ||= stage;
+        cause.discoveryPreconditions ||= preconditions;
+      } catch {
+        // Some third-party errors can be non-extensible. The surrounding
+        // boundary still has the current stage as a safe fallback.
+      }
+    }
+    throw cause;
+  }
+}
+
+function noteDiscoveryFailure(trace, stage, error, preconditions = {}) {
+  const actualStage = error?.discoveryStage || stage;
+  const actualPreconditions = error?.discoveryPreconditions || preconditions;
+  const diagnostic = errorDetails(error);
+  if (typeof error?.code === "string") diagnostic.code = error.code;
+  if (typeof error?.exactReason === "string") diagnostic.exactReason = error.exactReason;
+  const fallbackCode = {
+    [REAL_HTML_DISCOVERY_STAGES.SOURCE_COPY]: "CORPUS_FILE_COPY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.ELECTRON_LAUNCH]: "ELECTRON_LAUNCH_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.PROJECT_READY]: "PROJECT_READY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.EDITABLE_READY]: "EDITABLE_READY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.WORKING_COPY]: "WORKING_COPY_UNAVAILABLE",
+    [REAL_HTML_DISCOVERY_STAGES.SOURCE_INDEX]: "SOURCE_INDEX_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_DISCOVERY]: "AUTHORED_TAB_DISCOVERY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_ACTIVATION]: "AUTHORED_TAB_ACTIVATION_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.AUTHORED_CANDIDATE_DISCOVERY]: "AUTHORED_CANDIDATE_DISCOVERY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY]: "RUNTIME_GENERATED_PROBE_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE]: "CAPABILITY_PROBE_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION]: "CAPABILITY_NORMALIZATION_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY]: "PREFLIGHT_INTEGRITY_FAILED",
+    [REAL_HTML_DISCOVERY_STAGES.CLEANUP]: "CLEANUP_FAILED",
+  }[actualStage] || "DISCOVERY_FAILED";
+  diagnostic.code ||= fallbackCode;
+  diagnostic.exactReason ||= fallbackCode;
+  return recordDiscoveryFailure(
+    trace,
+    actualStage,
+    diagnostic,
+    actualPreconditions,
+  );
 }
 
 function recordOperationFailure(fileId, stageId, operationId, error) {
@@ -634,26 +698,86 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
-async function freezeCapabilityManifest(page, workingCopyPath, { allowUnresolved = false } = {}) {
-  const source = readFileSync(workingCopyPath, "utf8");
-  const sourceElements = sourceElementsForCapabilityManifest(source);
+async function freezeCapabilityManifest(
+  page,
+  workingCopyPath,
+  { allowUnresolved = false, discoveryTrace = null } = {},
+) {
+  const source = await runDiscoveryStage(
+    discoveryTrace,
+    REAL_HTML_DISCOVERY_STAGES.WORKING_COPY,
+    { workingCopyReady: true },
+    () => readFileSync(workingCopyPath, "utf8"),
+  );
+  const sourceElements = await runDiscoveryStage(
+    discoveryTrace,
+    REAL_HTML_DISCOVERY_STAGES.SOURCE_INDEX,
+    { workingCopyReady: true, sourceBytesRead: true },
+    () => sourceElementsForCapabilityManifest(source),
+  );
   const candidates = [];
   const authoredDenominator = [];
   const unresolvedProbes = [];
   const runtimeGeneratedTargets = [];
   const runtimeGeneratedDiagnostics = [];
-  for (const tabId of await authoredTabIds(page)) {
-    await clickAuthoredTab(page, tabId);
-    const frame = await currentEditorFrame(page);
-    candidates.push(...await collectVisibleAuthoredCandidates(frame, sourceElements, tabId));
-    const runtimeGenerated = await discoverRuntimeGeneratedTargets({
-      page,
-      frame,
-      editor: editorFor(page),
-      tabId,
-    });
+  const tabIds = await runDiscoveryStage(
+    discoveryTrace,
+    REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_DISCOVERY,
+    { sourceElementCount: sourceElements.length },
+    () => authoredTabIds(page),
+  );
+  for (const tabId of tabIds) {
+    await runDiscoveryStage(
+      discoveryTrace,
+      REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_ACTIVATION,
+      { sourceElementCount: sourceElements.length, tabKnown: tabId !== null },
+      () => clickAuthoredTab(page, tabId),
+    );
+    const frame = await runDiscoveryStage(
+      discoveryTrace,
+      REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_ACTIVATION,
+      { sourceElementCount: sourceElements.length, tabKnown: tabId !== null },
+      () => currentEditorFrame(page),
+    );
+    candidates.push(...await runDiscoveryStage(
+      discoveryTrace,
+      REAL_HTML_DISCOVERY_STAGES.AUTHORED_CANDIDATE_DISCOVERY,
+      { sourceElementCount: sourceElements.length, tabKnown: tabId !== null },
+      () => collectVisibleAuthoredCandidates(frame, sourceElements, tabId),
+    ));
+    const runtimeGenerated = await runDiscoveryStage(
+      discoveryTrace,
+      REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY,
+      {
+        sourceElementCount: sourceElements.length,
+        tabKnown: tabId !== null,
+        authoredCandidateCount: candidates.length,
+      },
+      () => discoverRuntimeGeneratedTargets({
+        page,
+        frame,
+        editor: editorFor(page),
+        tabId,
+      }),
+    );
     runtimeGeneratedTargets.push(...runtimeGenerated.targets);
     runtimeGeneratedDiagnostics.push({ tabId, ...runtimeGenerated.diagnostics });
+    const runtimeIssue = runtimeGeneratedDiagnosticsIssue([runtimeGenerated.diagnostics]);
+    if (runtimeIssue) {
+      const error = new Error("Runtime-generated target diagnostics were incomplete.");
+      error.code = runtimeIssue;
+      noteDiscoveryFailure(
+        discoveryTrace,
+        REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY,
+        error,
+        {
+          sourceElementCount: sourceElements.length,
+          tabKnown: tabId !== null,
+          authoredCandidateCount: candidates.length,
+          runtimeGeneratedTargetCount: runtimeGenerated.targets.length,
+        },
+      );
+    }
   }
 
   const candidatesById = new Map();
@@ -713,19 +837,65 @@ async function freezeCapabilityManifest(page, workingCopyPath, { allowUnresolved
       continue;
     }
     try {
-      await clickAuthoredTab(page, candidate.tabId);
-      const frame = await currentEditorFrame(page);
-      const observation = await probeAuthoredCapability({
-        page,
-        frame,
-        editor: editorFor(page),
-        candidate,
-        mode: "discover",
-        sourceElements,
-      });
+      const observation = await runDiscoveryStage(
+        discoveryTrace,
+        REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
+        {
+          candidateCount: candidates.length,
+          sourceElementCount: sourceElements.length,
+          candidateTabKnown: candidate.tabId !== null,
+        },
+        async () => {
+          await clickAuthoredTab(page, candidate.tabId);
+          const frame = await currentEditorFrame(page);
+          return probeAuthoredCapability({
+            page,
+            frame,
+            editor: editorFor(page),
+            candidate,
+            mode: "discover",
+            sourceElements,
+          });
+        },
+      );
       probed.push({ ...observation, type: majorElementType(observation.tag) });
+      if (
+        allowUnresolved
+        && typeof observation.probeReason === "string"
+        && observation.probeReason !== "CAPABILITY_OBSERVED"
+      ) {
+        unresolvedProbes.push({
+          probeStableId: candidate.stableId,
+          operationStableId: null,
+          code: observation.probeReason,
+          details: null,
+        });
+        const discoveryCode = observation.probeReason === "NO_EXACT_HIT_POINT"
+          || observation.probeReason.startsWith("CAPABILITY_PROBE_")
+          ? observation.probeReason
+          : `CAPABILITY_PROBE_PRECHECK_${observation.probeReason}`;
+        noteDiscoveryFailure(
+          discoveryTrace,
+          REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
+          { code: discoveryCode, exactReason: observation.probeReason },
+          {
+            candidateCount: candidates.length,
+            sourceElementCount: sourceElements.length,
+            candidateTabKnown: candidate.tabId !== null,
+          },
+        );
+        // A pre-probe rejection is already a concrete executor boundary for
+        // this read-only file. Do not spend time probing every later element.
+        break;
+      }
     } catch (cause) {
       if (!allowUnresolved) throw cause;
+      noteDiscoveryFailure(
+        discoveryTrace,
+        REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
+        cause,
+        { candidateCount: candidates.length, candidateTabKnown: candidate.tabId !== null },
+      );
       unresolvedProbes.push({
         probeStableId: candidate.stableId,
         operationStableId: cause?.details?.selectedId || null,
@@ -734,15 +904,30 @@ async function freezeCapabilityManifest(page, workingCopyPath, { allowUnresolved
       });
       await page.keyboard.press("Escape").catch(() => {});
       await waitUntilEditable(page).catch(() => {});
+      // Capability preflight only needs a truthful first concrete discovery
+      // failure for this file.  Once an authored probe has failed, probing
+      // hundreds of later elements can only add redundant unresolved rows;
+      // stop here so the read-only diagnostic remains bounded and actionable.
+      if (allowUnresolved) break;
     }
   }
-  const normalized = normalizeCapabilityProbeObservations(probed, {
-    allowConflicts: allowUnresolved,
-  });
-  const manifest = createCapabilityManifest({
-    sourceIndex: { elements: sourceElements },
-    liveDom: normalized.liveDom,
-  });
+  const normalized = await runDiscoveryStage(
+    discoveryTrace,
+    REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION,
+    { candidateCount: candidates.length, probeCount: probed.length },
+    () => normalizeCapabilityProbeObservations(probed, {
+      allowConflicts: allowUnresolved,
+    }),
+  );
+  const manifest = await runDiscoveryStage(
+    discoveryTrace,
+    REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION,
+    { sourceElementCount: sourceElements.length, probeCount: probed.length },
+    () => createCapabilityManifest({
+      sourceIndex: { elements: sourceElements },
+      liveDom: normalized.liveDom,
+    }),
+  );
   const aliasByProbeId = new Map(normalized.aliases.map((entry) => [
     entry.probeStableId,
     entry.operationStableId,
@@ -851,12 +1036,29 @@ async function freezeCapabilityManifest(page, workingCopyPath, { allowUnresolved
   for (const entry of denominatorWithOperations.filter((item) => !item.operationStableId)) {
     const rejectedProbe = probed.find((item) => item.stableId === entry.probeStableId);
     if (rejectedProbe && !unresolvedProbes.some((item) => item.probeStableId === entry.probeStableId)) {
+      const probeReason = typeof rejectedProbe.probeReason === "string"
+        ? rejectedProbe.probeReason
+        : "CAPABILITY_PROBE_IDENTITY_UNRESOLVED";
       unresolvedProbes.push({
         probeStableId: entry.probeStableId,
         operationStableId: null,
-        code: rejectedProbe.probeReason || "CAPABILITY_PROBE_IDENTITY_UNRESOLVED",
+        code: probeReason,
         details: null,
       });
+      const discoveryCode = probeReason === "NO_EXACT_HIT_POINT"
+        || probeReason.startsWith("CAPABILITY_PROBE_")
+        ? probeReason
+        : `CAPABILITY_PROBE_PRECHECK_${probeReason}`;
+      noteDiscoveryFailure(
+        discoveryTrace,
+        REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
+        { code: discoveryCode, exactReason: probeReason },
+        {
+          candidateCount: candidates.length,
+          sourceElementCount: sourceElements.length,
+          candidateTabKnown: entry.tabId !== null,
+        },
+      );
     }
   }
   const draft = createCapabilityManifestDraft({
@@ -2835,6 +3037,7 @@ for (const filename of files) {
     completedTargets: [],
     structureCycles: [],
     lifecycle: [],
+    discovery: createDiscoveryTrace(),
   };
   let session;
   let page;
@@ -2849,12 +3052,20 @@ for (const filename of files) {
   let capabilityFailure = null;
   try {
     try {
+      markDiscoveryStage(row.discovery, REAL_HTML_DISCOVERY_STAGES.SOURCE_COPY, {
+        corpusFileSelected: true,
+        readOnlyCorpus: true,
+      });
       original = readFileSync(originalPath);
       row.originalSha256 = sha256(original);
       row.originalSize = original.length;
       mkdirSync(copyDir, { recursive: true });
       writeFileSync(copyPath, original);
     } catch (cause) {
+      noteDiscoveryFailure(row.discovery, REAL_HTML_DISCOVERY_STAGES.SOURCE_COPY, cause, {
+        corpusFileSelected: true,
+        readOnlyCorpus: true,
+      });
       resultReport.blockFile(filename, "ENVIRONMENT_BLOCKED", {
         exactReason: "CORPUS_FILE_COPY_FAILED",
         ...errorDetails(cause),
@@ -2862,8 +3073,14 @@ for (const filename of files) {
       throw cause;
     }
     try {
+      markDiscoveryStage(row.discovery, REAL_HTML_DISCOVERY_STAGES.ELECTRON_LAUNCH, {
+        sourceCopyReady: Boolean(original),
+      });
       session = await launchStemmio({ activeSourcePath: copyPath, ...REAL_HTML_LAUNCH_OPTIONS });
     } catch (cause) {
+      noteDiscoveryFailure(row.discovery, REAL_HTML_DISCOVERY_STAGES.ELECTRON_LAUNCH, cause, {
+        sourceCopyReady: Boolean(original),
+      });
       resultReport.blockFile(filename, "ENVIRONMENT_BLOCKED", {
         exactReason: "ELECTRON_LAUNCH_FAILED",
         ...errorDetails(cause),
@@ -2871,15 +3088,36 @@ for (const filename of files) {
       throw cause;
     }
     page = session.page;
-    await waitForProjectReady(page);
-    await waitUntilEditable(page);
-    workingCopyPath = await managedWorkingCopyPath(page, copyPath);
+    await runDiscoveryStage(
+      row.discovery,
+      REAL_HTML_DISCOVERY_STAGES.PROJECT_READY,
+      { sourceCopyReady: Boolean(original), electronLaunched: Boolean(session), pageReady: Boolean(page) },
+      () => waitForProjectReady(page),
+    );
+    await runDiscoveryStage(
+      row.discovery,
+      REAL_HTML_DISCOVERY_STAGES.EDITABLE_READY,
+      { sourceCopyReady: Boolean(original), electronLaunched: Boolean(session), pageReady: true },
+      () => waitUntilEditable(page),
+    );
+    workingCopyPath = await runDiscoveryStage(
+      row.discovery,
+      REAL_HTML_DISCOVERY_STAGES.WORKING_COPY,
+      { sourceCopyReady: Boolean(original), electronLaunched: Boolean(session), editableReady: true },
+      () => managedWorkingCopyPath(page, copyPath),
+    );
     const preflightWorkingCopyBefore = capabilityPreflightOnly
-      ? readFileSync(workingCopyPath)
+      ? await runDiscoveryStage(
+        row.discovery,
+        REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+        { workingCopyReady: Boolean(workingCopyPath) },
+        () => readFileSync(workingCopyPath),
+      )
       : null;
     try {
       frozenCapability = await freezeCapabilityManifest(page, workingCopyPath, {
         allowUnresolved: capabilityPreflightOnly,
+        discoveryTrace: row.discovery,
       });
       row.capabilityManifest = {
         fingerprint: frozenCapability.fingerprint,
@@ -2903,13 +3141,24 @@ for (const filename of files) {
         ...(capabilityPreflightOnly ? { draft: frozenCapability.draft } : {}),
       };
     } catch (cause) {
+      noteDiscoveryFailure(
+        row.discovery,
+        REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION,
+        cause,
+        { workingCopyReady: Boolean(workingCopyPath), editableReady: Boolean(page) },
+      );
       row.capabilityError = errorDetails(cause);
       capabilityFailure = cause;
       await page.keyboard.press("Escape").catch(() => {});
       await waitUntilEditable(page).catch(() => {});
     }
     if (capabilityPreflightOnly) {
-      const preflightWorkingCopyAfter = readFileSync(workingCopyPath);
+      const preflightWorkingCopyAfter = await runDiscoveryStage(
+        row.discovery,
+        REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+        { workingCopyReady: Boolean(workingCopyPath), preflightStarted: true },
+        () => readFileSync(workingCopyPath),
+      );
       row.preflightWorkingCopy = {
         beforeSha256: sha256(preflightWorkingCopyBefore),
         beforeSize: preflightWorkingCopyBefore.length,
@@ -2922,12 +3171,30 @@ for (const filename of files) {
           code: "PREFLIGHT_WORKING_COPY_CHANGED",
           exactReason: "READ_ONLY_PREFLIGHT_MUTATED_WORKING_SOURCE",
         };
+        const error = new Error("Read-only capability preflight changed the managed Working Copy.");
+        error.code = "PREFLIGHT_WORKING_COPY_CHANGED";
+        noteDiscoveryFailure(
+          row.discovery,
+          REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+          error,
+          { workingCopyReady: true, preflightStarted: true },
+        );
       }
       row.status = capabilityPreflightFileStatus({
         discoveryFailed: Boolean(capabilityFailure),
         workingCopyUnchanged: row.preflightWorkingCopy.unchanged,
         draftIssues: frozenCapability?.draft?.issues || [],
       });
+      recordDiscoveryObservation(
+        row.discovery,
+        REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+        "preflight-complete",
+        {
+          status: row.status,
+          workingCopyUnchanged: row.preflightWorkingCopy.unchanged,
+          manifestProduced: Boolean(frozenCapability),
+        },
+      );
       continue;
     }
     try {
@@ -3731,6 +3998,15 @@ for (const filename of files) {
           error.details = {
             diagnostics: frozenCapability.runtimeGeneratedDiagnostics,
           };
+          noteDiscoveryFailure(
+            row.discovery,
+            REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY,
+            error,
+            {
+              sourceElementCount: frozenCapability.sourceElements?.length || 0,
+              runtimeGeneratedTargetCount: frozenCapability.runtimeGeneratedTargets.length,
+            },
+          );
           recordOperationFailure(
             filename,
             REAL_HTML_STAGE_IDS.CAPABILITY_MATRIX,
@@ -3923,9 +4199,31 @@ for (const filename of files) {
   } catch (cause) {
     row.error = String(cause?.stack || cause);
     if (capabilityPreflightOnly) {
+      noteDiscoveryFailure(
+        row.discovery,
+        row.discovery.currentStage || REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+        cause,
+        {
+          sourceRead: Boolean(original),
+          electronLaunched: Boolean(session),
+          workingCopyReady: Boolean(workingCopyPath),
+        },
+      );
       row.status = !original || !session ? "ENVIRONMENT_BLOCKED" : "DISCOVERY_ERROR";
       row.preflightError = errorDetails(cause);
     } else {
+      if (!frozenCapability && !row.discovery.firstFailure) {
+        noteDiscoveryFailure(
+          row.discovery,
+          row.discovery.currentStage || REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION,
+          cause,
+          {
+            sourceRead: Boolean(original),
+            electronLaunched: Boolean(session),
+            workingCopyReady: Boolean(workingCopyPath),
+          },
+        );
+      }
       const fileRow = resultReport.rowsForFile(filename).find(
         (resultRow) => resultRow.level === "file",
       );
@@ -3941,7 +4239,15 @@ for (const filename of files) {
     if (session) {
       await stopStemmio(session.electronApp, session.isolatedUserData).catch((cause) => {
         row.cleanupError = String(cause?.stack || cause);
-        if (capabilityPreflightOnly) row.status = "DISCOVERY_ERROR";
+        if (capabilityPreflightOnly) {
+          row.status = "DISCOVERY_ERROR";
+          noteDiscoveryFailure(
+            row.discovery,
+            REAL_HTML_DISCOVERY_STAGES.CLEANUP,
+            cause,
+            { electronLaunched: true, sourceRead: Boolean(original) },
+          );
+        }
       });
     }
     if (original && row.originalFinalSize == null) {
@@ -3961,7 +4267,15 @@ for (const filename of files) {
       } catch (cause) {
         row.originalUnchanged = null;
         row.originalVerificationError = String(cause?.stack || cause);
-        if (capabilityPreflightOnly) row.status = "ENVIRONMENT_BLOCKED";
+        if (capabilityPreflightOnly) {
+          row.status = "ENVIRONMENT_BLOCKED";
+          noteDiscoveryFailure(
+            row.discovery,
+            REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+            cause,
+            { sourceRead: Boolean(original), sourceStillAvailable: true },
+          );
+        }
       }
     }
     if (!capabilityPreflightOnly) {
@@ -3971,11 +4285,15 @@ for (const filename of files) {
     }
     report.results.push(row);
     saveReport();
+    const firstDiscoveryFailure = row.discovery.firstFailure;
+    const discoverySuffix = firstDiscoveryFailure
+      ? ` firstFailure=${firstDiscoveryFailure.stage}/${firstDiscoveryFailure.code}`
+      : "";
     console.log(capabilityPreflightOnly
-      ? `${report.results.length}/${files.length}: ${row.status} capability preflight`
+      ? `${report.results.length}/${files.length}: ${row.status} capability preflight${discoverySuffix}`
       : `${report.results.length}/${files.length}: ${row.status} ${filename} `
         + `(${row.completedTargets.filter((target) => !target.rejected).length} text hosts, `
-        + `${row.structureCycles.length} structure cycles)`);
+        + `${row.structureCycles.length} structure cycles)${discoverySuffix}`);
   }
 }
 
