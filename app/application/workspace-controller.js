@@ -472,7 +472,7 @@ export class WorkspaceController {
     if (!projectSession || typeof projectSession.register !== "function") {
       throw new TypeError("WorkspaceController requires ProjectSession injection.");
     }
-    if (!documentSession || typeof documentSession.update !== "function") {
+    if (!documentSession || typeof documentSession.publishAuthority !== "function") {
       throw new TypeError("WorkspaceController requires DocumentSession injection.");
     }
     if (!commentSession || typeof commentSession.setComments !== "function") {

@@ -16,6 +16,17 @@ function persistState(value) {
   return PERSIST_STATES.has(value) ? value : "idle";
 }
 
+function isDocumentWrite(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Number.isSafeInteger(value.revision)
+    && value.revision >= 0
+    && typeof value.html === "string"
+  );
+}
+
 const CANVAS_AUTHORITY_STATES = new Set([
   "idle",
   "pending",
@@ -223,6 +234,10 @@ function initialSnapshot({
   html = "",
   persistedSourceSha256 = null,
   workingHtmlSha256 = persistedSourceSha256,
+  editRevision = 0,
+  lastPersistedRevision = editRevision,
+  persistState: initialPersistState = "idle",
+  persistError = "",
 } = {}) {
   const persistedHash = persistedSourceSha256 ? String(persistedSourceSha256) : null;
   return Object.freeze({
@@ -231,10 +246,10 @@ function initialSnapshot({
     workingHtmlSha256: workingHtmlSha256 ? String(workingHtmlSha256) : null,
     canvasGeneration: 0,
     sourceReceipt: null,
-    editRevision: 0,
-    lastPersistedRevision: 0,
-    persistState: "idle",
-    persistError: "",
+    editRevision: revision(editRevision),
+    lastPersistedRevision: revision(lastPersistedRevision),
+    persistState: persistState(initialPersistState),
+    persistError: String(persistError || ""),
     hasPendingWrite: false,
     isFlushing: false,
     canvasAuthority: canvasAuthority({ generation: 0 }),
@@ -247,6 +262,8 @@ export class DocumentSession {
   #snapshot;
 
   #pendingWrite = null;
+
+  #activeWrite = null;
 
   #flushPromise = null;
 
@@ -294,53 +311,6 @@ export class DocumentSession {
     }
   }
 
-  update({
-    html,
-    persistedSourceSha256,
-    workingHtmlSha256,
-    editRevision,
-    lastPersistedRevision,
-    persistState: nextPersistState,
-    persistError,
-    pendingWrite,
-  }) {
-    const next = { ...this.#snapshot };
-    if (html !== undefined) {
-      const nextHtml = String(html);
-      if (nextHtml !== next.html && workingHtmlSha256 === undefined) {
-        next.workingHtmlSha256 = null;
-      }
-      next.html = nextHtml;
-    }
-    if (persistedSourceSha256 !== undefined) {
-      next.persistedSourceSha256 = persistedSourceSha256
-        ? String(persistedSourceSha256)
-        : null;
-    }
-    if (workingHtmlSha256 !== undefined) {
-      next.workingHtmlSha256 = workingHtmlSha256
-        ? String(workingHtmlSha256)
-        : null;
-    }
-    if (editRevision !== undefined) {
-      next.editRevision = revision(editRevision);
-    }
-    if (lastPersistedRevision !== undefined) {
-      next.lastPersistedRevision = revision(lastPersistedRevision);
-    }
-    if (nextPersistState !== undefined) {
-      next.persistState = persistState(nextPersistState);
-    }
-    if (persistError !== undefined) {
-      next.persistError = String(persistError || "");
-    }
-    if (pendingWrite !== undefined) {
-      this.#pendingWrite = pendingWrite || null;
-    }
-    this.#emit(next);
-    return this.#snapshot;
-  }
-
   reset({
     html,
     persistedSourceSha256 = null,
@@ -351,6 +321,7 @@ export class DocumentSession {
     operationId = "",
   }) {
     this.#pendingWrite = null;
+    this.#activeWrite = null;
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
     const receipt = this.#nextReceipt({
@@ -582,77 +553,172 @@ export class DocumentSession {
     return nextRevision;
   }
 
-  setHtml(html) {
-    const nextHtml = String(html);
-    this.#emit({
-      ...this.#snapshot,
-      html: nextHtml,
-      workingHtmlSha256: nextHtml === this.#snapshot.html
-        ? this.#snapshot.workingHtmlSha256
-        : null,
-    });
-  }
-
-  setPersistedSourceSha256(persistedSourceSha256) {
-    this.#emit({
-      ...this.#snapshot,
-      persistedSourceSha256: persistedSourceSha256
-        ? String(persistedSourceSha256)
-        : null,
-    });
-  }
-
-  setEditRevision(value) {
-    this.#emit({ ...this.#snapshot, editRevision: revision(value) });
-  }
-
-  setLastPersistedRevision(value) {
-    this.#emit({
-      ...this.#snapshot,
-      lastPersistedRevision: revision(value),
-    });
-  }
-
-  setPersistence({
-    state = this.#snapshot.persistState,
-    error = this.#snapshot.persistError,
-  } = {}) {
-    this.#emit({
-      ...this.#snapshot,
-      persistState: persistState(state),
-      persistError: String(error || ""),
-    });
-  }
-
-  setPersistState(state) {
-    this.setPersistence({ state });
-  }
-
-  setPersistError(error) {
-    this.setPersistence({ error });
-  }
-
-  setPendingWrite(write) {
-    this.#pendingWrite = write || null;
-    return this.#pendingWrite;
-  }
-
-  takePendingWrite() {
-    const write = this.#pendingWrite;
+  markPreviewDirty() {
     this.#pendingWrite = null;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "preview-dirty",
+      persistError: "",
+    });
+    return this.#snapshot;
+  }
+
+  queueWrite(write) {
+    if (!isDocumentWrite(write)) {
+      throw new TypeError("Document queued write requires exact HTML and a non-negative revision.");
+    }
+    this.#pendingWrite = write;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "queued",
+      persistError: "",
+    });
     return write;
   }
 
-  setFlushPromise(promise) {
-    if (promise !== null && typeof promise?.then !== "function") {
+  beginWrite() {
+    const write = this.#pendingWrite;
+    if (!write) return null;
+    this.#pendingWrite = null;
+    this.#activeWrite = write;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "writing",
+      persistError: "",
+    });
+    return write;
+  }
+
+  restoreWrite(write, { replacePending = false } = {}) {
+    if (!isDocumentWrite(write)) {
+      throw new TypeError("Document restored write requires exact HTML and a non-negative revision.");
+    }
+    const pending = this.#pendingWrite;
+    this.#activeWrite = null;
+    if (
+      !replacePending
+      && pending
+      && revision(pending.revision) >= revision(write.revision)
+    ) {
+      return pending;
+    }
+    this.#pendingWrite = write;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "queued",
+      persistError: "",
+    });
+    return write;
+  }
+
+  rebaseQueuedWrite({ expectedWrite, nextWrite } = {}) {
+    if (this.#pendingWrite !== expectedWrite) return false;
+    if (!isDocumentWrite(nextWrite)) {
+      throw new TypeError("Document rebased write requires exact HTML and a non-negative revision.");
+    }
+    this.#pendingWrite = nextWrite;
+    this.#emit(this.#snapshot);
+    return true;
+  }
+
+  rebaseActiveWrite({ expectedWrite, nextWrite } = {}) {
+    if (this.#activeWrite !== expectedWrite) return false;
+    if (!isDocumentWrite(nextWrite)) {
+      throw new TypeError("Document active write requires exact HTML and a non-negative revision.");
+    }
+    this.#activeWrite = nextWrite;
+    return true;
+  }
+
+  finishWrite(write) {
+    if (this.#activeWrite !== write) return false;
+    this.#activeWrite = null;
+    return true;
+  }
+
+  confirmWrite({ write, html, sourceSha256, persistedRevision } = {}) {
+    const writeRevision = revision(write?.revision);
+    const confirmedRevision = revision(persistedRevision);
+    const confirmedHash = String(sourceSha256 || "");
+    if (
+      !isDocumentWrite(write)
+      || this.#activeWrite !== write
+      || !SHA256.test(confirmedHash)
+      || confirmedRevision < writeRevision
+    ) return Object.freeze({ accepted: false, completesCurrentDocument: false });
+    this.#activeWrite = null;
+    const completesCurrentDocument = Boolean(
+      this.#snapshot.editRevision === writeRevision
+      && !this.#pendingWrite
+      && this.#snapshot.html === String(html ?? "")
+      && String(write.html ?? "") === String(html ?? "")
+    );
+    const next = {
+      ...this.#snapshot,
+      persistedSourceSha256: confirmedHash,
+      lastPersistedRevision: Math.max(
+        this.#snapshot.lastPersistedRevision,
+        confirmedRevision,
+      ),
+    };
+    if (completesCurrentDocument) {
+      next.html = String(html);
+      next.workingHtmlSha256 = confirmedHash;
+    }
+    if (this.#pendingWrite) {
+      next.persistState = "queued";
+      next.persistError = "";
+    } else if (completesCurrentDocument) {
+      next.persistState = "idle";
+      next.persistError = "";
+    }
+    this.#emit(next);
+    return Object.freeze({ accepted: true, completesCurrentDocument });
+  }
+
+  reconcileRecoveredRevision(value) {
+    const reconciledRevision = revision(value);
+    this.#pendingWrite = null;
+    this.#emit({
+      ...this.#snapshot,
+      editRevision: reconciledRevision,
+      lastPersistedRevision: reconciledRevision,
+      persistState: "idle",
+      persistError: "",
+    });
+    return this.#snapshot;
+  }
+
+  markPersistenceIdle() {
+    if (this.#pendingWrite) return false;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "idle",
+      persistError: "",
+    });
+    return true;
+  }
+
+  recordPersistenceFailure({ error, conflict = false } = {}) {
+    this.#emit({
+      ...this.#snapshot,
+      persistState: conflict ? "conflict" : "failed",
+      persistError: String(error || ""),
+    });
+    return this.#snapshot;
+  }
+
+  beginFlush(promise) {
+    if (typeof promise?.then !== "function") {
       throw new TypeError("Document flush authority must be a Promise.");
     }
+    if (this.#flushPromise && this.#flushPromise !== promise) return false;
     this.#flushPromise = promise;
     this.#emit(this.#snapshot);
     return promise;
   }
 
-  clearFlushPromise(promise) {
+  finishFlush(promise) {
     if (this.#flushPromise !== promise) return false;
     this.#flushPromise = null;
     this.#emit(this.#snapshot);
@@ -783,17 +849,15 @@ export class DocumentSession {
     }
     if (content !== html || declaredSha256 !== frozenSha256) {
       const reason = "磁盘中的 HTML 已被其他操作修改。当前页面没有覆盖任何一份；请先导出当前 HTML，或重新载入磁盘文件。";
-      this.setPersistence({ state: "conflict", error: reason });
+      this.recordPersistenceFailure({ conflict: true, error: reason });
       return boundaryBlock("source-diverged", reason, true);
     }
 
-    this.update({
+    this.#emit({
+      ...this.#snapshot,
       persistedSourceSha256: frozenSha256,
       workingHtmlSha256: frozenSha256,
-      lastPersistedRevision: Math.max(
-        this.#snapshot.lastPersistedRevision,
-        cutoff,
-      ),
+      lastPersistedRevision: Math.max(this.#snapshot.lastPersistedRevision, cutoff),
       persistState: "idle",
       persistError: "",
     });

@@ -106,7 +106,9 @@ test("permanent autosave failure keeps H0, protects H1, navigates, closes, and r
     });
 
     const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" });
-    const documentTitle = (await tabs.getByRole("tab").first().innerText()).trim();
+    const documentTitle = (await tabs.getByRole("tab").first().innerText())
+      .split(/\s*·\s*/u)[0]
+      .trim();
     await launched.page.getByRole("button", { name: "新标签页" }).click();
     await expect(workbench).toHaveAttribute("data-start-page", "true");
     const expandSidebar = launched.page.getByRole("button", { name: "展开左侧边栏" });

@@ -32,8 +32,7 @@ test("document session owns source bytes, revisions and pending write", () => {
   });
   const revision = session.beginEdit("<main>two</main>");
   const write = { revision, html: session.html };
-  session.setPendingWrite(write);
-  session.setPersistence({ state: "queued", error: "" });
+  session.queueWrite(write);
 
   assert.equal(revision, 1);
   assert.equal(session.html, "<main>two</main>");
@@ -87,7 +86,7 @@ test("canvas recovery advances only the disposable render generation", () => {
 test("document conflict rejects later edit revisions until reset", () => {
   const session = new DocumentSession({ html: "one" });
   session.beginEdit("two");
-  session.setPersistence({ state: "conflict", error: "changed" });
+  session.recordPersistenceFailure({ conflict: true, error: "changed" });
   assert.equal(session.beginEdit("three"), 1);
   assert.equal(session.html, "two");
 
@@ -102,38 +101,164 @@ test("document session clears only the matching flush promise", async () => {
   const session = new DocumentSession();
   const first = Promise.resolve(true);
   const second = Promise.resolve(false);
-  session.setFlushPromise(first);
-  assert.equal(session.clearFlushPromise(second), false);
+  session.beginFlush(first);
+  assert.equal(session.finishFlush(second), false);
   assert.equal(session.flushPromise, first);
-  assert.equal(session.clearFlushPromise(first), true);
+  assert.equal(session.finishFlush(first), true);
   assert.equal(session.flushPromise, null);
 });
 
 test("document snapshot exposes only derived write and flush state", () => {
   const session = new DocumentSession({ html: "<main>source</main>" });
   const write = { revision: 1, html: session.html };
-  session.setPendingWrite(write);
-  session.setPersistence({ state: "queued" });
+  session.queueWrite(write);
   assert.equal(session.snapshot.hasPendingWrite, true);
   assert.equal(session.snapshot.isFlushing, false);
 
   const flush = Promise.resolve(true);
-  session.setFlushPromise(flush);
+  session.beginFlush(flush);
   assert.equal(session.snapshot.hasPendingWrite, true);
   assert.equal(session.snapshot.isFlushing, true);
 
-  assert.equal(session.clearFlushPromise(flush), true);
-  session.takePendingWrite();
-  session.setPersistence({ state: "idle" });
+  assert.equal(session.finishFlush(flush), true);
+  session.beginWrite();
+  session.markPersistenceIdle();
   assert.equal(session.snapshot.hasPendingWrite, false);
   assert.equal(session.snapshot.isFlushing, false);
+});
+
+test("an old write receipt advances durable evidence without clearing a newer edit", () => {
+  const firstHtml = "<main>first edit</main>";
+  const secondHtml = "<main>second edit</main>";
+  const session = new DocumentSession({
+    html: "<main>source</main>",
+    persistedSourceSha256: sha256("<main>source</main>"),
+  });
+  const firstRevision = session.beginEdit(firstHtml, {
+    sourceSha256: sha256(firstHtml),
+  });
+  const firstWrite = { revision: firstRevision, html: firstHtml };
+  session.queueWrite(firstWrite);
+  assert.equal(session.beginWrite(), firstWrite);
+
+  const secondRevision = session.beginEdit(secondHtml, {
+    sourceSha256: sha256(secondHtml),
+  });
+  const secondWrite = { revision: secondRevision, html: secondHtml };
+  session.queueWrite(secondWrite);
+  const confirmation = session.confirmWrite({
+    write: firstWrite,
+    html: firstHtml,
+    sourceSha256: sha256(firstHtml),
+    persistedRevision: firstRevision,
+  });
+
+  assert.deepEqual(confirmation, {
+    accepted: true,
+    completesCurrentDocument: false,
+  });
+  assert.equal(session.html, secondHtml);
+  assert.equal(session.workingHtmlSha256, sha256(secondHtml));
+  assert.equal(session.persistedSourceSha256, sha256(firstHtml));
+  assert.equal(session.lastPersistedRevision, firstRevision);
+  assert.equal(session.pendingWrite, secondWrite);
+  assert.equal(session.persistState, "queued");
+});
+
+test("write confirmation publishes current bytes and hashes atomically", () => {
+  const html = "<main>saved atomically</main>";
+  const digest = sha256(html);
+  const session = new DocumentSession({
+    html: "<main>source</main>",
+    persistedSourceSha256: sha256("<main>source</main>"),
+  });
+  const write = {
+    revision: session.beginEdit(html, { sourceSha256: digest }),
+    html,
+  };
+  session.queueWrite(write);
+  session.beginWrite();
+  const observed = [];
+  session.setObserver((snapshot) => observed.push(snapshot));
+
+  const result = session.confirmWrite({
+    write,
+    html,
+    sourceSha256: digest,
+    persistedRevision: write.revision,
+  });
+
+  assert.equal(result.completesCurrentDocument, true);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].html, html);
+  assert.equal(observed[0].workingHtmlSha256, digest);
+  assert.equal(observed[0].persistedSourceSha256, digest);
+  assert.equal(observed[0].persistState, "idle");
+});
+
+test("an old flush completion cannot clear a newer flush owner", () => {
+  const session = new DocumentSession();
+  const first = Promise.resolve("first");
+  const second = Promise.resolve("second");
+  session.beginFlush(first);
+  assert.equal(session.finishFlush(first), true);
+  session.beginFlush(second);
+
+  assert.equal(session.finishFlush(first), false);
+  assert.equal(session.flushPromise, second);
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
+test("write recovery and rebase keep the newest owned operation", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = { revision: 1, html: "<main>one</main>", operationId: "write-1" };
+  const second = { revision: 2, html: "<main>two</main>", operationId: "write-2" };
+  const rebased = { ...second, operationId: "write-2-rebased" };
+  session.queueWrite(first);
+  session.beginWrite();
+  session.queueWrite(second);
+
+  assert.equal(session.restoreWrite(first), second);
+  assert.equal(session.pendingWrite, second);
+  assert.equal(session.rebaseQueuedWrite({
+    expectedWrite: first,
+    nextWrite: rebased,
+  }), false);
+  assert.equal(session.rebaseQueuedWrite({
+    expectedWrite: second,
+    nextWrite: rebased,
+  }), true);
+  session.recordPersistenceFailure({ error: "write result unknown" });
+  assert.equal(session.pendingWrite, rebased);
+  assert.equal(session.persistState, "failed");
+  assert.equal(session.persistError, "write result unknown");
+});
+
+test("document snapshot contract remains read-only and shape-stable", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  assert.deepEqual(Object.keys(session.snapshot).sort(), [
+    "canvasAuthority",
+    "canvasGeneration",
+    "editRevision",
+    "hasPendingWrite",
+    "html",
+    "isFlushing",
+    "lastPersistedRevision",
+    "persistError",
+    "persistState",
+    "persistedSourceSha256",
+    "sourceReceipt",
+    "workingHtmlSha256",
+  ]);
+  assert.equal(Object.isFrozen(session.snapshot), true);
 });
 
 test("a stale canvas hash does not block a boundary whose exact bytes were safely persisted", async () => {
   const html = "<main>saved</main>";
   const sourceSha256 = sha256(html);
-  const session = new DocumentSession({ html, persistedSourceSha256: sourceSha256 });
-  session.update({
+  const session = new DocumentSession({
+    html,
+    persistedSourceSha256: sourceSha256,
     editRevision: 4,
     lastPersistedRevision: 6,
   });
@@ -167,8 +292,9 @@ test("a stale persisted projection is silently repaired from authoritative sourc
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 3,
+    lastPersistedRevision: 2,
   });
-  session.update({ editRevision: 3, lastPersistedRevision: 2 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -200,8 +326,9 @@ test("only confirmed authoritative divergence becomes a source conflict", async 
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -227,8 +354,9 @@ test("a transient authoritative read failure stays recoverable and does not inve
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -252,8 +380,9 @@ test("invalid authoritative content integrity is confirmed before recovery is es
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,

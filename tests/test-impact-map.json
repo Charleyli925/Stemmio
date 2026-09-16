@@ -668,10 +668,19 @@
         "^app/application/document-session\\.(?:js|d\\.ts)$"
       ],
       "suites": [
-        "typecheck"
+        "typecheck",
+        "browser-editing-smoke",
+        "electron-editing-smoke",
+        "electron-recovery-smoke",
+        "electron-project-lifecycle-smoke"
       ],
       "nodeTests": [
-        "tests/document-session.test.mjs"
+        "tests/document-session.test.mjs",
+        "tests/document-workflow.test.mjs",
+        "tests/project-workflow.test.mjs",
+        "tests/version-workflow.test.mjs",
+        "tests/run-workflow.test.mjs",
+        "tests/workspace-controller.test.mjs"
       ]
     },
     {
