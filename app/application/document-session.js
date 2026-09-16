@@ -106,6 +106,55 @@ function sourceReceiptContext(context) {
   });
 }
 
+function isNonNegativeSafeInteger(value) {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0;
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isNullableNonEmptyString(value) {
+  return value === null || isNonEmptyString(value);
+}
+
+function isSourceReceiptContext(context) {
+  if (!context || typeof context !== "object" || Array.isArray(context)) return false;
+  if (
+    !isNonNegativeSafeInteger(context.epoch)
+    || !isNonEmptyString(context.projectId)
+    || !isNonEmptyString(context.documentId)
+    || !isNonEmptyString(context.sourcePath)
+  ) return false;
+  const targetFields = [
+    "projectRootPath",
+    "targetKind",
+    "workingCopyId",
+    "versionId",
+    "exactSourcePath",
+    "sourceSha256",
+    "sessionEpoch",
+  ];
+  const hasTarget = targetFields.some((key) => Object.hasOwn(context, key));
+  if (!hasTarget) return true;
+  if (!targetFields.every((key) => Object.hasOwn(context, key))) return false;
+  if (
+    !isNonEmptyString(context.projectRootPath)
+    || (context.targetKind !== "working-copy" && context.targetKind !== "version")
+    || !isNullableNonEmptyString(context.workingCopyId)
+    || !isNullableNonEmptyString(context.versionId)
+    || !isNonEmptyString(context.exactSourcePath)
+    || typeof context.sourceSha256 !== "string"
+    || !SHA256.test(context.sourceSha256)
+    || !isNonNegativeSafeInteger(context.sessionEpoch)
+    || (context.targetKind === "working-copy" && !isNonEmptyString(context.workingCopyId))
+    || (context.targetKind === "version" && !isNonEmptyString(context.versionId))
+  ) return false;
+  return true;
+}
+
 function sourceReceipt({
   sessionIncarnation,
   sequence,
@@ -137,21 +186,48 @@ function sourceReceipt({
 }
 
 export function isSourceReceipt(value) {
-  return Boolean(
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && Number.isSafeInteger(Number(value.sessionIncarnation))
-    && Number(value.sessionIncarnation) > 0
-    && Number.isSafeInteger(Number(value.sequence))
-    && Number(value.sequence) > 0
-    && SOURCE_RECEIPT_ORIGINS.has(value.origin)
-    && String(value.operationId || "")
-    && Number.isSafeInteger(Number(value.editRevision))
-    && Number.isSafeInteger(Number(value.canvasGeneration))
-    && (value.context == null || sourceReceiptContext(value.context))
-    && (value.sourceSha256 === "" || /^sha256:[a-f0-9]{64}$/u.test(String(value.sourceSha256)))
-  );
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const requiredFields = [
+    "sessionIncarnation",
+    "sequence",
+    "origin",
+    "operationId",
+    "editRevision",
+    "canvasGeneration",
+    "sourceSha256",
+    "context",
+    "epoch",
+    "projectId",
+    "documentId",
+    "sourcePath",
+    "sessionEpoch",
+  ];
+  if (!requiredFields.every((key) => Object.hasOwn(value, key))) return false;
+  if (
+    !isNonNegativeSafeInteger(value.sessionIncarnation)
+    || value.sessionIncarnation === 0
+    || !isNonNegativeSafeInteger(value.sequence)
+    || value.sequence === 0
+    || !SOURCE_RECEIPT_ORIGINS.has(value.origin)
+    || !isNonEmptyString(value.operationId)
+    || !isNonNegativeSafeInteger(value.editRevision)
+    || !isNonNegativeSafeInteger(value.canvasGeneration)
+    || typeof value.sourceSha256 !== "string"
+    || (value.sourceSha256 !== "" && !SHA256.test(value.sourceSha256))
+  ) return false;
+  if (value.context === null) {
+    return value.epoch === null
+      && value.projectId === null
+      && value.documentId === null
+      && value.sourcePath === null
+      && value.sessionEpoch === null;
+  }
+  if (!isSourceReceiptContext(value.context)) return false;
+  return value.epoch === value.context.epoch
+    && value.projectId === value.context.projectId
+    && value.documentId === value.context.documentId
+    && value.sourcePath === value.context.sourcePath
+    && value.sessionEpoch === (value.context.sessionEpoch ?? null);
 }
 
 export function sameSourceReceiptContext(left, right) {
