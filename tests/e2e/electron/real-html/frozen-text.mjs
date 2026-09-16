@@ -308,7 +308,16 @@ export async function executeFrozenText({ frame, target, access, page, editor,
       saved = await readSource();
       const oracle = sourceScope(saved);
       // Save is a soft checkpoint. Ending the session here removes the history
-      // bookmark and would test the separate fresh-frame history fallback.
+      // bookmark and would test the separate fresh-frame history fallback. The
+      // persisted source can settle before Chromium restores the exact native
+      // whitespace bookmark, so wait for that public caret boundary as well.
+      await expect.poll(async () => {
+        try {
+          return (await endFocus()).actual.remainingText;
+        } catch (error) {
+          return error?.details?.actual?.remainingText ?? null;
+        }
+      }, { timeout: 2_000 }).toBe(trailingText);
       const focus = await endFocus();
       return { sourceSha256: frozenDigest(saved), sessionPreserved: focus.conditions.focusMatches, ...oracle };
     });

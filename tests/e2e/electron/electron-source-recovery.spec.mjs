@@ -106,9 +106,8 @@ test("permanent autosave failure keeps H0, protects H1, navigates, closes, and r
     });
 
     const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" });
-    const documentTitle = (await tabs.getByRole("tab").first().innerText())
-      .split(/\s*·\s*/u)[0]
-      .trim();
+    const documentTabName = await tabs.getByRole("tab").first().getAttribute("aria-label");
+    expect(documentTabName).toBeTruthy();
     await launched.page.getByRole("button", { name: "新标签页" }).click();
     await expect(workbench).toHaveAttribute("data-start-page", "true");
     const expandSidebar = launched.page.getByRole("button", { name: "展开左侧边栏" });
@@ -116,7 +115,7 @@ test("permanent autosave failure keeps H0, protects H1, navigates, closes, and r
     const sidebar = launched.page.locator(".workbench-global-sidebar");
     await sidebar.getByRole("button", { name: "设置", exact: true }).click();
     await expect(workbench).toHaveAttribute("data-settings-page", "true");
-    await tabs.getByRole("tab").filter({ hasText: documentTitle }).click();
+    await tabs.getByRole("tab", { name: documentTabName, exact: true }).click();
     await expect(workbench).toHaveAttribute("data-persist-state", "failed");
     await expect.poll(() => loadedDiskFrame(
       launched.page,

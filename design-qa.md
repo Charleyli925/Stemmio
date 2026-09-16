@@ -3553,6 +3553,7 @@ final result: passed
 - Mode: DESIGN CHANGE, lightweight exception. 仅历史页的既有菜单项从禁用改为可用，并将文案改为“在浏览器中打开此版本”；当前稿文案、菜单顺序、布局、图标、颜色与 Finder/导出动作不变。
 - 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
 - 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。
+- 2026-09-17 合同补核：A 等待保存时切换到 B 的结果现在完整断言为原始 A 的 `stale.context`；成功、阻塞、拒绝和未知结果也断言完整字段。生产工作流进入窄范围 `checkJs`，不改变菜单、切换、输入收口或系统打开行为。局部 Node 65/65 与 edit gate 通过；真实 Electron 与私人语料结论仍沿用本 PR 后续精确 head 的完成证据，不以本次 Node 结果替代。
 
 ### P1 follow-up — created-history current-draft recovery
 
