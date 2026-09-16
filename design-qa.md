@@ -3547,3 +3547,12 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - 无必须跟进的 P3；若未来统一放大所有工作台弹出菜单字号，应作为全局密度调整处理，而不是只修改历史页。
 
 final result: passed
+
+## 2026-09-16 — Transient tab display handoff
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.
+- Presentation contract: up to 20 exact persisted and Canvas-verified HTML projections remain data-only within 32 MiB. A cache hit may mount a script-disabled display page only while handing the selected tab to its exact live Canvas; rapid overlap is bounded at two and settlement returns the mounted count to zero. Scroll, Canvas mode and bounded page context survive HTML eviction only for the same tab, Project, Document and source Hash.
+- Rebuilt source Electron evidence: the two-document Registry restart scenario restores the persisted active document without prewarm marks, begins the normal open path, observes at least one temporary iframe during a cached return, and returns to zero mounted iframes after each exact Canvas settles. Keyboard tab navigation and rapid project switching with immediate close also pass.
+- Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
+- Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
+- Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.

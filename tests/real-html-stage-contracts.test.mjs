@@ -215,6 +215,89 @@ test("real HTML discovery keeps the first stage, code and safe preconditions", (
   assert.equal(trace.events[0].preconditions.privatePath, undefined);
 });
 
+test("runtime discovery failures block preflight even when no exception escapes", () => {
+  const trace = createDiscoveryTrace();
+  recordDiscoveryFailure(
+    trace,
+    REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY,
+    {
+      code: "RUNTIME_GENERATED_PROBE_FAILED",
+      exactReason: "RUNTIME_GENERATED_PROBE_FAILED",
+      cause: {
+        substage: "target-click",
+        code: "RUNTIME_PROBE_TARGET_CLICK_FAILED",
+        targetIndex: 4,
+        targetTag: "canvas",
+        connected: true,
+        frameGeneration: "7",
+        hitKind: "canvas",
+        selector: "[private]",
+      },
+    },
+    { sourceElementCount: 5, workingCopyReady: true },
+  );
+  assert.equal(trace.firstFailure.failureBoundary, "executor");
+  assert.equal(trace.firstFailure.rootCause, "UNDETERMINED");
+  assert.deepEqual(trace.firstFailure.cause, {
+    substage: "target-click",
+    code: "RUNTIME_PROBE_TARGET_CLICK_FAILED",
+    targetIndex: 4,
+    targetTag: "canvas",
+    connected: true,
+    frameGeneration: "7",
+    hitKind: "canvas",
+  });
+  const status = capabilityPreflightFileStatus({
+    discoveryFailed: trace.firstFailure !== null,
+    workingCopyUnchanged: true,
+    originalUnchanged: true,
+  });
+  assert.equal(status, "DISCOVERY_ERROR");
+  assert.equal(capabilityPreflightExitCode([{
+    status,
+    originalUnchanged: true,
+    preflightWorkingCopy: { unchanged: true },
+    discovery: trace,
+  }]), 1);
+  assert.equal(capabilityPreflightExitCode([{
+    status: "PENDING_REVIEW",
+    originalUnchanged: true,
+    preflightWorkingCopy: { unchanged: true },
+    discovery: trace,
+  }]), 1);
+});
+
+test("a stopped capability probe keeps the full static denominator as partial diagnostics", () => {
+  const denominator = Array.from({ length: 5 }, (_, index) => ({
+    probeStableId: `sm1_${String(index + 1).padStart(32, "0")}`,
+    operationStableId: `sm1_${String(index + 1).padStart(32, "0")}`,
+    region: index < 2 ? "top" : "middle",
+    tabId: null,
+    type: "text",
+    expectations: [],
+  }));
+  for (const stopAt of [0, 2]) {
+    const draft = createCapabilityManifestDraft({
+      authoredDenominator: denominator,
+      discovery: {
+        complete: false,
+        knownCandidateCount: denominator.length,
+        authoredDenominatorCount: denominator.length,
+        examinedCandidateCount: stopAt + 1,
+        probedCandidateCount: stopAt + 1,
+        unexaminedCandidateCount: denominator.length - stopAt - 1,
+        stopReason: "NO_EXACT_HIT_POINT",
+      },
+    });
+    assert.equal(draft.coveragePlan.denominator, denominator.length);
+    assert.equal(draft.coveragePlan.required, 3);
+    assert.equal(draft.coveragePlan.status, "PARTIAL_DIAGNOSTIC");
+    assert.equal(draft.coveragePlan.discoveryComplete, false);
+    assert.equal(draft.coveragePlan.unexaminedCandidateCount, denominator.length - stopAt - 1);
+    assert.ok(draft.issues.includes("DISCOVERY_INCOMPLETE"));
+  }
+});
+
 test("real HTML discovery observations do not turn a successful preflight into a failure", () => {
   const trace = createDiscoveryTrace();
   recordDiscoveryObservation(
@@ -986,6 +1069,44 @@ test("capability preflight cannot pass file, cleanup, or source failures", () =>
     preflightWorkingCopy: { unchanged: true },
   };
   assert.equal(capabilityPreflightExitCode([passingRow]), 0);
+  assert.equal(capabilityPreflightExitCode([{
+    ...passingRow,
+    discovery: {
+      firstFailure: null,
+      events: [],
+      failures: [],
+    },
+    capabilityManifest: {
+      discovery: {
+        complete: true,
+        knownCandidateCount: 2,
+        authoredDenominatorCount: 2,
+        examinedCandidateCount: 2,
+        probedCandidateCount: 2,
+        unexaminedCandidateCount: 0,
+        stopReason: null,
+      },
+    },
+  }]), 0);
+  assert.equal(capabilityPreflightExitCode([{
+    ...passingRow,
+    discovery: {
+      firstFailure: null,
+      events: [],
+      failures: [],
+    },
+    capabilityManifest: {
+      discovery: {
+        complete: false,
+        knownCandidateCount: 10,
+        authoredDenominatorCount: 10,
+        examinedCandidateCount: 1,
+        probedCandidateCount: 1,
+        unexaminedCandidateCount: 9,
+        stopReason: "target-click",
+      },
+    },
+  }]), 1);
   for (const broken of [
     { ...passingRow, status: "DISCOVERY_ERROR" },
     { ...passingRow, originalUnchanged: false },

@@ -187,8 +187,8 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   编辑。已登记项目的 exact open envelope 必须证明 Renderer 水合不再重复 `/source`，干净且 generation/
   Hash 完全一致的 verified Canvas 必须证明不会重复 render fence。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
-  3 个 hot / 8 项 / 48 MiB LRU、滚动与 PageViewContext 恢复，以及淘汰不关闭标签；Electron
-  标签页用例证明缓存显示仍进入正常项目打开链路。Registry-before-hydrate 与
+  20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
+  标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。Registry-before-hydrate 与
   hydrate-before-Registry 都必须得到相同标题/缺失项结果。持久化测试拒绝 title/path/HTML/Hash
   和未知字段，验证 `activeTabId:null`、原子替换与无效文件 fail-closed；Electron 证明 Left/Right/
   Home/End 的 roving focus、键盘关闭后的活动标签焦点、Start 冷重启抑制 activePath、Start→Registry 原位打开、Registry 标题恢复及 unmounted outlet 安全关闭。
