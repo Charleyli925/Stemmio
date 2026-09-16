@@ -668,13 +668,15 @@
         "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
         "^scripts/verify-source-receipt-typecheck\\.mjs$",
         "^tests/source-receipt-contract\\.typecheck\\.ts$",
+        "^tests/source-receipt-typecheck-verifier\\.test\\.mjs$",
         "^tsconfig\\.source-receipt\\.json$"
       ],
       "suites": [
         "typecheck"
       ],
       "nodeTests": [
-        "tests/document-session.test.mjs"
+        "tests/document-session.test.mjs",
+        "tests/source-receipt-typecheck-verifier.test.mjs"
       ]
     },
     {
