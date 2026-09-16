@@ -268,10 +268,12 @@ function createHarness({
     },
     async flush({ throughRevision } = {}) {
       const persistedHash = sha256(documentSession.html);
-      const write = { revision: throughRevision, html: documentSession.html };
-      documentSession.queueWrite(write);
+      const write = documentSession.pendingWrite || documentSession.restorePendingWrite({
+        revision: throughRevision,
+        html: documentSession.html,
+      });
       documentSession.beginWrite();
-      documentSession.confirmWrite({
+      documentSession.acceptWriteConfirmation({
         write,
         html: documentSession.html,
         sourceSha256: persistedHash,
@@ -639,7 +641,10 @@ test("a dirty document cannot reuse the Canvas validation lease", async (t) => {
     generation: 0,
     renderedSha256: sha256(OLD_HTML),
   });
-  harness.documentSession.beginEdit(OLD_HTML.replace("old", "dirty"));
+  harness.documentSession.acceptEdit({
+    html: OLD_HTML.replace("old", "dirty"),
+    write: null,
+  });
 
   const outcome = await harness.workflow.prepareSwitch();
   assert.equal(outcome.status, "succeeded");
@@ -678,7 +683,7 @@ test("project switch accepts protected Working HTML without refreshing a last-kn
     },
   });
   t.after(() => harness.workflow.dispose());
-  harness.documentSession.beginEdit(latestHtml);
+  harness.documentSession.acceptEdit({ html: latestHtml, write: null });
 
   const outcome = await harness.workflow.prepareSwitch();
 
@@ -714,7 +719,7 @@ test("close protects the latest source without claiming a stale projection is cu
     },
   });
   t.after(() => harness.workflow.dispose());
-  harness.documentSession.beginEdit(latestHtml);
+  harness.documentSession.acceptEdit({ html: latestHtml, write: null });
 
   const outcome = await harness.workflow.prepareClose({
     requestId: "close_stale_last_known_good",
@@ -840,7 +845,10 @@ test("a failed source write can switch only after an exact recovery checkpoint",
     },
   });
   t.after(() => harness.workflow.dispose());
-  harness.documentSession.beginEdit(OLD_HTML.replace("old", "protected"));
+  harness.documentSession.acceptEdit({
+    html: OLD_HTML.replace("old", "protected"),
+    write: null,
+  });
   harness.documentSession.recordPersistenceFailure({ error: "disk denied" });
 
   const outcome = await harness.workflow.prepareSwitch();
@@ -868,7 +876,10 @@ test("a failed source write can close after recovery evidence without claiming s
     },
   });
   t.after(() => harness.workflow.dispose());
-  harness.documentSession.beginEdit(OLD_HTML.replace("old", "protected"));
+  harness.documentSession.acceptEdit({
+    html: OLD_HTML.replace("old", "protected"),
+    write: null,
+  });
   harness.documentSession.recordPersistenceFailure({ error: "disk denied" });
 
   const result = await harness.workflow.prepareClose({
@@ -2460,7 +2471,10 @@ test("native input delivered after the switch drain defers without losing the ac
         };
         if (firstFreeze) {
           firstFreeze = false;
-          harness.documentSession.beginEdit(harness.documentSession.html);
+          harness.documentSession.acceptEdit({
+            html: harness.documentSession.html,
+            write: null,
+          });
         }
         return frozen;
       },
@@ -2482,9 +2496,9 @@ test("native input delivered after the switch drain defers without losing the ac
   assert.ok(harness.unlockCount >= 1);
 
   const write = { revision: 1, html: harness.documentSession.html };
-  harness.documentSession.queueWrite(write);
+  harness.documentSession.restorePendingWrite(write);
   harness.documentSession.beginWrite();
-  harness.documentSession.confirmWrite({
+  harness.documentSession.acceptWriteConfirmation({
     write,
     html: harness.documentSession.html,
     sourceSha256: sha256(harness.documentSession.html),
@@ -5683,7 +5697,7 @@ test("a lost finalize response resumes from the renderer receipt without reapply
   const appliedEpoch = h.projectSession.epoch;
   const resetCount = h.documentWorkflow.resetCount;
   const edited = A_HTML.replace("A", "edited after finalize loss");
-  h.documentSession.beginEdit(edited);
+  h.documentSession.acceptEdit({ html: edited, write: null });
   h.draftSession.activate({
     epoch: appliedEpoch,
     projectId: "project_a",
@@ -5732,7 +5746,7 @@ test("a post-apply Canvas failure retries only Canvas and finalization on the sa
   const appliedEpoch = h.projectSession.epoch;
   const resetCount = h.documentWorkflow.resetCount;
   const edited = A_HTML.replace("A", "edited during canvas recovery");
-  h.documentSession.beginEdit(edited);
+  h.documentSession.acceptEdit({ html: edited, write: null });
   h.draftSession.activate({
     epoch: appliedEpoch,
     projectId: "project_a",

@@ -575,17 +575,24 @@ export class DocumentSession {
     return true;
   }
 
-  beginEdit(html, {
+  acceptEdit({
+    html,
     origin = "local-edit",
     operationId = "",
     sourceSha256 = "",
     context = null,
+    write: writeDetails = null,
   } = {}) {
     if (this.#snapshot.persistState === "conflict") {
-      return this.#snapshot.editRevision;
+      return Object.freeze({
+        accepted: false,
+        revision: this.#snapshot.editRevision,
+        write: null,
+      });
     }
     this.#confirmedReceiptSequence = null;
     const nextRevision = this.#snapshot.editRevision + 1;
+    const nextHtml = String(html);
     const nextWorkingHash = SHA256.test(String(sourceSha256 || ""))
       ? String(sourceSha256)
       : null;
@@ -597,45 +604,51 @@ export class DocumentSession {
       sourceSha256: nextWorkingHash || "",
       context,
     });
+    const write = writeDetails === null || writeDetails === undefined
+      ? null
+      : {
+        ...writeDetails,
+        html: nextHtml,
+        revision: nextRevision,
+      };
+    if (write && (
+      !isDocumentWrite(write)
+      || !writeMatchesContext(write, receipt.context)
+    )) {
+      throw new TypeError("Document accepted edit write must match its document owner.");
+    }
+    this.#pendingWrite = write;
+    if (write) this.#writeAuthorities.set(write, this.#authorityGeneration);
     this.#emit({
       ...this.#snapshot,
-      html: String(html),
+      html: nextHtml,
       editRevision: nextRevision,
       sourceReceipt: receipt,
+      persistState: write ? "queued" : "preview-dirty",
       persistError: "",
       workingHtmlSha256: nextWorkingHash,
       canvasAuthority: pendingCanvasAuthority(this.#snapshot.canvasGeneration),
     });
-    return nextRevision;
-  }
-
-  markPreviewDirty() {
-    this.#pendingWrite = null;
-    this.#emit({
-      ...this.#snapshot,
-      persistState: "preview-dirty",
-      persistError: "",
+    return Object.freeze({
+      accepted: true,
+      revision: nextRevision,
+      write,
     });
-    return this.#snapshot;
   }
 
-  queueWrite(write) {
+  restorePendingWrite(write) {
     if (!isDocumentWrite(write)) {
-      throw new TypeError("Document queued write requires exact HTML and a non-negative revision.");
+      throw new TypeError("Document restored pending write requires exact HTML and a non-negative revision.");
     }
     if (
       revision(write.revision) !== this.#snapshot.editRevision
       || String(write.html) !== this.#snapshot.html
       || !writeMatchesContext(write, this.#snapshot.sourceReceipt?.context)
     ) {
-      throw new TypeError("Document queued write must match the currently accepted document state.");
+      throw new TypeError("Document restored pending write must match the currently accepted document state.");
     }
-    if (
-      this.#pendingWrite
-      && this.#pendingWrite !== write
-      && revision(write.revision) <= revision(this.#pendingWrite.revision)
-    ) {
-      throw new TypeError("Document queued write cannot replace an equal or newer pending edit.");
+    if (this.#pendingWrite || this.#activeWrite) {
+      throw new TypeError("Document restored pending write cannot replace owned write work.");
     }
     this.#pendingWrite = write;
     this.#writeAuthorities.set(write, this.#authorityGeneration);
@@ -735,7 +748,16 @@ export class DocumentSession {
     return true;
   }
 
-  confirmWrite({ write, html, sourceSha256, persistedRevision } = {}) {
+  acceptWriteConfirmation({
+    write,
+    html,
+    sourceSha256,
+    persistedRevision,
+    context = null,
+    routingChanged = false,
+    operationId = "",
+    nextWrite = undefined,
+  } = {}) {
     const writeRevision = revision(write?.revision);
     const confirmedRevision = revision(persistedRevision);
     const confirmedHash = String(sourceSha256 || "");
@@ -746,14 +768,45 @@ export class DocumentSession {
       || !SHA256.test(confirmedHash)
       || confirmedRevision < writeRevision
       || String(html ?? "") !== String(write.html)
-    ) return Object.freeze({ accepted: false, completesCurrentDocument: false });
+    ) return Object.freeze({
+      accepted: false,
+      completesCurrentDocument: false,
+      authorityChanged: false,
+    });
+    const currentReceipt = this.#snapshot.sourceReceipt;
+    const acknowledgedContext = context || currentReceipt?.context || null;
+    const pending = this.#pendingWrite;
+    const confirmedPending = nextWrite === undefined ? pending : nextWrite;
+    if (
+      (nextWrite !== undefined && (
+        !pending
+        || !isDocumentWrite(nextWrite)
+        || !writeRebaseKeepsOwner(pending, nextWrite, acknowledgedContext)
+        || !writeMatchesContext(nextWrite, acknowledgedContext)
+      ))
+      || (routingChanged && confirmedPending && !writeMatchesContext(
+        confirmedPending,
+        acknowledgedContext,
+      ))
+    ) return Object.freeze({
+      accepted: false,
+      completesCurrentDocument: false,
+      authorityChanged: false,
+    });
     this.#activeWrite = null;
     const completesCurrentDocument = Boolean(
       this.#snapshot.editRevision === writeRevision
-      && !this.#pendingWrite
+      && !confirmedPending
       && this.#snapshot.html === String(html ?? "")
       && String(write.html ?? "") === String(html ?? "")
     );
+    const receiptNeedsHashRepair = Boolean(
+      completesCurrentDocument
+      && (!currentReceipt
+        || !SHA256.test(String(currentReceipt.sourceSha256 || ""))
+        || currentReceipt.sourceSha256 !== confirmedHash),
+    );
+    const authorityChanged = Boolean(routingChanged || receiptNeedsHashRepair);
     const next = {
       ...this.#snapshot,
       persistedSourceSha256: confirmedHash,
@@ -762,6 +815,10 @@ export class DocumentSession {
         confirmedRevision,
       ),
     };
+    this.#pendingWrite = confirmedPending;
+    if (confirmedPending) {
+      this.#writeAuthorities.set(confirmedPending, this.#authorityGeneration);
+    }
     if (completesCurrentDocument) {
       next.html = String(html);
       next.workingHtmlSha256 = confirmedHash;
@@ -773,8 +830,32 @@ export class DocumentSession {
       next.persistState = "idle";
       next.persistError = "";
     }
+    if (authorityChanged) {
+      this.#authorityGeneration += 1;
+      this.#confirmedReceiptSequence = null;
+      const canvasGeneration = this.#snapshot.canvasGeneration + 1;
+      next.canvasGeneration = canvasGeneration;
+      next.sourceReceipt = this.#nextReceipt({
+        origin: "authority",
+        operationId,
+        editRevision: this.#snapshot.editRevision,
+        canvasGeneration,
+        sourceSha256: completesCurrentDocument
+          ? confirmedHash
+          : this.#snapshot.workingHtmlSha256 || confirmedHash,
+        context: acknowledgedContext,
+      });
+      next.canvasAuthority = pendingCanvasAuthority(canvasGeneration);
+      if (confirmedPending) {
+        this.#writeAuthorities.set(confirmedPending, this.#authorityGeneration);
+      }
+    }
     this.#emit(next);
-    return Object.freeze({ accepted: true, completesCurrentDocument });
+    return Object.freeze({
+      accepted: true,
+      completesCurrentDocument,
+      authorityChanged,
+    });
   }
 
   reconcileRecoveredRevision(value) {

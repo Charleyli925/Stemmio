@@ -1043,7 +1043,17 @@ test("DocumentWorkflow reconstructs a missing pending write and rebinds comment 
     sourceAnchor: { id: "target_rebind", selector: "p", resolution: "exact" },
     attachments: [],
   }]);
-  harness.documentSession.beginEdit(after);
+  harness.documentSession.publishAuthority({
+    html: after,
+    persistedSourceSha256: sha256(before),
+    workingHtmlSha256: sha256(after),
+    editRevision: 1,
+    lastPersistedRevision: 0,
+    persistState: "queued",
+    pendingWrite: null,
+    context: harness.context,
+    operationId: "restore-missing-pending-write",
+  });
 
   const outcome = await harness.workflow.flush({ throughRevision: 1 });
 
@@ -1788,7 +1798,11 @@ test("DocumentWorkflow fences delayed replacement proof against a newer local ed
   const recovering = h.recover();
   await proofStarted;
   const localHtml = h.currentHtml.replace("V9 current", "new local edit");
-  h.documentSession.beginEdit(localHtml);
+  h.documentSession.acceptEdit({
+    html: localHtml,
+    context: h.context,
+    write: h.context,
+  });
   releaseProof();
   const result = await recovering;
   assert.equal(result.status, "stale");
@@ -2428,8 +2442,7 @@ test("observeExternalSourceChange ignores stale paths and in-flight writes", asy
   assert.equal(stale.status, "succeeded");
   assert.equal(stale.value.ignored, true);
 
-  const revision = harness.documentSession.beginEdit(html);
-  harness.documentSession.queueWrite({ revision, html });
+  harness.documentSession.acceptEdit({ html, write: {} });
   harness.documentSession.beginWrite();
   const deferred = await harness.workflow.observeExternalSourceChange({
     sourcePath: SOURCE_PATH,
@@ -2512,11 +2525,13 @@ test("local and history observations with a receipt hash mismatch never verify",
   const wrongSha256 = sha256("different rendered bytes");
   for (const origin of ["local-edit", "history"]) {
     const harness = createHarness({ html });
-    harness.documentSession.beginEdit(nextHtml, {
+    harness.documentSession.acceptEdit({
+      html: nextHtml,
       origin,
       sourceSha256: nextSha256,
       context: harness.context,
       operationId: `${origin}-hash-fence`,
+      write: null,
     });
     const receipt = harness.documentSession.sourceReceipt;
     assert.equal(harness.workflow.confirmCanvas({
@@ -2849,7 +2864,11 @@ test("leave readiness is current evidence, not a permission retained across an e
   const boundary = h.workflow.captureLeaveBoundary();
   assert.equal(h.workflow.verifyLeaveBoundary(boundary, { needsSourceProtection: true,
     committedSourceSha256: sha256(h.documentSession.html) }).kind, "ready");
-  h.documentSession.beginEdit(h.documentSession.html.replace("one", "newer"));
+  h.documentSession.acceptEdit({
+    html: h.documentSession.html.replace("one", "newer"),
+    context: h.context,
+    write: h.context,
+  });
   assert.equal(h.workflow.inspectLeaveReadiness().action, "full-check");
   assert.equal(h.workflow.verifyLeaveBoundary(boundary).code, "PROJECT_SWITCH_SOURCE_CHANGED");
 });
@@ -2860,7 +2879,11 @@ test("leave boundary cannot cross a same-byte document switch or source replacem
     t.after(() => h.workflow.dispose());
     const boundary = h.workflow.captureLeaveBoundary();
     if (change === "context") h.projectSession.openLocator("/tmp/another-document.html");
-    else h.documentSession.beginEdit(h.documentSession.html.replace("one", "replacement"));
+    else h.documentSession.acceptEdit({
+      html: h.documentSession.html.replace("one", "replacement"),
+      context: h.context,
+      write: h.context,
+    });
     assert.equal(h.workflow.verifyLeaveBoundary(boundary).code, "PROJECT_SWITCH_SOURCE_CHANGED", change);
   }
 });

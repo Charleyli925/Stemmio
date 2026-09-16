@@ -69,15 +69,21 @@ The renderer's main workspace facts are partitioned as follows:
   exact-byte reconciliation at persistence boundaries. A receipt binds origin,
   operation, edit revision, Canvas generation, source Hash and the complete
   Project/session context. Production callers can change these facts only
-  through complete actions: accept an edit, queue/begin/restore/rebase/confirm
-  a write, record persistence failure, publish authority, or reset the session.
+  through complete actions: atomically accept an edit with its pending write,
+  begin/restore/rebase a write, accept a verified write confirmation, record
+  persistence failure, publish authority, or reset the session.
   There is no public arbitrary field patch or raw persistence/pending-write
-  setter. Ordinary queueing must match the accepted HTML, revision and source
-  context; registration/path changes use the explicit same-byte rebase actions.
+  setter. Ordinary edit acceptance publishes the new HTML, revision, receipt
+  and pending-write ownership in one snapshot; registration/path changes use
+  the explicit same-byte rebase actions.
   `beginWrite` grants execution only when no write is already active, and
-  `restoreWrite` can retire only that exact active object. Write confirmation
-  advances only the acknowledged durable revision and exact bytes; it preserves
-  a newer queued edit. Idle publication requires no active/pending write and
+  `restoreWrite` can retire only that exact active object. After
+  `DocumentWorkflow` validates the external response, write confirmation is one
+  Session action that accepts the exact active write, advances only its proven
+  durable revision/Hash and decides whether the current document is complete;
+  it preserves a newer queued edit and publishes any verified route/Hash
+  authority change in the same snapshot. Idle publication requires no
+  active/pending write and
   confirmed current revision/Hash, but does not wait for recovery-journal
   retirement; flush completion releases only the matching Promise owner. Reset
   fences both old writes and the old flush owner, and operation-bound failures

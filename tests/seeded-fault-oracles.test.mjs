@@ -149,7 +149,7 @@ test("canvas confirmation stays fenced when working HTML was skipped before save
     renderedSha256: digest,
   }), true);
   const edited = "<main>two</main>";
-  const revision = session.beginEdit(edited);
+  const { revision } = session.acceptEdit({ html: edited, write: null });
   assert.equal(session.confirmCanvas({
     generation: 1,
     renderedSha256: sha256(edited),

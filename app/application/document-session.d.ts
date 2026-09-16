@@ -145,14 +145,19 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
     error?: string;
     receipt: DocumentSourceReceipt;
   }): boolean;
-  beginEdit(html: string, value?: {
+  acceptEdit(value: {
+    html: string;
     origin?: "local-edit" | "history";
     operationId?: string;
     sourceSha256?: string;
     context?: ProjectContext | null;
-  }): number;
-  markPreviewDirty(): DocumentSessionSnapshot;
-  queueWrite(write: TWrite): TWrite;
+    write?: Omit<TWrite, "html" | "revision"> | null;
+  }): Readonly<{
+    accepted: boolean;
+    revision: number;
+    write: TWrite | null;
+  }>;
+  restorePendingWrite(write: TWrite): TWrite;
   beginWrite(): TWrite | null;
   restoreWrite(write: TWrite, value?: {
     nextWrite?: TWrite;
@@ -167,14 +172,19 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
     nextWrite: TWrite;
   }): boolean;
   finishWrite(write: TWrite): boolean;
-  confirmWrite(value: {
+  acceptWriteConfirmation(value: {
     write: TWrite & { revision?: number; html?: string };
     html: string;
     sourceSha256: string;
     persistedRevision: number;
+    context?: ProjectContext | null;
+    routingChanged?: boolean;
+    operationId?: string;
+    nextWrite?: TWrite;
   }): Readonly<{
     accepted: boolean;
     completesCurrentDocument: boolean;
+    authorityChanged: boolean;
   }>;
   reconcileRecoveredRevision(value: number): DocumentSessionSnapshot;
   markPersistenceIdle(): boolean;

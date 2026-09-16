@@ -101,7 +101,8 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   managed path，等待期间形成的较新 queued write 也必须连同 epoch 改绑，随后只向新路径写入最新 HTML。
   `tests/document-session.test.mjs` 直接冻结 W1 active/W2 pending 的重复 begin、失败恢复、迟到恢复、
   旧 ACK、reset 后旧 ACK/失败、旧 flush finally、合法同字节 rebase 和“源码已确认但恢复日志仍在退役”的顺序；
-  不得用未先接受编辑的非法 `queueWrite` 构造这些 fixture。
+  普通编辑 fixture 必须通过 `acceptEdit` 同时建立已接受内容和 pending write；
+  `restorePendingWrite` 只用于已验证恢复证据的重建路径。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`

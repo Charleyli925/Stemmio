@@ -494,8 +494,7 @@ Source 逐节点对账；Script 执行状态迁移；为绝对无刷新建立双
 → 校验岛外字节完全不变，并重解析受影响区域
 → 语义内核从 before/after 完整 HTML 导出 identityDelta（新增/删除/移动 ID、保留根与放置证据）
 → 用新源码原子重建 projection 并恢复逻辑选区
-→ 内存 source HTML 立即更新
-→ editRevision + 1
+→ DocumentSession 以一个接受动作原子发布新 source HTML、editRevision、来源回执和 pendingWrite
 → 记录 edit event
 → debounce 后进入同一串行队列
 → 核对源 Hash
@@ -504,6 +503,7 @@ Source 逐节点对账；Script 执行状态迁移；为绝对无刷新建立双
 → 对 plain `setText`，Canvas/Repository 共用纯 planner，拒绝 void/raw-text target，并核对唯一 target-content patch 的范围、原字节、规范转义后字节和 kind；Repository 也从 original-forward 源码独立重建 `replaceTextRange`、`setAttribute`、普通/整段合并 `setStyle` 的完整 patch 数组；对 identified `setText` 岛内容及需要 wrapper 的 range-style，继续按目标内容范围或逻辑文字范围核对位置、数量、样式字节和新 ID，部分 range 不得省略 wrapper identity；Canvas 不预规划 range，而是在发布前从同一次 Kernel materialization 的 patch 判断是否新增 wrapper，并执行既有 flex/grid 与局部填充拒绝
 → 临时文件写入、刷盘、原子替换
 → 重读校验
+→ DocumentWorkflow 验证外部响应后，DocumentSession 以一个确认动作接受对应 active write，推进持久化事实并保留更新的 pendingWrite
 → 封存新的 ID/tag/parent/order binding，仅用于之后的外部冲突检测
 → lastPersistedRevision 前移；失败则由全局错误提示承载
 ```
