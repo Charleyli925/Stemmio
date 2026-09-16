@@ -126,6 +126,7 @@ export function capabilityExpectationRows({ sourceElements, operation, observati
 
 export function capabilityManifestDraftIssues(draft) {
   const issues = [];
+  if (draft?.discovery?.complete === false) issues.push("DISCOVERY_INCOMPLETE");
   if (!Array.isArray(draft?.authoredDenominator) || draft.authoredDenominator.length === 0) {
     issues.push("AUTHORED_DENOMINATOR_EMPTY");
   }
@@ -164,13 +165,34 @@ export function createCapabilityManifestDraft({
   observationConflicts = [],
   unresolvedProbes = [],
   exclusions = [],
+  discovery = null,
 }) {
   const denominator = authoredDenominator || [];
+  const discoveryState = {
+    complete: discovery?.complete !== false,
+    knownCandidateCount: Number.isInteger(discovery?.knownCandidateCount)
+      ? discovery.knownCandidateCount
+      : denominator.length,
+    authoredDenominatorCount: Number.isInteger(discovery?.authoredDenominatorCount)
+      ? discovery.authoredDenominatorCount
+      : denominator.length,
+    examinedCandidateCount: Number.isInteger(discovery?.examinedCandidateCount)
+      ? discovery.examinedCandidateCount
+      : denominator.length,
+    probedCandidateCount: Number.isInteger(discovery?.probedCandidateCount)
+      ? discovery.probedCandidateCount
+      : denominator.length,
+    unexaminedCandidateCount: Number.isInteger(discovery?.unexaminedCandidateCount)
+      ? discovery.unexaminedCandidateCount
+      : 0,
+    stopReason: typeof discovery?.stopReason === "string" ? discovery.stopReason : null,
+  };
   const draft = {
     schemaVersion: 1,
     reviewStatus: "DRAFT",
     capabilityRules: CAPABILITY_EXPECTATION_RULES,
     coverageRequirement: 0.6,
+    discovery: discoveryState,
     authoredDenominator: denominator,
     operationGroups: operationGroups || [],
     aliases,
@@ -181,7 +203,13 @@ export function createCapabilityManifestDraft({
       denominator: denominator.length,
       required: Math.ceil(denominator.length * 0.6),
       assigned: 0,
-      status: "PENDING_REVIEW",
+      status: discoveryState.complete ? "PENDING_REVIEW" : "PARTIAL_DIAGNOSTIC",
+      discoveryComplete: discoveryState.complete,
+      knownCandidateCount: discoveryState.knownCandidateCount,
+      examinedCandidateCount: discoveryState.examinedCandidateCount,
+      probedCandidateCount: discoveryState.probedCandidateCount,
+      unexaminedCandidateCount: discoveryState.unexaminedCandidateCount,
+      stopReason: discoveryState.stopReason,
       regions: [...new Set(denominator.map((entry) => entry.region))],
       tabs: [...new Set(denominator.map((entry) => entry.tabId || "__default__"))],
       majorTypes: [...new Set(denominator.map((entry) => entry.type))],
@@ -208,6 +236,7 @@ export function capabilityPreflightFileStatus({
     || draftIssues.includes("UNRESOLVED_PROBES_PRESENT")
     || draftIssues.includes("UNRESOLVED_DENOMINATOR_IDENTITIES")
     || draftIssues.includes("INCOMPLETE_CAPABILITY_EXPECTATIONS")
+    || draftIssues.includes("DISCOVERY_INCOMPLETE")
   ) return "DISCOVERY_ERROR";
   return "PENDING_REVIEW";
 }
@@ -217,6 +246,8 @@ export function capabilityPreflightExitCode(rows) {
     row.status === "PENDING_REVIEW"
     && row.originalUnchanged === true
     && row.preflightWorkingCopy?.unchanged === true
+    && row.discovery?.firstFailure == null
+    && row.discovery?.complete !== false
     && !row.cleanupError
   )) ? 0 : 1;
 }

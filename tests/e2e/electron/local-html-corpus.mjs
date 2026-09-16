@@ -175,9 +175,19 @@ const report = {
   minimumAuthoredElementCoverage: 0.6,
   minimumDynamicContinuityCyclesPerFile: 3,
   discoveryDiagnostics: {
-    schemaVersion: 1,
+    schemaVersion: 2,
     stages: Object.values(REAL_HTML_DISCOVERY_STAGES),
     firstFailureOnlyFor: "each file keeps the first observed discovery failure; later failures remain in failures",
+    firstFailureSemantics: "failureBoundary describes the observed executor boundary; rootCause remains UNDETERMINED unless independently established",
+    progressFields: [
+      "complete",
+      "knownCandidateCount",
+      "authoredDenominatorCount",
+      "examinedCandidateCount",
+      "probedCandidateCount",
+      "unexaminedCandidateCount",
+      "stopReason",
+    ],
   },
   inputAuthority: "Real mouse/keyboard for fixed text flows; native color controls use bounded input/change event injection and are labeled per behavior row",
   categories: {
@@ -354,6 +364,9 @@ function noteDiscoveryFailure(trace, stage, error, preconditions = {}) {
   const diagnostic = errorDetails(error);
   if (typeof error?.code === "string") diagnostic.code = error.code;
   if (typeof error?.exactReason === "string") diagnostic.exactReason = error.exactReason;
+  if (error?.discoveryCause && typeof error.discoveryCause === "object") {
+    diagnostic.cause = error.discoveryCause;
+  }
   const fallbackCode = {
     [REAL_HTML_DISCOVERY_STAGES.SOURCE_COPY]: "CORPUS_FILE_COPY_FAILED",
     [REAL_HTML_DISCOVERY_STAGES.ELECTRON_LAUNCH]: "ELECTRON_LAUNCH_FAILED",
@@ -720,6 +733,7 @@ async function freezeCapabilityManifest(
   const unresolvedProbes = [];
   const runtimeGeneratedTargets = [];
   const runtimeGeneratedDiagnostics = [];
+  let runtimeDiscoveryFailure = null;
   const tabIds = await runDiscoveryStage(
     discoveryTrace,
     REAL_HTML_DISCOVERY_STAGES.AUTHORED_TAB_DISCOVERY,
@@ -766,6 +780,11 @@ async function freezeCapabilityManifest(
     if (runtimeIssue) {
       const error = new Error("Runtime-generated target diagnostics were incomplete.");
       error.code = runtimeIssue;
+      error.discoveryCause = runtimeGenerated.diagnostics.firstFailure || null;
+      runtimeDiscoveryFailure ||= {
+        code: runtimeIssue,
+        cause: runtimeGenerated.diagnostics.firstFailure || null,
+      };
       noteDiscoveryFailure(
         discoveryTrace,
         REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY,
@@ -786,7 +805,9 @@ async function freezeCapabilityManifest(
     group.push(candidate);
     candidatesById.set(candidate.stableId, group);
   }
-  const probed = [];
+  // The authored denominator is a static source/live census. Build it before
+  // any bounded probe can stop on its first concrete failure, so a partial
+  // diagnostic never shrinks the coverage denominator.
   for (const group of candidatesById.values()) {
     const visible = group.filter((candidate) => candidate.visible === true);
     const duplicateInOneView = visible.some((candidate) => (
@@ -816,6 +837,18 @@ async function freezeCapabilityManifest(
         sourceEditable: sourceMatches[0].sourceEditable === true,
       });
     }
+  }
+  const probed = [];
+  let examinedCandidateCount = 0;
+  let probedCandidateCount = 0;
+  let stopReason = runtimeDiscoveryFailure?.code || null;
+  for (const group of candidatesById.values()) {
+    examinedCandidateCount += 1;
+    const visible = group.filter((candidate) => candidate.visible === true);
+    const duplicateInOneView = visible.some((candidate) => (
+      visible.filter((other) => other.tabId === candidate.tabId).length > 1
+    ));
+    const candidate = visible[0] || group[0];
     if (duplicateInOneView) {
       probed.push(...group.map((candidate) => ({
         ...candidate,
@@ -837,6 +870,7 @@ async function freezeCapabilityManifest(
       continue;
     }
     try {
+      probedCandidateCount += 1;
       const observation = await runDiscoveryStage(
         discoveryTrace,
         REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
@@ -884,6 +918,7 @@ async function freezeCapabilityManifest(
             candidateTabKnown: candidate.tabId !== null,
           },
         );
+        stopReason ||= discoveryCode;
         // A pre-probe rejection is already a concrete executor boundary for
         // this read-only file. Do not spend time probing every later element.
         break;
@@ -896,6 +931,7 @@ async function freezeCapabilityManifest(
         cause,
         { candidateCount: candidates.length, candidateTabKnown: candidate.tabId !== null },
       );
+      stopReason ||= cause?.code || "CAPABILITY_PROBE_FAILED";
       unresolvedProbes.push({
         probeStableId: candidate.stableId,
         operationStableId: cause?.details?.selectedId || null,
@@ -961,6 +997,15 @@ async function freezeCapabilityManifest(
     };
   });
   const selection = selectCapabilityTargets(manifest);
+  const discovery = {
+    complete: stopReason == null && examinedCandidateCount === candidatesById.size,
+    knownCandidateCount: candidatesById.size,
+    authoredDenominatorCount: authoredDenominator.length,
+    examinedCandidateCount,
+    probedCandidateCount,
+    unexaminedCandidateCount: Math.max(0, candidatesById.size - examinedCandidateCount),
+    stopReason,
+  };
   if (!allowUnresolved) {
     return deepFreeze({
       manifest,
@@ -968,6 +1013,7 @@ async function freezeCapabilityManifest(
       sourceElements,
       runtimeGeneratedTargets,
       runtimeGeneratedDiagnostics,
+      discovery,
       fingerprint: sha256(Buffer.from(JSON.stringify({
         schemaVersion: manifest.schemaVersion,
         entries: manifest.entries,
@@ -976,6 +1022,7 @@ async function freezeCapabilityManifest(
         selected: selection.selected.map((entry) => entry.elementId),
         runtimeGeneratedTargets,
         runtimeGeneratedDiagnostics,
+        discovery,
       }))),
     });
   }
@@ -1059,8 +1106,14 @@ async function freezeCapabilityManifest(
           candidateTabKnown: entry.tabId !== null,
         },
       );
+      stopReason ||= probeReason;
     }
   }
+  // A normalization-time identity rejection can be discovered after the
+  // probe loop. Keep the progress record aligned with that final first-stop
+  // reason instead of emitting a stale complete=true snapshot.
+  discovery.complete = stopReason == null && examinedCandidateCount === candidatesById.size;
+  discovery.stopReason = stopReason;
   const draft = createCapabilityManifestDraft({
     authoredDenominator: denominatorWithOperations,
     operationGroups,
@@ -1068,6 +1121,7 @@ async function freezeCapabilityManifest(
     observationConflicts: normalized.conflicts,
     unresolvedProbes,
     exclusions: manifest.excluded,
+    discovery,
   });
   return deepFreeze({
     manifest,
@@ -1075,6 +1129,7 @@ async function freezeCapabilityManifest(
     sourceElements,
     runtimeGeneratedTargets,
     runtimeGeneratedDiagnostics,
+    discovery,
     draft,
     fingerprint: sha256(Buffer.from(JSON.stringify({
       schemaVersion: manifest.schemaVersion,
@@ -3130,6 +3185,7 @@ for (const filename of files) {
         behaviorFamilies: frozenCapability.manifest.behaviorFamilies,
         runtimeGeneratedTargets: frozenCapability.runtimeGeneratedTargets,
         runtimeGeneratedDiagnostics: frozenCapability.runtimeGeneratedDiagnostics,
+        discovery: frozenCapability.discovery,
         entries: frozenCapability.manifest.entries,
         exclusions: frozenCapability.manifest.excluded,
         selection: {
@@ -3181,7 +3237,11 @@ for (const filename of files) {
         );
       }
       row.status = capabilityPreflightFileStatus({
-        discoveryFailed: Boolean(capabilityFailure),
+        discoveryFailed: Boolean(
+          capabilityFailure
+          || row.discovery.firstFailure
+          || frozenCapability?.discovery?.complete === false,
+        ),
         workingCopyUnchanged: row.preflightWorkingCopy.unchanged,
         draftIssues: frozenCapability?.draft?.issues || [],
       });
@@ -3995,6 +4055,8 @@ for (const filename of files) {
         if (runtimeDiagnosticsIssue) {
           const error = new Error("Runtime-generated target diagnostics were incomplete.");
           error.code = runtimeDiagnosticsIssue;
+          error.discoveryCause = frozenCapability.runtimeGeneratedDiagnostics
+            .find((entry) => entry?.firstFailure)?.firstFailure || null;
           error.details = {
             diagnostics: frozenCapability.runtimeGeneratedDiagnostics,
           };

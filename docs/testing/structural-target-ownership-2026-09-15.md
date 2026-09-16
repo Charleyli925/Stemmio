@@ -229,3 +229,65 @@ npm run test:real-html:electron -- --preflight
 延迟、Candidate 数量或意外重建率上有改善；完整三组配对活动待 discovery 根因修复后，
 沿用同一语料、冻结身份和独立结果口径再执行。安装态、长会话 20/50/100 轮和八文件
 正式结构闭环也仍未执行。
+
+## 2026-09-16 discovery contract 修正：失败状态、完整分母与首个安全 cause
+
+本节只记录针对评审评论 `5686070658` 的 discovery 合同修正，不改写上文已经
+绑定的历史结果。实现基于合并后的 #559 提交 `d34bead84785d0f8674cc5fd47a2dc9496de3924`；
+本节对应的最终源码以本 PR 的 exact head 为准。
+
+### 合同修正
+
+- Runtime-generated probe 的诊断失败现在同时进入文件级 `DISCOVERY_ERROR` 和
+  preflight 非零退出条件；即使没有异常继续向外抛出，也不会留下可签收的
+  `PENDING_REVIEW`。
+- authored denominator 在任何 bounded probe 之前完成静态 census。首个具体 probe
+  错误仍停止后续探测，但 draft 只标记 `PARTIAL_DIAGNOSTIC`，并保留
+  `known/examined/probed/unexamined` 与 `stopReason`，不把部分结果当作正式覆盖计划。
+- Runtime 首错只保留一个经过白名单过滤的底层 cause（substage、safe code、target
+  index/tag、connected、frame generation、hit kind）。`failureBoundary` 描述观察到的
+  executor 边界，`rootCause` 在没有独立证据时保持 `UNDETERMINED`；不把八个文件
+  宣称为 executor 根因。
+- authored-only 页面在探测成功后会发布显式 `runtimeGenerated=false`；没有任何
+  Runtime-generated target 是有效的零目标结果，不会被误报为 probe failure。缺失
+  selection diagnostic（`null`）仍按探测未完成处理。
+
+### 本次用户指定八文件只读 preflight
+
+命令仍使用用户指定目录，不写回原稿，也不在执行中替换目标：
+
+```text
+STEMMIO_REAL_HTML_DIR=/path/to/user-designated-corpus
+STEMMIO_E2E_WINDOW_MODE=hidden
+npm run test:real-html:electron -- --preflight
+```
+
+结果为 `8/8 DISCOVERY_ERROR`、`pendingReview=0`、`environmentBlocked=0`，按新的
+preflight 合同退出码为 1；没有进入 A/B/C 正式操作或成功率分母。每行的
+`originalUnchanged` 与 `preflightWorkingCopy.unchanged` 均为 true。
+
+| 文件 | 首错阶段 | 首错代码 | 边界 / 根因 | 安全前置条件 | discovery progress |
+| --- | --- | --- | --- | --- | --- |
+| H01 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor / `UNDETERMINED` | candidates 373；source elements 375；tab known false | 1/373 examined；denominator 102 |
+| H02 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED`；cause `target-click/RUNTIME_PROBE_TARGET_CLICK_FAILED` | executor / `UNDETERMINED` | source elements 161；authored candidates 160；runtime targets 0；frame generation 3 | 1/160 examined；denominator 147 |
+| H03 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor / `UNDETERMINED` | candidates 1029；source elements 1031；tab known false | 1/1029 examined；denominator 1005 |
+| H04 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor / `UNDETERMINED` | candidates 559；source elements 559；tab known false | 1/559 examined；denominator 444 |
+| H05 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor / `UNDETERMINED` | candidates 302；source elements 302；tab known false | 1/302 examined；denominator 286 |
+| H06 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED`；cause `target-click/RUNTIME_PROBE_TARGET_CLICK_FAILED` | executor / `UNDETERMINED` | source elements 986；authored candidates 973；runtime targets 0；frame generation 3 | 1/973 examined；denominator 850 |
+| H07 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED`；cause `target-click/RUNTIME_PROBE_TARGET_CLICK_FAILED` | executor / `UNDETERMINED` | source elements 246；authored candidates 245；runtime targets 1；frame generation 3 | 1/245 examined；denominator 233 |
+| H08 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor / `UNDETERMINED` | candidates 630；source elements 630；tab known false | 1/630 examined；denominator 624 |
+
+表中的 `executor` 是失败发生的观测边界，不是对 Harness 或产品根因的归因；下一轮
+应继续从这些首错前置条件排查，不得将其改写为“不适用”或通过等待、换目标来规避。
+
+### 本轮验证
+
+| 验证 | 结果 |
+| --- | --- |
+| 结构策略与 discovery 契约 Node | 66/66 通过；`npm run gate:edit` 汇合 141/141 通过 |
+| Runtime-generated Browser discovery | 4/4 通过：Runtime target、authored-only 零目标、不完整诊断、Escape stale |
+| 变更文件 `node --check`、ESLint、`git diff --check` | 通过；ESLint 0 errors |
+| 用户指定八文件 | 只读 preflight 仍阻断；本轮新增首错 cause 与 progress，不构成真实语料签收 |
+
+本节不宣称安装态、长会话压力、真实 A/B/C 闭环或新旧版本配对收益已经完成；这些
+活动必须在 discovery 根因修复并重新冻结当前身份后，沿用独立结果分母再执行。
