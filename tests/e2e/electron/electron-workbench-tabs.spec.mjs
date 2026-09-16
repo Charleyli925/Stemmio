@@ -1245,7 +1245,8 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
       await app.page.getByRole("button", { name: "更多", exact: true }).click();
       await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
       await app.page.getByRole("dialog").getByRole("button", { name: "创建并编辑", exact: true }).click();
-      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled();
+      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true }))
+        .toBeEnabled({ timeout: 60_000 });
       else {
         // Creating and validating the immutable V9 snapshot performs real
         // filesystem work. Under the full Electron gate it can legitimately

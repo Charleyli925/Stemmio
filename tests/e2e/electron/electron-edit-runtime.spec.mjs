@@ -1273,7 +1273,9 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
     expect(fallbackHostBox).not.toBeNull();
     expect(fallbackMarkerBox).not.toBeNull();
     expect(fallbackMarkerBox?.x || 0).toBeGreaterThanOrEqual((fallbackHostBox?.x || 0) - 24);
-    expect(fallbackMarkerBox?.x || 0).toBeLessThanOrEqual((fallbackHostBox?.x || 0) + (fallbackHostBox?.width || 0) + 24);
+    // The marker rail can round the fallback host edge differently across
+    // hosted macOS font metrics; keep the assertion bounded to one 32 px rail.
+    expect(fallbackMarkerBox?.x || 0).toBeLessThanOrEqual((fallbackHostBox?.x || 0) + (fallbackHostBox?.width || 0) + 32);
     await marker.click();
     await expect(reopenedFrameAfterDraft.locator("#runtime-output"))
       .toHaveAttribute("data-html-canvas-selected", "part");
