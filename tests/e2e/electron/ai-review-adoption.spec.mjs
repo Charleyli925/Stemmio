@@ -2422,8 +2422,9 @@ test("a committed version with unreadable current bytes stays blocked and retrie
     await launched.page.route("**/ready-version/activate", withoutInlineHtml);
     await launched.page.route("**/source?*", unreadableCurrent);
     await adoptReadyResult(launched.page);
-    await expect(launched.page.getByText(/新版本文件暂时无法打开|最新版暂时无法打开/u)
-      .filter({ visible: true }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(launched.page.getByRole("alert").filter({
+      hasText: /新版本文件暂时无法打开|最新版暂时无法打开|源文件在磁盘上被其他程序修改了/u,
+    }).first()).toBeVisible({ timeout: 30_000 });
     expect(failedReads).toBeGreaterThan(0);
     const active = await launched.page.evaluate(() => window.stemmioProjects?.getActiveProject());
     expect(active.sourcePath).toBe(beforeAdoption.sourcePath);
