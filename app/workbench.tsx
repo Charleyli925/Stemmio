@@ -229,7 +229,7 @@ import {
   restoreCachedDocumentPresentation,
   useDocumentSurfaceHandoff,
 } from "./workbench/document-surface-presentation";
-import { markDocumentSurfacePrewarmed, markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
+import { markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
 import {
   type ReviewDocuments,
 } from "./workbench/review-document";
@@ -1708,20 +1708,9 @@ export default function Workbench() {
         epoch?: unknown;
         requestId?: unknown;
         ackPending?: unknown;
-        tabId?: unknown;
-        sourceSha256?: unknown;
-        hot?: unknown;
       }>;
       if (projectEvent.type === "project-hydration-stage") {
         markProjectHydrationStage(String(projectEvent.stage || ""), projectEvent.operationId, projectEvent.timing);
-        return;
-      }
-      if (projectEvent.type === "document-surface-prewarmed") {
-        markDocumentSurfacePrewarmed(
-          projectEvent.tabId,
-          projectEvent.sourceSha256,
-          projectEvent.hot,
-        );
         return;
       }
       if (projectEvent.type === "project-applied") {
@@ -6682,7 +6671,6 @@ export default function Workbench() {
                   height="var(--comment-canvas-height, 760px)"
                   onChange={handleCanvasChange}
                   onInteraction={() => {
-                    workspaceControllerRef.current?.deferDocumentSurfacePrewarm();
                     if (commentCanvasPort.getSnapshot().relinkingTarget) {
                       commentCanvasPort.armRelinkSelection();
                     }
@@ -6774,7 +6762,6 @@ export default function Workbench() {
               height="100%"
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
-              onInteraction={() => workspaceControllerRef.current?.deferDocumentSurfacePrewarm()}
               onReady={historyPreview ? undefined : handlePreviewReady}
               presentationCovered={cachedSurfaceBlocksCanvas}
               initialScrollTop={historyPreview ? undefined : visibleCachedSurface?.scrollTop}

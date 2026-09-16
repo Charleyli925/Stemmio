@@ -123,42 +123,6 @@ test("surface cache honors an explicit three-entry hot override and byte-bounded
   });
 });
 
-test("surface cache admits trusted Registry projections without creating document authority", () => {
-  const session = new DocumentSurfaceCacheSession();
-  const tab = {
-    tabId: "document:project_a:doc_a",
-    kind: "document",
-    projectId: "project_a",
-    documentId: "doc_a",
-  };
-  session.reconcile([tab.tabId]);
-  const warm = session.captureProjection({
-    tab,
-    project: {
-      projectId: "project_a",
-      documentId: "doc_a",
-      sourcePath: "/tmp/a.html",
-      sha256: hash("a"),
-      html: "<main>prewarmed</main>",
-    },
-  });
-  assert.equal(warm.tier, "warm");
-  assert.equal(session.snapshot.hotTabIds.length, 0);
-  const hot = session.captureProjection({
-    tab,
-    hot: true,
-    project: {
-      projectId: "project_a",
-      documentId: "doc_a",
-      sourcePath: "/tmp/a.html",
-      sha256: hash("a"),
-      html: "<main>prewarmed</main>",
-    },
-  });
-  assert.equal(hot.tier, "hot");
-  assert.deepEqual(session.snapshot.hotTabIds, [tab.tabId]);
-});
-
 test("surface cache eviction makes old tabs cold without changing tab identity", () => {
   const session = new DocumentSurfaceCacheSession({
     maxHotEntries: 2,

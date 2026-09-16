@@ -50,7 +50,6 @@ export class DocumentSurfaceCacheSession {
   readonly snapshot: DocumentSurfaceCacheSnapshot;
   subscribe(listener: (snapshot: DocumentSurfaceCacheSnapshot) => void): () => void;
   capture(input?: Record<string, unknown>): DocumentSurfaceCacheEntry | null;
-  captureProjection(input?: Record<string, unknown>): DocumentSurfaceCacheEntry | null;
   touch(tabId: string): DocumentSurfaceCacheEntry | null;
   updatePresentation(tabId: string, presentation?: Readonly<Record<string, unknown>>): DocumentSurfaceCacheEntry | null;
   remove(tabId: string): boolean;

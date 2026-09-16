@@ -398,13 +398,11 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     await expect(restoredTabs.filter({ hasText: "registry-restart-a" })).toHaveCount(1);
     await expect(restoredTabs.filter({ hasText: "registry-restart-b" })).toHaveCount(1);
     await expect(restoredTabs.filter({ hasText: "registry-restart-b" })).toHaveAttribute("aria-selected", "true");
-    // The restored active document may have a data-only warm projection, but
-    // it must not keep a hidden full-page display iframe once its Canvas is live.
+    // Restart restoration begins the authoritative open immediately. It does
+    // not read a presentation projection or wait for a cache surface first.
     await expect(restored.page.locator('[data-testid="workbench-document-surface-cache"] iframe'))
       .toHaveCount(0, { timeout: 30_000 });
     const readStartupPresentation = () => restored.page.evaluate(() => ({
-      projected: performance.getEntriesByName("stemmio:tab-cache:prewarmed", "mark")
-        .find((entry) => entry.detail?.hot === true)?.startTime || null,
       visible: performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark")[0]
         ?.startTime || null,
       verified: (() => {
@@ -413,14 +411,9 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
       })(),
     }));
     await expect.poll(readStartupPresentation).toMatchObject({
-      projected: expect.any(Number),
+      visible: null,
       verified: expect.any(Number),
     });
-    const startupPresentation = await readStartupPresentation();
-    expect(startupPresentation.projected).toBeLessThan(startupPresentation.verified);
-    if (startupPresentation.visible !== null) {
-      expect(startupPresentation.visible).toBeLessThan(startupPresentation.verified);
-    }
 
     await closeStemmioGracefully(restored.electronApp, restored.page);
     restoredClosed = true;

@@ -362,8 +362,6 @@ export interface DocumentSurfaceControllerCapability extends WorkspaceSnapshotRe
     tabId: string,
     presentation?: Readonly<Record<string, unknown>>,
   ): DocumentSurfaceCacheEntry | null;
-  confirmDocumentSurfaceReady(tabId: string, sourceSha256: string): boolean;
-  deferDocumentSurfacePrewarm(delayMs?: number): boolean;
 }
 
 export interface NavigationWorkflowControllerCapability extends WorkspaceSnapshotReader {

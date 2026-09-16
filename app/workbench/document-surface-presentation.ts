@@ -112,7 +112,6 @@ export function useDocumentSurfaceHandoff({
     const exactToken = tokenForEntry(entry);
     if (!exactToken) return false;
     setPresentedToken((current) => sameDocumentSurfaceCacheToken(current, exactToken) ? current : exactToken);
-    controller?.confirmDocumentSurfaceReady(exactToken.tabId, exactToken.sourceSha256);
     return true;
   }, [controller]);
   const completeHandoff = useCallback((token: DocumentSurfaceCacheToken) => {
@@ -122,7 +121,6 @@ export function useDocumentSurfaceHandoff({
     controller?.updateDocumentSurfacePresentation(tabId, { scrollTop });
   }, [controller]);
   const markFirstScroll = useCallback((tabId: string, scrollTop: number) => {
-    controller?.deferDocumentSurfacePrewarm();
     performance.mark("stemmio:tab-cache:first-scroll-response", {
       detail: Object.freeze({ tabId, scrollTop }),
     });

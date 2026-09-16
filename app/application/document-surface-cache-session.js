@@ -204,51 +204,6 @@ export class DocumentSurfaceCacheSession {
     return this.#snapshot.entries.find((candidate) => candidate.tabId === tabId) || null;
   }
 
-  captureProjection({ tab, project, hot = false } = {}) {
-    const tabId = String(tab?.tabId || "");
-    const projectId = String(project?.projectId || "");
-    const documentId = String(project?.documentId || "");
-    const sourcePath = String(project?.sourcePath || "");
-    const sourceSha256 = String(project?.sha256 || "");
-    const html = typeof project?.html === "string" ? project.html : null;
-    if (
-      tab?.kind !== "document"
-      || tab.projectId !== projectId
-      || tab.documentId !== documentId
-      || !tabId
-      || !sourcePath
-      || !SHA256.test(sourceSha256)
-      || html === null
-    ) return null;
-    if (!this.#tabIds.includes(tabId)) this.#tabIds = [...this.#tabIds, tabId];
-    const contentBytes = Math.max(1, 2 * html.length + 2 * sourcePath.length + 512);
-    const previous = this.#entries.get(tabId);
-    if (previous) this.#totalBytes -= previous.byteLength;
-    this.#entries.delete(tabId);
-    const presentationBytes = previous
-      ? Math.max(0, previous.byteLength - previous.contentBytes)
-      : 0;
-    const byteLength = contentBytes + presentationBytes;
-    this.#entries.set(tabId, {
-      tabId,
-      projectId,
-      documentId,
-      sourcePath,
-      sourceSha256,
-      html,
-      canvasMode: previous?.canvasMode || "edit",
-      pageViewContext: previous?.pageViewContext || null,
-      scrollTop: previous?.scrollTop || 0,
-      contentBytes,
-      byteLength,
-    });
-    this.#totalBytes += byteLength;
-    if (hot) this.#promote(tabId);
-    this.#evict();
-    this.#publish();
-    return this.#snapshot.entries.find((candidate) => candidate.tabId === tabId) || null;
-  }
-
   touch(tabId) {
     const id = String(tabId || "");
     const entry = this.#entries.get(id);
