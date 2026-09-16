@@ -1162,6 +1162,7 @@ test("Runtime-generated discovery trusts controller diagnostics and freezes one 
     frozenTargetCount: 1,
     rejectedDiagnosticCount: 0,
     truncated: false,
+    firstFailure: null,
   });
   expect(frozen.targets).toEqual([{
     targetKey: `${CORRECT_ID}:table:table:nth-of-type(1)`,
@@ -1173,6 +1174,43 @@ test("Runtime-generated discovery trusts controller diagnostics and freezes one 
     capabilityFamilies: ["comment"],
     deniedCapabilityFamilies: ["text", "format", "copy", "move", "delete"],
   }]);
+  expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics])).toBeNull();
+});
+
+test("Runtime-generated discovery records an authored-only page without a probe failure", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${CORRECT_ID}">
+        <table id="authored-only-table"><tbody><tr><td>authored</td></tr></tbody></table>
+      </section>
+    </main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  await page.locator("#authored-only-table").evaluate((element) => {
+    for (const target of [element, ...element.querySelectorAll("td")]) {
+      target.addEventListener("click", () => {
+        document.querySelector("[data-runtime-root]")
+          ?.setAttribute("data-selection-runtime-generated", "false");
+      });
+    }
+  });
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: "tab-a",
+  });
+  expect(frozen.targets).toEqual([]);
+  expect(frozen.diagnostics).toMatchObject({
+    candidateCount: 2,
+    probedCount: 2,
+    visibleCount: 2,
+    runtimeGeneratedCount: 0,
+    frozenTargetCount: 0,
+    rejectedDiagnosticCount: 0,
+    probeFailureCount: 0,
+    firstFailure: null,
+  });
   expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics])).toBeNull();
 });
 
@@ -1214,6 +1252,11 @@ test("Runtime-generated discovery rejects incomplete diagnostics and authored vi
     frozenTargetCount: 0,
     rejectedDiagnosticCount: 2,
     probeFailureCount: 0,
+    firstFailure: {
+      substage: "diagnostic-validate",
+      code: "RUNTIME_GENERATED_DIAGNOSTIC_FIELDS_MISSING",
+      targetTag: "table",
+    },
   });
   expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics]))
     .toBe("RUNTIME_GENERATED_DIAGNOSTICS_INCOMPLETE");
@@ -1242,6 +1285,10 @@ test("Runtime-generated discovery rejects stale diagnostics when Escape cannot c
   });
   expect(frozen.targets).toEqual([]);
   expect(frozen.diagnostics.probeFailureCount).toBe(2);
+  expect(frozen.diagnostics.firstFailure).toMatchObject({
+    substage: "selection-clear",
+    code: "RUNTIME_PROBE_SELECTION_NOT_CLEARED",
+  });
   expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics]))
     .toBe("RUNTIME_GENERATED_PROBE_FAILED");
   expect(runtimeGeneratedDiagnosticsIssue([]))
