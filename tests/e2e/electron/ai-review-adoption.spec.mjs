@@ -2400,13 +2400,20 @@ test("a committed version with unreadable current bytes stays blocked and retrie
     const beforeAdoption = await captureReviewAcceptPersistence(launched.page);
     // The stable current path needs no Desktop file switch. Exercise the real
     // read-back boundary when a committed receipt carries no inline HTML.
+    let committedWithoutInlineHtml = false;
     const withoutInlineHtml = async (route) => {
       const response = await route.fetch();
       expect(response.ok()).toBe(true);
-      await route.fulfill({ response, json: { ...await response.json(), content: null } });
+      const receipt = await response.json();
+      committedWithoutInlineHtml = true;
+      await route.fulfill({ response, json: { ...receipt, content: null } });
     };
     let failedReads = 0;
     const unreadableCurrent = async (route) => {
+      if (!committedWithoutInlineHtml) {
+        await route.continue();
+        return;
+      }
       failedReads += 1;
       await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({
         error: { code: "E2E_CURRENT_DRAFT_OPEN_FAILED", message: "新版本文件暂时无法打开。" },
