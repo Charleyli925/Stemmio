@@ -772,6 +772,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     const dialog = launched.page.getByRole("dialog", { name: /基于.*创建新版本/ });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(dialog).not.toBeVisible();
     expect((await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })).versions).toHaveLength(8);
     await expect(mode.getByRole("button", { name: "预览", exact: true })).toHaveAttribute("aria-pressed", "true");
 

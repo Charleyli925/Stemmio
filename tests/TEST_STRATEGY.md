@@ -643,6 +643,33 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 
 新增测试至少要回答四件事：对应哪个真实故障；使用哪个独立 oracle；属于哪个门禁层；是否已经被更低成本测试覆盖。不能给出明确答案的重复排列或纯“代码里存在某个字符串”测试，不应加入常规门禁。
 
+### 关键保证与最短证据链
+
+下表是这些边界的定位索引，不是新的 Harness。修改命中的生产 owner
+时仍由 `tests/test-impact-map.json` 选测；表中命令用于定向复现和
+解释为什么某项保证可信。
+
+| 关键保证 | 最直接的独立 oracle | 具体位置 | 定向执行入口 |
+|---|---|---|---|
+| 非法 SourceReceipt 不能被放行 | 固定的非法值、缺失字段、超界数字和 context 投影与生产守卫结果对比；不调用守卫自己生成期望 | `tests/document-session.test.mjs` 的 `source receipt guard ...` 正反例 | `node --test tests/document-session.test.mjs` |
+| 原子写入异常不掩盖真实结果 | 故障注入后独立读取目标字节、目录项和主错误，区分 replace 前后的 cleanup | `tests/lifecycle-core.test.mjs` 的 255-byte、directory-sync 和 cleanup failure 用例 | `node --test tests/lifecycle-core.test.mjs` |
+| 禁止的架构依赖必须失败 | 独立临时源码中的合法/非法 AST 固定样例，再执行完整生产图检查 | `tests/architecture-boundaries.test.mjs` 与 `scripts/check-architecture.mjs` | `npm run architecture:check && node --test tests/architecture-boundaries.test.mjs` |
+| SourceReceipt 核心实现真正受类型检查 | 编译输入列表核对加定向错误变异；变异未报错则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
+| 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
+| 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
+| 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |
+
+交付结果不得只记录“PASS”。至少保留：精确 commit 与工作区内容
+Hash、base、OS/architecture、Node/Electron 版本、`selection.json` 中的计划场景、
+reconciliation 中的实际发现/执行场景、独立断言结果，以及首个失败的阶段与
+诊断。标准门禁由 `output/test-runs/<run-id>/selection.json`、`results.json` 和
+Playwright reconciliation/report 承载这些事实；交付摘要只引用对应 run id，不手工改写
+计数。
+
+私人真实 HTML 语料不存在、不可读或发现失败时，结果必须记为
+`NOT_EXECUTED` 或明确环境阻塞，并保留受影响的验收限制。不得记为“不适用”，也不得用合成
+fixture、DOM 编辑兼容性扫描或仓库 Electron 通过代替真实语料验收。
+
 ### 第一批版本展示快速回归
 
 复用 Electron 合成项目及现有 Playwright 配置：
