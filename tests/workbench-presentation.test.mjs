@@ -9,7 +9,7 @@ function input() {
     version: { versions: [1, 2, 3].map((i) => ({ id: `v${i}`, label: `V${i}`, displayFileName: `A-V${i}.html` })), currentBasedOnVersionId: "v2", latestVersionId: "v3", viewingVersionId: "v1", viewMode: "current" },
     activeTab: { tabId: "tabA", kind: "document", title: "A-V2.html", projectId: "A", documentId: "docA" },
     canvasMode: "edit", reviewActive: false, hasReadyPayload: false, hasReadyReviewSession: false,
-    reviewPreparing: false, canShowCurrentFileInFolder: true, canOpenCurrentHtmlInDefaultBrowser: true,
+    reviewPreparing: false, canShowCurrentFileInFolder: true, canOpenSelectedHtmlInDefaultBrowser: true,
     persistState: "idle", editRevision: 0, lastPersistedRevision: 0, hasWorkspaceController: true,
     projectHydrating: false, projectLoadError: false, viewTransitioning: false, runInProgress: false,
     workspaceIssue: false, externalSourcePreview: false, hasDocumentHistoryAction: false, interactionLocked: false,
@@ -24,7 +24,7 @@ test("history gives sidebar and tab the viewed Version while retaining distinct 
   assert.equal(p.currentEditingVersionId, "v2"); assert.equal(p.latestVersionId, "v3");
   assert.equal(p.edit.enabled, false); assert.match(p.edit.reason, /预览模式/u);
   assert.equal(p.preview.enabled, true); assert.equal(p.preview.selected, true);
-  assert.equal(p.canShowInFinder, false); assert.equal(p.canOpenCurrentHtml, false);
+  assert.equal(p.canShowInFinder, false); assert.equal(p.canOpenSelectedHtml, true);
   assert.equal(p.canExportCurrentHtml, true);
   assert.equal(p.canReloadCurrentSource, false);
   assert.equal(p.mode, "preview");
@@ -53,7 +53,7 @@ test("safety conditions continue to control file and mode buttons", () => {
   source.persistState = "saving";
   const p = deriveWorkbenchPresentation(source);
   assert.equal(p.edit.enabled, false); assert.equal(p.preview.enabled, false);
-  assert.equal(p.canOpenCurrentHtml, false); assert.equal(p.canReloadCurrentSource, false);
+  assert.equal(p.canOpenSelectedHtml, true); assert.equal(p.canReloadCurrentSource, false);
 });
 test("a branching lineage still renders V1 through Vn without mutating input", () => {
   const versions = [{ versionId: "v3", ordinal: 3, basedOnVersionId: "v1" }, { versionId: "v1", ordinal: 1 }, { versionId: "v2", ordinal: 2, basedOnVersionId: "v1" }];
@@ -74,7 +74,7 @@ test("document-dependent actions require the same target, even with a ready revi
       assert.equal(action.enabled, false);
       assert.ok(action.reason);
     }
-    for (const key of ["canShowInFinder", "canOpenCurrentHtml", "canExportCurrentHtml", "canReloadCurrentSource", "refreshAvailable"]) {
+    for (const key of ["canShowInFinder", "canOpenSelectedHtml", "canExportCurrentHtml", "canReloadCurrentSource", "refreshAvailable"]) {
       assert.equal(p[key], false, key);
     }
   }
@@ -84,7 +84,7 @@ test("a matching unsaved document retains its source export during persistence f
   const p = deriveWorkbenchPresentation({ ...input(), persistState: "error",
     editRevision: 4, lastPersistedRevision: 2, workspaceIssue: true });
   assert.equal(p.canExportCurrentHtml, true);
-  assert.equal(p.canOpenCurrentHtml, false);
+  assert.equal(p.canOpenSelectedHtml, true);
   assert.equal(p.canReloadCurrentSource, false);
 });
 
@@ -96,7 +96,7 @@ test("a source-less document is usable only while its tab owns the current runti
   assert.equal(bound.edit.enabled, true);
   assert.equal(bound.preview.enabled, true);
   assert.equal(bound.canExportCurrentHtml, true);
-  assert.equal(bound.canOpenCurrentHtml, false);
+  assert.equal(bound.canOpenSelectedHtml, false);
   assert.equal(bound.canShowInFinder, false);
   assert.equal(bound.reviewAvailable, false);
   const other = deriveWorkbenchPresentation({ ...source, runtimeOwnerTabId: "tabB" });

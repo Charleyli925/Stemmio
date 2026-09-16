@@ -1,5 +1,9 @@
 import type { BridgeClient } from "./bridge-client.js";
 import type {
+  BrowserOpenRequest,
+  BrowserOpenResult,
+} from "./browser-open-workflow.js";
+import type {
   AttachmentBinaryPort,
   CommentWorkflowOutcome,
 } from "./comment-workflow.js";
@@ -324,6 +328,20 @@ export type WorkspaceControllerConstruction = Readonly<{
     canvas: VersionWorkflowCanvasPort;
     files?: import("./version-workflow.js").VersionFilePort;
   }>;
+  browserOpen?: Readonly<{
+    canvas: Readonly<{
+      checkpointSource(input?: Readonly<{ trigger?: string }>): Readonly<{
+        ok: boolean;
+        html: string;
+        pendingMutation?: unknown;
+        reason?: string;
+      }> | undefined;
+    }>;
+    files: Readonly<{
+      openInDefaultBrowser(input: BrowserOpenRequest): Promise<unknown>;
+    }>;
+    errorMessage?: (cause: unknown, fallback: string) => string;
+  }>;
   clock: ClockPort;
 }>;
 
@@ -371,6 +389,7 @@ export type RuntimeWorkspaceControllerConstruction = Readonly<{
     NonNullable<WorkspaceControllerConstruction["versionWorkflow"]>,
     "runSession"
   >;
+  browserOpen: NonNullable<WorkspaceControllerConstruction["browserOpen"]>;
   clock: ClockPort;
 }>;
 
@@ -719,6 +738,7 @@ export class WorkspaceController {
   loadPreservedDrafts(): Promise<VersionWorkflowOutcome<{ context: ProjectContext; entries: import("./version-workflow.js").PreservedDraftSummary[] }>>;
   restorePreservedDraft(input: { recoveryId: string }): Promise<VersionWorkflowOutcome<import("./version-workflow.js").CurrentVersionResult>>;
   exportHtml(input?: { suggestedName?: string; saveVersion?: boolean }): Promise<VersionWorkflowOutcome>;
+  openSelectedDocumentInDefaultBrowser(): Promise<DocumentWorkflowOutcome<BrowserOpenResult>>;
   openCreatedHistoryVersion(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
   queryHistoryCreation(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
   ensureRegistered(

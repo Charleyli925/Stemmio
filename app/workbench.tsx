@@ -1354,6 +1354,28 @@ export default function Workbench() {
           },
         },
       },
+      browserOpen: {
+        canvas: {
+          checkpointSource: (options?: { trigger?: string }) => (
+            editorRef.current?.checkpointNativeTextIntent({
+              trigger: options?.trigger === "save" ? "save" : "manual",
+            })
+          ),
+        },
+        files: {
+          openInDefaultBrowser: async (input) => {
+            const openInDefaultBrowser = window.stemmioProjects?.openInDefaultBrowser;
+            if (typeof openInDefaultBrowser !== "function") {
+              throw Object.freeze({
+                code: "BROWSER_OPEN_UNAVAILABLE",
+                message: "当前环境不能在系统浏览器中打开 HTML。",
+              });
+            }
+            return openInDefaultBrowser(input);
+          },
+        },
+        errorMessage: productErrorMessage,
+      },
       clock: { now: Date.now },
     });
     workspaceControllerRef.current = controller;
@@ -3308,57 +3330,24 @@ export default function Workbench() {
     });
   }, [currentProjectSessionSnapshot]);
 
-  const openCurrentHtmlInDefaultBrowser = useCallback(async () => {
-    const activeProject = currentProjectSessionSnapshot();
-    const activeSourcePath = activeProject.sourcePath;
-    const activeEpoch = activeProject.epoch;
-    const openInDefaultBrowser = window.stemmioProjects?.openInDefaultBrowser;
-    if (!activeSourcePath || !openInDefaultBrowser) return;
+  const openSelectedHtmlInDefaultBrowser = useCallback(async () => {
+    if (!workspaceController) return;
     await runLocalUserAction({
       kind: "open-source-in-browser",
       invoke: async () => {
-        // The browser reads the on-disk file, so this action is a source-authority
-        // boundary: capture delivered native input and wait for its exact revision
-        // to be acknowledged before asking the main process to launch the file.
-        const committed = editorRef.current?.checkpointNativeTextIntent({
-          trigger: "save",
+        const outcome = await workspaceController.openSelectedDocumentInDefaultBrowser();
+        if (outcome.status === "succeeded") return outcome.value;
+        const reason = outcome.status === "stale"
+          ? "所选页面已经切换，因此没有打开其他文档。"
+          : outcome.reason;
+        throw Object.freeze({
+          code: outcome.status === "stale"
+            ? "BROWSER_OPEN_STALE"
+            : outcome.status === "unknown"
+              ? "BROWSER_OPEN_UNKNOWN"
+              : outcome.code,
+          message: reason,
         });
-        if (!committed || !committed.ok) {
-          editorRef.current?.showCommitBlocked(
-            committed?.reason
-              || "请点回文字完成输入，再在默认浏览器中打开。",
-          );
-          return;
-        }
-        let launchRevision = currentDocumentSessionSnapshot().editRevision;
-        if (committed.html !== currentDocumentSessionSnapshot().html) {
-          const enqueued = enqueueAutosave(
-            committed.html,
-            committed.pendingMutation || undefined,
-          );
-          if (enqueued.status !== "succeeded") {
-            throw new Error(documentEditFailureReason(enqueued));
-          }
-          launchRevision = enqueued.value.revision;
-        }
-        const persisted = await flushAutosave(launchRevision);
-        const settledProject = currentProjectSessionSnapshot();
-        const settledDocument = currentDocumentSessionSnapshot();
-        if (
-          !persisted
-          || activeEpoch !== settledProject.epoch
-          || !sameLocalSourcePath(settledProject.sourcePath, activeSourcePath)
-          || settledDocument.hasPendingWrite
-          || settledDocument.isFlushing
-          || workspaceController?.hasDocumentHistoryAction
-          || settledDocument.persistState !== "idle"
-          || settledDocument.lastPersistedRevision < launchRevision
-        ) {
-          throw new Error(
-            "当前修改尚未安全写入源 HTML，因此没有打开浏览器。请稍后重试。",
-          );
-        }
-        return openInDefaultBrowser(activeSourcePath);
       },
       onFailure: (cause: unknown) => setInterruption({
         kind: "open-in-browser-failed",
@@ -3368,13 +3357,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [
-    currentDocumentSessionSnapshot,
-    currentProjectSessionSnapshot,
-    enqueueAutosave,
-    flushAutosave,
-    workspaceController,
-  ]);
+  }, [workspaceController]);
 
   const handleCanvasChange = useCallback((
     nextHtml: string,
@@ -5496,7 +5479,7 @@ export default function Workbench() {
     && typeof window !== "undefined"
     && window.stemmioProjects?.showInFolder,
   );
-  const canOpenCurrentHtmlInDefaultBrowser = Boolean(
+  const canOpenSelectedHtmlInDefaultBrowser = Boolean(
     sourcePath
     && typeof window !== "undefined"
     && window.stemmioProjects?.openInDefaultBrowser,
@@ -5507,17 +5490,17 @@ export default function Workbench() {
     activeTab: activeWorkbenchTab || null, runtimeOwnerTabId: workbenchTabsSnapshot.runtimeOwnerTabId, canvasMode: displayedCanvasMode,
     reviewActive: Boolean(presentedReadyReviewSession), activeRunStatus: activeRun?.status,
     hasReadyPayload: Boolean(activeRun?.readyPayload), hasReadyReviewSession: Boolean(presentedReadyReviewSession),
-    reviewPreparing, canShowCurrentFileInFolder, canOpenCurrentHtmlInDefaultBrowser,
+    reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, hasWorkspaceController: Boolean(workspaceController),
     projectHydrating, projectLoadError: Boolean(projectLoadError), viewTransitioning,
     runInProgress, workspaceIssue: Boolean(workspaceIssue), externalSourcePreview: Boolean(externalSourcePreview),
     hasDocumentHistoryAction, interactionLocked,
   }), [projectId, documentId, sourcePath, versionSnapshot, activeWorkbenchTab, workbenchTabsSnapshot.runtimeOwnerTabId, displayedCanvasMode,
     activeRun?.status, activeRun?.readyPayload, presentedReadyReviewSession,
-    reviewPreparing, canShowCurrentFileInFolder, canOpenCurrentHtmlInDefaultBrowser,
+    reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, workspaceController, projectHydrating,
     projectLoadError, viewTransitioning, runInProgress, workspaceIssue, externalSourcePreview, interactionLocked, hasDocumentHistoryAction]);
-  const { reviewAvailable, canShowInFinder, canOpenCurrentHtml,
+  const { reviewAvailable, canShowInFinder, canOpenSelectedHtml,
     canExportCurrentHtml, canReloadCurrentSource } = presentation;
   const pendingRunOutcome = Boolean(
     activeRun?.requestId === "pending" && projectLocked,
@@ -6085,11 +6068,11 @@ export default function Workbench() {
               ? "历史版本没有独立工作文件；请打开当前稿"
               : !canShowInFinder ? "当前页面没有可在 Finder 中显示的工作文件" : undefined,
             onShowInFolder: () => void showProjectInFolder(),
-            canOpenInBrowser: canOpenCurrentHtml,
-            openInBrowserUnavailableReason: presentation.isHistory
-              ? "浏览器只能打开当前工作文件；历史版本可直接导出"
-              : !canOpenCurrentHtml ? "当前工作文件尚未完成持久化" : undefined,
-            onOpenInBrowser: () => void openCurrentHtmlInDefaultBrowser(),
+            canOpenInBrowser: canOpenSelectedHtml,
+            openInBrowserUnavailableReason: !canOpenSelectedHtml
+              ? "当前页面没有可验证的 HTML 文件"
+              : undefined,
+            onOpenInBrowser: () => void openSelectedHtmlInDefaultBrowser(),
             canExportCurrentHtml,
             exportUnavailableReason: !canExportCurrentHtml ? "当前页面还没有可导出的 HTML" : undefined,
             onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),

@@ -681,6 +681,66 @@
       ]
     },
     {
+      "id": "browser-open",
+      "patterns": [
+        "^app/application/browser-open-workflow\\.(?:js|d\\.ts)$",
+        "^app/application/workspace-controller\\.(?:js|d\\.ts)$",
+        "^app/workbench\\.tsx$",
+        "^app/workbench/(?:workbench-header-projection|workbench-more-menu|types)\\.(?:ts|tsx)$",
+        "^desktop/(?:main|preload|open-in-default-browser)\\.mjs$",
+        "^tests/(?:browser-open-workflow|open-in-default-browser|desktop-preload-ipc|workbench-presentation)\\.test\\.mjs$",
+        "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$"
+      ],
+      "entryInterfaces": [
+        "app/application/browser-open-workflow.d.ts",
+        "app/application/workspace-controller.d.ts",
+        "app/workbench/types.ts"
+      ],
+      "owners": [
+        "BrowserOpenWorkflow",
+        "WorkspaceController",
+        "Desktop trusted project IPC"
+      ],
+      "implementationFiles": [
+        "app/application/browser-open-workflow.js",
+        "app/application/workspace-controller.js",
+        "app/workbench.tsx",
+        "app/workbench/workbench-header-projection.ts",
+        "app/workbench/workbench-more-menu.tsx",
+        "desktop/open-in-default-browser.mjs",
+        "desktop/main.mjs",
+        "desktop/preload.mjs"
+      ],
+      "focusedTests": [
+        "tests/browser-open-workflow.test.mjs",
+        "tests/open-in-default-browser.test.mjs",
+        "tests/desktop-preload-ipc.test.mjs",
+        "tests/workbench-presentation.test.mjs",
+        "tests/e2e/electron/electron-workbench-tabs.spec.mjs"
+      ],
+      "requiredDocs": [
+        "docs/ARCHITECTURE_MAP.md",
+        "docs/INTERACTION_FLOW.md",
+        "docs/STATE_OWNERSHIP.md",
+        "tests/TEST_STRATEGY.md"
+      ],
+      "requiredDocSections": [
+        {
+          "path": "docs/ARCHITECTURE_MAP.md",
+          "headings": [
+            "## Capability domains"
+          ]
+        },
+        {
+          "path": "docs/INTERACTION_FLOW.md",
+          "headings": [
+            "### 工具栏、项目上下文与设置",
+            "### 11.2 查看历史"
+          ]
+        }
+      ]
+    },
+    {
       "id": "current-draft-versions",
       "patterns": [
         "^bridge/project-file-repository/current-draft\\.mjs$",

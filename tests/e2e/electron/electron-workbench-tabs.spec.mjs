@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { pathToFileURL } from "node:url";
 import { loadedDiskFrame as loadedStaticDiskFrame } from "./helpers/stemmio-app-fixture.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import {
@@ -39,6 +40,21 @@ function identityPreservingCandidateHtml(target, title) {
 
 function currentProjectTabName(filePath) {
   return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
+}
+
+async function interceptExternalBrowserOpen(electronApp) {
+  await electronApp.evaluate(({ shell }) => {
+    globalThis.__stemmioOpenedExternalUrls = [];
+    shell.openExternal = async (sourceUrl) => {
+      globalThis.__stemmioOpenedExternalUrls.push(sourceUrl);
+    };
+  });
+}
+
+async function openedExternalUrls(electronApp) {
+  return electronApp.evaluate(() => (
+    globalThis.__stemmioOpenedExternalUrls || []
+  ));
 }
 
 test("Electron tab keyboard navigation manages focus and a persisted Start suppresses activePath restart", {
@@ -652,18 +668,26 @@ test("Electron sidebar opens an imported historical version in the existing proj
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });
     }, exportPath);
     await expect(launched.page.getByText("测试历史快照校验失败", { exact: true })).toHaveCount(0);
+    const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
+    await interceptExternalBrowserOpen(launched.electronApp);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await expect(launched.page.getByRole("menuitem", { name: "保存为新版本", exact: true })).toBeDisabled();
     await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeEnabled();
     await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeDisabled();
-    await expect(launched.page.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeDisabled();
+    const openHistoryInBrowser = launched.page.getByRole("menuitem", { name: "在浏览器中打开此版本", exact: true });
+    await expect(openHistoryInBrowser).toBeEnabled();
     await expect(launched.page.getByRole("menuitemcheckbox", { name: "同时保存为新版本", exact: true })).toBeDisabled();
     await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toBeDisabled();
     await expect(launched.page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true })).toBeDisabled();
     await expect(launched.page.getByText("历史版本没有独立工作文件；请打开当前稿", { exact: true })).toBeVisible();
     await launched.page.screenshot({ path: test.info().outputPath("version-history-menu.png") });
+    await openHistoryInBrowser.click();
+    await expect.poll(() => openedExternalUrls(launched.electronApp)).toEqual([
+      pathToFileURL(realpathSync(historicalBytes.path)).href,
+    ]);
+    expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
+    await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "导出此版本…", exact: true }).click();
-    const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
     await expect.poll(() => { try { return readFileSync(exportPath, "utf8"); } catch { return null; } }).toBe(historicalBytes.content);
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
 
@@ -1076,7 +1100,29 @@ test("Electron local current draft saves immutable versions and exports with an 
     await expect(mode).toHaveAttribute("data-view-label", "当前");
     await expect(current).toHaveAttribute("aria-current", "page");
     await expect(project.locator('.sidebar-version-row[data-selected="true"]')).toHaveCount(0);
-    const secondEdit = await editCurrent("LOCAL_EXPORT_TWO");
+    let secondEdit = await editCurrent("LOCAL_EXPORT_TWO");
+
+    await interceptExternalBrowserOpen(launched.electronApp);
+    const pendingBrowserFrame = await loadedStaticDiskFrame(
+      launched.page,
+      currentPath,
+      { expectedCase: "list-item", includeEditor: true },
+    );
+    await activateNativeEdit(pendingBrowserFrame.frame, "list-item");
+    await setTextSelection(pendingBrowserFrame.frame, "list-item", 0, 3);
+    await launched.page.keyboard.insertText("BROWSER_NATIVE_INPUT");
+    await more.click();
+    await launched.page.getByRole("menuitem", {
+      name: "在浏览器中打开工作文件",
+      exact: true,
+    }).click();
+    await expect.poll(() => openedExternalUrls(launched.electronApp)).toEqual([
+      pathToFileURL(identity.exactSourcePath).href,
+    ]);
+    await expect.poll(() => readFileSync(currentPath, "utf8")).toContain(
+      "BROWSER_NATIVE_INPUT",
+    );
+    secondEdit = readFileSync(currentPath, "utf8");
 
     const exportPath = path.join(fixture.sourceDirectory, "exported-current.html");
     await launched.electronApp.evaluate(({ dialog }, filePath) => {

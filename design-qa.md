@@ -3537,3 +3537,9 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - 无必须跟进的 P3；若未来统一放大所有工作台弹出菜单字号，应作为全局密度调整处理，而不是只修改历史页。
 
 final result: passed
+
+## 2026-09-16 — 默认浏览器打开精确所见 HTML
+
+- Mode: DESIGN CHANGE, lightweight exception. 仅历史页的既有菜单项从禁用改为可用，并将文案改为“在浏览器中打开此版本”；当前稿文案、菜单顺序、布局、图标、颜色与 Finder/导出动作不变。
+- 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
+- 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。

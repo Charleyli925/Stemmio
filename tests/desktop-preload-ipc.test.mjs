@@ -621,16 +621,25 @@ test("preload exposes the narrow default-browser HTML operation", async () => {
   const calls = [];
   const api = await loadPreload(async (...args) => {
     calls.push(args);
-    return success({ sourcePath: "/Users/demo/report.html" });
+    return success({
+      sourcePath: "/Users/demo/report.html",
+      targetKind: "working-copy",
+    });
   });
 
+  const target = {
+    targetKind: "working-copy",
+    sourcePath: "/Users/demo/report.html",
+    expectedSha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+
   assert.deepEqual(
-    await api.openInDefaultBrowser("/Users/demo/report.html"),
-    { sourcePath: "/Users/demo/report.html" },
+    await api.openInDefaultBrowser(target),
+    { sourcePath: "/Users/demo/report.html", targetKind: "working-copy" },
   );
   assert.deepEqual(calls[0], [
     "html-projects:open-in-default-browser",
-    "/Users/demo/report.html",
+    target,
   ]);
 });
 
@@ -1163,7 +1172,11 @@ test("preload never replays a failed local side-effect request", async () => {
   const actions = [
     ["showInFolder", "/Users/demo/report.html"],
     ["openProjectsRoot"],
-    ["openInDefaultBrowser", "/Users/demo/report.html"],
+    ["openInDefaultBrowser", {
+      targetKind: "working-copy",
+      sourcePath: "/Users/demo/report.html",
+      expectedSha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    }],
     ["revealAiTask", {
       sourcePath: "/Users/demo/report.html",
     }],

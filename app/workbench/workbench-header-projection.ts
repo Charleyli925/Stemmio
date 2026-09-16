@@ -17,7 +17,7 @@ type PresentationInput = {
   hasReadyReviewSession: boolean;
   reviewPreparing: boolean;
   canShowCurrentFileInFolder: boolean;
-  canOpenCurrentHtmlInDefaultBrowser: boolean;
+  canOpenSelectedHtmlInDefaultBrowser: boolean;
   persistState: string;
   editRevision: number;
   lastPersistedRevision: number;
@@ -86,8 +86,12 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     review: { enabled: !reviewActive && !input.reviewPreparing && reviewAvailable, selected: reviewActive, reason: reviewReason },
     reviewAvailable,
     canShowInFinder: !isHistory && sameDocument && input.canShowCurrentFileInFolder,
-    canOpenCurrentHtml: !isHistory && sameDocument && input.canOpenCurrentHtmlInDefaultBrowser && input.persistState === "idle"
-      && input.editRevision === input.lastPersistedRevision,
+    canOpenSelectedHtml: Boolean(
+      fileReady
+      && sameDocument
+      && project.sourcePath
+      && input.canOpenSelectedHtmlInDefaultBrowser,
+    ),
     canExportCurrentHtml: fileReady,
     canReloadCurrentSource,
     refreshAvailable: Boolean(hasDocumentTarget && (input.canvasMode === "preview" || reviewActive)

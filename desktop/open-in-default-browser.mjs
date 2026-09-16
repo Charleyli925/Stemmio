@@ -25,24 +25,31 @@ export function assertDefaultBrowserSourcePath(
 }
 
 export function createOpenInDefaultBrowserOperation({
-  assertKnownProjectPath,
+  authorizeTarget,
   inspectHtmlFile,
   openExternal,
 }) {
   if (
-    typeof assertKnownProjectPath !== "function"
+    typeof authorizeTarget !== "function"
     || typeof inspectHtmlFile !== "function"
     || typeof openExternal !== "function"
   ) {
     throw new TypeError("默认浏览器操作依赖不完整。");
   }
 
-  return async function openInDefaultBrowser(sourcePathInput) {
-    const sourcePath = assertDefaultBrowserSourcePath(sourcePathInput);
-    await assertKnownProjectPath(sourcePath);
+  return async function openInDefaultBrowser(targetInput) {
+    const target = await authorizeTarget(targetInput);
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new TypeError("默认浏览器目标授权无效。");
+    }
+    const sourcePath = assertDefaultBrowserSourcePath(target.sourcePath);
     await inspectHtmlFile(sourcePath);
     const sourceUrl = pathToFileURL(sourcePath).href;
     await openExternal(sourceUrl);
-    return { sourcePath };
+    return {
+      sourcePath,
+      targetKind: target.targetKind,
+      ...(target.versionId ? { versionId: target.versionId } : {}),
+    };
   };
 }

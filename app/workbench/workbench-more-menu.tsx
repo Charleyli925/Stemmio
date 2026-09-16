@@ -120,7 +120,7 @@ export function WorkbenchMoreMenu({
     },
     {
       id: "open-in-browser",
-      label: "在浏览器中打开工作文件",
+      label: isHistory ? "在浏览器中打开此版本" : "在浏览器中打开工作文件",
       icon: <ArrowSquareOutIcon aria-hidden="true" size={16} weight="bold" />,
       onSelect: onOpenInBrowser,
       disabled: !canOpenInBrowser,
