@@ -649,8 +649,9 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 `npx playwright test --config tests/e2e/electron/playwright.smoke.config.mjs --grep @smoke-version-display`
 以及 `npx playwright test --config tests/e2e/electron/playwright.ai-smoke.config.mjs --grep @smoke-version-display`。
 两个既有配置分别负责原生界面和 AI 场景，可加 `--repeat-each 2` 验证重复执行。
-固定覆盖有继承分支的 V1…V3 顺序、后台历史打开、返回当前、跨项目切换、键盘打开，
-同时断言左侧选中、标签标题、工具栏历史/审阅标识与编辑权限。
+固定覆盖有继承分支的 V1…V3 顺序、项目作用域当前稿/规则/历史标签去重、同一历史标签切换 Vn、
+后台历史打开、返回当前、跨项目直达规则/历史且不闪现目标当前稿、键盘打开，同时断言左侧选中、
+“项目名 · 页面类型”标签标题、历史预览选中/编辑禁用、菜单完整禁用态和导出对象。
 该组同时保留原有 project-lifecycle / review 标签，进入对应交付门禁。
 纯函数测试不能替代这组真实 Electron 证据。
 

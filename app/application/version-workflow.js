@@ -137,6 +137,7 @@ export class VersionWorkflow {
   #codecs;
   #hashPort;
   #canvasPort;
+  #currentSurfacePort;
   #clock;
   #snapshot = initialSnapshot();
   #listeners = new Set();
@@ -279,6 +280,7 @@ export class VersionWorkflow {
     };
     this.#clock = clock;
     this.#filePort = ports.files || null;
+    this.#currentSurfacePort = ports.currentSurface || null;
   }
 
   getSnapshot() {
@@ -770,6 +772,7 @@ export class VersionWorkflow {
 
   async returnToCurrent({
     context = this.#projectSession.context,
+    currentSurfaceCommitScope = null,
   } = {}) {
     if (this.#disposed) {
       return blocked("VERSION_WORKFLOW_DISPOSED", "版本工作流已经停止。");
@@ -785,7 +788,65 @@ export class VersionWorkflow {
     if (creation?.context.projectId === current.projectId && creation.context.documentId === current.documentId) {
       if (creation.phase === "unknown") return blocked("HISTORY_CREATION_UNKNOWN", "创建结果暂时未知，请先查询同一操作；仍可切换项目或关闭标签。");
       if (["created", "open-failed"].includes(creation.phase)) {
-        return this.openCreatedHistoryVersion({ operationId: creation.operationId, context: current });
+        const result = creation.result;
+        const liveContext = this.#projectSession.context;
+        const currentAlreadyOwnsCreatedVersion = Boolean(
+          result?.status === "created"
+          && liveContext?.workingCopyId === result.workingCopyId
+          && liveContext.versionId === result.versionId
+          && this.#versionSession.snapshot.currentBasedOnVersionId === result.versionId
+          && this.#documentSession.persistedSourceSha256 === result.contentSha256
+        );
+        if (currentAlreadyOwnsCreatedVersion) {
+          const priorView = this.#versionSession.captureView();
+          const generation = ++this.#creationGeneration;
+          this.#versionSession.returnCurrent();
+          try {
+            await new Promise((resolve) => {
+              if (typeof this.#canvasPort.requestFrame !== "function") {
+                resolve();
+                return;
+              }
+              this.#canvasPort.requestFrame(() => this.#canvasPort.requestFrame(resolve));
+            });
+            await this.#canvasPort.verifyRendered(
+              this.#documentSession.html,
+              this.#documentSession.persistedSourceSha256,
+              current,
+            );
+            if (!this.#projectSession.matches(current)) {
+              this.#versionSession.restoreView(priorView);
+              return stale(current);
+            }
+            try {
+              await this.#bridgeClient.confirmHistoryCreationOpened({
+                target: liveContext,
+                operationId: creation.operationId,
+              });
+            } catch { /* The exact current Canvas is already usable; retry acknowledgement on restart. */ }
+            this.#setHistoryCreation({
+              phase: "opened",
+              operationId: creation.operationId,
+              context: current,
+              result,
+            }, generation);
+            const value = {
+              context: current,
+              content: this.#documentSession.html,
+              sha256: this.#documentSession.snapshot.workingHtmlSha256,
+            };
+            this.#emitEvent({ type: "version-current-returned", ...value });
+            void this.#documentWorkflow.observeExternalSourceChange({ sourcePath: current.sourcePath });
+            return succeeded(value);
+          } catch {
+            this.#versionSession.restoreView(priorView);
+          }
+        }
+        return this.openCreatedHistoryVersion({
+          operationId: creation.operationId,
+          context: current,
+          currentSurfaceCommitScope,
+        });
       }
     }
     // Leaving a read-only projection must remain possible even when a disk
@@ -1179,7 +1240,11 @@ export class VersionWorkflow {
     }
   }
 
-  async openCreatedHistoryVersion({ operationId, context = this.#projectSession.context } = {}) {
+  async openCreatedHistoryVersion({
+    operationId,
+    context = this.#projectSession.context,
+    currentSurfaceCommitScope = null,
+  } = {}) {
     const current = copyContext(context);
     if (!current || !this.#projectSession.matches(current)) return stale(current || {});
     if (this.#runSession.activeLocked) return blocked("HISTORY_CREATION_RUN_LOCKED", "请先完成当前 AI 任务或候选的处理。");
@@ -1199,9 +1264,11 @@ export class VersionWorkflow {
       }
       this.#setHistoryCreation({ phase: "opening", operationId, context: current, result }, generation);
       if (!this.#isNavigationCurrent(operation)) return stale(current);
-      const drained = await this.#projectWorkflow.drain("history", { deadlineAt: this.#clock.now() + 15_000 });
-      if (!drained.ok) throw new Error(drained.reason || "当前修改尚未保护，暂未打开新稿。");
-      if (!this.#isNavigationCurrent(operation)) return stale(current);
+      // The creation command drained the replaced current source before its
+      // durable receipt was written. Retrying that exact receipt must not drain
+      // the now-superseded source again: the managed history creation itself
+      // may have changed those bytes, which the external-write guard correctly
+      // reports as a conflict until this verified transition takes ownership.
       const payload = await this.#bridgeClient.workspace(result.sourcePath);
       const decoded = decodeWorkspaceResponse(payload, this.#codecs);
       const target = payload.openTarget;
@@ -1254,6 +1321,15 @@ export class VersionWorkflow {
         return prepared?.coordination?.operationId
           ? unknown(operationId, "桌面工作文件已完成激活，但本地项目状态待同一操作核对。")
           : stale(current);
+      }
+      if (this.#currentSurfacePort?.commit) {
+        const surface = await this.#currentSurfacePort.commit({
+          context: nextContext,
+          currentSurfaceCommitScope,
+        });
+        if (surface?.status !== "succeeded") {
+          throw new Error(surface?.reason || "新当前稿权威已发布，但当前稿标签未能打开。");
+        }
       }
       this.#setHistoryCreation({ phase: "opening", operationId, context: nextContext, result }, generation);
       await this.#canvasPort.verifyRendered(content, sha256, nextContext);

@@ -1137,7 +1137,7 @@ test("Electron keeps managed current draft identity in the selected tab and reti
     ));
     const projectId = originalManifest.projectId;
 
-    await expect(titleStemLocator(launched.page)).toHaveText("欢迎来到源页.html");
+    await expect(titleStemLocator(launched.page)).toHaveText("欢迎来到源页·当前稿");
     await expect(launched.page.getByRole("button", { name: /重命名文件/u }))
       .toHaveCount(0);
     await expect(launched.page.getByRole("textbox", { name: "文件名（不含后缀）" }))

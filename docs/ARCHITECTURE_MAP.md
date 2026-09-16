@@ -280,15 +280,23 @@ ProjectSession + ProjectWorkflow + ProjectRulesWorkflow + VersionSession
 
 The global sidebar owns the visible project context, safe project switching, the
 single mixed project list and the fixed settings entry. The current project
-contains the “长期规则” row; it is not part of the version timeline and opens
-the singleton `project-rules` tab in the workbench without a version date.
+contains the “长期规则” row; it is not part of the version timeline.
+`WorkbenchTabsSession` owns one current-draft, one `project-rules` and one
+`history` presentation identity per `projectId + documentId`. The tab row names
+these surfaces by project and kind; selecting another Vn updates the existing
+history identity instead of creating a tab per Version. `WorkbenchNavigationWorkflow`
+is the only coordinator that safely drains the prior surface, opens a different
+project when required, asks the owning rules/version workflow for the exact
+target page, and only then commits the visible tab. A rules/history intent must
+not commit the target project's current-draft tab as an intermediate view.
 Project rows are deduplicated by `projectId` and ordered by the authoritative
 content-update timestamp; opening a project does not update that order.
 `ProjectRulesSession` and `ProjectRulesWorkflow` remain fact and lifecycle
 owners for persistence, autosave and close/switch safety; the editor is only a
 projection over that workflow. The document canvas remains mounted while the
 rules tab is visible, so switching presentation does not rebuild the HTML
-iframe. The repository may continue to persist the rules in its internal
+iframe. Historical HTML remains owned by VersionSession/VersionWorkflow rather
+than the tab projection. The repository may continue to persist the rules in its internal
 `PROJECT.md` file without exposing that filename in the UI.
 
 ## Run and navigation render boundaries

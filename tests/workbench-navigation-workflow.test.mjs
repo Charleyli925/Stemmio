@@ -16,6 +16,12 @@ const D = { projectId: "project_delta", documentId: "doc_delta", name: "Delta" }
 
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => { resolve = nextResolve; });
+  return { promise, resolve };
+}
+
 test("Start recovery export protects the journal source path", async () => {
   const source = await readFile(new URL(
     "../app/workbench/workbench-sidebar-container.tsx",
@@ -31,7 +37,12 @@ function assertAlignedNavigation(harness, expectedProject) {
   const snapshot = harness.tabs.snapshot;
   const active = snapshot.tabs.find((tab) => tab.tabId === snapshot.activeTabId);
   assert.ok(active);
-  if (active.kind === "start" || active.kind === "settings" || active.kind === "project-rules") {
+  if (
+    active.kind === "start"
+    || active.kind === "settings"
+    || active.kind === "project-rules"
+    || active.kind === "history"
+  ) {
     assert.equal(snapshot.mountedDocumentTabId, null);
     if (snapshot.runtimeOwnerTabId) {
       assert.equal(snapshot.tabs.some((tab) => (
@@ -79,6 +90,17 @@ function projectSnapshot(project, epoch, options = {}) {
       documentId: project.documentId,
       epoch,
       sourcePath: `/managed/${project.projectId}.html`,
+      openTarget: {
+        projectId: project.projectId,
+        documentId: project.documentId,
+        projectRootPath: `/managed/${project.projectId}`,
+        targetKind: "working-copy",
+        workingCopyId: `work_${project.projectId}`,
+        versionId: "ver_0001",
+        exactSourcePath: `/managed/${project.projectId}.html`,
+        sourceSha256: `sha256:${"a".repeat(64)}`,
+        sessionEpoch: epoch,
+      },
     },
     project: {
       hydration: {
@@ -98,6 +120,10 @@ function projectSnapshot(project, epoch, options = {}) {
         error: options.canvasError || null,
       },
     },
+    versionSession: {
+      viewMode: options.viewMode || "current",
+      viewingVersionId: options.viewingVersionId || null,
+    },
   };
 }
 
@@ -106,6 +132,8 @@ function fixture({
   confirm,
   cancel,
   acceptExternal,
+  viewHistory: onViewHistory,
+  returnToCurrent: onReturnToCurrent,
   tabsPersistence = null,
   surfaceCache = null,
   clock = { now: () => 1_000 },
@@ -134,6 +162,42 @@ function fixture({
     openProjectRules({ context }) {
       calls.push(`rules:${context.projectId}`);
       return Promise.resolve({ status: "succeeded", value: { opened: true } });
+    },
+    viewHistory({ version, context }) {
+      calls.push(`history:${context.projectId}:${version.id}`);
+      if (onViewHistory) return onViewHistory({
+        version,
+        context,
+        publishVersion(viewMode, viewingVersionId = null) {
+          snapshot = {
+            ...snapshot,
+            versionSession: { viewMode, viewingVersionId },
+          };
+        },
+      });
+      snapshot = {
+        ...snapshot,
+        versionSession: { viewMode: "history", viewingVersionId: version.id },
+      };
+      return Promise.resolve({ status: "succeeded", value: { versionId: version.id } });
+    },
+    returnToCurrent({ context, currentSurfaceCommitScope = null }) {
+      calls.push(`current:${context.projectId}`);
+      if (onReturnToCurrent) return onReturnToCurrent({
+        context,
+        currentSurfaceCommitScope,
+        publishCurrent() {
+          snapshot = {
+            ...snapshot,
+            versionSession: { viewMode: "current", viewingVersionId: null },
+          };
+        },
+      });
+      snapshot = {
+        ...snapshot,
+        versionSession: { viewMode: "current", viewingVersionId: null },
+      };
+      return Promise.resolve({ status: "succeeded", value: { returned: true } });
     },
   };
   const publish = (next) => {
@@ -651,18 +715,18 @@ test("settings opens once, returns to the retained document without reopening Pr
   assert.equal(harness.calls.some((call) => call === `open:registered:${A.projectId}`), false);
 });
 
-test("长期规则只打开一个标签，并在返回 HTML 时复用 runtime owner", async () => {
+test("长期规则在项目内去重，并在返回 HTML 时复用 runtime owner", async () => {
   const harness = fixture();
-  const first = await harness.workflow.createProjectRules();
+  const first = await harness.workflow.createProjectRules({ ...A, title: A.name });
   assert.equal(first.status, "succeeded");
-  assert.equal(first.value.tabId, "project-rules:1");
+  assert.equal(first.value.tabId, "project-rules:project_alpha:doc_alpha");
   assert.equal(harness.navigation.snapshot.lastReceipt.kind, "project-rules");
-  assert.equal(harness.tabs.snapshot.activeTabId, "project-rules:1");
+  assert.equal(harness.tabs.snapshot.activeTabId, "project-rules:project_alpha:doc_alpha");
   assert.equal(harness.tabs.snapshot.mountedDocumentTabId, null);
   assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, "document:project_alpha:doc_alpha");
   assert.deepEqual(harness.calls.filter((call) => call === `rules:${A.projectId}`), [`rules:${A.projectId}`]);
 
-  const second = await harness.workflow.createProjectRules();
+  const second = await harness.workflow.createProjectRules({ ...A, title: A.name });
   assert.equal(second.status, "succeeded");
   assert.equal(harness.tabs.snapshot.tabs.filter((tab) => tab.kind === "project-rules").length, 1);
   assert.deepEqual(harness.calls.filter((call) => call === `rules:${A.projectId}`), [`rules:${A.projectId}`]);
@@ -673,6 +737,188 @@ test("长期规则只打开一个标签，并在返回 HTML 时复用 runtime ow
   assert.equal(harness.tabs.snapshot.mountedDocumentTabId, `document:${A.projectId}:${A.documentId}`);
   assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, `document:${A.projectId}:${A.documentId}`);
   assert.deepEqual(harness.calls.filter((call) => call === "prepare"), ["prepare"]);
+});
+
+test("跨项目规则和历史只在目标页面就绪后提交标签", async () => {
+  const harness = fixture();
+  const rules = await harness.workflow.createProjectRules({ ...B, title: B.name });
+  assert.equal(rules.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `project-rules:${B.projectId}:${B.documentId}`);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, B.projectId);
+  assert.deepEqual(harness.calls.filter((call) => call === `rules:${B.projectId}`), [`rules:${B.projectId}`]);
+
+  const history = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  );
+  assert.equal(history.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `history:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, A.projectId);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("history:")), [
+    `history:${A.projectId}:ver_2`,
+  ]);
+
+  const current = await harness.workflow.activateTab(`document:${A.projectId}:${A.documentId}`);
+  assert.equal(current.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.deepEqual(harness.calls.filter((call) => call === `current:${A.projectId}`), [
+    `current:${A.projectId}`,
+  ]);
+});
+
+test("同一项目切换另一个历史版本时复用标签并重新加载所选快照", async () => {
+  const harness = fixture();
+  const first = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  );
+  assert.equal(first.status, "succeeded");
+
+  const second = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_4", ordinal: 4, displayFileName: "Alpha-V4.html" },
+  );
+  assert.equal(second.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => tab.kind === "history").length, 1);
+  assert.equal(harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history")?.versionId, "ver_4");
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("history:")), [
+    `history:${A.projectId}:ver_2`,
+    `history:${A.projectId}:ver_4`,
+  ]);
+});
+
+test("历史版本在新快照验证前保留已显示的版本身份", async () => {
+  const pending = deferred();
+  const harness = fixture({
+    viewHistory: async ({ version, publishVersion }) => {
+      if (version.id === "ver_4") await pending.promise;
+      publishVersion("history", version.id);
+      return { status: "succeeded", value: { versionId: version.id } };
+    },
+  });
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+
+  const opening = harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_4", ordinal: 4, displayFileName: "Alpha-V4.html" },
+  );
+  await nextTurn();
+  let history = harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history");
+  assert.equal(history?.versionId, "ver_2");
+  assert.equal(history?.versionOrdinal, 2);
+
+  pending.resolve();
+  assert.equal((await opening).status, "succeeded");
+  history = harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history");
+  assert.equal(history?.versionId, "ver_4");
+  assert.equal(history?.versionOrdinal, 4);
+});
+
+test("当前稿权威已发布但画布确认失败时由当前稿标签承接错误", async () => {
+  const harness = fixture();
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+  harness.publish(projectSnapshot(A, 2, { viewMode: "current" }));
+
+  const outcome = await harness.workflow.openRegisteredProject({
+    ...A,
+    title: A.name,
+    force: true,
+    committedVersionTransitionFailure: {
+      code: "CANVAS_VERIFY_FAILED",
+      reason: "canvas failed",
+    },
+  });
+  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.code, "CANVAS_VERIFY_FAILED");
+  assert.equal(outcome.committed, true);
+  assert.equal(outcome.tabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.tabs.find((tab) => tab.tabId === outcome.tabId)?.status, "error");
+  assert.equal(harness.controller.getSnapshot().versionSession.viewMode, "current");
+});
+
+test("历史创建打开会在当前稿标签被关闭后重建唯一当前页", async () => {
+  const harness = fixture();
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+  harness.tabs.close(`document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.resolveTab(`document:${A.projectId}:${A.documentId}`), null);
+  harness.publish(projectSnapshot(A, 2, { viewMode: "current" }));
+
+  const outcome = await harness.workflow.commitCurrentVersionAuthority({
+    context: {
+      projectId: A.projectId,
+      documentId: A.documentId,
+      epoch: 2,
+      sourcePath: `/managed/${A.projectId}.html`,
+    },
+    title: A.name,
+  });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => (
+    tab.kind === "document" && tab.projectId === A.projectId && tab.documentId === A.documentId
+  )).length, 1);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("current:")), []);
+});
+
+test("历史创建恢复在外层导航事务内提交当前稿并释放后续导航", async () => {
+  const releaseCommit = deferred();
+  let workflow;
+  let observedScope = null;
+  const harness = fixture({
+    returnToCurrent: async ({ context, currentSurfaceCommitScope, publishCurrent }) => {
+      observedScope = currentSurfaceCommitScope;
+      assert.equal(context.workingCopyId, `work_${A.projectId}`);
+      publishCurrent();
+      await releaseCommit.promise;
+      return workflow.commitCurrentVersionAuthority({
+        context,
+        title: A.name,
+        currentSurfaceCommitScope,
+      });
+    },
+  });
+  workflow = harness.workflow;
+  assert.equal((await workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+
+  const returning = workflow.activateTab(`document:${A.projectId}:${A.documentId}`);
+  await nextTurn();
+  const queued = workflow.createSettings();
+  await nextTurn();
+  assert.equal(harness.navigation.snapshot.phase, "preparing");
+  assert.ok(observedScope);
+
+  releaseCommit.resolve();
+  assert.equal((await returning).status, "succeeded");
+  assert.equal((await queued).status, "succeeded");
+  assert.equal(
+    harness.tabs.resolveTab(harness.tabs.snapshot.activeTabId)?.kind,
+    "settings",
+  );
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => (
+    tab.kind === "document"
+    && tab.projectId === A.projectId
+    && tab.documentId === A.documentId
+  )).length, 1);
+  assert.equal(harness.navigation.snapshot.phase, "idle");
+
+  const stale = await workflow.commitCurrentVersionAuthority({
+    context: harness.controller.getSnapshot().projectSession,
+    currentSurfaceCommitScope: Object.freeze({}),
+  });
+  assert.equal(stale.code, "WORKBENCH_NAVIGATION_SCOPE_STALE");
 });
 
 test("external admission completes only after the correlated application and terminal settlement", async () => {
