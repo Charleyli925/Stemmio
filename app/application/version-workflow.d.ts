@@ -156,7 +156,10 @@ export type VersionWorkflowConstruction = Readonly<{
     hash: Readonly<{ sha256(html: string): Promise<string> }>;
     canvas: VersionWorkflowCanvasPort;
     currentSurface?: Readonly<{
-      commit(input: { context: ProjectContext }): Promise<VersionWorkflowOutcome>;
+      commit(input: {
+        context: ProjectContext;
+        currentSurfaceCommitScope?: object | null;
+      }): Promise<VersionWorkflowOutcome>;
     }>;
   }>;
   clock: Readonly<{ now(): number }>;
@@ -190,10 +193,15 @@ export class VersionWorkflow {
   returnToCurrent(input?: {
     context?: ProjectContext | null;
     fromDeferred?: boolean;
+    currentSurfaceCommitScope?: object | null;
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
   createVersionFromHistory(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
   restoreHistoryCreation(input: { operationId: string; context: ProjectContext }): Promise<void>;
-  openCreatedHistoryVersion(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
+  openCreatedHistoryVersion(input: {
+    operationId: string;
+    context?: ProjectContext | null;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
   queryHistoryCreation(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
   saveCurrentVersion(input?: { operationId?: string; context?: ProjectContext | null; expectedSourceSha256?: string }): Promise<VersionWorkflowOutcome<CurrentVersionResult>>;
   retryCurrentVersion(input?: Record<string, unknown>): Promise<VersionWorkflowOutcome<CurrentVersionResult>>;

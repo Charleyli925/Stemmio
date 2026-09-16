@@ -392,7 +392,10 @@ export interface NavigationWorkflowControllerCapability extends WorkspaceSnapsho
     context: ProjectContext;
     deadlineAt?: number;
   }): Promise<VersionWorkflowOutcome>;
-  returnToCurrent(input: { context: ProjectContext }): Promise<VersionWorkflowOutcome>;
+  returnToCurrent(input: {
+    context: ProjectContext;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome>;
 }
 
 export interface AiConversationControllerCapability

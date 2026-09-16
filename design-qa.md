@@ -3554,6 +3554,17 @@ final result: passed
 - 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
 - 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。
 
+### P1 follow-up — created-history current-draft recovery
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, color, spacing or layout changed; the established direct history Preview, disabled Edit, absent top banner and complete disabled-aware More menu remain unchanged.
+- The recovery path now carries the verified Working Copy/OpenTarget identity and reuses the active navigation transaction when the newly published current authority commits its tab. Public navigation commands still use FIFO admission; no busy insertion, detached async commit or timeout workaround was introduced.
+- The durable creation operation already protects the replaced current source before it writes its receipt. Opening that exact receipt therefore validates its full workspace/HTML/Hash tuple and performs the managed transition without re-draining bytes that the same creation operation intentionally superseded.
+- Deterministic evidence: the navigation/version workflow suites pass 134/134, including an admitted current-draft recovery with another navigation queued behind it, stale transaction-scope rejection, full OpenTarget forwarding and no second drain.
+- Rebuilt source Electron evidence: both “click the same project current row” and “close the active history tab” recover after an injected created-workspace read failure, select the unique current-draft tab, release a later new-tab/current-tab round trip and retain exactly two versions from one create request. Both cases pass without retry.
+- Boundary: synthetic source Electron evidence on the managed project fixture; no private real-HTML corpus, packaged app or installed app was used for this behavior-only repair.
+
+follow-up result: passed
+
 ## 2026-09-16 — Transient tab display handoff
 
 - Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.
