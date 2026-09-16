@@ -53,6 +53,17 @@ function writeMatchesContext(write, context) {
   return fields.every((field) => String(write?.[field] ?? "") === String(context[field] ?? ""));
 }
 
+function writeRebaseKeepsOwner(expectedWrite, nextWrite, context) {
+  if (!sameWriteBytes(expectedWrite, nextWrite)) return false;
+  for (const field of ["projectId", "documentId"]) {
+    const expected = String(expectedWrite?.[field] || "");
+    const next = String(nextWrite?.[field] || "");
+    const current = String(context?.[field] || "");
+    if ((expected && expected !== next) || (current && current !== next)) return false;
+  }
+  return true;
+}
+
 const CANVAS_AUTHORITY_STATES = new Set([
   "idle",
   "pending",
@@ -686,10 +697,14 @@ export class DocumentSession {
   rebaseQueuedWrite({ expectedWrite, nextWrite } = {}) {
     if (this.#pendingWrite !== expectedWrite) return false;
     if (
-      !sameWriteBytes(expectedWrite, nextWrite)
-      || !writeMatchesContext(nextWrite, this.#snapshot.sourceReceipt?.context)
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
     ) {
-      throw new TypeError("Document rebased write requires exact HTML and a non-negative revision.");
+      throw new TypeError("Document rebased write must keep its accepted bytes and document owner.");
     }
     this.#pendingWrite = nextWrite;
     this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
@@ -700,10 +715,14 @@ export class DocumentSession {
   rebaseActiveWrite({ expectedWrite, nextWrite } = {}) {
     if (this.#activeWrite !== expectedWrite) return false;
     if (
-      !sameWriteBytes(expectedWrite, nextWrite)
-      || !writeMatchesContext(nextWrite, this.#snapshot.sourceReceipt?.context)
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
     ) {
-      throw new TypeError("Document active write requires exact HTML and a non-negative revision.");
+      throw new TypeError("Document active write rebase must keep its accepted bytes and document owner.");
     }
     this.#activeWrite = nextWrite;
     this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);

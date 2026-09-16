@@ -2312,6 +2312,7 @@ export class DocumentWorkflow {
         lastPersistedRevision: nextLastPersistedRevision,
         persistState: currentDocument.persistState,
         persistError: currentDocument.persistError,
+        pendingWrite: queued,
         context: acknowledgedContext,
         operationId: this.#nextOperationId("authority-autosave-route"),
       });

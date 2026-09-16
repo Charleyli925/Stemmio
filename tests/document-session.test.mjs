@@ -431,7 +431,7 @@ test("ordinary queueing cannot overwrite accepted bytes or an existing pending w
   assert.equal(session.pendingWrite, write);
 });
 
-test("write rebase requires the complete current authority identity", () => {
+test("write rebase keeps the document owner while permitting a verified route and hash refresh", () => {
   const session = new DocumentSession({
     html: "<main>one</main>",
     persistedSourceSha256: RECEIPT_CONTEXT.sourceSha256,
@@ -441,27 +441,19 @@ test("write rebase requires the complete current authority identity", () => {
   const revision = session.beginEdit(html, { context: RECEIPT_CONTEXT });
   const write = { ...RECEIPT_CONTEXT, revision, html };
   session.queueWrite(write);
-  const nextContext = {
-    ...RECEIPT_CONTEXT,
-    sourcePath: "/tmp/rebased-document.html",
-    exactSourcePath: "/tmp/rebased-document.html",
-  };
-  session.publishAuthority({
-    html,
-    persistedSourceSha256: RECEIPT_CONTEXT.sourceSha256,
-    workingHtmlSha256: sha256(html),
-    editRevision: revision,
-    context: nextContext,
-  });
-
   assert.throws(
     () => session.rebaseQueuedWrite({
       expectedWrite: write,
-      nextWrite: { ...write, sourcePath: nextContext.sourcePath },
+      nextWrite: { ...write, projectId: "project_other" },
     }),
-    /requires exact HTML and a non-negative revision/u,
+    /must keep its accepted bytes and document owner/u,
   );
-  const rebased = { ...write, ...nextContext };
+  const rebased = {
+    ...write,
+    exactSourcePath: "/private/tmp/document.html",
+    sourceSha256: sha256(html),
+    expectedSourceSha256: sha256(html),
+  };
   assert.equal(session.rebaseQueuedWrite({ expectedWrite: write, nextWrite: rebased }), true);
   assert.equal(session.pendingWrite, rebased);
   assert.equal(session.beginWrite(), rebased);

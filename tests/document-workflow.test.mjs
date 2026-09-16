@@ -672,6 +672,9 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
     sourceSha256: sha256(before),
   };
   const calls = [];
+  let markFirstStarted;
+  const firstStarted = new Promise((resolve) => { markFirstStarted = resolve; });
+  let resolveFirst;
   const harness = createHarness({
     html: before,
     bridge: {
@@ -683,7 +686,7 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
           exactSourcePath: movedPath,
           sourceSha256: sha256(body.html),
         };
-        return {
+        const response = {
           ok: true,
           content: body.html,
           sha256: sha256(body.html),
@@ -697,6 +700,11 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
             deletedCommentIds: [],
           },
         };
+        if (calls.length === 1) {
+          markFirstStarted();
+          return new Promise((resolve) => { resolveFirst = () => resolve(response); });
+        }
+        return response;
       },
     },
   });
@@ -709,7 +717,11 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
   harness.workflow.subscribeEvents((event) => events.push(event));
 
   harness.workflow.enqueueEdit({ html: after });
-  assert.equal((await harness.workflow.flush()).status, "succeeded");
+  const flushing = harness.workflow.flush();
+  await firstStarted;
+  harness.workflow.enqueueEdit({ html: final });
+  resolveFirst();
+  assert.equal((await flushing).status, "succeeded");
   assert.equal(harness.projectSession.context?.sourcePath, movedPath);
   assert.equal(harness.projectSession.context?.projectRootPath, "/tmp/project-renamed");
   assert.equal(
@@ -717,8 +729,6 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
     movedPath,
   );
 
-  harness.workflow.enqueueEdit({ html: final });
-  assert.equal((await harness.workflow.flush()).status, "succeeded");
   assert.equal(calls.length, 2);
   assert.equal(calls[1].sourcePath, movedPath);
   assert.equal(calls[1].exactSourcePath, movedPath);
@@ -864,12 +874,22 @@ test("DocumentWorkflow rejects an unchainable source transaction without publish
   assert.equal(harness.canvas.invalidations, 0);
 });
 
-test("DocumentWorkflow drains a newer queued write after an earlier acknowledgement", async () => {
+test("DocumentWorkflow drains a newer managed write after the earlier ACK refreshes its source hash", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const middle = before.replace("one", "two");
   const after = before.replace("one", "three");
   const calls = [];
   let resolveFirst;
+  const openTarget = (sourceSha256) => ({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    projectRootPath: "/tmp/document-workflow-project",
+    targetKind: "working-copy",
+    workingCopyId: "working_document_workflow",
+    versionId: "version_document_workflow",
+    exactSourcePath: SOURCE_PATH,
+    sourceSha256,
+  });
   const harness = createHarness({
     html: before,
     bridge: {
@@ -884,10 +904,15 @@ test("DocumentWorkflow drains a newer queued write after an earlier acknowledgem
           sha256: sha256(body.html),
           persistedRevision: body.editRevision,
           lastModifiedAt: "2026-08-11T00:00:02.000Z",
+          openTarget: openTarget(sha256(body.html)),
         });
       },
     },
   });
+  assert.ok(harness.projectSession.adoptOpenTarget({
+    previousSourcePath: SOURCE_PATH,
+    target: openTarget(sha256(before)),
+  }));
 
   harness.workflow.enqueueEdit({ html: middle });
   const flushing = harness.workflow.flush();
@@ -900,6 +925,7 @@ test("DocumentWorkflow drains a newer queued write after an earlier acknowledgem
     sha256: sha256(middle),
     persistedRevision: 1,
     lastModifiedAt: "2026-08-11T00:00:01.000Z",
+    openTarget: openTarget(sha256(middle)),
   });
 
   assert.equal((await flushing).status, "succeeded");
