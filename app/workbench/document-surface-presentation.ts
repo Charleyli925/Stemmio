@@ -5,7 +5,14 @@ import type {
   DocumentSurfaceCacheEntry,
   DocumentSurfaceCacheSnapshot,
   DocumentSurfaceCacheToken,
+  DocumentSurfacePresentation,
 } from "../application/document-surface-cache-session.js";
+import {
+  clampRuntimeScroll,
+  outerScrollLimits,
+  outerScrollMetricsReady,
+  scheduleWhenReady,
+} from "../components/html-canvas-frame.js";
 import {
   documentSurfaceCacheEntryMatchesToken,
   documentSurfaceCacheToken,
@@ -56,27 +63,27 @@ export function useDocumentSurfaceHandoff({
   visibleCachedSurfaceReady: boolean;
   retainPresentedTab: (token: DocumentSurfaceCacheToken) => boolean;
   completeHandoff: (token: DocumentSurfaceCacheToken) => void;
-  updateVisibleScroll: (tabId: string, scrollTop: number) => void;
+  updateHandoffScroll: (token: DocumentSurfaceCacheToken, scrollTop: number) => void;
   markFirstScroll: (tabId: string, scrollTop: number) => void;
 } {
   const pending = cache.entries.find((entry) => (
-    entry.tier === "hot" && entry.tabId === tabs.pendingTabId
+    entry.tabId === tabs.pendingTabId
   )) || null;
   const pendingToken = tokenForEntry(pending);
   const [presentedToken, setPresentedToken] = useState<DocumentSurfaceCacheToken | null>(null);
   const [retainedCandidateToken, setCandidateToken] = useState<DocumentSurfaceCacheToken | null>(null);
   const pendingTabId = pendingToken?.tabId || null;
   const pendingSourceSha256 = pendingToken?.sourceSha256 || null;
-  const presentedEntryIsHot = Boolean(
+  const presentedEntryIsCached = Boolean(
     presentedToken && entryForToken(cache, presentedToken),
   );
   useLayoutEffect(() => {
-    if (!presentedToken || presentedEntryIsHot) return;
-    // A demoted projection must not become visible again merely because the
-    // cache promotes the same tab later; it must rehydrate as a candidate.
+    if (!presentedToken || presentedEntryIsCached) return;
+    // An evicted projection must not become visible again merely because the
+    // same tab later receives different source bytes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPresentedToken(null);
-  }, [presentedEntryIsHot, presentedToken]);
+  }, [presentedEntryIsCached, presentedToken]);
   useEffect(() => {
     if (!pendingTabId || !pendingSourceSha256) return;
     // The pending tab can commit before the static candidate reports ready;
@@ -112,21 +119,19 @@ export function useDocumentSurfaceHandoff({
     const exactToken = tokenForEntry(entry);
     if (!exactToken) return false;
     setPresentedToken((current) => sameDocumentSurfaceCacheToken(current, exactToken) ? current : exactToken);
-    controller?.confirmDocumentSurfaceReady(exactToken.tabId, exactToken.sourceSha256);
     return true;
   }, [controller]);
   const completeHandoff = useCallback((token: DocumentSurfaceCacheToken) => {
     setPresentedToken((current) => sameDocumentSurfaceCacheToken(current, token) ? null : current);
   }, []);
-  const updateVisibleScroll = useCallback((tabId: string, scrollTop: number) => {
-    controller?.updateDocumentSurfacePresentation(tabId, { scrollTop });
+  const updateHandoffScroll = useCallback((token: DocumentSurfaceCacheToken, scrollTop: number) => {
+    controller?.updateDocumentSurfacePresentationForToken(token, { scrollTop });
   }, [controller]);
   const markFirstScroll = useCallback((tabId: string, scrollTop: number) => {
-    controller?.deferDocumentSurfacePrewarm();
     performance.mark("stemmio:tab-cache:first-scroll-response", {
       detail: Object.freeze({ tabId, scrollTop }),
     });
-  }, [controller]);
+  }, []);
   const retainedCandidateIsActive = Boolean(
     retainedCandidateToken
     && active?.kind === "document"
@@ -151,7 +156,7 @@ export function useDocumentSurfaceHandoff({
     visibleCachedSurfaceReady: Boolean(visibleCachedSurface),
     retainPresentedTab,
     completeHandoff,
-    updateVisibleScroll,
+    updateHandoffScroll,
     markFirstScroll,
   };
 }
@@ -192,27 +197,80 @@ export function rememberActiveDocumentPresentation({
 
 export function restoreCachedDocumentPresentation({
   controller,
+  tabId,
   project,
   setPageViewContext,
-  setCanvasMode,
   stage,
 }: {
   controller: DocumentSurfaceControllerCapability;
+  tabId: string;
   project: HtmlProject;
   setPageViewContext: (value: PageViewContext | null) => void;
-  setCanvasMode: (value: CanvasMode) => void;
   stage: HTMLDivElement | null;
-}) {
-  const cached = controller.getSnapshot().documentSurfaceCache?.entries.find((entry) => (
-    entry.projectId === project.projectId
+}): DocumentSurfacePresentation | null {
+  const cached = controller.getSnapshot().documentSurfaceCache?.presentations.find((entry) => (
+    entry.tabId === tabId
+    && entry.projectId === project.projectId
     && entry.documentId === project.documentId
     && entry.sourceSha256 === project.sha256
   )) || null;
   setPageViewContext(cached?.pageViewContext as PageViewContext | null);
-  if (!cached) return null;
-  setCanvasMode(cached.canvasMode);
-  window.requestAnimationFrame(() => {
-    if (stage) stage.scrollTop = cached.scrollTop;
+  if (!stage) return cached;
+  if (!cached || cached.canvasMode !== "edit") {
+    stage.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    return cached;
+  }
+  let userInterrupted = false;
+  const stopForUser = () => {
+    userInterrupted = true;
+    cleanup();
+  };
+  const cleanup = () => {
+    window.clearTimeout(cleanupTimer);
+    stage.removeEventListener("wheel", stopForUser);
+    stage.removeEventListener("touchstart", stopForUser);
+    stage.removeEventListener("pointerdown", stopForUser);
+    stage.removeEventListener("keydown", stopForUser);
+  };
+  stage.addEventListener("wheel", stopForUser, { passive: true, once: true });
+  stage.addEventListener("touchstart", stopForUser, { passive: true, once: true });
+  stage.addEventListener("pointerdown", stopForUser, { passive: true, once: true });
+  stage.addEventListener("keydown", stopForUser, { once: true });
+  const cleanupTimer = window.setTimeout(cleanup, 2_000);
+  const exactActivationStillCurrent = () => {
+    if (userInterrupted) return false;
+    const snapshot = controller.getSnapshot();
+    const activeTab = snapshot.workbenchTabs?.tabs.find((candidate) => (
+      candidate.tabId === snapshot.workbenchTabs?.activeTabId
+    ));
+    const currentSourceSha256 = snapshot.document?.workingHtmlSha256
+      || snapshot.document?.persistedSourceSha256;
+    return Boolean(
+      (activeTab?.tabId === tabId || snapshot.workbenchTabs?.pendingTabId === tabId)
+      && snapshot.projectSession?.projectId === project.projectId
+      && snapshot.projectSession?.documentId === project.documentId
+      && currentSourceSha256 === project.sha256,
+    );
+  };
+  const activationIsActive = () => (
+    controller.getSnapshot().workbenchTabs?.activeTabId === tabId
+  );
+  scheduleWhenReady({
+    isCurrent: exactActivationStillCurrent,
+    isReady: () => (
+      activationIsActive()
+      && outerScrollMetricsReady(stage, cached.scrollTop)
+    ),
+    onReady: () => {
+      cleanup();
+      if (!exactActivationStillCurrent() || !activationIsActive()) return;
+      const limits = outerScrollLimits(stage);
+      stage.scrollTo({
+        top: clampRuntimeScroll(cached.scrollTop, limits.maxTop),
+        left: stage.scrollLeft,
+        behavior: "auto",
+      });
+    },
   });
   return cached;
 }

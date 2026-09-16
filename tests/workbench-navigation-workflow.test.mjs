@@ -16,6 +16,12 @@ const D = { projectId: "project_delta", documentId: "doc_delta", name: "Delta" }
 
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => { resolve = nextResolve; });
+  return { promise, resolve };
+}
+
 test("Start recovery export protects the journal source path", async () => {
   const source = await readFile(new URL(
     "../app/workbench/workbench-sidebar-container.tsx",
@@ -115,6 +121,8 @@ function fixture({
   confirm,
   cancel,
   acceptExternal,
+  viewHistory: onViewHistory,
+  returnToCurrent: onReturnToCurrent,
   tabsPersistence = null,
   surfaceCache = null,
   clock = { now: () => 1_000 },
@@ -146,6 +154,16 @@ function fixture({
     },
     viewHistory({ version, context }) {
       calls.push(`history:${context.projectId}:${version.id}`);
+      if (onViewHistory) return onViewHistory({
+        version,
+        context,
+        publishVersion(viewMode, viewingVersionId = null) {
+          snapshot = {
+            ...snapshot,
+            versionSession: { viewMode, viewingVersionId },
+          };
+        },
+      });
       snapshot = {
         ...snapshot,
         versionSession: { viewMode: "history", viewingVersionId: version.id },
@@ -154,6 +172,15 @@ function fixture({
     },
     returnToCurrent({ context }) {
       calls.push(`current:${context.projectId}`);
+      if (onReturnToCurrent) return onReturnToCurrent({
+        context,
+        publishCurrent() {
+          snapshot = {
+            ...snapshot,
+            versionSession: { viewMode: "current", viewingVersionId: null },
+          };
+        },
+      });
       snapshot = {
         ...snapshot,
         versionSession: { viewMode: "current", viewingVersionId: null },
@@ -746,6 +773,89 @@ test("同一项目切换另一个历史版本时复用标签并重新加载所�
     `history:${A.projectId}:ver_2`,
     `history:${A.projectId}:ver_4`,
   ]);
+});
+
+test("历史版本在新快照验证前保留已显示的版本身份", async () => {
+  const pending = deferred();
+  const harness = fixture({
+    viewHistory: async ({ version, publishVersion }) => {
+      if (version.id === "ver_4") await pending.promise;
+      publishVersion("history", version.id);
+      return { status: "succeeded", value: { versionId: version.id } };
+    },
+  });
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+
+  const opening = harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_4", ordinal: 4, displayFileName: "Alpha-V4.html" },
+  );
+  await nextTurn();
+  let history = harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history");
+  assert.equal(history?.versionId, "ver_2");
+  assert.equal(history?.versionOrdinal, 2);
+
+  pending.resolve();
+  assert.equal((await opening).status, "succeeded");
+  history = harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history");
+  assert.equal(history?.versionId, "ver_4");
+  assert.equal(history?.versionOrdinal, 4);
+});
+
+test("当前稿权威已发布但画布确认失败时由当前稿标签承接错误", async () => {
+  const harness = fixture();
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+  harness.publish(projectSnapshot(A, 2, { viewMode: "current" }));
+
+  const outcome = await harness.workflow.openRegisteredProject({
+    ...A,
+    title: A.name,
+    force: true,
+    committedVersionTransitionFailure: {
+      code: "CANVAS_VERIFY_FAILED",
+      reason: "canvas failed",
+    },
+  });
+  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.code, "CANVAS_VERIFY_FAILED");
+  assert.equal(outcome.committed, true);
+  assert.equal(outcome.tabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.tabs.find((tab) => tab.tabId === outcome.tabId)?.status, "error");
+  assert.equal(harness.controller.getSnapshot().versionSession.viewMode, "current");
+});
+
+test("历史创建打开会在当前稿标签被关闭后重建唯一当前页", async () => {
+  const harness = fixture();
+  assert.equal((await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  )).status, "succeeded");
+  harness.tabs.close(`document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.resolveTab(`document:${A.projectId}:${A.documentId}`), null);
+  harness.publish(projectSnapshot(A, 2, { viewMode: "current" }));
+
+  const outcome = await harness.workflow.commitCurrentVersionAuthority({
+    context: {
+      projectId: A.projectId,
+      documentId: A.documentId,
+      epoch: 2,
+      sourcePath: `/managed/${A.projectId}.html`,
+    },
+    title: A.name,
+  });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => (
+    tab.kind === "document" && tab.projectId === A.projectId && tab.documentId === A.documentId
+  )).length, 1);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("current:")), []);
 });
 
 test("external admission completes only after the correlated application and terminal settlement", async () => {

@@ -155,6 +155,9 @@ export type VersionWorkflowConstruction = Readonly<{
     files?: VersionFilePort;
     hash: Readonly<{ sha256(html: string): Promise<string> }>;
     canvas: VersionWorkflowCanvasPort;
+    currentSurface?: Readonly<{
+      commit(input: { context: ProjectContext }): Promise<VersionWorkflowOutcome>;
+    }>;
   }>;
   clock: Readonly<{ now(): number }>;
 }>;

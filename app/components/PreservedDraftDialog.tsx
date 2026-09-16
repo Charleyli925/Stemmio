@@ -13,12 +13,17 @@ type Props = {
 
 export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad, onRestore }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
+  const sessionRef = useRef(0);
   const [entries, setEntries] = useState<PreservedDraftSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (!open) { ref.current?.close(); return; }
+    const session = ++sessionRef.current;
+    if (!open) {
+      ref.current?.close();
+      return () => { if (sessionRef.current === session) sessionRef.current += 1; };
+    }
     let active = true;
     ref.current?.showModal();
     window.queueMicrotask(() => {
@@ -28,13 +33,19 @@ export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad
       setLoading(true);
       setRestoring(null);
       void onLoad().then((outcome) => {
-        if (!active) return;
+        if (!active || sessionRef.current !== session) return;
         if (outcome.status === "succeeded") setEntries(outcome.value.entries);
         else if ("reason" in outcome) setError(outcome.reason);
-      }).catch(() => { if (active) setError("暂时无法读取保留的稿件。"); })
-        .finally(() => { if (active) setLoading(false); });
+      }).catch(() => {
+        if (active && sessionRef.current === session) setError("暂时无法读取保留的稿件。");
+      }).finally(() => {
+        if (active && sessionRef.current === session) setLoading(false);
+      });
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (sessionRef.current === session) sessionRef.current += 1;
+    };
   }, [open, contextKey, onLoad]);
 
   return <dialog ref={ref} className="cancel-ai-run-dialog preserved-draft-dialog"
@@ -52,14 +63,19 @@ export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad
             <small>{new Date(entry.createdAt).toLocaleString()} · 基于 V{Number(entry.basedOnVersionId.replace(/^ver_/, ""))}{entry.hasComments ? " · 含评论" : ""}</small>
           </span>
           <button type="button" className="cancel-ai-run-end" disabled={Boolean(restoring)} onClick={async () => {
+            const session = sessionRef.current;
             setRestoring(entry.recoveryId);
             setError("");
             try {
               const outcome = await onRestore(entry.recoveryId);
+              if (sessionRef.current !== session) return;
               if (outcome.status === "succeeded") onClose();
               else if ("reason" in outcome) setError(outcome.reason);
-            } catch { setError("稿件尚未恢复，原有内容保留。"); }
-            finally { setRestoring(null); }
+            } catch {
+              if (sessionRef.current === session) setError("稿件尚未恢复，原有内容保留。");
+            } finally {
+              if (sessionRef.current === session) setRestoring(null);
+            }
           }}>{restoring === entry.recoveryId ? "正在恢复…" : "恢复为当前稿"}</button>
         </li>)}
       </ul>

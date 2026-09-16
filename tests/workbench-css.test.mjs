@@ -159,7 +159,7 @@ test("project version lists retain compact unweighted rows", async () => {
   assert.doesNotMatch(css, /sidebar-project-rules-copy|<small>PROJECT\.md/u);
 });
 
-test("cache handoff waits for static display readiness and uses live canvas geometry", async () => {
+test("cache mounts only explicit ready handoff surfaces on live canvas geometry", async () => {
   const moduleCss = await readFile(new URL(
     "../app/workbench/workbench-document-surface-cache.module.css",
     import.meta.url,
@@ -172,10 +172,11 @@ test("cache handoff waits for static display readiness and uses live canvas geom
   assert.match(moduleCss, /\.cache\s*\{[\s\S]*?grid-column:\s*2/u);
   assert.match(moduleCss, /\.cache\[data-visible="true"\]\s*\{[\s\S]*?padding:\s*0/u);
   assert.match(cacheComponent, /data-display-ready/u);
-  assert.match(cacheComponent, /activeTabId/u);
+  assert.doesNotMatch(cacheComponent, /activeTabId/u);
   assert.match(cacheComponent, /candidateTabId/u);
   assert.match(cacheComponent, /presentedToken/u);
-  assert.match(cacheComponent, /entry\.tabId !== activeTabId/u);
+  assert.match(cacheComponent, /snapshot\.entries\.filter\(isExplicitHandoffSurface\)/u);
+  assert.match(cacheComponent, /data-mounted-count=\{handoffEntries\.length\}/u);
   assert.match(cacheComponent, /entry\.tabId === candidateTabId && entry\.sourceSha256 === candidateSourceSha256/u);
   assert.match(cacheComponent, /entry\.tabId === visibleTabId && entry\.sourceSha256 === visibleSourceSha256/u);
   assert.match(cacheComponent, /data-source-sha256=\{entry\.sourceSha256\}/u);

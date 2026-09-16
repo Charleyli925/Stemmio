@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-<!-- adr-history-max: 0075 -->
+<!-- adr-history-max: 0076 -->
 <!-- adr-history-gaps: 0020 -->
 
 This is the default reading path for decisions that still constrain PageRoot.
@@ -10,7 +10,7 @@ Historical and superseded decisions remain available from the archive index.
 
 The repository has one historical gap, `0020`, which is intentionally never
 reused. The four collisions found in the first curation pass were assigned
-`0055` through `0058`; future ADRs must use the next number above `0075`.
+`0055` through `0058`; future ADRs must use the next number above `0076`.
 
 ## Active decisions
 
@@ -41,15 +41,15 @@ reused. The four collisions found in the first curation pass were assigned
 | 0039 | [Provider-neutral Agent runtime boundary](0039-provider-neutral-agent-runtime.md) | Living |
 | 0040 | [Provider-neutral persistence and Conversation v2](0040-provider-neutral-persistence-and-conversation-v2.md) | Living |
 | 0044 | [HTML opening commits at display readiness](0044-visible-first-html-open.md) | Living |
-| 0045 | [Byte-bounded display caches accelerate tabs and review](0045-byte-bounded-tab-and-review-display-caches.md) | Living |
+| 0045 | [Byte-bounded display caches accelerate tabs and review](0045-byte-bounded-tab-and-review-display-caches.md) | Living for explicit Review; tab Hot/Warm pool superseded by ADR 0076 |
 | 0046 | [Review keeps text and element presence only](0046-review-core-text-and-element-diff.md) | Historical core presentation; source/visual scope superseded by ADR 0066/0068 |
 | 0047 | [Project open publishes Core before fenced Supplemental projections](0047-core-supplemental-project-open.md) | Living |
-| 0048 | [Tab display cache uses a measured Hot/Warm/Cold resource budget](0048-hot-warm-cold-tab-resource-budget.md) | Living |
+| 0048 | [Tab display cache uses a measured Hot/Warm/Cold resource budget](0048-hot-warm-cold-tab-resource-budget.md) | Superseded by ADR 0076 |
 | 0049 | [Desktop loads the real renderer shell before Bridge readiness](0049-desktop-shell-first-startup.md) | Living |
-| 0051 | [HTML readiness is progressive and scroll never waits for Canvas verification](0051-progressive-scrollable-html-readiness.md) | Living |
+| 0051 | [HTML readiness is progressive and scroll never waits for Canvas verification](0051-progressive-scrollable-html-readiness.md) | Living readiness model; restart and inactive-tab prewarm superseded by ADR 0076 |
 | 0052 | [Product ACP catalog and managed installer](0052-acp-catalog-installer.md) | Living |
 | 0053 | [Codex chooser uses ACP; App Server stays packaged-unregistered](0053-codex-acp-adapter.md) | Living; implementation metadata records the completed removal |
-| 0054 | [bundle common ECharts bytes and retain five exact frozen Canvases](0054-bundled-echarts-and-five-canvas-residency.md) | Living in part; bundled ECharts and the immutable byte store remain, multi-Canvas residency is retired |
+| 0054 | [bundle common ECharts bytes and retain five exact frozen Canvases](0054-bundled-echarts-and-five-canvas-residency.md) | Living only for bundled ECharts and the immutable byte store; multi-Canvas residency is retired and static tab residency is superseded by ADR 0076 |
 | 0057 | [Mutable records preserve unknown members instead of dropping or refusing them](0057-forward-compatible-record-members.md) | Living |
 | 0059 | [Source elements use a persistent PageRoot identity](0059-persistent-source-element-identity.md) | Living |
 | 0060 | [Managed Working Copies materialize source element identity once](0060-working-copy-source-element-identity-migration.md) | Living |
@@ -57,7 +57,7 @@ reused. The four collisions found in the first curation pass were assigned
 | 0062 | [Semantic source operations lower to complete identified HTML](0062-semantic-source-operation-kernel.md) | Living |
 | 0063 | [Canvas undo is a 20-step open-document memory history](0063-open-document-memory-history.md) | Living |
 | 0064 | [Source structure edits use stable IDs and semantic operations](0064-stable-id-source-structure-editing.md) | Living |
-| 0065 | [Edit runs supported author scripts in a disposable source-bound page](0065-disposable-edit-runtime.md) | Living |
+| 0065 | [Edit runs supported author scripts in a disposable source-bound page](0065-disposable-edit-runtime.md) | Living; inactive Hot display-cache clause superseded by ADR 0076 |
 | 0066 | [Review pairs persistent IDs and reports source changes](0066-stable-id-source-review.md) | Living source-fact authority; visual enhancement extended by ADR 0068 |
 | 0067 | [AI Candidate identity is validated before PageRoot assigns new IDs](0067-ai-candidate-source-identity.md) | Living |
 | 0068 | [Review keeps source facts authoritative and adds visual enhancement](0068-review-visual-verdict-gate.md) | Living |
@@ -71,6 +71,7 @@ reused. The four collisions found in the first curation pass were assigned
 | 0073 | [One current draft and immutable history](0073-single-current-draft.md) | Living |
 | 0074 | [Proven in-place structural editing](0074-proven-in-place-structural-editing.md) | Accepted contract |
 | 0075 | [Stemmio identity and local-storage boundary](0075-stemmio-identity-and-storage-boundary.md) | Accepted |
+| 0076 | [Tab display pages exist only during an explicit handoff](0076-transient-tab-display-handoff.md) | Accepted |
 
 ## Reading guide
 

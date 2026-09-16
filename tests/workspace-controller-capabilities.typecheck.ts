@@ -42,6 +42,10 @@ void comments.subscribe(() => undefined);
 comments.commands.updateDraft("draft");
 void documentSurface.getSnapshot();
 void documentSurface.updateDocumentSurfacePresentation("tab-1");
+void documentSurface.updateDocumentSurfacePresentationForToken({
+  tabId: "tab-1",
+  sourceSha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+});
 void navigationFacet.getSnapshot();
 void navigationFacet.commands.createStartTab();
 void navigation.subscribe(() => undefined);

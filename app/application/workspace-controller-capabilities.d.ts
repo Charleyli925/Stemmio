@@ -3,8 +3,9 @@ import type {
   DocumentSessionSnapshot,
 } from "./document-session.js";
 import type {
-  DocumentSurfaceCacheEntry,
   DocumentSurfaceCacheSnapshot,
+  DocumentSurfacePresentation,
+  DocumentSurfaceCacheToken,
 } from "./document-surface-cache-session.js";
 import type { CommentSessionSnapshot } from "./comment-session.js";
 import type {
@@ -311,6 +312,8 @@ export interface NavigationControllerCommands {
     documentId: string;
     title: string;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
+    force?: boolean;
+    committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
 }
 
@@ -372,9 +375,11 @@ export interface DocumentSurfaceControllerCapability extends WorkspaceSnapshotRe
   updateDocumentSurfacePresentation(
     tabId: string,
     presentation?: Readonly<Record<string, unknown>>,
-  ): DocumentSurfaceCacheEntry | null;
-  confirmDocumentSurfaceReady(tabId: string, sourceSha256: string): boolean;
-  deferDocumentSurfacePrewarm(delayMs?: number): boolean;
+  ): DocumentSurfacePresentation | null;
+  updateDocumentSurfacePresentationForToken(
+    token: DocumentSurfaceCacheToken,
+    presentation?: Readonly<Record<string, unknown>>,
+  ): DocumentSurfacePresentation | null;
 }
 
 export interface NavigationWorkflowControllerCapability extends WorkspaceSnapshotReader {

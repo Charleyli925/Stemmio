@@ -63,7 +63,12 @@ export class WorkbenchTabsSession {
   commitStart(tabId: string): WorkbenchTabsSnapshot | null;
   commitSettings(tabId: string): WorkbenchTabsSnapshot | null;
   commitProjectRules(tabId: string): WorkbenchTabsSnapshot | null;
-  commitHistory(tabId: string): WorkbenchTabsSnapshot | null;
+  commitHistory(tabId: string, version?: {
+    versionId: string;
+    versionOrdinal: number;
+    versionLabel?: string;
+    displayFileName?: string;
+  } | null): WorkbenchTabsSnapshot | null;
   commitDocument(input: { tabId: string; projectId: string; documentId: string; title: string }): WorkbenchTabsSnapshot | null;
   cancelSwitch(tabId: string): WorkbenchTabsSnapshot;
   updateStatus(projectId: string, documentId: string, status: WorkbenchTabStatus): WorkbenchTabsSnapshot;
