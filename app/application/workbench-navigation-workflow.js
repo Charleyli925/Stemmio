@@ -128,6 +128,44 @@ export class WorkbenchNavigationWorkflow {
     });
   }
 
+  commitCurrentVersionAuthority({ context, title = "" } = {}) {
+    return this.#admit({
+      kind: "version-current-authority",
+      projectId: String(context?.projectId || ""),
+      documentId: String(context?.documentId || ""),
+    }, async (active) => {
+      const project = this.#controller.getSnapshot()?.projectSession;
+      if (
+        !context
+        || project?.projectId !== context.projectId
+        || project?.documentId !== context.documentId
+        || Number(project?.epoch) !== Number(context.epoch)
+        || String(project?.sourcePath || "") !== String(context.sourcePath || "")
+        || this.#controller.getSnapshot()?.versionSession?.viewMode !== "current"
+      ) return { outcome: rejected(
+        "VERSION_CURRENT_AUTHORITY_STALE",
+        "当前稿权威已经变化，没有切换标签页。",
+      ) };
+      const projectTab = this.#tabs.snapshot.tabs.find((tab) => (
+        tab.projectId === context.projectId
+        && tab.documentId === context.documentId
+      ));
+      const tab = this.#tabs.stageDocument({
+        projectId: context.projectId,
+        documentId: context.documentId,
+        title: String(title || projectTab?.title || project?.name || "当前稿"),
+      });
+      if (!tab) return { outcome: rejected(
+        "WORKBENCH_TAB_SWITCH_BUSY",
+        "另一个开始标签正在打开 HTML，请稍后重试。",
+      ) };
+      return this.#activateTab(active, tab.tabId, {
+        force: true,
+        currentAuthorityCommitted: true,
+      });
+    });
+  }
+
   createStart() {
     return this.#admit({ kind: "create-start" }, async (active) => {
       const before = new Set(this.#tabs.snapshot.tabs.map((tab) => tab.tabId));
@@ -204,12 +242,15 @@ export class WorkbenchNavigationWorkflow {
         && tab.documentId === requestedProject.documentId
       ));
       const versionChanged = Boolean(existing && existing.versionId !== versionId);
-      this.#tabs.createHistory({
+      const requestedHistory = Object.freeze({
         ...requestedProject,
         versionId,
         versionOrdinal,
         versionLabel: String(version?.versionLabel || version?.label || `V${versionOrdinal}`),
         displayFileName: String(version?.displayFileName || ""),
+      });
+      this.#tabs.createHistory({
+        ...requestedHistory,
         focus: false,
       });
       const target = this.#tabs.snapshot.tabs.find((tab) => (
@@ -218,7 +259,10 @@ export class WorkbenchNavigationWorkflow {
         && tab.documentId === requestedProject.documentId
       ));
       return target
-        ? this.#activateTab(active, target.tabId, { force: versionChanged })
+        ? this.#activateTab(active, target.tabId, {
+          force: versionChanged,
+          historyVersion: requestedHistory,
+        })
         : { outcome: rejected("VERSION_HISTORY_TAB_CREATE_FAILED", "无法打开历史版本标签页。") };
     });
   }
@@ -638,6 +682,9 @@ export class WorkbenchNavigationWorkflow {
     skipCapture = false,
     switchPrepared = false,
     currentOverride = null,
+    historyVersion = null,
+    committedVersionTransitionFailure = null,
+    currentAuthorityCommitted = false,
   } = {}) {
     const target = this.#tabs.resolveTab(tabId);
     if (!target) return { outcome: rejected("WORKBENCH_TAB_NOT_FOUND", "这个标签页已经关闭。") };
@@ -685,6 +732,9 @@ export class WorkbenchNavigationWorkflow {
       return { outcome: succeeded({ tabId: target.tabId }), receipt };
     }
     if (target.kind === "project-rules" || target.kind === "history") {
+      const surfaceTarget = target.kind === "history" && historyVersion
+        ? Object.freeze({ ...target, ...historyVersion, tabId: target.tabId, kind: target.kind })
+        : target;
       const prepared = skipPrepare || current?.kind === "start" || current?.kind === "settings"
         ? succeeded()
         : await this.#projectWorkflow.prepareSwitch();
@@ -753,10 +803,10 @@ export class WorkbenchNavigationWorkflow {
         ? await this.#controller.openProjectRules({ context })
         : await this.#controller.viewHistory({
           version: {
-            id: target.versionId,
-            ordinal: target.versionOrdinal,
-            label: target.versionLabel,
-            displayFileName: target.displayFileName,
+            id: surfaceTarget.versionId,
+            ordinal: surfaceTarget.versionOrdinal,
+            label: surfaceTarget.versionLabel,
+            displayFileName: surfaceTarget.displayFileName,
           },
           context,
           deadlineAt: this.#clock.now() + deadlineMs,
@@ -773,7 +823,7 @@ export class WorkbenchNavigationWorkflow {
         return sameProject ? { outcome } : this.#surfaceFailureAfterProjectCommit(active, target, outcome);
       }
       const committed = target.kind === "history"
-        ? this.#tabs.commitHistory(target.tabId)
+        ? this.#tabs.commitHistory(target.tabId, surfaceTarget)
         : this.#tabs.commitProjectRules(target.tabId);
       if (!committed) {
         const outcome = rejected(
@@ -804,10 +854,41 @@ export class WorkbenchNavigationWorkflow {
       && currentProject?.projectId === target.projectId
       && currentProject.documentId === target.documentId
     );
+    if (currentAuthorityCommitted) {
+      if (
+        !sameProjectDocument
+        || currentSnapshot?.versionSession?.viewMode !== "current"
+      ) return { outcome: rejected(
+        "VERSION_CURRENT_AUTHORITY_STALE",
+        "当前稿权威已经变化，没有切换标签页。",
+      ) };
+      const committed = this.#tabs.commitDocument({
+        tabId: target.tabId,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        title: target.title,
+      });
+      if (!committed) return { outcome: rejected(
+        "WORKBENCH_TAB_COMMIT_REJECTED",
+        "标签页状态已变化，没有打开当前稿。",
+      ) };
+      const receipt = Object.freeze({
+        transactionId: active.transactionId,
+        applicationId: null,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        epoch: Number(currentProject.epoch) || 0,
+        tabId: target.tabId,
+        kind: "document",
+      });
+      this.#session.transition(active.transactionId, "canvas-verified", { receipt });
+      return { outcome: succeeded({ tabId: target.tabId }), receipt };
+    }
     const canReuseMountedDocument = Boolean(
       sameProjectDocument
       && (
         current?.kind === "history"
+        || (force && current?.kind === "document" && current.tabId === target.tabId)
         || (
           (current?.kind === "settings" || current?.kind === "project-rules")
           && this.#tabs.snapshot.runtimeOwnerTabId === target.tabId
@@ -815,22 +896,42 @@ export class WorkbenchNavigationWorkflow {
       )
     );
     if (canReuseMountedDocument) {
-        if (current?.kind === "history" || currentSnapshot?.versionSession?.viewMode === "history") {
-          const returned = await this.#controller.returnToCurrent({
-            context: {
-              epoch: Number(currentProject.epoch) || 0,
-              projectId: String(currentProject.projectId),
-              documentId: String(currentProject.documentId),
-              sourcePath: String(currentProject.sourcePath || ""),
-            },
-          });
-          if (returned?.status !== "succeeded") {
-            return { outcome: rejected(
-              returned?.code || "VERSION_CURRENT_RETURN_REJECTED",
-              String(returned?.reason || "暂时无法回到当前稿。"),
-            ) };
-          }
+      if (committedVersionTransitionFailure) {
+        const committedFailure = this.#commitCurrentAfterVersionTransition(
+          active,
+          target,
+          committedVersionTransitionFailure,
+        );
+        if (committedFailure) return committedFailure;
+        return { outcome: rejected(
+          committedVersionTransitionFailure.code || "VERSION_CURRENT_OPEN_FAILED",
+          String(committedVersionTransitionFailure.reason || "新版本已创建，但当前稿画布尚未准备好。"),
+        ) };
+      }
+      if (
+        current?.kind === "history"
+        || currentSnapshot?.versionSession?.viewMode === "history"
+      ) {
+        const context = {
+          epoch: Number(currentProject.epoch) || 0,
+          projectId: String(currentProject.projectId),
+          documentId: String(currentProject.documentId),
+          sourcePath: String(currentProject.sourcePath || ""),
+        };
+        const returned = await this.#controller.returnToCurrent({ context });
+        if (returned?.status !== "succeeded") {
+          const committedFailure = this.#commitCurrentAfterVersionTransition(
+            active,
+            target,
+            returned,
+          );
+          if (committedFailure) return committedFailure;
+          return { outcome: rejected(
+            returned?.code || "VERSION_CURRENT_RETURN_REJECTED",
+            String(returned?.reason || "暂时无法回到当前稿。"),
+          ) };
         }
+      }
         const committed = this.#tabs.commitDocument({
           tabId: target.tabId,
           projectId: target.projectId,
@@ -846,7 +947,7 @@ export class WorkbenchNavigationWorkflow {
           applicationId: null,
           projectId: target.projectId,
           documentId: target.documentId,
-          epoch: Number(currentProject.epoch) || 0,
+          epoch: Number(this.#controller.getSnapshot()?.projectSession?.epoch) || 0,
           tabId: target.tabId,
           kind: "document",
         });
@@ -870,6 +971,43 @@ export class WorkbenchNavigationWorkflow {
       project: snapshot?.projectSession,
       document: snapshot?.document,
     }) || null;
+  }
+
+  #commitCurrentAfterVersionTransition(active, target, outcome) {
+    const snapshot = this.#controller.getSnapshot();
+    const project = snapshot?.projectSession;
+    if (
+      target.kind !== "document"
+      || project?.projectId !== target.projectId
+      || project?.documentId !== target.documentId
+      || snapshot?.versionSession?.viewMode !== "current"
+    ) return null;
+    const committed = this.#tabs.commitDocument({
+      tabId: target.tabId,
+      projectId: target.projectId,
+      documentId: target.documentId,
+      title: target.title,
+    });
+    if (!committed) return null;
+    this.#tabs.updateStatus(target.projectId, target.documentId, "error");
+    const receipt = Object.freeze({
+      transactionId: active.transactionId,
+      applicationId: null,
+      projectId: target.projectId,
+      documentId: target.documentId,
+      epoch: Number(project.epoch) || 0,
+      tabId: target.tabId,
+      kind: "document",
+    });
+    active.receipt = receipt;
+    return {
+      outcome: rejected(
+        outcome?.code || "VERSION_CURRENT_OPEN_FAILED",
+        String(outcome?.reason || "新版本已创建，但当前稿画布尚未准备好。可以重试打开。"),
+        { committed: true, tabId: target.tabId },
+      ),
+      receipt,
+    };
   }
 
   #surfaceFailureAfterProjectCommit(active, target, outcome) {

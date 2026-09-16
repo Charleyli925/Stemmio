@@ -137,6 +137,7 @@ export class VersionWorkflow {
   #codecs;
   #hashPort;
   #canvasPort;
+  #currentSurfacePort;
   #clock;
   #snapshot = initialSnapshot();
   #listeners = new Set();
@@ -279,6 +280,7 @@ export class VersionWorkflow {
     };
     this.#clock = clock;
     this.#filePort = ports.files || null;
+    this.#currentSurfacePort = ports.currentSurface || null;
   }
 
   getSnapshot() {
@@ -1308,6 +1310,12 @@ export class VersionWorkflow {
         return prepared?.coordination?.operationId
           ? unknown(operationId, "桌面工作文件已完成激活，但本地项目状态待同一操作核对。")
           : stale(current);
+      }
+      if (this.#currentSurfacePort?.commit) {
+        const surface = await this.#currentSurfacePort.commit({ context: nextContext });
+        if (surface?.status !== "succeeded") {
+          throw new Error(surface?.reason || "新当前稿权威已发布，但当前稿标签未能打开。");
+        }
       }
       this.#setHistoryCreation({ phase: "opening", operationId, context: nextContext, result }, generation);
       await this.#canvasPort.verifyRendered(content, sha256, nextContext);

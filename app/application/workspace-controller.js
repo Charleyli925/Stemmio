@@ -263,7 +263,9 @@ export function createRuntimeWorkspaceController({
     sourceHistorySession: new SourceHistorySession(),
     conversationSession: new ConversationSession(),
     workbenchTabsSession: new WorkbenchTabsSession(),
-    documentSurfaceCacheSession: new DocumentSurfaceCacheSession(),
+    documentSurfaceCacheSession: new DocumentSurfaceCacheSession({
+      maxEntries: initial.documentSurfaceCacheMaxEntries,
+    }),
     workbenchNavigationSession: new WorkbenchNavigationSession(),
     workbenchTabsPersistenceCoordinator: new WorkbenchTabsPersistenceCoordinator({
       port: ports.workbenchTabs || null,
@@ -358,13 +360,6 @@ export class WorkspaceController {
   #workbenchTabsReady = false;
   #externalOpenUnsubscribe = null;
   #navigationHostPort = null;
-  #documentProjectionPort = null;
-  #surfaceFramePort = null;
-  #surfacePrewarmScheduler = null;
-  #surfacePrewarmTimer = null;
-  #surfacePrewarmGeneration = 0;
-  #surfaceReadyWaiters = new Map();
-  #readySurfaceKeys = new Set();
   #bufferedExternalOpens = [];
   #runSessionUnsubscribe = null;
   #sessionPublicationDepth = 0;
@@ -525,13 +520,6 @@ export class WorkspaceController {
     this.#navigationHostPort = ports.navigation || null;
     this.#uiPreferencesPort = ports.uiPreferences || null;
     this.#agentCredentialStatusPort = ports.agentCredentialStatus || null;
-    this.#documentProjectionPort = projectWorkflow?.ports?.projectOpen
-      ?.readRegisteredProjection || null;
-    this.#surfaceFramePort = projectWorkflow?.ports?.canvas?.requestFrame || null;
-    this.#surfacePrewarmScheduler = projectWorkflow?.scheduler || {
-      setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
-      clearTimeout: (handle) => globalThis.clearTimeout(handle),
-    };
     this.#workbenchNavigationSession = workbenchNavigationSession;
     this.#workbenchNavigationSnapshot = workbenchNavigationSession?.snapshot || null;
     // The conversation projection is optional so an existing embedder that has
@@ -924,8 +912,6 @@ export class WorkspaceController {
         );
         this.#workbenchTabsUnsubscribe = this.#workbenchTabsSession.subscribe((snapshot) => {
           if (this.#disposed) return;
-          const priorActiveTabId = this.#workbenchTabsSnapshot?.activeTabId || null;
-          if (snapshot.pendingTabId) this.#cancelSurfacePrewarm();
           this.#workbenchTabsSnapshot = snapshot;
           this.#documentSurfaceCacheSession?.reconcile(
             snapshot.tabs
@@ -934,13 +920,6 @@ export class WorkspaceController {
           );
           this.#refreshDocumentSurfaceCache();
           this.#publishAggregateSnapshot();
-          if (
-            !snapshot.pendingTabId
-            && snapshot.activeTabId !== priorActiveTabId
-            && snapshot.tabs.some((tab) => (
-              tab.kind === "document" && tab.tabId === snapshot.activeTabId
-            ))
-          ) this.#scheduleInactiveSurfacePrewarm(snapshot.activeTabId);
         });
         this.#documentSurfaceCacheUnsubscribe =
           this.#documentSurfaceCacheSession?.subscribe((snapshot) => {
@@ -1033,6 +1012,15 @@ export class WorkspaceController {
           hash: this.#hashPort,
           canvas: versionWorkflow.canvas,
           files: versionWorkflow.files,
+          currentSurface: {
+            commit: ({ context }) => (
+              this.#workbenchNavigationWorkflow?.commitCurrentVersionAuthority({ context })
+              || Promise.resolve(rejected(
+                "WORKBENCH_NAVIGATION_UNAVAILABLE",
+                "当前稿导航暂时不可用。",
+              ))
+            ),
+          },
         },
         clock,
       });
@@ -1129,12 +1117,6 @@ export class WorkspaceController {
   }
 
   dispose() {
-    this.#cancelSurfacePrewarm();
-    for (const waiters of this.#surfaceReadyWaiters.values()) {
-      for (const finish of waiters) finish(false);
-    }
-    this.#surfaceReadyWaiters.clear();
-    this.#readySurfaceKeys.clear();
     this.#disposed = true;
     this.#pendingRegistrationPublication = null;
     this.#projectSession.setObserver(null);
@@ -1336,31 +1318,30 @@ export class WorkspaceController {
   }
 
   updateDocumentSurfacePresentation(tabId, presentation) {
-    return this.#documentSurfaceCacheSession?.updatePresentation(tabId, presentation) || null;
+    const tab = this.#workbenchTabsSession?.resolveTab(tabId);
+    const project = this.#projectSessionSnapshot;
+    const document = this.#documentSessionSnapshot;
+    const currentIdentity = tab?.kind === "document"
+      && project?.projectId === tab.projectId
+      && project?.documentId === tab.documentId
+      ? {
+          projectId: tab.projectId,
+          documentId: tab.documentId,
+          sourceSha256: document?.workingHtmlSha256 || document?.persistedSourceSha256,
+        }
+      : null;
+    return this.#documentSurfaceCacheSession?.updatePresentation(
+      tabId,
+      presentation,
+      currentIdentity,
+    ) || null;
   }
 
-  confirmDocumentSurfaceReady(tabId, sourceSha256) {
-    const key = `${String(tabId || "")}:${String(sourceSha256 || "")}`;
-    const waiters = this.#surfaceReadyWaiters.get(key);
-    if (!waiters?.size) {
-      this.#readySurfaceKeys.add(key);
-      if (this.#readySurfaceKeys.size > 64) {
-        this.#readySurfaceKeys.delete(this.#readySurfaceKeys.values().next().value);
-      }
-      return true;
-    }
-    for (const finish of [...waiters]) finish(true);
-    return true;
-  }
-
-  deferDocumentSurfacePrewarm(delayMs = 900) {
-    const activeTabId = this.#workbenchTabsSession?.snapshot.activeTabId;
-    if (!activeTabId) return false;
-    this.#cancelSurfacePrewarm();
-    this.#surfacePrewarmTimer = this.#surfacePrewarmScheduler?.setTimeout(() => {
-      this.#scheduleInactiveSurfacePrewarm(activeTabId);
-    }, Math.max(250, Number(delayMs) || 900));
-    return true;
+  updateDocumentSurfacePresentationForToken(token, presentation) {
+    return this.#documentSurfaceCacheSession?.updatePresentationForToken(
+      token,
+      presentation,
+    ) || null;
   }
 
   async #initializeWorkbenchTabs() {
@@ -1467,14 +1448,6 @@ export class WorkspaceController {
       }
       return;
     }
-    const pendingTab = this.#workbenchTabsSession.resolveTab(pending);
-    if (pendingTab?.kind === "document") {
-      const prewarmed = await this.#prewarmDocumentSurface(pendingTab, { hot: true });
-      if (prewarmed) {
-        await this.#waitForSurfaceReady(prewarmed);
-        await this.#waitForSurfaceFrame();
-      }
-    }
     const outcome = await this.#workbenchNavigationWorkflow.activateTab(pending, {
       intentKind: "startup-restore",
     });
@@ -1520,127 +1493,6 @@ export class WorkspaceController {
       committed: outcome.committed === true,
       reason: outcome.reason,
     });
-  }
-
-  async #prewarmDocumentSurface(tab, { hot = false } = {}) {
-    if (
-      this.#disposed
-      || tab?.kind !== "document"
-      || typeof this.#documentProjectionPort !== "function"
-    ) return null;
-    const existing = this.#documentSurfaceCacheSession?.snapshot.entries
-      .find((entry) => entry.tabId === tab.tabId);
-    if (existing) return existing;
-    const projection = await this.#documentProjectionPort(tab.projectId).catch(() => null);
-    const current = this.#workbenchTabsSession?.resolveTab(tab.tabId);
-    if (
-      this.#disposed
-      || current?.kind !== "document"
-      || current.projectId !== tab.projectId
-      || current.documentId !== tab.documentId
-      || projection?.projectId !== tab.projectId
-      || projection?.documentId !== tab.documentId
-    ) return null;
-    const admitted = this.#documentSurfaceCacheSession?.captureProjection({
-      tab: current,
-      project: projection,
-      hot,
-    }) || null;
-    if (admitted) {
-      this.#emitEvent({
-        type: "document-surface-prewarmed",
-        tabId: admitted.tabId,
-        sourceSha256: admitted.sourceSha256,
-        hot: admitted.tier === "hot",
-      });
-    }
-    return admitted;
-  }
-
-  #waitForSurfaceFrame() {
-    return new Promise((resolve) => {
-      if (typeof this.#surfaceFramePort === "function") {
-        let remainingFrames = 2;
-        const nextFrame = () => {
-          remainingFrames -= 1;
-          if (remainingFrames <= 0) resolve();
-          else this.#surfaceFramePort(nextFrame);
-        };
-        this.#surfaceFramePort(nextFrame);
-        return;
-      }
-      this.#surfacePrewarmScheduler?.setTimeout(resolve, 0);
-    });
-  }
-
-  #waitForSurfaceReady(entry, timeoutMs = 1_000) {
-    const key = `${entry.tabId}:${entry.sourceSha256}`;
-    if (this.#readySurfaceKeys.delete(key)) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let timer = null;
-      const finish = (ready) => {
-        if (timer !== null) this.#surfacePrewarmScheduler?.clearTimeout(timer);
-        const waiters = this.#surfaceReadyWaiters.get(key);
-        waiters?.delete(finish);
-        if (!waiters?.size) this.#surfaceReadyWaiters.delete(key);
-        resolve(ready);
-      };
-      const waiters = this.#surfaceReadyWaiters.get(key) || new Set();
-      waiters.add(finish);
-      this.#surfaceReadyWaiters.set(key, waiters);
-      timer = this.#surfacePrewarmScheduler?.setTimeout(
-        () => finish(false),
-        Math.max(100, Number(timeoutMs) || 1_000),
-      );
-    });
-  }
-
-  #scheduleInactiveSurfacePrewarm(activeTabId) {
-    this.#cancelSurfacePrewarm();
-    const tabs = this.#workbenchTabsSession?.snapshot.tabs || [];
-    const activeIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
-    const queue = tabs
-      .map((tab, index) => ({ tab, index }))
-      .filter(({ tab }) => tab.kind === "document" && tab.tabId !== activeTabId)
-      .sort((left, right) => (
-        Math.abs(left.index - activeIndex) - Math.abs(right.index - activeIndex)
-        || left.index - right.index
-      ));
-    const generation = ++this.#surfacePrewarmGeneration;
-    const runNext = async () => {
-      if (
-        this.#disposed
-        || generation !== this.#surfacePrewarmGeneration
-        || this.#workbenchTabsSession?.snapshot.pendingTabId
-      ) return;
-      if (this.projectHydrating) {
-        this.#surfacePrewarmTimer = this.#surfacePrewarmScheduler?.setTimeout(
-          runNext,
-          240,
-        );
-        return;
-      }
-      const next = queue.shift();
-      if (!next) {
-        this.#surfacePrewarmTimer = null;
-        return;
-      }
-      await this.#prewarmDocumentSurface(next.tab);
-      if (generation !== this.#surfacePrewarmGeneration) return;
-      this.#surfacePrewarmTimer = this.#surfacePrewarmScheduler?.setTimeout(
-        runNext,
-        180,
-      );
-    };
-    this.#surfacePrewarmTimer = this.#surfacePrewarmScheduler?.setTimeout(runNext, 180);
-  }
-
-  #cancelSurfacePrewarm() {
-    this.#surfacePrewarmGeneration += 1;
-    if (this.#surfacePrewarmTimer !== null) {
-      this.#surfacePrewarmScheduler?.clearTimeout(this.#surfacePrewarmTimer);
-      this.#surfacePrewarmTimer = null;
-    }
   }
 
   refreshProject(input) {
