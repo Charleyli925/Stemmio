@@ -206,10 +206,15 @@ do not split one state owner across hooks only to reduce line count.
 The gate must enforce responsibility, not private field names:
 
 - Views cannot import or call the Bridge.
+- Views cannot issue raw requests or filesystem writes; they dispatch application commands.
 - Application cannot import React, Workbench presentation, components or desktop.
-- Domain is pure.
+- Domain is pure: no React, Electron, filesystem, Bridge or application dependency.
 - Sessions are constructed only by `createRuntimeWorkspaceController()`.
-- Repository internals are not a second writer.
+- Repository internals are not a second writer; aliased filesystem imports are checked too.
+- `shared/` is cross-runtime pure logic except the explicit host-only
+  `project-storage-contract.mjs`; renderer and domain code cannot import that host adapter.
+- Parser failures and custom-root scans fail closed so an omitted or malformed source file
+  cannot be reported as an architecture pass.
 - Retired modules stay deleted.
 - Global Notice growth is frozen to `scripts/notice-disposition-ledger.json`.
   Generic `setToast` is retired. Remaining interruptions are closed

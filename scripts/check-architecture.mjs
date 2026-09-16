@@ -11,12 +11,14 @@ import {
   hasFilesystemWrite,
   hasIdentifier,
   hasLiteralComparison,
+  importBindings,
   memberAccesses,
   moduleSpecifiers,
   newExpressionNames,
   parseModule,
   persistentFileIdentityComparisons,
   stringLiterals,
+  syntaxErrors,
 } from "./architecture-ast-query.mjs";
 import {
   loadNoticeLedger,
@@ -181,6 +183,9 @@ const APPROVED_PERSISTENCE_OWNERS = new Set([
   "desktop/usage-telemetry.mjs",
   "desktop/workbench-tabs-state.mjs",
 ]);
+const HOST_ONLY_SHARED_MODULES = new Set([
+  "shared/project-storage-contract.mjs",
+]);
 
 async function sourceFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
@@ -192,8 +197,8 @@ async function sourceFiles(directory) {
   return nested.flat();
 }
 
-function relative(filePath) {
-  return path.relative(PRODUCT_ROOT, filePath).split(path.sep).join("/");
+function relative(filePath, productRoot = PRODUCT_ROOT) {
+  return path.relative(productRoot, filePath).split(path.sep).join("/");
 }
 
 function isApplication(file) {
@@ -217,7 +222,8 @@ function isProviderWorkflow(file) {
 }
 
 function presentationImport(specifier) {
-  return /(?:^|\/)(?:workbench|components|desktop)(?:\/|$)/u.test(specifier);
+  return /(?:^|\/)(?:workbench|components|desktop)(?:\/|$)/u.test(specifier)
+    || /(?:^|\/)(?:page|layout)(?:\.[^/]*)?$/u.test(specifier);
 }
 
 function bridgeImport(specifier) {
@@ -228,26 +234,49 @@ function hasProviderImplementationImport(imports) {
   return imports.some((specifier) => /(?:^|\/)(?:qoder-availability|QoderAvailabilityCard|qoder-provider)(?:\.[^/]*)?$/u.test(specifier));
 }
 
+function hostDependencyImport(specifier) {
+  return specifier === "electron"
+    || specifier.startsWith("electron/")
+    || specifier.startsWith("node:")
+    || specifier === "react"
+    || specifier.startsWith("react/")
+    || /(?:^|\/)(?:application|components|workbench|desktop|bridge)(?:\/|\.|$)/u.test(specifier);
+}
+
+function hostOnlySharedImport(specifier) {
+  return /(?:^|\/)project-storage-contract(?:\.mjs)?$/u.test(specifier);
+}
+
 export function layerBoundaryViolations({ file = "", source = "", module = null } = {}) {
   const handle = module || parseModule(file || "fixture.js", source);
   const imports = moduleSpecifiers(handle);
   const violations = [];
   if (file.startsWith("app/domain/")) {
     for (const specifier of imports) {
-      if (specifier === "react" || /(?:^|\/)(?:application|components|desktop)(?:\/|$)/u.test(specifier)) {
+      if (hostDependencyImport(specifier) || hostOnlySharedImport(specifier)) {
         violations.push(`${file}: domain code cannot import ${specifier}`);
       }
     }
   }
   if (isApplication(file)) {
     for (const specifier of imports) {
-      if (specifier === "react" || presentationImport(specifier)) {
+      if (specifier === "react" || specifier.startsWith("react/") || presentationImport(specifier)) {
         violations.push(`${file}: application code cannot import ${specifier}`);
       }
     }
   }
   if (isRenderer(file) && imports.some(bridgeImport)) {
     violations.push(`${file}: views cannot import the Bridge client`);
+  }
+  if (file.startsWith("app/") && imports.some(hostOnlySharedImport)) {
+    violations.push(`${file}: renderer code cannot import host-only shared storage paths`);
+  }
+  if (file.startsWith("shared/") && !HOST_ONLY_SHARED_MODULES.has(file)) {
+    for (const specifier of imports) {
+      if (specifier === "electron" || specifier.startsWith("electron/") || specifier.startsWith("node:")) {
+        violations.push(`${file}: cross-runtime shared code cannot import host module ${specifier}`);
+      }
+    }
   }
   if (file.startsWith("bridge/") || file.startsWith("scripts/")) {
     for (const specifier of imports) {
@@ -262,10 +291,13 @@ export function layerBoundaryViolations({ file = "", source = "", module = null 
 export function ownershipBoundaryViolations({ file = "", source = "", module = null } = {}) {
   const handle = module || parseModule(file || "fixture.js", source);
   const violations = [];
-  const constructions = newExpressionNames(handle).filter((name) => (
-    (RUNTIME_OWNERS.has(name) || /(?:Session|Workflow)$/u.test(name))
-    && !LOCAL_PRESENTATION_RUNTIME_OWNERS.has(name)
-  ));
+  const aliases = new Map(importBindings(handle).map((binding) => [binding.local, binding.imported]));
+  const constructions = newExpressionNames(handle)
+    .map((name) => aliases.get(name) || name)
+    .filter((name) => (
+      (RUNTIME_OWNERS.has(name) || /(?:Session|Workflow)$/u.test(name))
+      && !LOCAL_PRESENTATION_RUNTIME_OWNERS.has(name)
+    ));
   if (constructions.length > 0 && file !== COMPOSITION_ROOT) {
     violations.push(`${file}: runtime Sessions and Workflows may only be constructed by the composition root`);
   }
@@ -286,6 +318,9 @@ export function escapeBoundaryViolations({ file = "", source = "", module = null
   const imports = moduleSpecifiers(handle);
   if (isApplication(file) && !isBridgeClient(file) && calls.includes("fetch")) {
     violations.push(`${file}: raw fetch belongs to the typed Bridge client`);
+  }
+  if (isRenderer(file) && calls.includes("fetch")) {
+    violations.push(`${file}: views cannot issue raw business requests`);
   }
   if (
     isApplication(file)
@@ -496,21 +531,24 @@ export function compositionBoundaryViolations({
   ];
 }
 
-export async function architectureViolations() {
+export async function architectureViolations({ productRoot = PRODUCT_ROOT } = {}) {
   const files = [
-    ...(await sourceFiles(path.join(PRODUCT_ROOT, "app"))),
-    ...(await sourceFiles(path.join(PRODUCT_ROOT, "bridge"))),
-    ...(await sourceFiles(path.join(PRODUCT_ROOT, "scripts"))),
-    ...(await sourceFiles(path.join(PRODUCT_ROOT, "desktop"))),
+    ...(await sourceFiles(path.join(productRoot, "app"))),
+    ...(await sourceFiles(path.join(productRoot, "bridge"))),
+    ...(await sourceFiles(path.join(productRoot, "scripts"))),
+    ...(await sourceFiles(path.join(productRoot, "desktop"))),
+    ...(await sourceFiles(path.join(productRoot, "shared"))),
   ];
-  const ledger = await loadNoticeLedger();
+  const useRepositoryLedgers = path.resolve(productRoot) === path.resolve(PRODUCT_ROOT);
+  const ledger = useRepositoryLedgers ? await loadNoticeLedger() : null;
   const scanned = [];
   const violations = [];
   for (const filePath of files) {
-    const file = relative(filePath);
+    const file = relative(filePath, productRoot);
     const source = await readFile(filePath, "utf8");
     const ast = parseModule(filePath, source);
     scanned.push({ file, source, module: ast });
+    violations.push(...syntaxErrors(ast).map((reason) => `${file}: parse error ${reason}`));
     if (file.startsWith("bridge/project-file-repository")) {
       violations.push(...persistentFileIdentityComparisons(ast).map((reason) => `${file}: ${reason}`));
     }
@@ -519,14 +557,18 @@ export async function architectureViolations() {
     violations.push(...escapeBoundaryViolations({ file, source, module: ast }));
     violations.push(...retiredArtifactViolations({ file, source, module: ast }));
     violations.push(...dialogPolicyViolations({ file, source, module: ast }));
-    violations.push(...noticePolicyViolations({ file, source, module: ast, ledger }));
+    if (useRepositoryLedgers) {
+      violations.push(...noticePolicyViolations({ file, source, module: ast, ledger }));
+    }
   }
-  violations.push(...await noticeInventoryViolations(scanned, ledger));
+  if (useRepositoryLedgers) {
+    violations.push(...await noticeInventoryViolations(scanned, ledger));
+  }
   return [...new Set(violations)].sort();
 }
 
-export async function budgetFindings() {
-  const budgetPath = path.join(PRODUCT_ROOT, "scripts", "architecture-budget.json");
+export async function budgetFindings({ productRoot = PRODUCT_ROOT } = {}) {
+  const budgetPath = path.join(productRoot, "scripts", "architecture-budget.json");
   let budget;
   try {
     budget = JSON.parse(await readFile(budgetPath, "utf8"));
@@ -536,8 +578,8 @@ export async function budgetFindings() {
   const violations = [];
   const hints = [];
   for (const [relPath, limits] of Object.entries(budget.files ?? {})) {
-    const source = await readFile(path.join(PRODUCT_ROOT, relPath), "utf8");
-    const handle = parseModule(path.join(PRODUCT_ROOT, relPath), source);
+    const source = await readFile(path.join(productRoot, relPath), "utf8");
+    const handle = parseModule(path.join(productRoot, relPath), source);
     for (const [metric, ceiling] of Object.entries(limits)) {
       const actual = metric === "maxLines"
         ? source.split("\n").length
@@ -557,14 +599,18 @@ export async function budgetFindings() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const violations = await architectureViolations();
+  const rootIndex = process.argv.indexOf("--root");
+  const productRoot = rootIndex >= 0 && process.argv[rootIndex + 1]
+    ? path.resolve(process.argv[rootIndex + 1])
+    : PRODUCT_ROOT;
+  const violations = await architectureViolations({ productRoot });
   if (violations.length > 0) {
     process.stderr.write(`Architecture contract failed:\n- ${violations.join("\n- ")}\n`);
     process.exitCode = 1;
   } else {
     process.stdout.write("Architecture contract passed.\n");
   }
-  const { violations: budgetViolations, hints } = await budgetFindings();
+  const { violations: budgetViolations, hints } = await budgetFindings({ productRoot });
   const notices = [...budgetViolations, ...hints];
   if (notices.length > 0) process.stdout.write(`Budget advisory:\n- ${notices.join("\n- ")}\n`);
 }
