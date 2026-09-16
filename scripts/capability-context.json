@@ -79,6 +79,7 @@
         "^app/application/source-receipt",
         "^scripts/verify-source-receipt-typecheck",
         "^tests/source-receipt-contract\\.typecheck",
+        "^tests/source-receipt-typecheck-verifier",
         "^tsconfig\\.source-receipt",
         "^tests/document-"
       ],
@@ -105,6 +106,7 @@
         "tests/document-workflow.test.mjs",
         "tests/document-save-plan.test.mjs",
         "tests/document-session.test.mjs",
+        "tests/source-receipt-typecheck-verifier.test.mjs",
         "tests/source-receipt-contract.typecheck.ts",
         "tests/project-workflow.test.mjs"
       ],

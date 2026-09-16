@@ -234,13 +234,20 @@ export async function ensureDesktopRendererTestHarness(page, initialProject = nu
 const FIXTURE_OPEN_ATTEMPTS = 3;
 const FIXTURE_OPEN_ATTEMPT_TIMEOUT = 18_000;
 
+function currentProjectTabName(name) {
+  return `${path.basename(name, path.extname(name))} · 当前稿`;
+}
+
 async function openFixtureThroughDesktopHarness({
   page,
   editor,
   name,
   buffer,
 }) {
-  const fixtureTitle = page.getByRole("tab", { name, exact: true });
+  const fixtureTitle = page.getByRole("tab", {
+    name: currentProjectTabName(name),
+    exact: true,
+  });
   let lastError;
 
   for (let attempt = 1; attempt <= FIXTURE_OPEN_ATTEMPTS; attempt += 1) {
@@ -291,10 +298,8 @@ async function openFixtureThroughDesktopHarness({
     }
   }
 
-  const currentTitle = await page.locator(
-    '.workbench-tab[data-selected="true"] button[role="tab"] > span:last-child',
-  )
-    .textContent()
+  const currentTitle = await page.getByRole("tab", { selected: true })
+    .getAttribute("aria-label")
     .catch(() => "");
   throw new Error(
     `Stemmio did not open fixture ${JSON.stringify(name)} after ${FIXTURE_OPEN_ATTEMPTS} bounded submissions; current title: ${JSON.stringify(currentTitle?.trim() || "")}.`,

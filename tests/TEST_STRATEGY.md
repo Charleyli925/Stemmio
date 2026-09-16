@@ -102,9 +102,11 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
 - `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
-  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并用定向错误变异证明
-  实现文件确实在 TypeScript program 内、错误字段类型必须报错；不打开全仓
-  `checkJs`。
+  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
+  `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
+  再以内存源码覆盖完成定向错误变异。证明必须在目标实现位置得到指定类型错误；若正式配置
+  关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
+  也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`
   与既有 Session owner 直接验证
   hydration generation fence、accepted-result FIFO、drain 后 native input 延后与恢复、

@@ -33,10 +33,10 @@ export default function HistoryCreationDialog({
     if (!dialog) return;
     if (open && !dialog.open) {
       dialog.showModal();
-      const focusFrame = requestAnimationFrame(
-        () => waitButtonRef.current?.focus(),
-      );
-      return () => cancelAnimationFrame(focusFrame);
+      // Establish the safe default before the user can begin a pointer
+      // sequence. A deferred focus can land between pointerdown and click on
+      // slower renderers and silently steal the create confirmation.
+      waitButtonRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
     }
