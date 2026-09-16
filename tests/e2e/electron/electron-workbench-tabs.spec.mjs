@@ -54,7 +54,7 @@ test("Electron tab keyboard navigation manages focus and a persisted Start suppr
     await firstLaunch.page.getByRole("button", { name: "新标签页" }).click();
     await expect(tablist.getByRole("tab")).toHaveCount(3);
     await expect(firstLaunch.page.getByTestId("workbench-document-surface-cache")
-      .locator("[data-tab-id] iframe")).toHaveCount(1);
+      .locator("[data-tab-id] iframe")).toHaveCount(0);
 
     const documentTab = tablist.getByRole("tab").nth(0);
     const firstStart = tablist.getByRole("tab").nth(1);
@@ -367,14 +367,42 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     const firstTabs = first.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     await expect(firstTabs).toHaveCount(2);
     await expect(firstTabs.filter({ hasText: "registry-restart-b" })).toHaveAttribute("aria-selected", "true");
-    const cachedSurfaces = first.page.getByTestId("workbench-document-surface-cache")
-      .locator("[data-tab-id]");
-    // The active document keeps its source projection in the cache session,
-    // but only the inactive tab mounts a read-only display iframe.
-    await expect(cachedSurfaces).toHaveCount(1, { timeout: 30_000 });
-    await expect(cachedSurfaces.locator("iframe")).toHaveCount(1);
-    await expect(cachedSurfaces.locator("iframe").first())
-      .toHaveAttribute("sandbox", "allow-same-origin");
+    const surfaceCache = first.page.getByTestId("workbench-document-surface-cache");
+    // The inactive tab retains exact HTML data and reading state, not a live
+    // display document. A cached return may mount only during the handoff.
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "2");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await first.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      sample();
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+    await firstTabs.filter({ hasText: "registry-restart-a" }).click();
+    await loadedDiskFrame(first.page, projectA.sourcePath, "list-item");
+    await expect.poll(() => first.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => first.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeLessThanOrEqual(2);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await firstTabs.filter({ hasText: "registry-restart-b" }).click();
+    await loadedDiskFrame(first.page, projectB.sourcePath, "list-item");
+    await first.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+    });
     const tabsStatePath = path.join(first.isolatedUserData, "workbench-tabs.json");
     await expect.poll(() => {
       try {
@@ -398,13 +426,11 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     await expect(restoredTabs.filter({ hasText: "registry-restart-a" })).toHaveCount(1);
     await expect(restoredTabs.filter({ hasText: "registry-restart-b" })).toHaveCount(1);
     await expect(restoredTabs.filter({ hasText: "registry-restart-b" })).toHaveAttribute("aria-selected", "true");
-    // The restored active document may have a data-only warm projection, but
-    // it must not keep a hidden full-page display iframe once its Canvas is live.
+    // Restart restoration begins the authoritative open immediately. It does
+    // not read a presentation projection or wait for a cache surface first.
     await expect(restored.page.locator('[data-testid="workbench-document-surface-cache"] iframe'))
       .toHaveCount(0, { timeout: 30_000 });
     const readStartupPresentation = () => restored.page.evaluate(() => ({
-      projected: performance.getEntriesByName("stemmio:tab-cache:prewarmed", "mark")
-        .find((entry) => entry.detail?.hot === true)?.startTime || null,
       visible: performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark")[0]
         ?.startTime || null,
       verified: (() => {
@@ -413,14 +439,9 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
       })(),
     }));
     await expect.poll(readStartupPresentation).toMatchObject({
-      projected: expect.any(Number),
+      visible: null,
       verified: expect.any(Number),
     });
-    const startupPresentation = await readStartupPresentation();
-    expect(startupPresentation.projected).toBeLessThan(startupPresentation.verified);
-    if (startupPresentation.visible !== null) {
-      expect(startupPresentation.visible).toBeLessThan(startupPresentation.verified);
-    }
 
     await closeStemmioGracefully(restored.electronApp, restored.page);
     restoredClosed = true;
@@ -446,6 +467,97 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
     removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron restores the visible reading position and Preview mode after HTML cache eviction", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(240_000);
+  const projectA = createSourceFixture("tab-reading-a.html", (source) => source.replace(
+    /<\/body>/iu,
+    `<section data-p="reading-tail" style="min-height:3200px;padding-top:120px">READING_TAIL_A</section></body>`,
+  ));
+  const projectB = createSourceFixture("tab-reading-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+    injectedEnv: { STEMMIO_E2E_DOCUMENT_SURFACE_CACHE_MAX_ENTRIES: "1" },
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    const stage = launched.page.locator(".review-scroll-stage");
+    await expect.poll(() => stage.evaluate((element) => (
+      element.scrollHeight - element.clientHeight
+    ))).toBeGreaterThan(1_500);
+    await stage.evaluate((element) => element.scrollTo({ top: 1_200, behavior: "auto" }));
+    const editScrollTop = await expect.poll(() => stage.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(1_000)
+      .then(() => stage.evaluate((element) => element.scrollTop));
+
+    await openRecentProject(launched.page, projectB.sourcePath);
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "tab-reading-a" });
+    const tabB = tabs.filter({ hasText: "tab-reading-b" });
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "1");
+    await expect(surfaceCache).toHaveAttribute("data-cold-count", "1");
+
+    await tabA.click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeGreaterThan(
+      editScrollTop - 40,
+    );
+
+    const mode = launched.page.getByRole("group", { name: "工作模式", exact: true });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    const previewFrame = launched.page.frameLocator('iframe[title="HTML 交互预览"]');
+    await expect(previewFrame.locator("body")).toBeVisible();
+    await previewFrame.locator("body").evaluate(() => window.scrollTo({ top: 900, behavior: "auto" }));
+    const previewScrollTop = await expect.poll(() => previewFrame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(700)
+      .then(() => previewFrame.locator("body").evaluate(() => window.scrollY));
+
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "1");
+    await expect(surfaceCache).toHaveAttribute("data-cold-count", "1");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+
+    await tabA.click();
+    await waitForProjectReady(launched.page);
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await expect(mode.getByRole("button", { name: "预览", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect(previewFrame.locator("body")).toBeVisible();
+    await expect.poll(() => previewFrame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(previewScrollTop - 40);
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBe(0);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+    });
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
   }
 });
 

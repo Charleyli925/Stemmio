@@ -449,6 +449,7 @@ declare global {
         e2eStaticCandidateFailure?: boolean;
         e2eRuntimeCommitHooks?: boolean;
         e2eCanvasCapabilityProbe?: boolean;
+        e2eDocumentSurfaceCacheMaxEntries?: number | null;
       }>;
     };
     __STEMMIO_E2E_RUNTIME_COMMIT_RELEASES__?: Array<() => void>;

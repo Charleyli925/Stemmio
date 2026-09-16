@@ -481,8 +481,9 @@ async function runtimeResourceSnapshot() {
         mounted: Boolean(surfaceCache),
         surfaceCount: surfaceCache?.querySelectorAll("[data-tab-id]").length || 0,
         iframeCount: surfaceCache?.querySelectorAll("iframe").length || 0,
-        hotCount: numberAttribute(surfaceCache, "data-hot-count"),
-        warmCount: numberAttribute(surfaceCache, "data-warm-count"),
+        mountedCount: numberAttribute(surfaceCache, "data-mounted-count"),
+        cacheEntryCount: numberAttribute(surfaceCache, "data-cache-entry-count"),
+        presentationCount: numberAttribute(surfaceCache, "data-presentation-count"),
         cachedBytes: numberAttribute(surfaceCache, "data-cache-bytes"),
       },
       runtimeHot: {
@@ -764,16 +765,16 @@ async function cacheState() {
     return {
       surfaceCount: root?.querySelectorAll("[data-tab-id]").length || 0,
       iframeCount: root?.querySelectorAll("iframe").length || 0,
-      hotTabIds: [...(root?.querySelectorAll("[data-tab-id]") || [])]
+      mountedTabIds: [...(root?.querySelectorAll("[data-tab-id]") || [])]
         .map((entry) => entry.getAttribute("data-tab-id")),
       visible: root?.getAttribute("data-visible") || null,
       visibleTabId: root?.getAttribute("data-visible-tab-id") || null,
-      hotCount: numberAttribute("data-hot-count"),
-      warmCount: numberAttribute("data-warm-count"),
+      mountedCount: numberAttribute("data-mounted-count"),
+      cacheEntryCount: numberAttribute("data-cache-entry-count"),
+      presentationCount: numberAttribute("data-presentation-count"),
       coldCount: numberAttribute("data-cold-count"),
       cachedBytes: numberAttribute("data-cache-bytes"),
       limits: {
-        maxHotEntries: numberAttribute("data-max-hot-entries"),
         maxEntries: numberAttribute("data-max-cache-entries"),
         maxBytes: numberAttribute("data-max-cache-bytes"),
       },
@@ -787,15 +788,15 @@ async function cacheState() {
 }
 
 function assertCacheBudget(snapshot, label, { minimumRuntimeHotCount = 0 } = {}) {
-  assert(snapshot.limits.maxHotEntries > 0, `${label}: cache diagnostics are missing`);
-  assert.equal(snapshot.surfaceCount, snapshot.hotCount, `${label}: Hot DOM count drifted`);
-  assert.equal(snapshot.iframeCount, snapshot.hotCount, `${label}: live iframe count drifted`);
+  assert(snapshot.limits.maxEntries > 0, `${label}: cache diagnostics are missing`);
+  assert.equal(snapshot.surfaceCount, snapshot.mountedCount, `${label}: handoff DOM count drifted`);
+  assert.equal(snapshot.iframeCount, snapshot.mountedCount, `${label}: handoff iframe count drifted`);
   assert(
-    snapshot.hotCount <= snapshot.limits.maxHotEntries,
-    `${label}: mounted hot surfaces exceeded the resource budget`,
+    snapshot.mountedCount <= 2,
+    `${label}: transient handoff surfaces exceeded the overlap budget`,
   );
   assert(
-    snapshot.hotCount + snapshot.warmCount <= snapshot.limits.maxEntries,
+    snapshot.cacheEntryCount <= snapshot.limits.maxEntries,
     `${label}: retained projections exceeded the entry budget`,
   );
   assert(

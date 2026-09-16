@@ -229,7 +229,7 @@ import {
   restoreCachedDocumentPresentation,
   useDocumentSurfaceHandoff,
 } from "./workbench/document-surface-presentation";
-import { markDocumentSurfacePrewarmed, markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
+import { markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
 import {
   type ReviewDocuments,
 } from "./workbench/review-document";
@@ -537,6 +537,7 @@ export default function Workbench() {
   const projectRegistrationPreparationRef = useRef("");
   const pendingSidebarHistoryRef = useRef<ProjectVersionSummary | null>(null);
   const pendingSidebarHistoryAttemptRef = useRef<ProjectVersionSummary | null>(null);
+  const pendingPresentationCaptureRef = useRef<string | null>(null);
   useEffect(() => () => {
     pendingSidebarHistoryRef.current = null;
     pendingSidebarHistoryAttemptRef.current = null;
@@ -647,6 +648,15 @@ export default function Workbench() {
   const projectSnapshot = shellSnapshot?.projectSession
     ?? INITIAL_PROJECT_SESSION_SNAPSHOT;
   const { sourcePath, projectId, documentId } = projectSnapshot;
+  const activeDocumentPresentation = documentSurfaceCacheSnapshot.presentations.find((entry) => (
+    activeWorkbenchTab?.kind === "document"
+    && entry.tabId === activeWorkbenchTab.tabId
+    && entry.projectId === projectId
+    && entry.documentId === documentId
+    && entry.sourceSha256 === (
+      documentSnapshot.workingHtmlSha256 || documentSnapshot.persistedSourceSha256
+    )
+  )) || null;
   // The first durable import changes the ProjectSession source from the
   // caller-owned HTML to V1's managed Working Copy without replacing the live
   // DocumentSession canvas. Keep the selected external HTML as the preview
@@ -903,6 +913,9 @@ export default function Workbench() {
       initial: {
         documentHtml: DEFAULT_PROJECT_HTML,
         runSourcePath: WELCOME_PROJECT.sourcePath,
+        documentSurfaceCacheMaxEntries:
+          window.stemmioRuntime?.diagnostics?.e2eDocumentSurfaceCacheMaxEntries
+          ?? undefined,
       },
       draftSession: {
         encodeComment: persistedComment,
@@ -1708,24 +1721,19 @@ export default function Workbench() {
         epoch?: unknown;
         requestId?: unknown;
         ackPending?: unknown;
-        tabId?: unknown;
-        sourceSha256?: unknown;
-        hot?: unknown;
       }>;
       if (projectEvent.type === "project-hydration-stage") {
         markProjectHydrationStage(String(projectEvent.stage || ""), projectEvent.operationId, projectEvent.timing);
         return;
       }
-      if (projectEvent.type === "document-surface-prewarmed") {
-        markDocumentSurfacePrewarmed(
-          projectEvent.tabId,
-          projectEvent.sourceSha256,
-          projectEvent.hot,
-        );
-        return;
-      }
       if (projectEvent.type === "project-applied") {
         const project = projectEvent.project as HtmlProject;
+        const tabSnapshot = workspaceController.getSnapshot().workbenchTabs;
+        const targetTabId = tabSnapshot?.tabs.find((tab) => (
+          tab.kind === "document"
+          && tab.projectId === project.projectId
+          && tab.documentId === project.documentId
+        ))?.tabId || "";
         markProjectApplied(projectEvent.operationId, projectEvent.epoch);
         setStartupIssue(null);
         setProjectName(project.name);
@@ -1739,9 +1747,9 @@ export default function Workbench() {
           pendingSidebarHistoryRef.current = null;
         }
         commentCanvasPort.setSelection(null);
-        restoreCachedDocumentPresentation({
-          controller: workspaceController, project, setPageViewContext,
-          setCanvasMode, stage: reviewStageRef.current,
+        const restoredPresentation = restoreCachedDocumentPresentation({
+          controller: workspaceController, tabId: targetTabId, project,
+          setPageViewContext, stage: reviewStageRef.current,
         });
         // Exact identity keys let tab changes cancel work without purging cache.
         reviewAnalysisSession.cancel();
@@ -1758,7 +1766,7 @@ export default function Workbench() {
         setPreviewAttachment(null);
         commentEditResumePendingRef.current = null;
         commentCanvasPort.resetLayout();
-        setCanvasMode("edit");
+        setCanvasMode(restoredPresentation?.canvasMode || "edit");
         setSourceViewTransitioning(false);
         setProjectRegistrationError("");
         setOpeningReadyVersion(Boolean(
@@ -1772,14 +1780,6 @@ export default function Workbench() {
             ),
           ),
         ));
-        const reviewStage = reviewStageRef.current;
-        if (reviewStage && typeof reviewStage.scrollTo === "function") {
-          try {
-            reviewStage.scrollTo({ top: 0 });
-          } catch {
-            // Scrolling is presentational and cannot own a project transition.
-          }
-        }
         return;
       }
       if (projectEvent.type === "project-draft-recovered") {
@@ -3214,18 +3214,31 @@ export default function Workbench() {
   ) => {
     if (!workspaceController) return;
     const activeTabId = tabs.activeTabId;
-    const cachedScrollTop = workspaceController.getSnapshot().documentSurfaceCache?.entries
+    const cachedScrollTop = workspaceController.getSnapshot().documentSurfaceCache?.presentations
       .find((entry) => entry.tabId === activeTabId)?.scrollTop;
     rememberActiveDocumentPresentation({ controller: workspaceController,
       tabs, canvasMode,
       pageViewContext: activePageViewContext,
       scrollTop: canvasMode === "edit"
-        ? editorRef.current?.getScrollTop() || 0
-        : cachedScrollTop ?? reviewStageRef.current?.scrollTop ?? 0 });
+        ? reviewStageRef.current?.scrollTop ?? 0
+        : cachedScrollTop ?? 0 });
   }, [
     activePageViewContext,
     canvasMode,
     workspaceController,
+  ]);
+  useLayoutEffect(() => {
+    const pendingTabId = workbenchTabsSnapshot.pendingTabId;
+    if (!pendingTabId) {
+      pendingPresentationCaptureRef.current = null;
+      return;
+    }
+    if (pendingPresentationCaptureRef.current === pendingTabId) return;
+    pendingPresentationCaptureRef.current = pendingTabId;
+    rememberWorkbenchTabPresentation(workbenchTabsSnapshot);
+  }, [
+    rememberWorkbenchTabPresentation,
+    workbenchTabsSnapshot,
   ]);
   const openRegisteredWorkbenchProject = useCallback(async (project: RegisteredProject) => {
     if (!navigationCapability || !project.documentId || project.availability !== "ready") return null;
@@ -6079,7 +6092,7 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  const { visibleCachedSurface, candidateCachedSurface, retainPresentedTab, completeHandoff, updateVisibleScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, renderedSourceSha256: canvasMode === "preview" && canvasRenderAcks.preview?.generation === canvasGeneration ? canvasRenderAcks.preview.sha256 : renderedContentSha256, canvasAuthority, canvasGeneration, controller: workspaceController });
+  const { visibleCachedSurface, candidateCachedSurface, retainPresentedTab, completeHandoff, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, renderedSourceSha256: canvasMode === "preview" && canvasRenderAcks.preview?.generation === canvasGeneration ? canvasRenderAcks.preview.sha256 : renderedContentSha256, canvasAuthority, canvasGeneration, controller: workspaceController });
   const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface);
   const retryProjectHydrationFromCommentRail = useCallback(() => {
     void workspaceController?.retryProjectHydration();
@@ -6520,13 +6533,12 @@ export default function Workbench() {
       /> : null}
       <WorkbenchDocumentSurfaceCache
         snapshot={documentSurfaceCacheSnapshot}
-        activeTabId={activeWorkbenchTab?.kind === "document" ? activeWorkbenchTab.tabId : null}
         visibleTabId={visibleCachedSurface?.tabId || null}
         visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
         candidateTabId={candidateCachedSurface?.tabId || null}
         candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
         onVisibleReady={retainPresentedTab} onHandoffComplete={completeHandoff}
-        onVisibleScroll={updateVisibleScroll}
+        onHandoffScroll={updateHandoffScroll}
         onFirstScroll={markFirstScroll}
         height="var(--comment-canvas-height, 760px)"
       />
@@ -6682,7 +6694,6 @@ export default function Workbench() {
                   height="var(--comment-canvas-height, 760px)"
                   onChange={handleCanvasChange}
                   onInteraction={() => {
-                    workspaceControllerRef.current?.deferDocumentSurfacePrewarm();
                     if (commentCanvasPort.getSnapshot().relinkingTarget) {
                       commentCanvasPort.armRelinkSelection();
                     }
@@ -6739,7 +6750,6 @@ export default function Workbench() {
                   pageViewContext={activePageViewContext}
                   pageViewDocumentKey={pageViewDocumentKey}
                   onPageViewContextChange={acceptPageViewContext}
-                  initialScrollTop={historyPreview ? undefined : visibleCachedSurface?.scrollTop}
                   locked={
                     runInProgress
                     || projectHydrating
@@ -6774,13 +6784,15 @@ export default function Workbench() {
               height="100%"
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
-              onInteraction={() => workspaceControllerRef.current?.deferDocumentSurfacePrewarm()}
               onReady={historyPreview ? undefined : handlePreviewReady}
               presentationCovered={cachedSurfaceBlocksCanvas}
-              initialScrollTop={historyPreview ? undefined : visibleCachedSurface?.scrollTop}
+              initialScrollTop={historyPreview ? undefined : activeDocumentPresentation?.scrollTop}
               onScrollTopChange={(scrollTop) => {
                 if (!historyPreview && activeWorkbenchTab.kind === "document") {
-                  updateVisibleScroll(activeWorkbenchTab.tabId, scrollTop);
+                  workspaceController?.updateDocumentSurfacePresentation(
+                    activeWorkbenchTab.tabId,
+                    { scrollTop },
+                  );
                 }
               }}
             />
