@@ -29,7 +29,19 @@ export class WorkbenchNavigationWorkflow {
   });
   openProject(input?: Record<string, unknown>): Promise<WorkbenchNavigationOutcome>;
   activateTab(tabId: string, input?: { deadlineMs?: number; intentKind?: string }): Promise<WorkbenchNavigationOutcome>;
-  openRegisteredProject(input: { projectId: string; documentId: string; title: string; status?: WorkbenchTabStatus }): Promise<WorkbenchNavigationOutcome>;
+  openRegisteredProject(input: {
+    projectId: string;
+    documentId: string;
+    title: string;
+    status?: WorkbenchTabStatus;
+    force?: boolean;
+    committedVersionTransitionFailure?: { code?: string; reason?: string };
+  }): Promise<WorkbenchNavigationOutcome>;
+  commitCurrentVersionAuthority(input: {
+    context: import("./project-session.js").ProjectContext;
+    title?: string;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<WorkbenchNavigationOutcome>;
   createStart(): Promise<WorkbenchNavigationOutcome>;
   createSettings(): Promise<WorkbenchNavigationOutcome>;
   createProjectRules(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;

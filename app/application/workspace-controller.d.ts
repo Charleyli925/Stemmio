@@ -742,7 +742,11 @@ export class WorkspaceController {
   restorePreservedDraft(input: { recoveryId: string }): Promise<VersionWorkflowOutcome<import("./version-workflow.js").CurrentVersionResult>>;
   exportHtml(input?: { suggestedName?: string; saveVersion?: boolean }): Promise<VersionWorkflowOutcome>;
   openSelectedDocumentInDefaultBrowser(): Promise<DocumentWorkflowOutcome<BrowserOpenResult>>;
-  openCreatedHistoryVersion(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
+  openCreatedHistoryVersion(input: {
+    operationId: string;
+    context?: ProjectContext | null;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome>;
   queryHistoryCreation(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome>;
   ensureRegistered(
     input?: RegistrationInput,

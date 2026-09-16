@@ -418,7 +418,10 @@ The current UI has no history “continue editing” command. Manual history wor
 first creates an immutable Version under one durable creation operation, then
 `openCreatedHistoryVersion` re-queries that same receipt and validates its full
 project/document/version/Working Copy/OpenTarget/HTML/Hash tuple before using
-the ordinary managed-source transition. A lost creation or opened acknowledgement
+the ordinary managed-source transition. The creation command already drained the
+replaced current source before committing that receipt; opening or retrying the
+same receipt does not drain the now-superseded source again, because creation may
+have intentionally changed those bytes. A lost creation or opened acknowledgement
 is reconciled under the same operation and never recreates the Version or rolls a
 newer Working Copy back. The old `/history-version/continue` route is disk-only
 compatibility: it may only read and replay an already-existing `historyActivation`

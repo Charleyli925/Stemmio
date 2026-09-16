@@ -22,6 +22,12 @@ export default function HistoryCreationDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const waitButtonRef = useRef<HTMLButtonElement>(null);
 
+  const closeDialog = () => {
+    const dialog = dialogRef.current;
+    if (dialog?.open) dialog.close();
+    onClose();
+  };
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -37,7 +43,7 @@ export default function HistoryCreationDialog({
   }, [open]);
 
   const handleBackdropPointer = (event: MouseEvent<HTMLDialogElement>) => {
-    if (event.target === event.currentTarget) onClose();
+    if (event.target === event.currentTarget) closeDialog();
   };
 
   return (
@@ -48,7 +54,7 @@ export default function HistoryCreationDialog({
       aria-describedby="history-create-description"
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        closeDialog();
       }}
       onClose={onClose}
       onMouseDown={handleBackdropPointer}
@@ -70,7 +76,7 @@ export default function HistoryCreationDialog({
             ref={waitButtonRef}
             className="cancel-ai-run-wait"
             type="button"
-            onClick={onClose}
+            onClick={closeDialog}
           >
             取消
           </button>

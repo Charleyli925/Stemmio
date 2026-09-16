@@ -412,14 +412,14 @@ body {
   white-space: nowrap;
 }
 
-.workbench-more-menu-entry > button:hover,
+.workbench-more-menu-entry > button:not([aria-disabled="true"]):hover,
 .workbench-more-menu-entry > button:focus-visible {
   background: var(--chrome-hover);
   color: var(--chrome-text);
   outline: none;
 }
 
-.workbench-more-menu-entry > button:active {
+.workbench-more-menu-entry > button:not([aria-disabled="true"]):active {
   background: var(--chrome-active);
 }
 
@@ -428,7 +428,7 @@ body {
   color: var(--chrome-accent);
 }
 
-.workbench-more-menu-entry > button:disabled {
+.workbench-more-menu-entry > button[aria-disabled="true"] {
   color: var(--chrome-muted);
   cursor: not-allowed;
   opacity: .62;
