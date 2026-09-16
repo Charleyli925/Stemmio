@@ -3486,7 +3486,6 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - First task gate stopped after 3/10 steps: type/lint passed; Node 1057/1058 passed, with the new Browser spec missing from the required risk ledger. The missing owner/oracle/stage entry is now present, and inventory plus impact-selection checks pass 49/49. Production source is unchanged. Full completion gate after this registration repair remains pending; original failure evidence is retained outside Git.
 
 - Final frozen-source task gate `2026-09-12T10-41-00-448Z-task` passed 10/10 steps: targeted Node 1058, contract 16 and core 1898 (overlapping groups); Browser 36/36, Electron 43/43 and AI/Review 30/30, with no selected failures, skips, flaky or missing tests. Both new Browser and both Electron fallback cases were selected and executed. Source fingerprints remained unchanged and all test processes exited. Only this QA result was added after the gate. Scope is synthetic rebuilt-source acceptance, not a private-corpus, vendor, packaged or installed-app result.
-
 ## 2026-09-16 — Direct structure closure and real-corpus discovery diagnostics
 
 - Mode: DESIGN CHANGE, lightweight. The existing move controls now check source-backed eligibility and whether a legal adjacent direction exists before doing the bounded Runtime subtree proof. No new control, panel, banner or visual token was added.
@@ -3504,3 +3503,52 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
 - Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
 - Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.
+
+## 2026-09-16 — 项目作用域页面标签与历史预览
+
+### Comparison target
+
+- Source visual truth: `/Users/lizexuan/.codex/generated_images/01a0a875-2b85-7861-a72f-fa5bf8af7cfd/exec-d25f03c0-220b-41c2-bd64-a1846b64a299.png`，1487 × 1058 px。该概念稿定义单行“项目名 · 页面类型”标签、Stemmio 品牌、历史类型色和历史菜单位置；两条用户批注明确覆盖概念稿中的“只读”徽标和只显示适用菜单项。
+- Rendered implementation: `output/playwright/electron-smoke/results/electron-workbench-tabs-El-d7fb3-in-the-existing-project-tab/version-history-menu.png`，2880 × 1920 px，对应 1440 × 960 CSS px、device scale factor 2。
+- State: 两个项目已打开，项目 B 的历史 V3 标签选中；工作模式直接选中“预览”，“编辑”禁用；左侧历史展开且 V3 选中；更多菜单打开并展示全部核心操作。
+- Normalization: 全景比较 `output/design-qa/project-tabs-pass2-comparison.png` 将实现等比缩放到 1058 px 高后与原始概念稿水平拼接，3076 × 1058 px；没有把 density 差异当作视觉问题。聚焦比较 `output/design-qa/project-tabs-pass2-focused.png` 使用概念稿顶部 1487 × 380 px 与实现顶部 2880 × 700 px（等比缩放到 380 px 高），共同检查品牌、标签、历史模式和菜单。
+
+### Findings
+
+- 没有剩余 P0/P1/P2。项目扩展名不再泄漏到项目前缀；历史使用琥珀色时钟图标，不复用当前稿绿点；项目名前缀和页面类型有明确字重层级；当前稿、规则、历史在同一标签行内可区分。
+- 字体与排版：沿用现有工作台系统字体和字号层级；标签项保持单行截断，菜单主文案与禁用原因有两级字重/字号。没有出现概念稿文字被挤压或页面类型丢失。
+- 间距与布局：1440 × 960 下标签、工具栏、项目栏和 8 项核心菜单均未遮挡持久控件；菜单具备视口最大高度和纵向滚动兜底。概念稿与实现的 Canvas/评论栏内容不同，是测试 HTML 和既有工作台结构，不属于本次标签架构的视觉目标。
+- 颜色与状态：当前稿保留绿色状态点；长期规则使用紫色铅笔；历史使用暖色时钟。历史页直接选中“预览”，禁用“编辑”，符合用户批注，不再增加“只读”模式或滑出横条。
+- 图像质量：品牌使用仓库内真实 `brand-logo.png`，在 @2x Electron 截图中边缘清晰；没有用 CSS 图形、文字或临时 SVG 代替品牌资产。其余图标来自现有 Phosphor 图标族，线重和尺寸一致。
+- 文案与对象关系：菜单完整保留“保存为新版本、基于此版本创建、Finder、浏览器、导出、同时保存、找回稿件、磁盘重载”；不可用项置灰并解释原因。“导出此版本…”保持可用，Finder/浏览器不会把当前稿冒充历史快照。
+- 交互与无障碍：真实 Electron 流程验证跨项目打开历史、同项目返回当前稿、键盘打开历史、历史失败保留当前页、创建确认取消、导出所见 V3、创建 V9/重启以及完整菜单禁用态。标签补充精确 `aria-label`，菜单原因通过 `aria-describedby` 关联；禁用项不进入方向键可操作集合。测试夹具故意触发一次 authored-script 错误和一次历史读取失败，均按预期恢复，没有未分类的 shell 控制台故障阻断流程。
+
+### Comparison history
+
+1. 第一轮真实 Electron 检查发现 P2：标签项目名前缀显示为 `sidebar-history-b.html · 历史 V3`，与所选“项目名 · 页面类型”不符。实现改为仅在标签展示层移除 `.htm/.html`，不改文件名、项目身份或持久化事实，并新增精确无障碍名称。
+2. 第一轮菜单比较还包含测试故意注入的“历史快照校验失败”瞬时提示，导致比较状态不一致。截图步骤改为等待该可恢复提示自然消失后再打开菜单；产品错误反馈行为保留。
+3. 第二轮使用 `project-tabs-pass2-comparison.png` 和 `project-tabs-pass2-focused.png` 复核同一状态，以上两项均已关闭，没有新的 P0/P1/P2。
+
+### Open questions
+
+- 无阻塞问题。概念稿只显示适用操作、并使用“历史 V3 · 只读”徽标；实现按用户后续批注明确采用“全部核心操作可见、不可用项置灰”和“直接预览、编辑禁用”，属于已确认的有意偏离。
+
+### Implementation checklist
+
+- [x] Stemmio Logo 与名称替换旧 HTML/源页品牌。
+- [x] 当前稿、长期规则、历史按项目各自去重为独立标签。
+- [x] 历史类型色、预览模式、禁用编辑和无额外横条。
+- [x] 完整菜单、置灰原因、历史导出对象和恢复入口反馈。
+- [x] 真实 Electron 1440 × 960 行为与视觉复核。
+
+### Follow-up polish
+
+- 无必须跟进的 P3；若未来统一放大所有工作台弹出菜单字号，应作为全局密度调整处理，而不是只修改历史页。
+
+final result: passed
+
+## 2026-09-16 — 默认浏览器打开精确所见 HTML
+
+- Mode: DESIGN CHANGE, lightweight exception. 仅历史页的既有菜单项从禁用改为可用，并将文案改为“在浏览器中打开此版本”；当前稿文案、菜单顺序、布局、图标、颜色与 Finder/导出动作不变。
+- 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
+- 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。

@@ -17,7 +17,7 @@ type PresentationInput = {
   hasReadyReviewSession: boolean;
   reviewPreparing: boolean;
   canShowCurrentFileInFolder: boolean;
-  canOpenCurrentHtmlInDefaultBrowser: boolean;
+  canOpenSelectedHtmlInDefaultBrowser: boolean;
   persistState: string;
   editRevision: number;
   lastPersistedRevision: number;
@@ -34,26 +34,29 @@ type PresentationInput = {
 
 export function deriveWorkbenchPresentation(input: PresentationInput) {
   const { project, version, activeTab, runInProgress, interactionLocked } = input;
-  const sameDocument = Boolean(project.projectId && project.documentId && activeTab?.kind === "document"
+  const sameDocument = Boolean(project.projectId && project.documentId
+    && (activeTab?.kind === "document" || activeTab?.kind === "history")
     && activeTab.projectId === project.projectId && activeTab.documentId === project.documentId);
   // A source-less document has no registered Project identity. Its existing
   // navigation runtime owner still binds the visible in-memory source to a tab.
   const sameUnsavedDocument = !project.sourcePath && !project.projectId && !project.documentId
     && activeTab?.kind === "document" && activeTab.tabId === input.runtimeOwnerTabId;
   const hasDocumentTarget = sameDocument || sameUnsavedDocument;
-  const reviewActive = sameDocument && input.reviewActive;
-  const isHistory = sameDocument && version.viewMode === "history";
+  const reviewActive = activeTab?.kind === "document" && sameDocument && input.reviewActive;
+  const isHistory = activeTab?.kind === "history" && sameDocument && version.viewMode === "history";
   const displayedVersionId = sameDocument
     ? isHistory ? version.viewingVersionId : version.currentBasedOnVersionId
     : null;
   const displayedVersion = version.versions.find((row) => row.id === displayedVersionId) || null;
   const reviewAvailable = Boolean(sameDocument && input.activeRunStatus === "ready-to-open"
     && input.hasReadyPayload && !input.hasReadyReviewSession && !input.reviewPreparing);
-  const editReason = reviewActive ? "完成审阅后可继续编辑"
+  const editReason = isHistory ? "历史版本以预览模式打开；如要继续编辑，请在更多菜单中创建新版本"
+    : reviewActive ? "完成审阅后可继续编辑"
     : runInProgress ? "本轮还在进行，结束或采纳后可回到编辑"
       : input.viewTransitioning || input.projectHydrating || input.projectLoadError ? "当前版本暂时不可操作"
         : !hasDocumentTarget ? "请先打开当前文档" : undefined;
   const previewReason = !hasDocumentTarget ? "请先打开当前文档" : reviewActive ? "完成审阅后可继续预览"
+    : isHistory ? undefined
     : interactionLocked ? "当前状态只能使用编辑画布" : undefined;
   const reviewReason = !sameDocument ? "请先打开当前文档" : reviewActive ? "正在审阅 AI 修改"
     : input.reviewPreparing ? "正在准备审阅…"
@@ -74,20 +77,21 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     currentEditingVersionId: sameDocument ? version.currentBasedOnVersionId : null,
     latestVersionId: sameDocument ? version.latestVersionId : null,
     tabId: activeTab?.tabId || null,
-    tabTitle: isHistory
-      ? displayedVersion?.displayFileName || displayedVersion?.label || "历史版本"
-      : activeTab?.title || "",
+    tabTitle: activeTab?.title || "",
     viewLabel: !hasDocumentTarget ? null : reviewActive ? "审阅" : isHistory ? "历史" : "当前",
     isHistory,
-    // History Edit requests creation; it does not unlock the historical preview.
-    mode: reviewActive ? "review" : input.canvasMode,
-    edit: { enabled: !editReason, selected: !reviewActive && input.canvasMode === "edit", reason: editReason },
-    preview: { enabled: hasDocumentTarget && !reviewActive && !interactionLocked, selected: !reviewActive && input.canvasMode === "preview", reason: previewReason },
+    mode: reviewActive ? "review" : isHistory ? "preview" : input.canvasMode,
+    edit: { enabled: !editReason, selected: !isHistory && !reviewActive && input.canvasMode === "edit", reason: editReason },
+    preview: { enabled: hasDocumentTarget && !reviewActive && (isHistory || !interactionLocked), selected: isHistory || (!reviewActive && input.canvasMode === "preview"), reason: previewReason },
     review: { enabled: !reviewActive && !input.reviewPreparing && reviewAvailable, selected: reviewActive, reason: reviewReason },
     reviewAvailable,
-    canShowInFinder: sameDocument && input.canShowCurrentFileInFolder,
-    canOpenCurrentHtml: sameDocument && input.canOpenCurrentHtmlInDefaultBrowser && input.persistState === "idle"
-      && input.editRevision === input.lastPersistedRevision,
+    canShowInFinder: !isHistory && sameDocument && input.canShowCurrentFileInFolder,
+    canOpenSelectedHtml: Boolean(
+      fileReady
+      && sameDocument
+      && project.sourcePath
+      && input.canOpenSelectedHtmlInDefaultBrowser,
+    ),
     canExportCurrentHtml: fileReady,
     canReloadCurrentSource,
     refreshAvailable: Boolean(hasDocumentTarget && (input.canvasMode === "preview" || reviewActive)

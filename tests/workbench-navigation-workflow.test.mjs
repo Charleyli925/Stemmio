@@ -31,7 +31,12 @@ function assertAlignedNavigation(harness, expectedProject) {
   const snapshot = harness.tabs.snapshot;
   const active = snapshot.tabs.find((tab) => tab.tabId === snapshot.activeTabId);
   assert.ok(active);
-  if (active.kind === "start" || active.kind === "settings" || active.kind === "project-rules") {
+  if (
+    active.kind === "start"
+    || active.kind === "settings"
+    || active.kind === "project-rules"
+    || active.kind === "history"
+  ) {
     assert.equal(snapshot.mountedDocumentTabId, null);
     if (snapshot.runtimeOwnerTabId) {
       assert.equal(snapshot.tabs.some((tab) => (
@@ -98,6 +103,10 @@ function projectSnapshot(project, epoch, options = {}) {
         error: options.canvasError || null,
       },
     },
+    versionSession: {
+      viewMode: options.viewMode || "current",
+      viewingVersionId: options.viewingVersionId || null,
+    },
   };
 }
 
@@ -134,6 +143,22 @@ function fixture({
     openProjectRules({ context }) {
       calls.push(`rules:${context.projectId}`);
       return Promise.resolve({ status: "succeeded", value: { opened: true } });
+    },
+    viewHistory({ version, context }) {
+      calls.push(`history:${context.projectId}:${version.id}`);
+      snapshot = {
+        ...snapshot,
+        versionSession: { viewMode: "history", viewingVersionId: version.id },
+      };
+      return Promise.resolve({ status: "succeeded", value: { versionId: version.id } });
+    },
+    returnToCurrent({ context }) {
+      calls.push(`current:${context.projectId}`);
+      snapshot = {
+        ...snapshot,
+        versionSession: { viewMode: "current", viewingVersionId: null },
+      };
+      return Promise.resolve({ status: "succeeded", value: { returned: true } });
     },
   };
   const publish = (next) => {
@@ -651,18 +676,18 @@ test("settings opens once, returns to the retained document without reopening Pr
   assert.equal(harness.calls.some((call) => call === `open:registered:${A.projectId}`), false);
 });
 
-test("长期规则只打开一个标签，并在返回 HTML 时复用 runtime owner", async () => {
+test("长期规则在项目内去重，并在返回 HTML 时复用 runtime owner", async () => {
   const harness = fixture();
-  const first = await harness.workflow.createProjectRules();
+  const first = await harness.workflow.createProjectRules({ ...A, title: A.name });
   assert.equal(first.status, "succeeded");
-  assert.equal(first.value.tabId, "project-rules:1");
+  assert.equal(first.value.tabId, "project-rules:project_alpha:doc_alpha");
   assert.equal(harness.navigation.snapshot.lastReceipt.kind, "project-rules");
-  assert.equal(harness.tabs.snapshot.activeTabId, "project-rules:1");
+  assert.equal(harness.tabs.snapshot.activeTabId, "project-rules:project_alpha:doc_alpha");
   assert.equal(harness.tabs.snapshot.mountedDocumentTabId, null);
   assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, "document:project_alpha:doc_alpha");
   assert.deepEqual(harness.calls.filter((call) => call === `rules:${A.projectId}`), [`rules:${A.projectId}`]);
 
-  const second = await harness.workflow.createProjectRules();
+  const second = await harness.workflow.createProjectRules({ ...A, title: A.name });
   assert.equal(second.status, "succeeded");
   assert.equal(harness.tabs.snapshot.tabs.filter((tab) => tab.kind === "project-rules").length, 1);
   assert.deepEqual(harness.calls.filter((call) => call === `rules:${A.projectId}`), [`rules:${A.projectId}`]);
@@ -673,6 +698,54 @@ test("长期规则只打开一个标签，并在返回 HTML 时复用 runtime ow
   assert.equal(harness.tabs.snapshot.mountedDocumentTabId, `document:${A.projectId}:${A.documentId}`);
   assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, `document:${A.projectId}:${A.documentId}`);
   assert.deepEqual(harness.calls.filter((call) => call === "prepare"), ["prepare"]);
+});
+
+test("跨项目规则和历史只在目标页面就绪后提交标签", async () => {
+  const harness = fixture();
+  const rules = await harness.workflow.createProjectRules({ ...B, title: B.name });
+  assert.equal(rules.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `project-rules:${B.projectId}:${B.documentId}`);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, B.projectId);
+  assert.deepEqual(harness.calls.filter((call) => call === `rules:${B.projectId}`), [`rules:${B.projectId}`]);
+
+  const history = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  );
+  assert.equal(history.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `history:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, A.projectId);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("history:")), [
+    `history:${A.projectId}:ver_2`,
+  ]);
+
+  const current = await harness.workflow.activateTab(`document:${A.projectId}:${A.documentId}`);
+  assert.equal(current.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.deepEqual(harness.calls.filter((call) => call === `current:${A.projectId}`), [
+    `current:${A.projectId}`,
+  ]);
+});
+
+test("同一项目切换另一个历史版本时复用标签并重新加载所选快照", async () => {
+  const harness = fixture();
+  const first = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_2", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  );
+  assert.equal(first.status, "succeeded");
+
+  const second = await harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_4", ordinal: 4, displayFileName: "Alpha-V4.html" },
+  );
+  assert.equal(second.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.tabs.filter((tab) => tab.kind === "history").length, 1);
+  assert.equal(harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history")?.versionId, "ver_4");
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("history:")), [
+    `history:${A.projectId}:ver_2`,
+    `history:${A.projectId}:ver_4`,
+  ]);
 });
 
 test("external admission completes only after the correlated application and terminal settlement", async () => {

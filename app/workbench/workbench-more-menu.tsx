@@ -28,13 +28,21 @@ type MoreMenuItem = Readonly<{
 export type WorkbenchMoreMenuProps = Readonly<{
   isHistory?: boolean;
   canShowInFolder: boolean;
+  showInFolderUnavailableReason?: string;
   onShowInFolder: () => void;
   canOpenInBrowser: boolean;
+  openInBrowserUnavailableReason?: string;
   onOpenInBrowser: () => void;
   canExportCurrentHtml: boolean;
+  exportUnavailableReason?: string;
   onExportCurrentHtml: (saveVersion?: boolean) => void;
   canSaveCurrentVersion?: boolean;
   onSaveCurrentVersion?: () => void;
+  canCreateVersionFromHistory?: boolean;
+  createVersionFromHistoryUnavailableReason?: string;
+  onCreateVersionFromHistory?: () => void;
+  canOpenPreservedDrafts?: boolean;
+  preservedDraftsUnavailableReason?: string;
   onOpenPreservedDrafts?: () => void;
   canReloadCurrentSource: boolean;
   reloadCurrentSourceUnavailableReason?: string;
@@ -46,7 +54,7 @@ function menuPosition(trigger: HTMLButtonElement) {
   const rect = trigger.getBoundingClientRect();
   const width = 220;
   return {
-    top: Math.min(rect.bottom + 6, Math.max(8, window.innerHeight - 320)),
+    top: Math.min(rect.bottom + 6, Math.max(8, window.innerHeight - 480)),
     left: Math.min(
       Math.max(8, rect.right - width),
       Math.max(8, window.innerWidth - width - 8),
@@ -57,13 +65,21 @@ function menuPosition(trigger: HTMLButtonElement) {
 export function WorkbenchMoreMenu({
   isHistory = false,
   canShowInFolder,
+  showInFolderUnavailableReason,
   onShowInFolder,
   canOpenInBrowser,
+  openInBrowserUnavailableReason,
   onOpenInBrowser,
   canExportCurrentHtml,
+  exportUnavailableReason,
   onExportCurrentHtml,
   canSaveCurrentVersion = false,
   onSaveCurrentVersion,
+  canCreateVersionFromHistory = false,
+  createVersionFromHistoryUnavailableReason,
+  onCreateVersionFromHistory,
+  canOpenPreservedDrafts = true,
+  preservedDraftsUnavailableReason,
   onOpenPreservedDrafts,
   canReloadCurrentSource,
   reloadCurrentSourceUnavailableReason,
@@ -78,22 +94,37 @@ export function WorkbenchMoreMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const items = useMemo<readonly MoreMenuItem[]>(() => [
-    ...(!isHistory && onSaveCurrentVersion ? [{
+    ...(onSaveCurrentVersion ? [{
       id: "save-version", label: "保存为新版本",
       icon: <FloppyDiskIcon aria-hidden="true" size={16} weight="duotone" />,
-      onSelect: onSaveCurrentVersion, disabled: !canSaveCurrentVersion,
+      onSelect: onSaveCurrentVersion,
+      disabled: isHistory || !canSaveCurrentVersion,
+      reason: isHistory ? "该操作只针对当前稿" : undefined,
+    }] : []),
+    ...(onCreateVersionFromHistory ? [{
+      id: "create-from-history", label: "基于此版本创建新版本…",
+      icon: <ClockCounterClockwiseIcon aria-hidden="true" size={16} />,
+      onSelect: onCreateVersionFromHistory,
+      disabled: !isHistory || !canCreateVersionFromHistory,
+      reason: !isHistory
+        ? "请先打开一个历史版本"
+        : createVersionFromHistoryUnavailableReason,
     }] : []),
     {
       id: "show-in-folder",
-      label: isHistory ? "在 Finder 中显示当前工作文件" : "在 Finder 中显示",
+      label: "在 Finder 中显示工作文件",
       icon: <FolderOpenIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onShowInFolder,
+      disabled: !canShowInFolder,
+      reason: showInFolderUnavailableReason,
     },
     {
       id: "open-in-browser",
-      label: isHistory ? "在浏览器中打开当前工作文件" : "在默认浏览器中打开",
+      label: isHistory ? "在浏览器中打开此版本" : "在浏览器中打开工作文件",
       icon: <ArrowSquareOutIcon aria-hidden="true" size={16} weight="bold" />,
       onSelect: onOpenInBrowser,
+      disabled: !canOpenInBrowser,
+      reason: openInBrowserUnavailableReason,
     },
     {
       id: "export-html",
@@ -101,17 +132,24 @@ export function WorkbenchMoreMenu({
       icon: <DownloadSimpleIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: () => onExportCurrentHtml(!isHistory && saveVersionOnExport),
       dividerBefore: true,
+      disabled: !canExportCurrentHtml,
+      reason: exportUnavailableReason,
     },
-    ...(!isHistory && onSaveCurrentVersion && canExportCurrentHtml ? [{
+    ...(onSaveCurrentVersion ? [{
       id: "export-save-version", label: "同时保存为新版本",
       icon: saveVersionOnExport ? <CheckSquareIcon aria-hidden="true" size={16} /> : <SquareIcon aria-hidden="true" size={16} />,
       onSelect: () => setSaveVersionOnExport((value) => !value),
-      checked: saveVersionOnExport, keepOpen: true, disabled: !canSaveCurrentVersion,
+      checked: saveVersionOnExport,
+      keepOpen: true,
+      disabled: isHistory || !canSaveCurrentVersion || !canExportCurrentHtml,
+      reason: isHistory ? "历史版本导出不会改变当前稿" : undefined,
     }] : []),
     ...(onOpenPreservedDrafts ? [{
       id: "preserved-drafts", label: "找回此前的稿件…",
       icon: <ClockCounterClockwiseIcon aria-hidden="true" size={16} />,
       onSelect: onOpenPreservedDrafts,
+      disabled: !canOpenPreservedDrafts,
+      reason: preservedDraftsUnavailableReason,
     }] : []),
     ...(onRetryDynamicContent ? [{
       id: "retry-dynamic",
@@ -129,33 +167,31 @@ export function WorkbenchMoreMenu({
       reason: reloadCurrentSourceUnavailableReason,
     },
   ], [
+    canCreateVersionFromHistory,
+    canExportCurrentHtml,
+    canOpenInBrowser,
+    canOpenPreservedDrafts,
     canReloadCurrentSource,
+    canSaveCurrentVersion,
+    canShowInFolder,
+    createVersionFromHistoryUnavailableReason,
+    exportUnavailableReason,
     isHistory,
+    onCreateVersionFromHistory,
     onExportCurrentHtml,
     onOpenInBrowser,
+    onOpenPreservedDrafts,
     onReloadCurrentSource,
     reloadCurrentSourceUnavailableReason,
     onRetryDynamicContent,
     onShowInFolder,
-    canSaveCurrentVersion,
-    canExportCurrentHtml,
     onSaveCurrentVersion,
-    onOpenPreservedDrafts,
+    openInBrowserUnavailableReason,
+    preservedDraftsUnavailableReason,
     saveVersionOnExport,
+    showInFolderUnavailableReason,
   ]);
-  const visibleItems = useMemo(() => items.filter((item) => (
-    item.id === "show-in-folder" ? canShowInFolder
-      : item.id === "open-in-browser" ? canOpenInBrowser
-        : item.id === "export-html" ? canExportCurrentHtml
-          : item.id === "reload-source" ? canReloadCurrentSource || Boolean(reloadCurrentSourceUnavailableReason) : true
-  )), [
-    canExportCurrentHtml,
-    canOpenInBrowser,
-    canReloadCurrentSource,
-    canShowInFolder,
-    items,
-    reloadCurrentSourceUnavailableReason,
-  ]);
+  const visibleItems = items;
   const interactiveItems = useMemo(
     () => visibleItems.filter((item) => !item.disabled),
     [visibleItems],
@@ -258,11 +294,12 @@ export function WorkbenchMoreMenu({
                   else itemRefs.current.delete(item.id);
                 }}
                 type="button"
-              role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
-              aria-checked={item.checked}
-              data-menu-item={item.id}
-              disabled={item.disabled}
-              aria-describedby={item.reason ? `${menuId}-${item.id}-reason` : undefined}
+                role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+                aria-label={item.label}
+                aria-checked={item.checked}
+                data-menu-item={item.id}
+                disabled={item.disabled}
+                aria-describedby={item.reason ? `${menuId}-${item.id}-reason` : undefined}
                 onClick={() => {
                   if (!item.keepOpen) close();
                   item.onSelect();

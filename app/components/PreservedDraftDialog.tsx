@@ -21,12 +21,19 @@ export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad
     if (!open) { ref.current?.close(); return; }
     let active = true;
     ref.current?.showModal();
-    void onLoad().then((outcome) => {
+    window.queueMicrotask(() => {
       if (!active) return;
-      if (outcome.status === "succeeded") setEntries(outcome.value.entries);
-      else if ("reason" in outcome) setError(outcome.reason);
-    }).catch(() => { if (active) setError("暂时无法读取保留的稿件。"); })
-      .finally(() => { if (active) setLoading(false); });
+      setEntries([]);
+      setError("");
+      setLoading(true);
+      setRestoring(null);
+      void onLoad().then((outcome) => {
+        if (!active) return;
+        if (outcome.status === "succeeded") setEntries(outcome.value.entries);
+        else if ("reason" in outcome) setError(outcome.reason);
+      }).catch(() => { if (active) setError("暂时无法读取保留的稿件。"); })
+        .finally(() => { if (active) setLoading(false); });
+    });
     return () => { active = false; };
   }, [open, contextKey, onLoad]);
 

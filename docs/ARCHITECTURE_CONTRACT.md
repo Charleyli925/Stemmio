@@ -68,7 +68,13 @@ The renderer's main workspace facts are partitioned as follows:
   receipts with a session incarnation, Canvas authority generation and
   exact-byte reconciliation at persistence boundaries. A receipt binds origin,
   operation, edit revision, Canvas generation, source Hash and the complete
-  Project/session context;
+  Project/session context. Production callers can change these facts only
+  through complete actions: accept an edit, queue/begin/restore/rebase/confirm
+  a write, record persistence failure, publish authority, or reset the session.
+  There is no public arbitrary field patch or raw persistence/pending-write
+  setter. Write confirmation advances only the acknowledged durable revision;
+  it preserves a newer queued edit, while flush completion releases only the
+  matching Promise owner;
 - `CommentSession`: disposable comment working copy, composer, tombstones and
   saved-comment edit session;
 - `DraftSession`: acknowledged Draft revision, pending mutation and

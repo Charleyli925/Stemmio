@@ -470,7 +470,7 @@ export class RunWorkflow {
     if (!projectSession || typeof projectSession.matches !== "function") {
       throw new TypeError("RunWorkflow requires ProjectSession injection.");
     }
-    if (!documentSession || typeof documentSession.update !== "function") {
+    if (!documentSession || typeof documentSession.beginEdit !== "function") {
       throw new TypeError("RunWorkflow requires DocumentSession injection.");
     }
     if (!commentSession || typeof commentSession.setComments !== "function") {

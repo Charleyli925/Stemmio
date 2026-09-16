@@ -180,8 +180,8 @@ function createHarness({
   const documentSession = new DocumentSession({
     html,
     persistedSourceSha256: sha256(html),
+    ...(initialDocument || {}),
   });
-  if (initialDocument) documentSession.update(initialDocument);
   const client = bridgeClient || {
     async ensureProject() {
       return registrationPayload();
@@ -1160,10 +1160,7 @@ test("late registration reconciliation preserves edits and comments made after a
     historyOperations: [],
     recoveryIdentity: null,
   };
-  harness.documentSession.update({
-    pendingWrite,
-    persistState: "queued",
-  });
+  harness.documentSession.queueWrite(pendingWrite);
   sourceHistorySession.activate(context, sha256(editedHtml), null);
   harness.commentSession.setComments([{
     commentId: "comment_after_registration_unknown",
@@ -1658,10 +1655,7 @@ test("managed registration fences edits during host activation and rebinds the l
     historyOperations: [],
     recoveryIdentity: null,
   };
-  harness.documentSession.update({
-    pendingWrite: queuedWrite,
-    persistState: "queued",
-  });
+  harness.documentSession.queueWrite(queuedWrite);
   const editedSnapshot = harness.documentSession.snapshot;
   const editedReceipt = harness.documentSession.sourceReceipt;
   const editedCanvasAuthority = harness.documentSession.canvasAuthority;
@@ -1840,8 +1834,7 @@ test("workspace controller is the sole aggregate Session observer and disconnect
   assert.equal(snapshots.at(-1)?.versionSession, harness.versionSession.snapshot);
   assert.equal(snapshots.at(-1)?.runSession, null);
 
-  harness.documentSession.setPendingWrite({ revision: 1 });
-  harness.documentSession.setPersistence({ state: "queued" });
+  harness.documentSession.queueWrite({ revision: 1, html: harness.documentSession.html });
   assert.equal(snapshots.at(-1)?.document?.hasPendingWrite, true);
 
   harness.commentSession.setComments([{
@@ -1853,7 +1846,8 @@ test("workspace controller is the sole aggregate Session observer and disconnect
 
   const finalSnapshot = harness.controller.getSnapshot();
   harness.controller.dispose();
-  harness.documentSession.setPersistence({ state: "idle" });
+  harness.documentSession.beginWrite();
+  harness.documentSession.markPersistenceIdle();
   assert.equal(harness.controller.getSnapshot(), finalSnapshot);
   unsubscribe();
 });
@@ -1868,7 +1862,7 @@ test("comments capability publishes only comment snapshots with stable commands"
   });
   const initial = capability.getSnapshot();
 
-  harness.documentSession.setPendingWrite({ revision: 1 });
+  harness.documentSession.queueWrite({ revision: 1, html: harness.documentSession.html });
   assert.equal(capability.getSnapshot(), initial);
   assert.equal(snapshots.length, 0);
 
@@ -2069,11 +2063,7 @@ test("workspace controller starts the disposable runtime when its initial source
   assert.equal(prepares.length, 0);
   const canvasGeneration = beforeAuthority?.canvasGeneration;
 
-  harness.documentSession.update({
-    editRevision: 1,
-    lastPersistedRevision: 1,
-    persistState: "idle",
-  });
+  harness.documentSession.reconcileRecoveredRevision(1);
   await settleAsyncRuntime();
 
   const preparing = harness.controller.getSnapshot().editRuntime;
@@ -2089,7 +2079,15 @@ test("workspace controller starts the disposable runtime when its initial source
   assert.equal(ready?.phase, "ready");
   assert.equal(ready?.canvasGeneration, canvasGeneration);
 
-  harness.documentSession.setPersistedSourceSha256(sha256(html + "<!-- source echo -->"));
+  const staleWrite = { revision: 0, html: "" };
+  harness.documentSession.queueWrite(staleWrite);
+  harness.documentSession.beginWrite();
+  harness.documentSession.confirmWrite({
+    write: staleWrite,
+    html: "",
+    sourceSha256: sha256(html + "<!-- source echo -->"),
+    persistedRevision: 1,
+  });
   await settleAsyncRuntime();
   assert.equal(prepares.length, 1);
   harness.controller.dispose();
@@ -2224,9 +2222,11 @@ test("a changed expected source Hash retires registration before Session publica
   const harness = createHarness({ bridgeClient: client });
   const pending = harness.controller.ensureRegistered();
   const newerHtml = "<main>newer source</main>";
-  harness.documentSession.update({
+  harness.documentSession.publishAuthority({
     html: newerHtml,
     persistedSourceSha256: sha256(newerHtml),
+    workingHtmlSha256: sha256(newerHtml),
+    operationId: "test-source-replacement",
   });
   resolveEnsure(registrationPayload());
 
@@ -2450,7 +2450,14 @@ test("runtime retry awaits save authority and never follows a changed document",
       });
       await settleAsyncRuntime();
       assert.equal(harness.controller.getSnapshot().editRuntime.retryAvailable, true);
-      harness.documentSession.update({ html: latest, editRevision: 1, persistState: 'writing' });
+      const write = {
+        revision: harness.documentSession.beginEdit(latest, {
+          sourceSha256: sha256(latest),
+        }),
+        html: latest,
+      };
+      harness.documentSession.queueWrite(write);
+      harness.documentSession.beginWrite();
       let finishSave;
       const save = new Promise(resolve => { finishSave = resolve; });
       harness.controller.flushDocument = () => save;
@@ -2458,8 +2465,11 @@ test("runtime retry awaits save authority and never follows a changed document",
       await settleAsyncRuntime();
       assert.equal(harness.controller.getSnapshot().editRuntime.phase, 'static-fallback');
       if (outcome === 'switched') harness.projectSession.openLocator(NEXT_SOURCE_PATH);
-      if (outcome !== 'failed') harness.documentSession.update({
-        persistedSourceSha256: sha256(latest), lastPersistedRevision: 1, persistState: 'idle',
+      if (outcome !== 'failed') harness.documentSession.confirmWrite({
+        write,
+        html: latest,
+        sourceSha256: sha256(latest),
+        persistedRevision: 1,
       });
       finishSave({ status: outcome === 'failed' ? 'blocked' : 'succeeded' });
       assert.equal(await retried, outcome === 'saved');

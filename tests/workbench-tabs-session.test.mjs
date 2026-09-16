@@ -101,26 +101,39 @@ test("settings is a singleton presentation tab and preserves the document runtim
   assert.equal(second.runtimeOwnerTabId, documentTabId);
 });
 
-test("长期规则是唯一的独立标签，并保留 HTML runtime owner", () => {
+test("长期规则在项目内去重，并保留 HTML runtime owner", () => {
   const session = new WorkbenchTabsSession();
   session.bindDocument(a);
   const documentTabId = session.snapshot.activeTabId;
 
-  const first = session.createProjectRules({ focus: true });
+  const first = session.createProjectRules({ ...a, focus: true });
   const rulesTab = first.tabs.find((tab) => tab.kind === "project-rules");
   assert.ok(rulesTab);
-  assert.equal(rulesTab.title, "长期规则");
+  assert.equal(rulesTab.title, "Alpha");
   assert.equal(first.activeTabId, rulesTab.tabId);
   assert.equal(first.mountedDocumentTabId, null);
   assert.equal(first.runtimeOwnerTabId, documentTabId);
 
   session.beginSwitch(rulesTab.tabId);
   session.commitProjectRules(rulesTab.tabId);
-  const second = session.createProjectRules({ focus: true });
+  const second = session.createProjectRules({ ...a, focus: true });
   assert.equal(second.tabs.filter((tab) => tab.kind === "project-rules").length, 1);
   assert.equal(second.activeTabId, rulesTab.tabId);
   assert.equal(second.runtimeOwnerTabId, documentTabId);
-  assert.doesNotMatch(JSON.stringify(session.serialize()), /PROJECT\.md|project-rules/u);
+  const third = session.createProjectRules({ ...b, focus: true });
+  assert.equal(third.tabs.filter((tab) => tab.kind === "project-rules").length, 2);
+  assert.match(JSON.stringify(session.serialize()), /project-rules/u);
+});
+
+test("历史标签在项目内复用并更新所选版本", () => {
+  const session = new WorkbenchTabsSession();
+  session.bindDocument(a);
+  session.createHistory({ ...a, versionId: "ver_1", versionOrdinal: 1, focus: false });
+  session.createHistory({ ...a, versionId: "ver_3", versionOrdinal: 3, focus: false });
+  const history = session.snapshot.tabs.filter((tab) => tab.kind === "history");
+  assert.equal(history.length, 1);
+  assert.equal(history[0].versionId, "ver_3");
+  assert.equal(history[0].versionOrdinal, 3);
 });
 
 test("a Finder rename updates the document tab title without changing its identity", () => {
@@ -193,9 +206,17 @@ test("closing the last document enters the start tab without deleting durable fa
 test("serialized state contains identity and presentation only", () => {
   const session = new WorkbenchTabsSession();
   session.bindDocument(a);
+  session.createHistory({
+    ...a,
+    versionId: "ver_0003",
+    versionOrdinal: 3,
+    versionLabel: "Private V3 label",
+    displayFileName: "Private Alpha V3.html",
+  });
   const serialized = JSON.stringify(session.serialize());
   assert.match(serialized, /project_alpha/u);
-  assert.doesNotMatch(serialized, /sourcePath|html|sha256|\/Users\//u);
+  assert.match(serialized, /ver_0003/u);
+  assert.doesNotMatch(serialized, /sourcePath|html|sha256|\/Users\/|Private Alpha|Private V3/u);
 });
 
 test("persisted null active identity restores Start without selecting a legacy document", () => {

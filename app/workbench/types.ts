@@ -3,6 +3,7 @@ import type {
   HtmlCanvasSelection,
 } from "../components/HtmlCanvasEditor";
 import type { DraftSnapshot } from "../application/draft-session.js";
+import type { BrowserOpenRequest } from "../application/browser-open-workflow.js";
 import type { SourceHistoryDirection, SourceHistoryEntry } from "../domain/source-history.js";
 import type {
   CandidateAssessment,
@@ -100,8 +101,12 @@ export type DesktopProjectsApi = {
   showInFolder?: (sourcePath: string) => Promise<{ sourcePath: string }>;
   openProjectsRoot?: () => Promise<{ opened: true }>;
   openInDefaultBrowser?: (
-    sourcePath: string,
-  ) => Promise<{ sourcePath: string }>;
+    target: BrowserOpenRequest,
+  ) => Promise<{
+    sourcePath: string;
+    targetKind: BrowserOpenRequest["targetKind"];
+    versionId?: string;
+  }>;
   renameHtml?: (payload: {
     operationId: string;
     sourcePath: string;

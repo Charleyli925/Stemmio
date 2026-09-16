@@ -558,7 +558,7 @@ test("local checkpoint refuses unpersisted content and releases navigation", asy
   let writes = 0;
   const h = createHarness({ currentDraft: true,
     createCurrent: async (input) => { writes++; return currentVersionReceipt(input); },
-    onDrain: async ({ documentSession }) => { documentSession.update({ html: DRAINED_HTML }); return { ok: true }; },
+    onDrain: async ({ documentSession }) => { documentSession.beginEdit(DRAINED_HTML); return { ok: true }; },
   });
   assert.equal((await h.workflow.saveCurrentVersion()).status, "rejected");
   assert.equal(writes, 0);
@@ -583,7 +583,7 @@ test("project switch during local checkpoint discards old UI response", async ()
 test("plain export includes latest native edits and does not create a version", async () => {
   const exports = []; let writes = 0; let h;
   h = createHarness({ currentDraft: true,
-    checkpointSource: () => { h.documentSession.update({ html: DRAINED_HTML }); return { ok: true }; },
+    checkpointSource: () => { h.documentSession.beginEdit(DRAINED_HTML); return { ok: true }; },
     exportHtmlCopy: async (input) => { exports.push(input); return { path: "/tmp/shared.html", sha256: sha256(input.html) }; },
     createCurrent: async () => { writes++; },
   });
@@ -602,7 +602,8 @@ for (const saveVersion of [false, true]) {
     let h;
     h = createHarness({ currentPath: null,
       checkpointSource: () => {
-        h.documentSession.update({ html: latest, editRevision: 1, persistState: "preview-dirty" });
+        h.documentSession.beginEdit(latest);
+        h.documentSession.markPreviewDirty();
         return { ok: true };
       },
       hashSource: async (html) => { hashed.push(html); return sha256(html); },
@@ -1621,8 +1622,11 @@ test("repairing an opened acknowledgement verifies current Canvas without reopen
     workspaceRead: async () => { reads += 1; return createdWorkspace(); },
     confirmCreation: async () => { acknowledgements += 1; throw new Error("lost acknowledgement"); } });
   assert.equal((await harness.workflow.openCreatedHistoryVersion({ operationId: "history_open_0001", context: harness.context })).status, "succeeded");
+  const createdContext = harness.projectSession.context;
+  await harness.workflow.viewHistory({ version: { id: "ver_0001" }, context: createdContext });
+  await harness.workflow.queryHistoryCreation({ operationId: "history_open_0001", context: createdContext });
   const commits = harness.calls.commit.length;
-  await harness.workflow.restoreHistoryCreation({ operationId: "history_open_0001", context: harness.projectSession.context });
+  assert.equal((await harness.workflow.returnToCurrent({ context: createdContext })).status, "succeeded");
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
   assert.equal(reads, 1);
   assert.equal(harness.calls.commit.length, commits);

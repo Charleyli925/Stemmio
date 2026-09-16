@@ -84,9 +84,42 @@
 
 .workbench-tab-title {
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workbench-tab-project {
+  min-width: 24px;
+  overflow: hidden;
+  color: #898690;
+  font-weight: 540;
+  text-overflow: ellipsis;
+}
+
+.workbench-tab-separator {
+  flex: none;
+  color: #aaa6b0;
+}
+
+.workbench-tab-surface {
+  flex: none;
+  color: inherit;
+  font-weight: 680;
+}
+
+.workbench-tab-kind-icon {
+  flex: none;
+}
+
+.workbench-tab[data-kind="project-rules"] .workbench-tab-kind-icon {
+  color: #7567b8;
+}
+
+.workbench-tab[data-kind="history"] .workbench-tab-kind-icon {
+  color: #bd7b36;
 }
 
 .workbench-tab-view-label {
@@ -217,10 +250,18 @@
   height: 30px;
   display: grid;
   place-items: center;
+  overflow: hidden;
   border: 1px solid #e1dff2;
   border-radius: 9px;
   background: #f0eef8;
   color: #625d9f;
+}
+
+.workbench-sidebar-product > button:first-child > span img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .workbench-sidebar-product strong {

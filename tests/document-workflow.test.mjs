@@ -2213,11 +2213,16 @@ test("DocumentWorkflow force-unlock adopts disk HTML and clears persistence conf
       },
     },
   });
-  harness.documentSession.setPersistence({
-    state: "conflict",
-    error: "源文件在磁盘上被其他程序修改了。",
+  harness.documentSession.publishAuthority({
+    html: before,
+    persistedSourceSha256: sha256(before),
+    workingHtmlSha256: sha256(before),
+    editRevision: 3,
+    lastPersistedRevision: 0,
+    persistState: "conflict",
+    persistError: "源文件在磁盘上被其他程序修改了。",
+    operationId: "test-force-unlock-conflict",
   });
-  harness.documentSession.setEditRevision(3);
 
   const outcome = await harness.workflow.forceUnlockConflict({
     context: harness.context,
@@ -2254,8 +2259,8 @@ test("DocumentWorkflow reloadAuthority adopts a Working Copy conflict through fo
       },
     },
   });
-  harness.documentSession.setPersistence({
-    state: "conflict",
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
     error: "源文件在磁盘上被其他程序修改了。",
   });
 
@@ -2397,7 +2402,8 @@ test("observeExternalSourceChange ignores stale paths and in-flight writes", asy
   assert.equal(stale.status, "succeeded");
   assert.equal(stale.value.ignored, true);
 
-  harness.documentSession.setPersistence({ state: "writing" });
+  harness.documentSession.queueWrite({ revision: 1, html });
+  harness.documentSession.beginWrite();
   const deferred = await harness.workflow.observeExternalSourceChange({
     sourcePath: SOURCE_PATH,
   });
@@ -2634,9 +2640,11 @@ test("ensureCurrentCanvas repairs a clean persisted hash mismatch with the autho
       },
     },
   });
-  harness.documentSession.update({
+  harness.documentSession.publishAuthority({
+    html: oldHtml,
     persistedSourceSha256: sha256("stale persisted bytes"),
     workingHtmlSha256: sha256(oldHtml),
+    operationId: "test-stale-persisted-hash",
   });
   const beforeReceipt = harness.documentSession.sourceReceipt;
 
@@ -2825,7 +2833,7 @@ test("leave boundary cannot cross a same-byte document switch or source replacem
     t.after(() => h.workflow.dispose());
     const boundary = h.workflow.captureLeaveBoundary();
     if (change === "context") h.projectSession.openLocator("/tmp/another-document.html");
-    else h.documentSession.update({ html: h.documentSession.html.replace("one", "replacement") });
+    else h.documentSession.beginEdit(h.documentSession.html.replace("one", "replacement"));
     assert.equal(h.workflow.verifyLeaveBoundary(boundary).code, "PROJECT_SWITCH_SOURCE_CHANGED", change);
   }
 });

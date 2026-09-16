@@ -268,10 +268,14 @@ function createHarness({
     },
     async flush({ throughRevision } = {}) {
       const persistedHash = sha256(documentSession.html);
-      documentSession.update({
-        persistedSourceSha256: persistedHash,
-        workingHtmlSha256: persistedHash,
-        lastPersistedRevision: throughRevision,
+      const write = { revision: throughRevision, html: documentSession.html };
+      documentSession.queueWrite(write);
+      documentSession.beginWrite();
+      documentSession.confirmWrite({
+        write,
+        html: documentSession.html,
+        sourceSha256: persistedHash,
+        persistedRevision: throughRevision,
       });
       return succeeded({ revision: throughRevision });
     },
@@ -766,7 +770,10 @@ test("an idle source flush still requires verified recovery before detaching a c
             },
           });
           t.after(() => harness.workflow.dispose());
-          harness.documentSession.setPersistence({ state: persistState, error: "source replaced" });
+          harness.documentSession.recordPersistenceFailure({
+            conflict: persistState === "conflict",
+            error: "source replaced",
+          });
           const before = {
             html: harness.documentSession.html,
             workingHtmlSha256: harness.documentSession.workingHtmlSha256,
@@ -834,7 +841,7 @@ test("a failed source write can switch only after an exact recovery checkpoint",
   });
   t.after(() => harness.workflow.dispose());
   harness.documentSession.beginEdit(OLD_HTML.replace("old", "protected"));
-  harness.documentSession.setPersistence({ state: "failed", error: "disk denied" });
+  harness.documentSession.recordPersistenceFailure({ error: "disk denied" });
 
   const outcome = await harness.workflow.prepareSwitch();
   assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
@@ -862,7 +869,7 @@ test("a failed source write can close after recovery evidence without claiming s
   });
   t.after(() => harness.workflow.dispose());
   harness.documentSession.beginEdit(OLD_HTML.replace("old", "protected"));
-  harness.documentSession.setPersistence({ state: "failed", error: "disk denied" });
+  harness.documentSession.recordPersistenceFailure({ error: "disk denied" });
 
   const result = await harness.workflow.prepareClose({
     requestId: "close_recovery_001",
@@ -2453,7 +2460,7 @@ test("native input delivered after the switch drain defers without losing the ac
         };
         if (firstFreeze) {
           firstFreeze = false;
-          harness.documentSession.update({ editRevision: 1 });
+          harness.documentSession.beginEdit(harness.documentSession.html);
         }
         return frozen;
       },
@@ -2474,7 +2481,15 @@ test("native input delivered after the switch drain defers without losing the ac
   assert.equal(harness.projectSession.sourcePath, OLD_PATH);
   assert.ok(harness.unlockCount >= 1);
 
-  harness.documentSession.update({ lastPersistedRevision: 1 });
+  const write = { revision: 1, html: harness.documentSession.html };
+  harness.documentSession.queueWrite(write);
+  harness.documentSession.beginWrite();
+  harness.documentSession.confirmWrite({
+    write,
+    html: harness.documentSession.html,
+    sourceSha256: sha256(harness.documentSession.html),
+    persistedRevision: 1,
+  });
   harness.workflow.reconcileDeferred();
   await waitFor(
     () => harness.projectSession.sourcePath === A_PATH

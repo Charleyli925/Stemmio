@@ -785,6 +785,60 @@ export class VersionWorkflow {
     if (creation?.context.projectId === current.projectId && creation.context.documentId === current.documentId) {
       if (creation.phase === "unknown") return blocked("HISTORY_CREATION_UNKNOWN", "创建结果暂时未知，请先查询同一操作；仍可切换项目或关闭标签。");
       if (["created", "open-failed"].includes(creation.phase)) {
+        const result = creation.result;
+        const liveContext = this.#projectSession.context;
+        const currentAlreadyOwnsCreatedVersion = Boolean(
+          result?.status === "created"
+          && liveContext?.workingCopyId === result.workingCopyId
+          && liveContext.versionId === result.versionId
+          && this.#versionSession.snapshot.currentBasedOnVersionId === result.versionId
+          && this.#documentSession.persistedSourceSha256 === result.contentSha256
+        );
+        if (currentAlreadyOwnsCreatedVersion) {
+          const priorView = this.#versionSession.captureView();
+          const generation = ++this.#creationGeneration;
+          this.#versionSession.returnCurrent();
+          try {
+            await new Promise((resolve) => {
+              if (typeof this.#canvasPort.requestFrame !== "function") {
+                resolve();
+                return;
+              }
+              this.#canvasPort.requestFrame(() => this.#canvasPort.requestFrame(resolve));
+            });
+            await this.#canvasPort.verifyRendered(
+              this.#documentSession.html,
+              this.#documentSession.persistedSourceSha256,
+              current,
+            );
+            if (!this.#projectSession.matches(current)) {
+              this.#versionSession.restoreView(priorView);
+              return stale(current);
+            }
+            try {
+              await this.#bridgeClient.confirmHistoryCreationOpened({
+                target: liveContext,
+                operationId: creation.operationId,
+              });
+            } catch { /* The exact current Canvas is already usable; retry acknowledgement on restart. */ }
+            this.#setHistoryCreation({
+              phase: "opened",
+              operationId: creation.operationId,
+              context: current,
+              result,
+            }, generation);
+            const value = {
+              context: current,
+              content: this.#documentSession.html,
+              sha256: this.#documentSession.snapshot.workingHtmlSha256,
+            };
+            this.#emitEvent({ type: "version-current-returned", ...value });
+            void this.#documentWorkflow.observeExternalSourceChange({ sourcePath: current.sourcePath });
+            return succeeded(value);
+          } catch {
+            this.#versionSession.restoreView(priorView);
+          }
+        }
         return this.openCreatedHistoryVersion({ operationId: creation.operationId, context: current });
       }
     }
@@ -1488,7 +1542,7 @@ export class VersionWorkflow {
     }
 
     this.#documentWorkflow.clearAudit();
-    this.#documentSession.setPersistence({ state: "idle", error: "" });
+    this.#documentSession.markPersistenceIdle();
 
     this.#commentWorkflow.queueDraft();
     this.#documentWorkflow.clearRecovery(context);

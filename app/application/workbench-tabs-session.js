@@ -4,6 +4,10 @@ function documentKey(projectId, documentId) {
   return `${projectId}\u0000${documentId}`;
 }
 
+function surfaceKey(kind, projectId, documentId) {
+  return `${kind}\u0000${documentKey(projectId, documentId)}`;
+}
+
 function freezeTab(tab) {
   return Object.freeze({ ...tab });
 }
@@ -26,17 +30,10 @@ function settingsTab(tabId = "settings:1") {
   });
 }
 
-function projectRulesTab(tabId = "project-rules:1") {
-  return freezeTab({
-    tabId,
-    kind: "project-rules",
-    title: "长期规则",
-    status: "normal",
-  });
-}
-
-function normalizedDocumentTab(value) {
+function normalizedProjectTab(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const kind = String(value.kind || "document");
+  if (!["document", "project-rules", "history"].includes(kind)) return null;
   const projectId = String(value.projectId || "");
   const documentId = String(value.documentId || "");
   const tabId = String(value.tabId || "");
@@ -48,13 +45,24 @@ function normalizedDocumentTab(value) {
     || !title
     || title.length > 180
   ) return null;
+  const versionId = kind === "history" ? String(value.versionId || "") : null;
+  const versionOrdinal = kind === "history" ? Number(value.versionOrdinal) : null;
+  if (kind === "history" && (!versionId || !Number.isInteger(versionOrdinal) || versionOrdinal < 1)) {
+    return null;
+  }
   return freezeTab({
     tabId,
-    kind: "document",
+    kind,
     projectId,
     documentId,
     title,
     status: STATUS.has(value.status) ? value.status : "normal",
+    ...(kind === "history" ? {
+      versionId,
+      versionOrdinal,
+      versionLabel: String(value.versionLabel || `V${versionOrdinal}`),
+      displayFileName: String(value.displayFileName || ""),
+    } : {}),
   });
 }
 
@@ -137,25 +145,31 @@ export class WorkbenchTabsSession {
   hydrate(value) {
     const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     const seenTabs = new Set();
-    const seenDocuments = new Set();
+    const seenSurfaces = new Set();
     const tabs = [];
     for (const candidate of Array.isArray(source.tabs) ? source.tabs : []) {
-      const tab = normalizedDocumentTab({ ...candidate, title: "HTML" });
+      const kind = ["document", "project-rules", "history"].includes(candidate?.kind)
+        ? candidate.kind
+        : "document";
+      const tab = normalizedProjectTab({ ...candidate, kind, title: "HTML" });
       if (!tab || seenTabs.has(tab.tabId)) continue;
-      const key = documentKey(tab.projectId, tab.documentId);
-      if (seenDocuments.has(key)) continue;
+      const key = surfaceKey(tab.kind, tab.projectId, tab.documentId);
+      if (seenSurfaces.has(key)) continue;
       seenTabs.add(tab.tabId);
-      seenDocuments.add(key);
+      seenSurfaces.add(key);
       tabs.push(tab);
     }
     const start = startTab();
     tabs.unshift(start);
     this.#restoredDocumentTabIds = new Set(
-      tabs.filter((tab) => tab.kind === "document").map((tab) => tab.tabId),
+      tabs
+        .filter((tab) => ["document", "project-rules", "history"].includes(tab.kind))
+        .map((tab) => tab.tabId),
     );
     const requestedActive = String(source.activeTabId || "");
     const pendingTabId = tabs.some(
-      (tab) => tab.kind === "document" && tab.tabId === requestedActive,
+      (tab) => ["document", "project-rules", "history"].includes(tab.kind)
+        && tab.tabId === requestedActive,
     ) ? requestedActive : null;
     return this.#publish({
       tabs,
@@ -205,8 +219,21 @@ export class WorkbenchTabsSession {
     });
   }
 
-  createProjectRules({ focus = true } = {}) {
-    const existing = this.#snapshot.tabs.find((tab) => tab.kind === "project-rules");
+  createProjectRules({ projectId, documentId, title, focus = true } = {}) {
+    const tab = normalizedProjectTab({
+      tabId: `project-rules:${projectId}:${documentId}`,
+      kind: "project-rules",
+      projectId,
+      documentId,
+      title,
+      status: "normal",
+    });
+    if (!tab) throw new TypeError("valid project rules tab identity is required");
+    const existing = this.#snapshot.tabs.find((item) => (
+      item.kind === "project-rules"
+      && item.projectId === projectId
+      && item.documentId === documentId
+    ));
     if (existing) {
       return this.#publish({
         ...this.#snapshot,
@@ -216,10 +243,6 @@ export class WorkbenchTabsSession {
         runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
       });
     }
-    let sequence = 1;
-    const ids = new Set(this.#snapshot.tabs.map((tab) => tab.tabId));
-    while (ids.has(`project-rules:${sequence}`)) sequence += 1;
-    const tab = projectRulesTab(`project-rules:${sequence}`);
     return this.#publish({
       tabs: [...this.#snapshot.tabs, tab],
       activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
@@ -229,9 +252,51 @@ export class WorkbenchTabsSession {
     });
   }
 
+  createHistory({
+    projectId,
+    documentId,
+    title,
+    versionId,
+    versionOrdinal,
+    versionLabel,
+    displayFileName,
+    focus = true,
+  } = {}) {
+    const tab = normalizedProjectTab({
+      tabId: `history:${projectId}:${documentId}`,
+      kind: "history",
+      projectId,
+      documentId,
+      title,
+      versionId,
+      versionOrdinal,
+      versionLabel,
+      displayFileName,
+      status: "normal",
+    });
+    if (!tab) throw new TypeError("valid project history tab identity is required");
+    const existingIndex = this.#snapshot.tabs.findIndex((item) => (
+      item.kind === "history"
+      && item.projectId === projectId
+      && item.documentId === documentId
+    ));
+    const tabs = [...this.#snapshot.tabs];
+    if (existingIndex >= 0) tabs[existingIndex] = tab;
+    else tabs.push(tab);
+    return this.#publish({
+      ...this.#snapshot,
+      tabs,
+      activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
+      pendingTabId: null,
+      mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
+      runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
+    });
+  }
+
   bindDocument({ projectId, documentId, title, status = "normal", focus = true }) {
-    const tab = normalizedDocumentTab({
+    const tab = normalizedProjectTab({
       tabId: `document:${projectId}:${documentId}`,
+      kind: "document",
       projectId,
       documentId,
       title,
@@ -284,8 +349,9 @@ export class WorkbenchTabsSession {
   }
 
   stageDocument({ projectId, documentId, title, status = "normal" }) {
-    const tab = normalizedDocumentTab({
+    const tab = normalizedProjectTab({
       tabId: `document:${projectId}:${documentId}`,
+      kind: "document",
       projectId,
       documentId,
       title,
@@ -335,6 +401,7 @@ export class WorkbenchTabsSession {
       target.kind === "start"
       || target.kind === "settings"
       || target.kind === "project-rules"
+      || target.kind === "history"
     ) return this.#publish({
       ...this.#snapshot,
       pendingTabId: target.tabId,
@@ -378,6 +445,21 @@ export class WorkbenchTabsSession {
   commitProjectRules(tabId) {
     const target = this.#snapshot.tabs.find(
       (tab) => tab.tabId === tabId && tab.kind === "project-rules",
+    );
+    if (!target || this.#snapshot.pendingTabId !== tabId) return null;
+    this.#pendingPriorStatus = null;
+    return this.#publish({
+      ...this.#snapshot,
+      activeTabId: tabId,
+      pendingTabId: null,
+      mountedDocumentTabId: null,
+      runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
+    });
+  }
+
+  commitHistory(tabId) {
+    const target = this.#snapshot.tabs.find(
+      (tab) => tab.tabId === tabId && tab.kind === "history",
     );
     if (!target || this.#snapshot.pendingTabId !== tabId) return null;
     this.#pendingPriorStatus = null;
@@ -461,7 +543,7 @@ export class WorkbenchTabsSession {
     let changed = false;
     const tabs = this.#snapshot.tabs.map((tab) => {
       if (
-        tab.kind !== "document"
+        !["document", "project-rules", "history"].includes(tab.kind)
         || tab.projectId !== projectId
         || tab.documentId !== documentId
         || tab.status === status
@@ -478,7 +560,7 @@ export class WorkbenchTabsSession {
     let changed = false;
     const tabs = this.#snapshot.tabs.map((tab) => {
       if (
-        tab.kind !== "document"
+        !["document", "project-rules", "history"].includes(tab.kind)
         || tab.projectId !== projectId
         || tab.documentId !== documentId
         || tab.title === normalizedTitle
@@ -501,7 +583,8 @@ export class WorkbenchTabsSession {
     const missing = [];
     let changed = false;
     const tabs = this.#snapshot.tabs.flatMap((tab) => {
-      if (tab.kind !== "document" || !this.#restoredDocumentTabIds.has(tab.tabId)) {
+      if (!["document", "project-rules", "history"].includes(tab.kind)
+        || !this.#restoredDocumentTabIds.has(tab.tabId)) {
         return [tab];
       }
       const project = registry.get(documentKey(tab.projectId, tab.documentId));
@@ -561,16 +644,22 @@ export class WorkbenchTabsSession {
 
   serialize() {
     return Object.freeze({
-      version: 1,
+      version: 2,
       activeTabId: this.#snapshot.tabs.find((tab) => (
-        tab.tabId === this.#snapshot.activeTabId && tab.kind === "document"
+        tab.tabId === this.#snapshot.activeTabId
+        && ["document", "project-rules", "history"].includes(tab.kind)
       )) ? this.#snapshot.activeTabId : null,
       tabs: Object.freeze(this.#snapshot.tabs
-        .filter((tab) => tab.kind === "document")
+        .filter((tab) => ["document", "project-rules", "history"].includes(tab.kind))
         .map((tab) => Object.freeze({
           tabId: tab.tabId,
+          kind: tab.kind,
           projectId: tab.projectId,
           documentId: tab.documentId,
+          ...(tab.kind === "history" ? {
+            versionId: tab.versionId,
+            versionOrdinal: tab.versionOrdinal,
+          } : {}),
         }))),
     });
   }
@@ -592,6 +681,7 @@ export function projectAppliedEventToWorkbenchTabs({ session, event, title }) {
     || !/^doc_[A-Za-z0-9_-]+$/.test(documentId)
     || !tabTitle
   ) return null;
+  const activeTab = session.resolveTab(session.snapshot.activeTabId);
   return session.bindDocument({
     projectId,
     documentId,
@@ -601,7 +691,8 @@ export function projectAppliedEventToWorkbenchTabs({ session, event, title }) {
     // WorkbenchNavigationWorkflow after its Controller identity check. The event
     // still refreshes/stages that exact identity, but never impersonates the
     // workflow's commit.
-    focus: !session.snapshot.pendingTabId,
+    focus: !session.snapshot.pendingTabId
+      && !["project-rules", "history"].includes(activeTab?.kind),
   });
 }
 

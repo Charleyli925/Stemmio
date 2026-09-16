@@ -294,7 +294,18 @@ export interface NavigationControllerCommands {
   ): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   createStartTab(): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   createSettingsTab(): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
-  createProjectRulesTab(project?: { projectId: string; documentId: string; title: string }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
+  createProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
+  createHistoryTab(
+    project: { projectId: string; documentId: string; title: string },
+    version: {
+      id?: string;
+      versionId?: string;
+      ordinal: number;
+      label?: string;
+      versionLabel?: string;
+      displayFileName?: string;
+    },
+  ): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   closeTab(tabId: string): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   openRegisteredProject(input: {
     projectId: string;
@@ -373,6 +384,13 @@ export interface NavigationWorkflowControllerCapability extends WorkspaceSnapsho
   subscribe(
     listener: (snapshot: WorkspaceControllerSnapshot) => void,
   ): () => void;
+  openProjectRules(input: { context: ProjectContext }): Promise<import("./project-rules-workflow.js").ProjectRulesWorkflowOutcome>;
+  viewHistory(input: {
+    version: Record<string, unknown>;
+    context: ProjectContext;
+    deadlineAt?: number;
+  }): Promise<VersionWorkflowOutcome>;
+  returnToCurrent(input: { context: ProjectContext }): Promise<VersionWorkflowOutcome>;
 }
 
 export interface AiConversationControllerCapability

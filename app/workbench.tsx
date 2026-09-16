@@ -1373,6 +1373,28 @@ export default function Workbench() {
           },
         },
       },
+      browserOpen: {
+        canvas: {
+          checkpointSource: (options?: { trigger?: string }) => (
+            editorRef.current?.checkpointNativeTextIntent({
+              trigger: options?.trigger === "save" ? "save" : "manual",
+            })
+          ),
+        },
+        files: {
+          openInDefaultBrowser: async (input) => {
+            const openInDefaultBrowser = window.stemmioProjects?.openInDefaultBrowser;
+            if (typeof openInDefaultBrowser !== "function") {
+              throw Object.freeze({
+                code: "BROWSER_OPEN_UNAVAILABLE",
+                message: "当前环境不能在系统浏览器中打开 HTML。",
+              });
+            }
+            return openInDefaultBrowser(input);
+          },
+        },
+        errorMessage: productErrorMessage,
+      },
       clock: { now: Date.now },
     });
     workspaceControllerRef.current = controller;
@@ -1737,15 +1759,6 @@ export default function Workbench() {
         markProjectApplied(projectEvent.operationId, projectEvent.epoch);
         setStartupIssue(null);
         setProjectName(project.name);
-        if (
-          pendingSidebarHistoryRef.current
-          && (
-            pendingSidebarHistoryRef.current.projectId !== project.projectId
-            || pendingSidebarHistoryRef.current.documentId !== project.documentId
-          )
-        ) {
-          pendingSidebarHistoryRef.current = null;
-        }
         commentCanvasPort.setSelection(null);
         const restoredPresentation = restoreCachedDocumentPresentation({
           controller: workspaceController, tabId: targetTabId, project,
@@ -3201,6 +3214,7 @@ export default function Workbench() {
   const presentWorkbenchTabOutcome = useCallback((outcome: unknown) => {
     if (!outcome || typeof outcome !== "object" || (outcome as { status?: string }).status === "succeeded") return;
     const result = outcome as { reason?: string; code?: string };
+    setFileStatusNotice(result.reason || "页面没有打开，原页面仍保留。");
     reportInternalFailure({
       area: "navigation",
       operation: "tab-switch",
@@ -3335,57 +3349,24 @@ export default function Workbench() {
     });
   }, [currentProjectSessionSnapshot]);
 
-  const openCurrentHtmlInDefaultBrowser = useCallback(async () => {
-    const activeProject = currentProjectSessionSnapshot();
-    const activeSourcePath = activeProject.sourcePath;
-    const activeEpoch = activeProject.epoch;
-    const openInDefaultBrowser = window.stemmioProjects?.openInDefaultBrowser;
-    if (!activeSourcePath || !openInDefaultBrowser) return;
+  const openSelectedHtmlInDefaultBrowser = useCallback(async () => {
+    if (!workspaceController) return;
     await runLocalUserAction({
       kind: "open-source-in-browser",
       invoke: async () => {
-        // The browser reads the on-disk file, so this action is a source-authority
-        // boundary: capture delivered native input and wait for its exact revision
-        // to be acknowledged before asking the main process to launch the file.
-        const committed = editorRef.current?.checkpointNativeTextIntent({
-          trigger: "save",
+        const outcome = await workspaceController.openSelectedDocumentInDefaultBrowser();
+        if (outcome.status === "succeeded") return outcome.value;
+        const reason = outcome.status === "stale"
+          ? "所选页面已经切换，因此没有打开其他文档。"
+          : outcome.reason;
+        throw Object.freeze({
+          code: outcome.status === "stale"
+            ? "BROWSER_OPEN_STALE"
+            : outcome.status === "unknown"
+              ? "BROWSER_OPEN_UNKNOWN"
+              : outcome.code,
+          message: reason,
         });
-        if (!committed || !committed.ok) {
-          editorRef.current?.showCommitBlocked(
-            committed?.reason
-              || "请点回文字完成输入，再在默认浏览器中打开。",
-          );
-          return;
-        }
-        let launchRevision = currentDocumentSessionSnapshot().editRevision;
-        if (committed.html !== currentDocumentSessionSnapshot().html) {
-          const enqueued = enqueueAutosave(
-            committed.html,
-            committed.pendingMutation || undefined,
-          );
-          if (enqueued.status !== "succeeded") {
-            throw new Error(documentEditFailureReason(enqueued));
-          }
-          launchRevision = enqueued.value.revision;
-        }
-        const persisted = await flushAutosave(launchRevision);
-        const settledProject = currentProjectSessionSnapshot();
-        const settledDocument = currentDocumentSessionSnapshot();
-        if (
-          !persisted
-          || activeEpoch !== settledProject.epoch
-          || !sameLocalSourcePath(settledProject.sourcePath, activeSourcePath)
-          || settledDocument.hasPendingWrite
-          || settledDocument.isFlushing
-          || workspaceController?.hasDocumentHistoryAction
-          || settledDocument.persistState !== "idle"
-          || settledDocument.lastPersistedRevision < launchRevision
-        ) {
-          throw new Error(
-            "当前修改尚未安全写入源 HTML，因此没有打开浏览器。请稍后重试。",
-          );
-        }
-        return openInDefaultBrowser(activeSourcePath);
       },
       onFailure: (cause: unknown) => setInterruption({
         kind: "open-in-browser-failed",
@@ -3395,13 +3376,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [
-    currentDocumentSessionSnapshot,
-    currentProjectSessionSnapshot,
-    enqueueAutosave,
-    flushAutosave,
-    workspaceController,
-  ]);
+  }, [workspaceController]);
 
   const handleCanvasChange = useCallback((
     nextHtml: string,
@@ -5443,193 +5418,26 @@ export default function Workbench() {
     runCapability,
   ]);
 
-  const viewHistoryVersion = useCallback(async (version: Version) => {
-    if (
-      runInProgress
-      || projectHydrating
-      || projectLoadError
-      || isViewTransitioning()
-      || !workspaceController
-    ) return null;
-    const context = captureProjectContext();
-    if (!context) return null;
-    const outcome = await requiredWorkspaceController(workspaceController)
-      .viewHistory({ version, context, deadlineAt: Date.now() + 15_000 });
-    if (outcome.status === "succeeded") {
-      editorRef.current?.clearSelection();
-      return "opened";
-    }
-    if (outcome.status === "stale") return "stale";
-    setFileStatusNotice(outcome.reason || "历史版本没有打开，当前工作内容仍保留。");
-    reportInternalFailure({
-      area: "history",
-      operation: "view-version",
-      code: "history-open-failed",
-      recovered: false,
-      cause: outcome.reason,
-    });
-    return "rejected";
-  }, [
-    captureProjectContext,
-    isViewTransitioning,
-    projectHydrating,
-    projectLoadError,
-    runInProgress,
-    workspaceController,
-  ]);
-
-  const returnToCurrent = useCallback(async () => {
-    if (isViewTransitioning() || !workspaceController) return;
-    const context = captureProjectContext();
-    if (!context) return;
-    const outcome = await requiredWorkspaceController(workspaceController)
-      .returnToCurrent({ context });
-    if (outcome.status === "succeeded") {
-      return;
-    }
-    if (outcome.status === "stale") return;
-    setFileStatusNotice(outcome.reason);
-    reportInternalFailure({
-      area: "history",
-      operation: "return-current",
-      code: "history-return-failed",
-      recovered: false,
-      cause: outcome.reason,
-    });
-  }, [
-    captureProjectContext,
-    isViewTransitioning,
-    workspaceController,
-  ]);
-
-  const sidebarSummaryVersion = useCallback((summary: ProjectVersionSummary): Version => {
-    const existing = versions.find((version) => version.id === summary.versionId);
-    if (existing) return existing;
-    return {
-      id: summary.versionId,
-      ordinal: summary.ordinal,
-      label: `版本 ${summary.ordinal}`,
-      summary: "",
-      generatedAt: summary.modifiedAt,
-      source: summary.ordinal === 1 ? "初始页面" : "内部 AI",
-      requirement: null,
-      contentSha256: "",
-      previousVersionId: summary.previousVersionId || null,
-      basedOnVersionId: summary.basedOnVersionId || null,
-      requestId: null,
-      attemptId: null,
-      committed: true,
-      comments: [],
-      directEdits: [],
-      supplements: [],
-      validationReview: null,
-      candidateAssessment: null,
-      workingCopyId: null,
-      displayFileName: summary.displayFileName,
-      modifiedAt: summary.modifiedAt,
-      isActiveWorkingCopy: summary.isActiveWorkingCopy,
-      isLatestOfficial: summary.isLatestOfficial,
-      differsFromBase: false,
-      saveState: null,
-    };
-  }, [versions]);
-
   const openCurrentSidebarProject = useCallback((project: RegisteredProject) => {
-    pendingSidebarHistoryRef.current = null;
-    if (project.projectId === projectId && project.documentId === documentId && viewMode === "history") {
-      void returnToCurrent();
-      return;
-    }
     void openRegisteredWorkbenchProject(project);
-  }, [documentId, openRegisteredWorkbenchProject, projectId, returnToCurrent, viewMode]);
+  }, [openRegisteredWorkbenchProject]);
 
   const openRegisteredSidebarVersion = useCallback((
     project: RegisteredProject,
     summary: ProjectVersionSummary,
   ) => {
-    pendingSidebarHistoryRef.current = null;
-    if (
-      project.projectId === projectId
-      && project.documentId === documentId
-    ) {
-      void viewHistoryVersion(sidebarSummaryVersion(summary));
-      return;
-    }
-    const intent = { ...summary };
-    pendingSidebarHistoryRef.current = intent;
-    void openRegisteredWorkbenchProject(project).then((outcome) => {
-      if (
-        outcome
-        && outcome.status !== "succeeded"
-        && outcome.committed !== true
-        && pendingSidebarHistoryRef.current === intent
-      ) {
-        pendingSidebarHistoryRef.current = null;
-      }
+    if (!navigationCapability || !project.documentId || project.availability !== "ready") return;
+    void navigationCapability.commands.createHistoryTab({
+      projectId: project.projectId,
+      documentId: project.documentId,
+      title: project.projectName,
+    }, summary).then((outcome) => {
+      presentWorkbenchTabOutcome(outcome);
+      if (outcome.status === "succeeded") editorRef.current?.clearSelection();
     });
   }, [
-    documentId,
-    openRegisteredWorkbenchProject,
-    projectId,
-    sidebarSummaryVersion,
-    viewHistoryVersion,
-  ]);
-
-  useEffect(() => {
-    const pending = pendingSidebarHistoryRef.current;
-    if (!pending) return;
-    if (
-      !projectId
-      || !documentId
-      || pending.projectId !== projectId
-      || pending.documentId !== documentId
-      || projectHydrating
-      || viewTransitioning
-      || !versions.some((version) => version.id === pending.versionId)
-    ) return;
-    if (projectLoadError) {
-      pendingSidebarHistoryRef.current = null;
-      return;
-    }
-    if (pendingSidebarHistoryAttemptRef.current === pending) return;
-    pendingSidebarHistoryAttemptRef.current = pending;
-    const retryDelay = () => new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 50);
-    });
-    const openPendingHistory = async () => {
-      const deadlineAt = Date.now() + 15_000;
-      try {
-        while (pendingSidebarHistoryRef.current === pending && Date.now() < deadlineAt) {
-          if (isViewTransitioning()) {
-            await retryDelay();
-            continue;
-          }
-          const opened = await viewHistoryVersion(sidebarSummaryVersion(pending));
-          // Only a replaced project context can invalidate an admitted intent.
-          // A definitive rejection is terminal and requires a fresh user click.
-          if (opened !== "stale") return;
-          await retryDelay();
-        }
-      } finally {
-        if (pendingSidebarHistoryRef.current === pending) {
-          pendingSidebarHistoryRef.current = null;
-        }
-        if (pendingSidebarHistoryAttemptRef.current === pending) {
-          pendingSidebarHistoryAttemptRef.current = null;
-        }
-      }
-    };
-    void openPendingHistory();
-  }, [
-    documentId,
-    isViewTransitioning,
-    projectHydrating,
-    projectId,
-    projectLoadError,
-    sidebarSummaryVersion,
-    versions,
-    viewTransitioning,
-    viewHistoryVersion,
+    navigationCapability,
+    presentWorkbenchTabOutcome,
   ]);
 
   const requestHistoryCreation = () => {
@@ -5649,6 +5457,16 @@ export default function Workbench() {
     const outcome = await workspaceController.openCreatedHistoryVersion({ operationId, context });
     if (outcome.status === "succeeded" && captureProjectContext()?.projectId === context.projectId
       && captureProjectContext()?.documentId === context.documentId) {
+      const currentTab = navigationCapability?.getSnapshot().tabs?.tabs.find((tab) => (
+        tab.kind === "document"
+        && tab.projectId === context.projectId
+        && tab.documentId === context.documentId
+      ));
+      const navigation = navigationCapability;
+      if (currentTab && navigation) {
+        const navigationOutcome = await navigation.commands.activateTab(currentTab.tabId);
+        presentWorkbenchTabOutcome(navigationOutcome);
+      }
       editorRef.current?.clearSelection();
       setFileStatusNotice("");
       setCanvasMode("edit");
@@ -5680,7 +5498,7 @@ export default function Workbench() {
     && typeof window !== "undefined"
     && window.stemmioProjects?.showInFolder,
   );
-  const canOpenCurrentHtmlInDefaultBrowser = Boolean(
+  const canOpenSelectedHtmlInDefaultBrowser = Boolean(
     sourcePath
     && typeof window !== "undefined"
     && window.stemmioProjects?.openInDefaultBrowser,
@@ -5691,17 +5509,17 @@ export default function Workbench() {
     activeTab: activeWorkbenchTab || null, runtimeOwnerTabId: workbenchTabsSnapshot.runtimeOwnerTabId, canvasMode: displayedCanvasMode,
     reviewActive: Boolean(presentedReadyReviewSession), activeRunStatus: activeRun?.status,
     hasReadyPayload: Boolean(activeRun?.readyPayload), hasReadyReviewSession: Boolean(presentedReadyReviewSession),
-    reviewPreparing, canShowCurrentFileInFolder, canOpenCurrentHtmlInDefaultBrowser,
+    reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, hasWorkspaceController: Boolean(workspaceController),
     projectHydrating, projectLoadError: Boolean(projectLoadError), viewTransitioning,
     runInProgress, workspaceIssue: Boolean(workspaceIssue), externalSourcePreview: Boolean(externalSourcePreview),
     hasDocumentHistoryAction, interactionLocked,
   }), [projectId, documentId, sourcePath, versionSnapshot, activeWorkbenchTab, workbenchTabsSnapshot.runtimeOwnerTabId, displayedCanvasMode,
     activeRun?.status, activeRun?.readyPayload, presentedReadyReviewSession,
-    reviewPreparing, canShowCurrentFileInFolder, canOpenCurrentHtmlInDefaultBrowser,
+    reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, workspaceController, projectHydrating,
     projectLoadError, viewTransitioning, runInProgress, workspaceIssue, externalSourcePreview, interactionLocked, hasDocumentHistoryAction]);
-  const { reviewAvailable, canShowInFinder, canOpenCurrentHtml,
+  const { reviewAvailable, canShowInFinder, canOpenSelectedHtml,
     canExportCurrentHtml, canReloadCurrentSource } = presentation;
   const pendingRunOutcome = Boolean(
     activeRun?.requestId === "pending" && projectLocked,
@@ -5936,7 +5754,7 @@ export default function Workbench() {
     deferEditorCommand,
     isViewTransitioning,
   });
-  const onSelectEdit = () => presentation.isHistory ? requestHistoryCreation() : createModeHandlers().onSelectEdit();
+  const onSelectEdit = () => createModeHandlers().onSelectEdit();
   const onSelectPreview = () => createModeHandlers().onSelectPreview();
 
   // The review compares immutable snapshots prepared against the
@@ -6265,17 +6083,36 @@ export default function Workbench() {
           moreMenu={{
             isHistory: presentation.isHistory,
             canShowInFolder: canShowInFinder,
+            showInFolderUnavailableReason: presentation.isHistory
+              ? "历史版本没有独立工作文件；请打开当前稿"
+              : !canShowInFinder ? "当前页面没有可在 Finder 中显示的工作文件" : undefined,
             onShowInFolder: () => void showProjectInFolder(),
-            canOpenInBrowser: canOpenCurrentHtml,
-            onOpenInBrowser: () => void openCurrentHtmlInDefaultBrowser(),
+            canOpenInBrowser: canOpenSelectedHtml,
+            openInBrowserUnavailableReason: !canOpenSelectedHtml
+              ? "当前页面没有可验证的 HTML 文件"
+              : undefined,
+            onOpenInBrowser: () => void openSelectedHtmlInDefaultBrowser(),
             canExportCurrentHtml,
+            exportUnavailableReason: !canExportCurrentHtml ? "当前页面还没有可导出的 HTML" : undefined,
             onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),
-            canSaveCurrentVersion: !runInProgress && !readyReviewOverlay && !projectHydrating && !projectLoadError && !viewTransitioning,
+            canSaveCurrentVersion: !presentation.isHistory && !runInProgress && !readyReviewOverlay && !projectHydrating && !projectLoadError && !viewTransitioning,
             onSaveCurrentVersion: () => { void workspaceController?.saveCurrentVersion(); },
+            canCreateVersionFromHistory: presentation.isHistory && !runInProgress && !projectHydrating && !projectLoadError && !viewTransitioning,
+            createVersionFromHistoryUnavailableReason: presentation.isHistory
+              && (runInProgress || projectHydrating || Boolean(projectLoadError) || viewTransitioning)
+              ? "项目就绪后可以基于此版本继续编辑"
+              : undefined,
+            onCreateVersionFromHistory: requestHistoryCreation,
+            canOpenPreservedDrafts: !presentation.isHistory,
+            preservedDraftsUnavailableReason: presentation.isHistory
+              ? "请先打开当前稿，再找回以前保留的稿件"
+              : undefined,
             onOpenPreservedDrafts: () => setPreservedDraftDialogOpen(true),
             canReloadCurrentSource: canReloadCurrentSource && !readyReviewOverlay,
             reloadCurrentSourceUnavailableReason: readyReviewOverlay
               ? "请先采用或不用这次 AI 修改，再从磁盘重新载入"
+              : presentation.isHistory
+                ? "历史版本不会从磁盘重载；请打开当前稿"
               : undefined,
             onReloadCurrentSource: () => void reloadCurrentSource(),
             onRetryDynamicContent: canReloadCurrentSource && editRuntimeSnapshot?.retryAvailable
@@ -6446,26 +6283,6 @@ export default function Workbench() {
             setCanvasMode("preview");
             revealAiConversation();
           }}
-        />
-      ) : presentation.isHistory ? (
-        <PreviewNavigationBanner
-          key={`history-${viewingVersionId || "unknown"}`}
-          icon={<ClockCounterClockwiseIcon aria-hidden="true" size={18} weight="duotone" />}
-          title={<>正在浏览 {presentation.displayedVersion?.label || "历史版本"}</>}
-          detail={viewingVersion
-            ? `只读 HTML 与 ${viewingVersion.comments.length} 条历史评论已在画布中展开`
-            : "画布来自精确不可变版本文件"}
-          secondaryActionLabel="创建新版本并编辑"
-          secondaryActionDisabled={
-            viewTransitioning
-            || runInProgress
-            || projectHydrating
-            || Boolean(projectLoadError)
-          }
-          onSecondaryAction={requestHistoryCreation}
-          actionLabel="回到当前稿"
-          actionDisabled={viewTransitioning}
-          onAction={() => void returnToCurrent()}
         />
       ) : null}
 
