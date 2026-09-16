@@ -670,6 +670,7 @@ export class WorkspaceController {
         createStartTab: () => this.createWorkbenchStartTab(),
         createSettingsTab: () => this.createWorkbenchSettingsTab(),
         createProjectRulesTab: (project) => this.createWorkbenchProjectRulesTab(project),
+        createHistoryTab: (project, version) => this.createWorkbenchHistoryTab(project, version),
         closeTab: (tabId) => this.closeWorkbenchTab(tabId),
         openRegisteredProject: (input) => this.openRegisteredWorkbenchProject(input),
       }),
@@ -1287,6 +1288,11 @@ export class WorkspaceController {
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
+  createWorkbenchHistoryTab(project, version) {
+    return this.#workbenchNavigationWorkflow?.createHistory(project, version)
+      || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
+  }
+
   closeWorkbenchTab(tabId) {
     return this.#workbenchNavigationWorkflow?.closeTab(tabId)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
@@ -1399,7 +1405,9 @@ export class WorkspaceController {
       return;
     }
     if (startupPriority === "persisted-active-tab") {
-      if (this.#workbenchTabsSession.snapshot.tabs.some((tab) => tab.kind === "document")) {
+      if (this.#workbenchTabsSession.snapshot.tabs.some((tab) => (
+        ["document", "project-rules", "history"].includes(tab.kind)
+      ))) {
         await this.#projectWorkflow.refreshRegisteredProjects();
       }
       return;
@@ -1408,7 +1416,9 @@ export class WorkspaceController {
       // A persisted Start remains active, but its retained document tabs still
       // need Registry projection for real titles and missing-project cleanup.
       // Refreshing the catalog does not activate activePath compatibility.
-      if (this.#workbenchTabsSession.snapshot.tabs.some((tab) => tab.kind === "document")) {
+      if (this.#workbenchTabsSession.snapshot.tabs.some((tab) => (
+        ["document", "project-rules", "history"].includes(tab.kind)
+      ))) {
         await this.#projectWorkflow.refreshRegisteredProjects();
       }
       return;
@@ -2762,7 +2772,75 @@ export class WorkspaceController {
     if (!event || typeof event !== "object") return;
     const current = this.#projectCatalogSnapshot;
     if (event.type === "project-hydrated" && event.historyCreation?.operationId) {
-      void this.#versionWorkflow?.restoreHistoryCreation({ operationId: event.historyCreation.operationId, context: event.context });
+      const versionWorkflow = this.#versionWorkflow;
+      const restoringPersistedTab = this.#workbenchNavigationSession?.snapshot.intent?.kind
+        === "startup-restore";
+      if (!restoringPersistedTab) {
+        void versionWorkflow?.restoreHistoryCreation({
+          operationId: event.historyCreation.operationId,
+          context: event.context,
+        });
+      }
+      const navigationWorkflow = this.#workbenchNavigationWorkflow;
+      const tabsSession = this.#workbenchTabsSession;
+      void (async () => {
+        if (!restoringPersistedTab) return;
+        await versionWorkflow?.queryHistoryCreation({
+          operationId: event.historyCreation.operationId,
+          context: event.context,
+        });
+        if (this.#disposed || !versionWorkflow || !navigationWorkflow || !tabsSession) return;
+        const creation = versionWorkflow.getSnapshot().creation;
+        const unresolvedCreateAndEdit = Boolean(
+          creation?.result?.status === "created"
+          && creation.result.openedAt === null
+          && creation.result.recoveryState !== "superseded"
+          && ["created", "opened", "open-failed"].includes(creation.phase)
+        );
+        if (!unresolvedCreateAndEdit) return;
+        const tabs = tabsSession.snapshot;
+        const requested = tabsSession.resolveTab(tabs.pendingTabId)
+          || tabsSession.resolveTab(tabs.activeTabId);
+        if (
+          !["document", "history"].includes(requested?.kind)
+          || requested?.projectId !== event.context?.projectId
+          || requested.documentId !== event.context?.documentId
+        ) return;
+        if (tabs.activeTabId !== requested.tabId || tabs.pendingTabId) {
+          const restoredSurfaceActive = await new Promise((resolve) => {
+            let unsubscribe = () => {};
+            let timeoutId = null;
+            const finish = (ready) => {
+              if (timeoutId !== null) clearTimeout(timeoutId);
+              unsubscribe();
+              resolve(ready);
+            };
+            const check = (snapshot) => {
+              if (snapshot.activeTabId === requested.tabId && !snapshot.pendingTabId) {
+                finish(true);
+              }
+            };
+            unsubscribe = tabsSession.subscribe(check);
+            timeoutId = setTimeout(() => finish(false), 15_000);
+            check(tabsSession.snapshot);
+          });
+          if (!restoredSurfaceActive || this.#disposed) return;
+        }
+        if (requested.kind === "document") {
+          await versionWorkflow.restoreHistoryCreation({
+            operationId: event.historyCreation.operationId,
+            context: this.#projectSession.context,
+          });
+          return;
+        }
+        const currentTab = tabsSession.snapshot.tabs.find((tab) => (
+          tab.kind === "document"
+          && tab.projectId === event.context.projectId
+          && tab.documentId === event.context.documentId
+        ));
+        if (!currentTab) return;
+        await navigationWorkflow.activateTab(currentTab.tabId);
+      })();
     }
     if (["project-hydrated", "project-source-renamed", "project-source-relocated"].includes(event.type)) this.#captureCurrentVersionSummary();
     if (event.type === "project-recents-loaded") {

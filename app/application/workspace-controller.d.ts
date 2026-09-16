@@ -409,7 +409,11 @@ export class WorkspaceController {
   activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number }): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchStartTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchSettingsTab(): Promise<WorkbenchNavigationOutcome>;
-  createWorkbenchProjectRulesTab(project?: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createWorkbenchProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createWorkbenchHistoryTab(
+    project: { projectId: string; documentId: string; title: string },
+    version: { id?: string; versionId?: string; ordinal: number; label?: string; versionLabel?: string; displayFileName?: string },
+  ): Promise<WorkbenchNavigationOutcome>;
   closeWorkbenchTab(tabId: string): Promise<WorkbenchNavigationOutcome>;
   openRegisteredWorkbenchProject(input: {
     projectId: string;

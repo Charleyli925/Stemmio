@@ -1,4 +1,3 @@
-import { seedLegacyHistoryActivation } from "../../helpers/legacy-history-activation.mjs";
 import { expect, test } from "@playwright/test";
 import { loadedDiskFrame as loadedStaticDiskFrame } from "./helpers/stemmio-app-fixture.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
@@ -36,6 +35,10 @@ function identityPreservingCandidateHtml(target, title) {
   return candidate === current
     ? current.replace(/<\/html\s*>/iu, `<!-- ${title} --></html>`)
     : candidate;
+}
+
+function currentProjectTabName(filePath) {
+  return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
 }
 
 test("Electron tab keyboard navigation manages focus and a persisted Start suppresses activePath restart", {
@@ -90,7 +93,7 @@ test("Electron tab keyboard navigation manages focus and a persisted Start suppr
       } catch {
         return null;
       }
-    }).toMatchObject({ version: 1, activeTabId: null });
+    }).toMatchObject({ version: 2, activeTabId: null });
 
     await closeStemmioGracefully(firstLaunch.electronApp, firstLaunch.page);
     firstClosed = true;
@@ -547,25 +550,26 @@ test("Electron sidebar opens an imported historical version in the existing proj
       name: `V${historicalVersion.ordinal}，历史版本`,
       exact: true,
     }).click();
-    await expect(tabs).toHaveCount(2, { timeout: 60_000 });
-    await expect(tabs.filter({ hasText: "sidebar-history-b" }))
+    await expect(tabs).toHaveCount(3, { timeout: 60_000 });
+    const selectedB = launched.page.locator('.workbench-tab[data-kind="history"]')
+      .filter({ hasText: "sidebar-history-b" })
+      .getByRole("tab");
+    const currentB = launched.page.locator('.workbench-tab[data-kind="document"]')
+      .filter({ hasText: "sidebar-history-b" })
+      .getByRole("tab");
+    await expect(selectedB)
       .toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
     await expect.poll(() => sidebar.locator(".sidebar-version-tree").count())
       .toBeGreaterThan(0);
-    await expect.poll(() => launched.page.locator(".preview-navigation-banner").count(), {
-      timeout: 60_000,
-    }).toBe(1);
-    await expect(launched.page.locator(".preview-navigation-banner").first())
-      .toContainText("正在浏览");
+    await expect(launched.page.locator(".preview-navigation-banner")).toHaveCount(0);
 
     const mode = launched.page.getByRole("group", { name: "工作模式", exact: true });
-    const selectedB = tabs.filter({ hasText: "sidebar-history-b" });
-    await expect(selectedB).toContainText(`${historicalVersion.displayFileName} · 历史`);
+    await expect(selectedB).toHaveAccessibleName(`sidebar-history-b · 历史 V${historicalVersion.ordinal}`);
     await expect(importedProject.locator('[data-selected="true"] .sidebar-version-file')).toHaveAccessibleName(`V${historicalVersion.ordinal}，历史版本`);
     await expect(importedProject.locator('[data-selected="true"] .sidebar-version-time'))
       .toHaveAttribute("datetime", historicalVersion.modifiedAt);
     await expect(mode).toHaveAttribute("data-view-label", "历史");
-    await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
+    await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
     const historicalPreview = launched.page.frameLocator('iframe[title="HTML 交互预览"]');
     await expect(historicalPreview.locator("body")).toBeVisible();
     await expect.poll(async () => (await launched.page.locator('iframe[title="HTML 交互预览"]').boundingBox())?.height || 0).toBeGreaterThan(400);
@@ -573,9 +577,9 @@ test("Electron sidebar opens an imported historical version in the existing proj
     const protectedWorkingBytes = readFileSync(target.exactSourcePath, "utf8");
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V3");
     await launched.page.screenshot({ path: test.info().outputPath("version-history-projection.png") });
-    await launched.page.getByRole("button", { name: "回到当前稿", exact: true }).click();
-    await expect(selectedB).toContainText(path.basename(target.exactSourcePath));
-    await expect(selectedB).not.toContainText("历史");
+    await importedProject.locator(".sidebar-project-current-row").click();
+    await expect(currentB).toHaveAttribute("aria-selected", "true");
+    await expect(selectedB).toContainText("历史");
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
     await expect(launched.page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(0);
     await expect(mode).toHaveAttribute("data-view-label", "当前");
@@ -601,8 +605,10 @@ test("Electron sidebar opens an imported historical version in the existing proj
 
 
     await currentProject.locator(".sidebar-project-current-row").click();
-    await expect(tabs).toHaveCount(2);
-    await expect(tabs.filter({ hasText: "sidebar-history-a" })).toHaveAttribute("aria-selected", "true");
+    await expect(tabs).toHaveCount(3);
+    await expect(launched.page.locator('.workbench-tab[data-kind="document"]')
+      .filter({ hasText: "sidebar-history-a" }).getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
     await expect(mode).toHaveAttribute("data-view-label", "当前");
     await expect(importedProject.locator(".sidebar-version-index")).toHaveText(["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"]);
     await expect(importedProject.locator('[data-selected="true"]')).toHaveCount(0);
@@ -615,7 +621,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     };
     await launched.page.route("**/version-file?*", rejectCrossProjectHistory);
     await historyButton.click();
-    await expect(selectedB).toHaveAttribute("aria-selected", "true");
+    await expect(currentB).toHaveAttribute("aria-selected", "true");
     await expect.poll(() => rejectedCrossProjectReads).toBe(1);
     await expect(launched.page.getByText("测试历史快照校验失败", { exact: true })).toBeVisible();
     await launched.page.evaluate(() => new Promise((resolve) => {
@@ -629,10 +635,12 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
     await historyButton.focus(); await historyButton.press("Enter");
     await expect(selectedB).toHaveAttribute("aria-selected", "true");
-    await expect(selectedB).toContainText(`${historicalVersion.displayFileName} · 历史`);
+    await expect(selectedB).toContainText(`历史 V${historicalVersion.ordinal}`);
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     const edit = mode.getByRole("button", { name: "编辑", exact: true });
-    await edit.click();
+    await expect(edit).toBeDisabled();
+    await launched.page.getByRole("button", { name: "更多", exact: true }).click();
+    await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     const dialog = launched.page.getByRole("dialog", { name: /基于.*创建新版本/ });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
@@ -643,9 +651,17 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.electronApp.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });
     }, exportPath);
+    await expect(launched.page.getByText("测试历史快照校验失败", { exact: true })).toHaveCount(0);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
-    await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示当前工作文件", exact: true })).toBeVisible();
-    await expect(launched.page.getByRole("menuitem", { name: "在浏览器中打开当前工作文件", exact: true })).toBeVisible();
+    await expect(launched.page.getByRole("menuitem", { name: "保存为新版本", exact: true })).toBeDisabled();
+    await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeEnabled();
+    await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeDisabled();
+    await expect(launched.page.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeDisabled();
+    await expect(launched.page.getByRole("menuitemcheckbox", { name: "同时保存为新版本", exact: true })).toBeDisabled();
+    await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toBeDisabled();
+    await expect(launched.page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true })).toBeDisabled();
+    await expect(launched.page.getByText("历史版本没有独立工作文件；请打开当前稿", { exact: true })).toBeVisible();
+    await launched.page.screenshot({ path: test.info().outputPath("version-history-menu.png") });
     await launched.page.getByRole("menuitem", { name: "导出此版本…", exact: true }).click();
     const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
     await expect.poll(() => { try { return readFileSync(exportPath, "utf8"); } catch { return null; } }).toBe(historicalBytes.content);
@@ -660,7 +676,8 @@ test("Electron sidebar opens an imported historical version in the existing proj
     };
     await launched.page.route("**/history-version/create", loseReceipt);
     await launched.page.route("**/workspace?*", failCreatedOpen);
-    await edit.click();
+    await launched.page.getByRole("button", { name: "更多", exact: true }).click();
+    await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     await dialog.getByRole("button", { name: "创建并编辑", exact: true }).click();
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled({ timeout: 30_000 });
     const createdSummary = await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
@@ -678,7 +695,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled();
     await launched.page.getByRole("button", { name: "打开已创建版本", exact: true }).click();
-    await expect(selectedB).toContainText(path.basename(target.exactSourcePath), { timeout: 60_000 });
+    await expect(currentB).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
     await expect(mode).toHaveAttribute("data-view-label", "当前");
     await expect(mode.getByRole("button", { name: "编辑", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(importedProject.locator(".sidebar-project-current-row")).toHaveAttribute("aria-current", "page");
@@ -707,7 +724,8 @@ test("Electron sidebar opens an imported historical version in the existing proj
     firstClosed = true;
     reopened = await launchStemmio({ isolatedUserData: launched.isolatedUserData });
     await waitForProjectReady(reopened.page);
-    await expect(reopened.page.getByRole("tab", { selected: true })).toContainText(path.basename(createdPath));
+    await expect(reopened.page.getByRole("tab", { selected: true }))
+      .toHaveAccessibleName(currentProjectTabName(createdPath));
     expect((await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })).versions).toHaveLength(9);
     const { frame: restartedFrame } = await loadedStaticDiskFrame(reopened.page, createdPath, { expectedCase: "list-item", includeEditor: true });
     await expect(restartedFrame.locator(caseSelector("list-item"))).toContainText("HISTORY_V9_SAVED");
@@ -888,12 +906,15 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
           await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "TEST_PENDING", message: "尚未打开新稿" } }) });
         } else await route.continue();
       });
-      await mode.getByRole("button", { name: "编辑", exact: true }).click();
+      await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+      await app.page.getByRole("button", { name: "更多", exact: true }).click();
+      await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
       await app.page.getByRole("dialog").getByRole("button", { name: "创建并编辑", exact: true }).click();
       if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled();
       else {
         await expect(mode).toHaveAttribute("data-view-label", "当前");
-        await expect(app.page.getByRole("tab", { selected: true })).toContainText(path.basename(initialPath));
+        await expect(app.page.getByRole("tab", { selected: true }))
+          .toHaveAccessibleName(currentProjectTabName(initialPath));
         // The selected tab is published before the navigation owner releases
         // its close guard. Wait for the public toolbar boundary before restart.
         await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
@@ -931,7 +952,8 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
       app = await launchStemmio({ isolatedUserData: userData,
         ...(recoveryCase === "superseded" ? { activeSourcePath: expectedPath } : {}) });
       await waitForProjectReady(app.page);
-      await expect(app.page.getByRole("tab", { selected: true })).toContainText(path.basename(expectedPath));
+      await expect(app.page.getByRole("tab", { selected: true }))
+        .toHaveAccessibleName(currentProjectTabName(expectedPath));
       if (recoveryCase === "superseded") {
         // Persist the selected V10, then exercise an ordinary restart without
         // a command-line target. The V9 acknowledgment is still missing.
@@ -939,7 +961,8 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
         app = null;
         app = await launchStemmio({ isolatedUserData: userData });
         await waitForProjectReady(app.page);
-        await expect(app.page.getByRole("tab", { selected: true })).toContainText(path.basename(expectedPath));
+        await expect(app.page.getByRole("tab", { selected: true }))
+          .toHaveAccessibleName(currentProjectTabName(expectedPath));
       }
       await expect(app.page.getByText("创建结果暂时未知", { exact: true })).toHaveCount(0);
       const restored = await repository.queryHistoryCreation({ target, operationId });
@@ -958,7 +981,9 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
       await expect(restoredMode.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
       await app.page.getByRole("button", { name: `V${historical.ordinal}，历史版本`, exact: true }).click();
       await expect(restoredMode).toHaveAttribute("data-view-label", "历史");
-      await restoredMode.getByRole("button", { name: "编辑", exact: true }).click();
+      await expect(restoredMode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+      await app.page.getByRole("button", { name: "更多", exact: true }).click();
+      await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
       await expect(app.page.getByRole("dialog", { name: /创建新版本/ })).toBeVisible();
       await app.page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
     } finally {

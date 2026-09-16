@@ -1621,8 +1621,11 @@ test("repairing an opened acknowledgement verifies current Canvas without reopen
     workspaceRead: async () => { reads += 1; return createdWorkspace(); },
     confirmCreation: async () => { acknowledgements += 1; throw new Error("lost acknowledgement"); } });
   assert.equal((await harness.workflow.openCreatedHistoryVersion({ operationId: "history_open_0001", context: harness.context })).status, "succeeded");
+  const createdContext = harness.projectSession.context;
+  await harness.workflow.viewHistory({ version: { id: "ver_0001" }, context: createdContext });
+  await harness.workflow.queryHistoryCreation({ operationId: "history_open_0001", context: createdContext });
   const commits = harness.calls.commit.length;
-  await harness.workflow.restoreHistoryCreation({ operationId: "history_open_0001", context: harness.projectSession.context });
+  assert.equal((await harness.workflow.returnToCurrent({ context: createdContext })).status, "succeeded");
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
   assert.equal(reads, 1);
   assert.equal(harness.calls.commit.length, commits);

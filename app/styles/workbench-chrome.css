@@ -371,6 +371,8 @@ body {
   z-index: 1000;
   width: 220px;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   display: grid;
   gap: 2px;
   padding: 6px;

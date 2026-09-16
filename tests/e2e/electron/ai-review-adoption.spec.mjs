@@ -2743,7 +2743,7 @@ test("a rewrite outside <main> is still reviewed", {
     if (await sidebar.getAttribute("data-open") !== "true") {
       await launched.page.getByRole("button", { name: "展开左侧边栏" }).click();
     }
-    await sidebar.getByRole("button", { name: "源页", exact: true }).click();
+    await sidebar.getByRole("button", { name: "Stemmio", exact: true }).click();
     await expect(launched.page.getByRole("button", { name: "关闭关于源页" }))
       .toBeVisible({ timeout: 15_000 });
     await launched.page.getByRole("button", { name: "关闭关于源页" }).click();
