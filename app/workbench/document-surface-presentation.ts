@@ -60,23 +60,23 @@ export function useDocumentSurfaceHandoff({
   markFirstScroll: (tabId: string, scrollTop: number) => void;
 } {
   const pending = cache.entries.find((entry) => (
-    entry.tier === "hot" && entry.tabId === tabs.pendingTabId
+    entry.tabId === tabs.pendingTabId
   )) || null;
   const pendingToken = tokenForEntry(pending);
   const [presentedToken, setPresentedToken] = useState<DocumentSurfaceCacheToken | null>(null);
   const [retainedCandidateToken, setCandidateToken] = useState<DocumentSurfaceCacheToken | null>(null);
   const pendingTabId = pendingToken?.tabId || null;
   const pendingSourceSha256 = pendingToken?.sourceSha256 || null;
-  const presentedEntryIsHot = Boolean(
+  const presentedEntryIsCached = Boolean(
     presentedToken && entryForToken(cache, presentedToken),
   );
   useLayoutEffect(() => {
-    if (!presentedToken || presentedEntryIsHot) return;
-    // A demoted projection must not become visible again merely because the
-    // cache promotes the same tab later; it must rehydrate as a candidate.
+    if (!presentedToken || presentedEntryIsCached) return;
+    // An evicted projection must not become visible again merely because the
+    // same tab later receives different source bytes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPresentedToken(null);
-  }, [presentedEntryIsHot, presentedToken]);
+  }, [presentedEntryIsCached, presentedToken]);
   useEffect(() => {
     if (!pendingTabId || !pendingSourceSha256) return;
     // The pending tab can commit before the static candidate reports ready;
@@ -124,7 +124,7 @@ export function useDocumentSurfaceHandoff({
     performance.mark("stemmio:tab-cache:first-scroll-response", {
       detail: Object.freeze({ tabId, scrollTop }),
     });
-  }, [controller]);
+  }, []);
   const retainedCandidateIsActive = Boolean(
     retainedCandidateToken
     && active?.kind === "document"
@@ -201,7 +201,7 @@ export function restoreCachedDocumentPresentation({
   setCanvasMode: (value: CanvasMode) => void;
   stage: HTMLDivElement | null;
 }) {
-  const cached = controller.getSnapshot().documentSurfaceCache?.entries.find((entry) => (
+  const cached = controller.getSnapshot().documentSurfaceCache?.presentations.find((entry) => (
     entry.projectId === project.projectId
     && entry.documentId === project.documentId
     && entry.sourceSha256 === project.sha256

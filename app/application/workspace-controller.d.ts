@@ -430,7 +430,7 @@ export class WorkspaceController {
   updateDocumentSurfacePresentation(
     tabId: string,
     presentation?: Readonly<Record<string, unknown>>,
-  ): import("./document-surface-cache-session.js").DocumentSurfaceCacheEntry | null;
+  ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
   subscribe(
     listener: (
       snapshot: import("./workspace-controller-capabilities.js").WorkspaceControllerSnapshot,

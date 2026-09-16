@@ -54,7 +54,7 @@ test("Electron tab keyboard navigation manages focus and a persisted Start suppr
     await firstLaunch.page.getByRole("button", { name: "新标签页" }).click();
     await expect(tablist.getByRole("tab")).toHaveCount(3);
     await expect(firstLaunch.page.getByTestId("workbench-document-surface-cache")
-      .locator("[data-tab-id] iframe")).toHaveCount(1);
+      .locator("[data-tab-id] iframe")).toHaveCount(0);
 
     const documentTab = tablist.getByRole("tab").nth(0);
     const firstStart = tablist.getByRole("tab").nth(1);
@@ -367,14 +367,39 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     const firstTabs = first.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     await expect(firstTabs).toHaveCount(2);
     await expect(firstTabs.filter({ hasText: "registry-restart-b" })).toHaveAttribute("aria-selected", "true");
-    const cachedSurfaces = first.page.getByTestId("workbench-document-surface-cache")
-      .locator("[data-tab-id]");
-    // The active document keeps its source projection in the cache session,
-    // but only the inactive tab mounts a read-only display iframe.
-    await expect(cachedSurfaces).toHaveCount(1, { timeout: 30_000 });
-    await expect(cachedSurfaces.locator("iframe")).toHaveCount(1);
-    await expect(cachedSurfaces.locator("iframe").first())
-      .toHaveAttribute("sandbox", "allow-same-origin");
+    const surfaceCache = first.page.getByTestId("workbench-document-surface-cache");
+    // The inactive tab retains exact HTML data and reading state, not a live
+    // display document. A cached return may mount only during the handoff.
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "2");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await first.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      sample();
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+    await firstTabs.filter({ hasText: "registry-restart-a" }).click();
+    await loadedDiskFrame(first.page, projectA.sourcePath, "list-item");
+    await expect.poll(() => first.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeGreaterThanOrEqual(1);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await firstTabs.filter({ hasText: "registry-restart-b" }).click();
+    await loadedDiskFrame(first.page, projectB.sourcePath, "list-item");
+    await first.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+    });
     const tabsStatePath = path.join(first.isolatedUserData, "workbench-tabs.json");
     await expect.poll(() => {
       try {

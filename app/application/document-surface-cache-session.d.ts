@@ -1,3 +1,14 @@
+export type DocumentSurfacePresentation = Readonly<{
+  tabId: string;
+  projectId: string;
+  documentId: string;
+  sourceSha256: string;
+  canvasMode: "edit" | "preview";
+  pageViewContext: Readonly<Record<string, unknown>> | null;
+  scrollTop: number;
+  byteLength: number;
+}>;
+
 export type DocumentSurfaceCacheEntry = Readonly<{
   tabId: string;
   projectId: string;
@@ -9,18 +20,16 @@ export type DocumentSurfaceCacheEntry = Readonly<{
   pageViewContext: Readonly<Record<string, unknown>> | null;
   scrollTop: number;
   byteLength: number;
-  tier: "hot" | "warm";
 }>;
 
 export type DocumentSurfaceCacheSnapshot = Readonly<{
   revision: number;
   entries: readonly DocumentSurfaceCacheEntry[];
-  hotTabIds: readonly string[];
-  warmTabIds: readonly string[];
+  presentations: readonly DocumentSurfacePresentation[];
   coldTabIds: readonly string[];
   totalBytes: number;
+  presentationBytes: number;
   limits: Readonly<{
-    maxHotEntries: number;
     maxEntries: number;
     maxBytes: number;
   }>;
@@ -46,12 +55,16 @@ export function documentSurfaceCacheEntryMatchesToken(
 ): boolean;
 
 export class DocumentSurfaceCacheSession {
-  constructor(input?: { maxHotEntries?: number; maxWarmEntries?: number; maxBytes?: number });
+  constructor(input?: { maxEntries?: number; maxBytes?: number });
   readonly snapshot: DocumentSurfaceCacheSnapshot;
   subscribe(listener: (snapshot: DocumentSurfaceCacheSnapshot) => void): () => void;
   capture(input?: Record<string, unknown>): DocumentSurfaceCacheEntry | null;
   touch(tabId: string): DocumentSurfaceCacheEntry | null;
-  updatePresentation(tabId: string, presentation?: Readonly<Record<string, unknown>>): DocumentSurfaceCacheEntry | null;
+  updatePresentation(
+    tabId: string,
+    presentation?: Readonly<Record<string, unknown>>,
+    identity?: Readonly<Record<string, unknown>>,
+  ): DocumentSurfacePresentation | null;
   remove(tabId: string): boolean;
   reconcile(tabIds: readonly string[]): DocumentSurfaceCacheSnapshot;
   clear(): void;

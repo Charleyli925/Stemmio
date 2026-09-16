@@ -1277,7 +1277,23 @@ export class WorkspaceController {
   }
 
   updateDocumentSurfacePresentation(tabId, presentation) {
-    return this.#documentSurfaceCacheSession?.updatePresentation(tabId, presentation) || null;
+    const tab = this.#workbenchTabsSession?.resolveTab(tabId);
+    const project = this.#projectSessionSnapshot;
+    const document = this.#documentSessionSnapshot;
+    const currentIdentity = tab?.kind === "document"
+      && project?.projectId === tab.projectId
+      && project?.documentId === tab.documentId
+      ? {
+          projectId: tab.projectId,
+          documentId: tab.documentId,
+          sourceSha256: document?.workingHtmlSha256 || document?.persistedSourceSha256,
+        }
+      : null;
+    return this.#documentSurfaceCacheSession?.updatePresentation(
+      tabId,
+      presentation,
+      currentIdentity,
+    ) || null;
   }
 
   async #initializeWorkbenchTabs() {

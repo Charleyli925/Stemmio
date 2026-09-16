@@ -1,8 +1,6 @@
-// A live iframe is materially more expensive than its source string. Keep only
-// the five most recent projections mounted, while retaining enough byte-bounded
-// source projections for a realistic 20-tab workbench to avoid a cold flash.
-const DEFAULT_MAX_HOT_ENTRIES = 5;
-const DEFAULT_MAX_WARM_ENTRIES = 20;
+// Complete HTML stays byte-bounded. Per-tab reading state is kept separately
+// so evicting a heavy source projection does not also erase scroll or mode.
+const DEFAULT_MAX_ENTRIES = 20;
 const DEFAULT_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PRESENTATION_CONTEXT_CHARS = 64 * 1024;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -27,7 +25,6 @@ export function documentSurfaceCacheEntryMatchesToken(entry, token) {
   return Boolean(
     entry
     && token
-    && entry.tier === "hot"
     && entry.tabId === token.tabId
     && entry.sourceSha256 === token.sourceSha256
   );
@@ -52,7 +49,54 @@ function presentationContext(value) {
   }
 }
 
-function freezeEntry(entry, hot) {
+function exactPresentation(presentation, identity) {
+  return Boolean(
+    presentation
+    && presentation.projectId === identity.projectId
+    && presentation.documentId === identity.documentId
+    && presentation.sourceSha256 === identity.sourceSha256,
+  );
+}
+
+function normalizedPresentation(identity, previous, value = {}) {
+  const base = exactPresentation(previous, identity) ? previous : null;
+  const owns = (key) => Object.prototype.hasOwnProperty.call(value, key);
+  const context = owns("pageViewContext")
+    ? presentationContext(value.pageViewContext)
+    : {
+        value: base?.pageViewContext || null,
+        bytes: base?.byteLength || 0,
+      };
+  return {
+    tabId: identity.tabId,
+    projectId: identity.projectId,
+    documentId: identity.documentId,
+    sourceSha256: identity.sourceSha256,
+    canvasMode: owns("canvasMode")
+      ? (value.canvasMode === "preview" ? "preview" : "edit")
+      : base?.canvasMode || "edit",
+    pageViewContext: context.value,
+    scrollTop: owns("scrollTop") && Number.isFinite(Number(value.scrollTop))
+      ? Math.max(0, Number(value.scrollTop))
+      : base?.scrollTop || 0,
+    byteLength: context.bytes,
+  };
+}
+
+function freezePresentation(presentation) {
+  return Object.freeze({
+    tabId: presentation.tabId,
+    projectId: presentation.projectId,
+    documentId: presentation.documentId,
+    sourceSha256: presentation.sourceSha256,
+    canvasMode: presentation.canvasMode,
+    pageViewContext: presentation.pageViewContext,
+    scrollTop: presentation.scrollTop,
+    byteLength: presentation.byteLength,
+  });
+}
+
+function freezeEntry(entry, presentation) {
   return Object.freeze({
     tabId: entry.tabId,
     projectId: entry.projectId,
@@ -60,26 +104,26 @@ function freezeEntry(entry, hot) {
     sourcePath: entry.sourcePath,
     sourceSha256: entry.sourceSha256,
     html: entry.html,
-    canvasMode: entry.canvasMode,
-    pageViewContext: entry.pageViewContext,
-    scrollTop: entry.scrollTop,
-    byteLength: entry.byteLength,
-    tier: hot ? "hot" : "warm",
+    canvasMode: presentation?.canvasMode || "edit",
+    pageViewContext: presentation?.pageViewContext || null,
+    scrollTop: presentation?.scrollTop || 0,
+    byteLength: entry.contentBytes,
   });
 }
 
-function frozenSnapshot(revision, entries, hotIds, tabIds, totalBytes, limits) {
-  const hot = new Set(hotIds);
+function frozenSnapshot(revision, entries, presentations, tabIds, totalBytes, limits) {
+  const presentationByTabId = new Map(presentations.map((value) => [value.tabId, value]));
   const entryIds = new Set(entries.map((entry) => entry.tabId));
   return Object.freeze({
     revision,
-    entries: Object.freeze(entries.map((entry) => freezeEntry(entry, hot.has(entry.tabId)))),
-    hotTabIds: Object.freeze([...hotIds]),
-    warmTabIds: Object.freeze(entries
-      .filter((entry) => !hot.has(entry.tabId))
-      .map((entry) => entry.tabId)),
+    entries: Object.freeze(entries.map((entry) => {
+      const presentation = presentationByTabId.get(entry.tabId);
+      return freezeEntry(entry, exactPresentation(presentation, entry) ? presentation : null);
+    })),
+    presentations: Object.freeze(presentations.map(freezePresentation)),
     coldTabIds: Object.freeze(tabIds.filter((tabId) => !entryIds.has(tabId))),
     totalBytes,
+    presentationBytes: presentations.reduce((total, value) => total + value.byteLength, 0),
     limits: Object.freeze({ ...limits }),
   });
 }
@@ -91,43 +135,35 @@ export const INITIAL_DOCUMENT_SURFACE_CACHE_SNAPSHOT = frozenSnapshot(
   [],
   0,
   {
-    maxHotEntries: DEFAULT_MAX_HOT_ENTRIES,
-    maxEntries: DEFAULT_MAX_WARM_ENTRIES,
+    maxEntries: DEFAULT_MAX_ENTRIES,
     maxBytes: DEFAULT_MAX_BYTES,
   },
 );
 
 /**
- * Owns disposable, read-only tab display projections. Entries never authorize
- * editing, persistence or source transitions; every activation still reopens
- * and validates the registered project through ProjectWorkflow.
+ * Owns disposable, read-only tab source projections and exact-version reading
+ * state. Entries never authorize editing, persistence or source transitions;
+ * every activation still reopens and validates through ProjectWorkflow.
  */
 export class DocumentSurfaceCacheSession {
   #listeners = new Set();
   #entries = new Map();
-  #hotIds = [];
+  #presentations = new Map();
   #tabIds = [];
   #totalBytes = 0;
   #revision = 0;
   #snapshot = INITIAL_DOCUMENT_SURFACE_CACHE_SNAPSHOT;
-  #maxHotEntries;
-  #maxWarmEntries;
+  #maxEntries;
   #maxBytes;
 
   constructor({
-    maxHotEntries = DEFAULT_MAX_HOT_ENTRIES,
-    maxWarmEntries = DEFAULT_MAX_WARM_ENTRIES,
+    maxEntries = DEFAULT_MAX_ENTRIES,
     maxBytes = DEFAULT_MAX_BYTES,
   } = {}) {
-    this.#maxHotEntries = Math.max(1, Math.round(Number(maxHotEntries)) || 1);
-    this.#maxWarmEntries = Math.max(
-      this.#maxHotEntries,
-      Math.round(Number(maxWarmEntries)) || this.#maxHotEntries,
-    );
+    this.#maxEntries = Math.max(1, Math.round(Number(maxEntries)) || 1);
     this.#maxBytes = Math.max(1, Math.round(Number(maxBytes)) || 1);
     this.#snapshot = frozenSnapshot(0, [], [], [], 0, {
-      maxHotEntries: this.#maxHotEntries,
-      maxEntries: this.#maxWarmEntries,
+      maxEntries: this.#maxEntries,
       maxBytes: this.#maxBytes,
     });
   }
@@ -165,40 +201,24 @@ export class DocumentSurfaceCacheSession {
     ) return null;
 
     if (!this.#tabIds.includes(tabId)) this.#tabIds = [...this.#tabIds, tabId];
+    const identity = { tabId, projectId, documentId, sourceSha256 };
+    this.#presentations.set(tabId, normalizedPresentation(
+      identity,
+      this.#presentations.get(tabId),
+      presentation,
+    ));
 
     const previous = this.#entries.get(tabId);
-    const owns = (key) => Object.prototype.hasOwnProperty.call(presentation, key);
-    const normalizedContext = owns("pageViewContext")
-      ? presentationContext(presentation.pageViewContext)
-      : {
-          value: previous?.pageViewContext || null,
-          bytes: previous
-            ? Math.max(0, previous.byteLength - previous.contentBytes)
-            : 0,
-        };
-    const contentBytes = Math.max(1, 2 * html.length + 2 * sourcePath.length + 512);
-    const entry = {
-      tabId,
-      projectId,
-      documentId,
-      sourcePath,
-      sourceSha256,
-      html,
-      canvasMode: owns("canvasMode")
-        ? (presentation.canvasMode === "preview" ? "preview" : "edit")
-        : previous?.canvasMode || "edit",
-      pageViewContext: normalizedContext.value,
-      scrollTop: owns("scrollTop") && Number.isFinite(Number(presentation.scrollTop))
-        ? Math.max(0, Number(presentation.scrollTop))
-        : previous?.scrollTop || 0,
-      contentBytes,
-      byteLength: contentBytes + normalizedContext.bytes,
-    };
-    if (previous) this.#totalBytes -= previous.byteLength;
+    if (previous) this.#totalBytes -= previous.contentBytes;
     this.#entries.delete(tabId);
-    this.#entries.set(tabId, entry);
-    this.#totalBytes += entry.byteLength;
-    this.#promote(tabId);
+    const contentBytes = Math.max(1, 2 * html.length + 2 * sourcePath.length + 512);
+    this.#entries.set(tabId, {
+      ...identity,
+      sourcePath,
+      html,
+      contentBytes,
+    });
+    this.#totalBytes += contentBytes;
     this.#evict();
     this.#publish();
     return this.#snapshot.entries.find((candidate) => candidate.tabId === tabId) || null;
@@ -210,47 +230,53 @@ export class DocumentSurfaceCacheSession {
     if (!entry) return null;
     this.#entries.delete(id);
     this.#entries.set(id, entry);
-    this.#promote(id);
     this.#publish();
     return this.#snapshot.entries.find((candidate) => candidate.tabId === id) || null;
   }
 
-  updatePresentation(tabId, presentation = {}) {
+  updatePresentation(tabId, presentation = {}, identity = {}) {
     const id = String(tabId || "");
     const entry = this.#entries.get(id);
-    if (!entry) return null;
-    const owns = (key) => Object.prototype.hasOwnProperty.call(presentation, key);
-    const normalizedContext = owns("pageViewContext")
-      ? presentationContext(presentation.pageViewContext)
-      : {
-          value: entry.pageViewContext,
-          bytes: Math.max(0, entry.byteLength - entry.contentBytes),
-        };
-    const next = {
-      ...entry,
-      canvasMode: owns("canvasMode")
-        ? (presentation.canvasMode === "preview" ? "preview" : "edit")
-        : entry.canvasMode,
-      pageViewContext: normalizedContext.value,
-      scrollTop: owns("scrollTop") && Number.isFinite(Number(presentation.scrollTop))
-        ? Math.max(0, Number(presentation.scrollTop))
-        : entry.scrollTop,
-      byteLength: entry.contentBytes + normalizedContext.bytes,
+    const previous = this.#presentations.get(id);
+    const requestedIdentity = {
+      projectId: String(identity?.projectId || ""),
+      documentId: String(identity?.documentId || ""),
+      sourceSha256: String(identity?.sourceSha256 || ""),
     };
-    this.#totalBytes += next.byteLength - entry.byteLength;
-    this.#entries.set(id, next);
-    this.#evict();
+    const sourceIdentity = requestedIdentity.projectId
+      && requestedIdentity.documentId
+      && SHA256.test(requestedIdentity.sourceSha256)
+      ? requestedIdentity
+      : entry;
+    const nextIdentity = {
+      tabId: id,
+      projectId: String(sourceIdentity?.projectId || ""),
+      documentId: String(sourceIdentity?.documentId || ""),
+      sourceSha256: String(sourceIdentity?.sourceSha256 || ""),
+    };
+    if (
+      !id
+      || !nextIdentity.projectId
+      || !nextIdentity.documentId
+      || !SHA256.test(nextIdentity.sourceSha256)
+    ) return null;
+    this.#presentations.set(
+      id,
+      normalizedPresentation(nextIdentity, previous, presentation),
+    );
     this.#publish();
-    return this.#snapshot.entries.find((candidate) => candidate.tabId === id) || null;
+    return this.#snapshot.presentations.find((candidate) => candidate.tabId === id) || null;
   }
 
   remove(tabId) {
     const id = String(tabId || "");
     const entry = this.#entries.get(id);
-    if (!entry) return false;
-    this.#entries.delete(id);
-    this.#totalBytes -= entry.byteLength;
-    this.#hotIds = this.#hotIds.filter((candidate) => candidate !== id);
+    const hadPresentation = this.#presentations.delete(id);
+    if (!entry && !hadPresentation) return false;
+    if (entry) {
+      this.#entries.delete(id);
+      this.#totalBytes -= entry.contentBytes;
+    }
     this.#publish();
     return true;
   }
@@ -264,12 +290,12 @@ export class DocumentSurfaceCacheSession {
     for (const [tabId, entry] of this.#entries) {
       if (retained.has(tabId)) continue;
       this.#entries.delete(tabId);
-      this.#totalBytes -= entry.byteLength;
+      this.#totalBytes -= entry.contentBytes;
       changed = true;
     }
-    const hotIds = this.#hotIds.filter((tabId) => retained.has(tabId));
-    if (hotIds.length !== this.#hotIds.length) {
-      this.#hotIds = hotIds;
+    for (const tabId of this.#presentations.keys()) {
+      if (retained.has(tabId)) continue;
+      this.#presentations.delete(tabId);
       changed = true;
     }
     if (changed) this.#publish();
@@ -277,9 +303,9 @@ export class DocumentSurfaceCacheSession {
   }
 
   clear() {
-    if (!this.#entries.size && !this.#hotIds.length && !this.#tabIds.length) return;
+    if (!this.#entries.size && !this.#presentations.size && !this.#tabIds.length) return;
     this.#entries.clear();
-    this.#hotIds = [];
+    this.#presentations.clear();
     this.#tabIds = [];
     this.#totalBytes = 0;
     this.#publish();
@@ -290,22 +316,16 @@ export class DocumentSurfaceCacheSession {
     this.#listeners.clear();
   }
 
-  #promote(tabId) {
-    this.#hotIds = [tabId, ...this.#hotIds.filter((candidate) => candidate !== tabId)]
-      .slice(0, this.#maxHotEntries);
-  }
-
   #evict() {
     while (
-      this.#entries.size > this.#maxWarmEntries
+      this.#entries.size > this.#maxEntries
       || this.#totalBytes > this.#maxBytes
     ) {
       const oldestId = this.#entries.keys().next().value;
       if (!oldestId) break;
       const oldest = this.#entries.get(oldestId);
       this.#entries.delete(oldestId);
-      this.#totalBytes -= oldest?.byteLength || 0;
-      this.#hotIds = this.#hotIds.filter((candidate) => candidate !== oldestId);
+      this.#totalBytes -= oldest?.contentBytes || 0;
     }
   }
 
@@ -314,12 +334,11 @@ export class DocumentSurfaceCacheSession {
     this.#snapshot = frozenSnapshot(
       this.#revision,
       [...this.#entries.values()],
-      this.#hotIds,
+      [...this.#presentations.values()],
       this.#tabIds,
       this.#totalBytes,
       {
-        maxHotEntries: this.#maxHotEntries,
-        maxEntries: this.#maxWarmEntries,
+        maxEntries: this.#maxEntries,
         maxBytes: this.#maxBytes,
       },
     );

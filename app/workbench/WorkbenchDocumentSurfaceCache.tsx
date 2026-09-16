@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type {
   DocumentSurfaceCacheToken,
@@ -15,7 +15,6 @@ function cacheTokenKey(token: DocumentSurfaceCacheToken | null): string | null {
 
 export default function WorkbenchDocumentSurfaceCache({
   snapshot,
-  activeTabId = null,
   visibleTabId,
   visibleSourceSha256,
   candidateTabId = null,
@@ -27,7 +26,6 @@ export default function WorkbenchDocumentSurfaceCache({
   height,
 }: {
   snapshot: DocumentSurfaceCacheSnapshot;
-  activeTabId?: string | null;
   visibleTabId: string | null;
   visibleSourceSha256: string | null;
   candidateTabId?: string | null;
@@ -45,42 +43,40 @@ export default function WorkbenchDocumentSurfaceCache({
   // can settle without exposing an unready frame.
   const [presentedToken, setPresentedToken] = useState<DocumentSurfaceCacheToken | null>(null);
   const readyTokenKeyRef = useRef<string | null>(null);
-  // The cache retains the active document's exact source projection for tab
-  // navigation, but an Edit tab must not also own a hidden full-page display
-  // iframe. Keep an active entry only while it is the explicit handoff
-  // candidate/cover for a tab switch; normal editing stays on HtmlCanvasEditor.
+  // Source projections are data-only until an exact tab-switch handoff asks
+  // for them. Normal inactive and active tabs own no display iframe.
   const isExplicitHandoffSurface = (entry: DocumentSurfaceCacheSnapshot["entries"][number]) => (
     (entry.tabId === candidateTabId && entry.sourceSha256 === candidateSourceSha256)
     || (entry.tabId === visibleTabId && entry.sourceSha256 === visibleSourceSha256)
   );
-  const hotEntries = snapshot.entries.filter((entry) => (
-    entry.tier === "hot"
-    && (entry.tabId !== activeTabId
-      || isExplicitHandoffSurface(entry))
-  ));
-  const visibleToken = visibleTabId && visibleSourceSha256
-    ? Object.freeze({ tabId: visibleTabId, sourceSha256: visibleSourceSha256 })
-    : null;
-  const candidateToken = candidateTabId && candidateSourceSha256
-    ? Object.freeze({ tabId: candidateTabId, sourceSha256: candidateSourceSha256 })
-    : null;
+  const handoffEntries = snapshot.entries.filter(isExplicitHandoffSurface);
+  const visibleToken = useMemo(() => (
+    visibleTabId && visibleSourceSha256
+      ? Object.freeze({ tabId: visibleTabId, sourceSha256: visibleSourceSha256 })
+      : null
+  ), [visibleSourceSha256, visibleTabId]);
+  const candidateToken = useMemo(() => (
+    candidateTabId && candidateSourceSha256
+      ? Object.freeze({ tabId: candidateTabId, sourceSha256: candidateSourceSha256 })
+      : null
+  ), [candidateSourceSha256, candidateTabId]);
   const observedToken = candidateToken || visibleToken;
   const observedTokenKey = cacheTokenKey(observedToken);
-  const presentedTokenIsHot = Boolean(
-    presentedToken && hotEntries.some((entry) => (
+  const presentedTokenIsRetained = Boolean(
+    presentedToken && handoffEntries.some((entry) => (
       entry.tabId === presentedToken.tabId
       && entry.sourceSha256 === presentedToken.sourceSha256
     )),
   );
 
   useLayoutEffect(() => {
-    if (!presentedToken || presentedTokenIsHot) return;
+    if (!presentedToken || presentedTokenIsRetained) return;
     readyTokenKeyRef.current = null;
-    // A cache entry that left the hot pool must return as a hidden candidate
-    // and wait for its newly mounted HtmlDisplaySurface to report readiness.
+    // A finished handoff must release its complete display document. Returning
+    // to the tab mounts a fresh hidden candidate and waits for its own ready.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPresentedToken(null);
-  }, [presentedToken, presentedTokenIsHot]);
+  }, [presentedToken, presentedTokenIsRetained]);
 
   useEffect(() => {
     const prior = priorVisibleTokenRef.current;
@@ -145,13 +141,12 @@ export default function WorkbenchDocumentSurfaceCache({
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [candidateSourceSha256, candidateTabId, onHandoffComplete, onVisibleReady, observedTokenKey, visibleSourceSha256, visibleTabId]);
+  }, [observedToken, observedTokenKey, onHandoffComplete, onVisibleReady, visibleToken]);
 
-  if (!hotEntries.length) return null;
   const renderedPresentedToken = presentedToken
     && visibleToken
     && cacheTokenKey(presentedToken) === cacheTokenKey(visibleToken)
-    && hotEntries.some((entry) => (
+    && handoffEntries.some((entry) => (
       entry.tabId === presentedToken.tabId
       && entry.sourceSha256 === presentedToken.sourceSha256
     ))
@@ -165,19 +160,19 @@ export default function WorkbenchDocumentSurfaceCache({
       data-visible={renderedPresentedToken ? "true" : undefined}
       data-visible-tab-id={renderedPresentedToken?.tabId || undefined}
       data-visible-source-sha256={renderedPresentedToken?.sourceSha256 || undefined}
-      data-hot-count={snapshot.hotTabIds.length}
-      data-warm-count={snapshot.warmTabIds.length}
+      data-mounted-count={handoffEntries.length}
+      data-cache-entry-count={snapshot.entries.length}
       data-cold-count={snapshot.coldTabIds.length}
       data-cache-bytes={snapshot.totalBytes}
-      data-max-hot-entries={snapshot.limits.maxHotEntries}
+      data-presentation-count={snapshot.presentations.length}
+      data-presentation-bytes={snapshot.presentationBytes}
       data-max-cache-entries={snapshot.limits.maxEntries}
       data-max-cache-bytes={snapshot.limits.maxBytes}
       aria-hidden={!renderedPresentedToken}
     >
-      {hotEntries.map((entry) => (
+      {handoffEntries.map((entry) => (
         <div
           className={styles.entry}
-          data-tier={entry.tier}
           data-tab-id={entry.tabId}
           data-source-sha256={entry.sourceSha256}
           data-scroll-top={entry.scrollTop}

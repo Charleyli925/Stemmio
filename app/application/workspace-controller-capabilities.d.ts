@@ -3,8 +3,8 @@ import type {
   DocumentSessionSnapshot,
 } from "./document-session.js";
 import type {
-  DocumentSurfaceCacheEntry,
   DocumentSurfaceCacheSnapshot,
+  DocumentSurfacePresentation,
 } from "./document-surface-cache-session.js";
 import type { CommentSessionSnapshot } from "./comment-session.js";
 import type {
@@ -361,7 +361,7 @@ export interface DocumentSurfaceControllerCapability extends WorkspaceSnapshotRe
   updateDocumentSurfacePresentation(
     tabId: string,
     presentation?: Readonly<Record<string, unknown>>,
-  ): DocumentSurfaceCacheEntry | null;
+  ): DocumentSurfacePresentation | null;
 }
 
 export interface NavigationWorkflowControllerCapability extends WorkspaceSnapshotReader {
