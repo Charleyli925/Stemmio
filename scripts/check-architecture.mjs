@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,8 @@ import {
 
 const PRODUCT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
+const REQUIRED_SOURCE_ROOTS = Object.freeze(["app", "bridge", "scripts", "desktop", "shared"]);
+const DEFAULT_IO = Object.freeze({ readdir, readFile, stat });
 const COMPOSITION_ROOT = "app/application/workspace-controller.js";
 const LOCAL_PRESENTATION_RUNTIME_OWNERS = new Set([
   "ReviewAnalysisSession",
@@ -187,14 +189,96 @@ const HOST_ONLY_SHARED_MODULES = new Set([
   "shared/project-storage-contract.mjs",
 ]);
 
-async function sourceFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+async function sourceFiles(directory, { io = DEFAULT_IO, productRoot = PRODUCT_ROOT } = {}) {
+  let entries;
+  try {
+    entries = await io.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    const target = relative(directory, productRoot) || ".";
+    throw new Error(`cannot read architecture source directory ${target}: ${error.message}`, {
+      cause: error,
+    });
+  }
   const nested = await Promise.all(entries.map(async (entry) => {
     const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) return sourceFiles(absolute);
+    if (entry.isDirectory()) return sourceFiles(absolute, { io, productRoot });
     return SOURCE_EXTENSIONS.has(path.extname(entry.name)) ? [absolute] : [];
   }));
   return nested.flat();
+}
+
+function validateLimitedInclude(value) {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || path.isAbsolute(value)
+    || value.split(/[\\/]/u).includes("..")
+  ) {
+    throw new Error(`limited scan include must be a relative path inside the root: ${value || "<missing>"}`);
+  }
+  return value.split(/[\\/]/u).filter(Boolean).join(path.sep);
+}
+
+async function sourceTargetFiles(target, { io, productRoot, required }) {
+  let targetStat;
+  try {
+    targetStat = await io.stat(target);
+  } catch (error) {
+    const name = relative(target, productRoot) || ".";
+    const prefix = required ? "required architecture source" : "limited architecture source";
+    throw new Error(`${prefix} ${name} is unavailable: ${error.message}`, { cause: error });
+  }
+  if (targetStat.isDirectory()) return sourceFiles(target, { io, productRoot });
+  if (targetStat.isFile()) {
+    if (!SOURCE_EXTENSIONS.has(path.extname(target))) {
+      throw new Error(`architecture source ${relative(target, productRoot)} has an unsupported extension`);
+    }
+    return [target];
+  }
+  throw new Error(`architecture source ${relative(target, productRoot)} is not a regular file or directory`);
+}
+
+export async function discoverSourceFiles({
+  productRoot = PRODUCT_ROOT,
+  scope = "full",
+  includes = [],
+  io = DEFAULT_IO,
+} = {}) {
+  const resolvedRoot = path.resolve(productRoot);
+  let rootStat;
+  try {
+    rootStat = await io.stat(resolvedRoot);
+  } catch (error) {
+    throw new Error(`architecture root is unavailable: ${resolvedRoot}: ${error.message}`, { cause: error });
+  }
+  if (!rootStat.isDirectory()) {
+    throw new Error(`architecture root must be a directory: ${resolvedRoot}`);
+  }
+  if (scope !== "full" && scope !== "limited") {
+    throw new Error(`architecture scan scope must be "full" or "limited", received: ${scope}`);
+  }
+  if (scope === "full" && includes.length > 0) {
+    throw new Error("--include is only valid with --scope limited");
+  }
+  if (scope === "limited" && includes.length === 0) {
+    throw new Error("limited architecture scan requires at least one explicit --include path");
+  }
+  const roots = scope === "full"
+    ? [...REQUIRED_SOURCE_ROOTS]
+    : [...new Set(includes.map(validateLimitedInclude))];
+  const files = [];
+  for (const root of roots) {
+    files.push(...await sourceTargetFiles(path.join(resolvedRoot, root), {
+      io,
+      productRoot: resolvedRoot,
+      required: scope === "full",
+    }));
+  }
+  const uniqueFiles = [...new Set(files.map((file) => path.resolve(file)))].sort();
+  if (uniqueFiles.length === 0) {
+    throw new Error(`architecture scan completed no work for ${scope} scope: ${roots.join(", ")}`);
+  }
+  return { productRoot: resolvedRoot, scope, roots, files: uniqueFiles };
 }
 
 function relative(filePath, productRoot = PRODUCT_ROOT) {
@@ -531,21 +615,26 @@ export function compositionBoundaryViolations({
   ];
 }
 
-export async function architectureViolations({ productRoot = PRODUCT_ROOT } = {}) {
-  const files = [
-    ...(await sourceFiles(path.join(productRoot, "app"))),
-    ...(await sourceFiles(path.join(productRoot, "bridge"))),
-    ...(await sourceFiles(path.join(productRoot, "scripts"))),
-    ...(await sourceFiles(path.join(productRoot, "desktop"))),
-    ...(await sourceFiles(path.join(productRoot, "shared"))),
-  ];
-  const useRepositoryLedgers = path.resolve(productRoot) === path.resolve(PRODUCT_ROOT);
+export async function architectureScan({
+  productRoot = PRODUCT_ROOT,
+  scope = "full",
+  includes = [],
+  io = DEFAULT_IO,
+} = {}) {
+  const discovery = await discoverSourceFiles({ productRoot, scope, includes, io });
+  const useRepositoryLedgers = scope === "full"
+    && discovery.productRoot === path.resolve(PRODUCT_ROOT);
   const ledger = useRepositoryLedgers ? await loadNoticeLedger() : null;
   const scanned = [];
   const violations = [];
-  for (const filePath of files) {
-    const file = relative(filePath, productRoot);
-    const source = await readFile(filePath, "utf8");
+  for (const filePath of discovery.files) {
+    const file = relative(filePath, discovery.productRoot);
+    let source;
+    try {
+      source = await io.readFile(filePath, "utf8");
+    } catch (error) {
+      throw new Error(`cannot read architecture source file ${file}: ${error.message}`, { cause: error });
+    }
     const ast = parseModule(filePath, source);
     scanned.push({ file, source, module: ast });
     violations.push(...syntaxErrors(ast).map((reason) => `${file}: parse error ${reason}`));
@@ -564,7 +653,15 @@ export async function architectureViolations({ productRoot = PRODUCT_ROOT } = {}
   if (useRepositoryLedgers) {
     violations.push(...await noticeInventoryViolations(scanned, ledger));
   }
-  return [...new Set(violations)].sort();
+  return {
+    ...discovery,
+    scannedCount: discovery.files.length,
+    violations: [...new Set(violations)].sort(),
+  };
+}
+
+export async function architectureViolations(options = {}) {
+  return (await architectureScan(options)).violations;
 }
 
 export async function budgetFindings({ productRoot = PRODUCT_ROOT } = {}) {
@@ -598,19 +695,51 @@ export async function budgetFindings({ productRoot = PRODUCT_ROOT } = {}) {
   return { violations, hints };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const rootIndex = process.argv.indexOf("--root");
-  const productRoot = rootIndex >= 0 && process.argv[rootIndex + 1]
-    ? path.resolve(process.argv[rootIndex + 1])
-    : PRODUCT_ROOT;
-  const violations = await architectureViolations({ productRoot });
-  if (violations.length > 0) {
-    process.stderr.write(`Architecture contract failed:\n- ${violations.join("\n- ")}\n`);
-    process.exitCode = 1;
-  } else {
-    process.stdout.write("Architecture contract passed.\n");
+export function parseArchitectureCliArgs(args) {
+  let productRoot = PRODUCT_ROOT;
+  let scope = "full";
+  const includes = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument !== "--root" && argument !== "--scope" && argument !== "--include") {
+      throw new Error(`unknown architecture check argument: ${argument}`);
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${argument} requires a value`);
+    }
+    index += 1;
+    if (argument === "--root") productRoot = path.resolve(value);
+    if (argument === "--scope") scope = value;
+    if (argument === "--include") includes.push(value);
   }
-  const { violations: budgetViolations, hints } = await budgetFindings({ productRoot });
-  const notices = [...budgetViolations, ...hints];
-  if (notices.length > 0) process.stdout.write(`Budget advisory:\n- ${notices.join("\n- ")}\n`);
+  return { productRoot, scope, includes };
+}
+
+async function runCli() {
+  try {
+    const options = parseArchitectureCliArgs(process.argv.slice(2));
+    const result = await architectureScan(options);
+    const summary = `${result.scannedCount} source files across ${result.scope} scope: ${result.roots.join(", ")}`;
+    if (result.violations.length > 0) {
+      process.stderr.write(`Architecture contract failed after scanning ${summary}:\n- ${result.violations.join("\n- ")}\n`);
+      process.exitCode = 1;
+    } else {
+      process.stdout.write(`Architecture contract passed. Scanned ${summary}.\n`);
+    }
+    if (result.scope === "full") {
+      const { violations: budgetViolations, hints } = await budgetFindings({
+        productRoot: result.productRoot,
+      });
+      const notices = [...budgetViolations, ...hints];
+      if (notices.length > 0) process.stdout.write(`Budget advisory:\n- ${notices.join("\n- ")}\n`);
+    }
+  } catch (error) {
+    process.stderr.write(`Architecture check could not complete: ${error.message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await runCli();
 }

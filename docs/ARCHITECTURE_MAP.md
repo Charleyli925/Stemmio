@@ -222,8 +222,13 @@ The gate must enforce responsibility, not private field names:
 - Repository internals are not a second writer; aliased filesystem imports are checked too.
 - `shared/` is cross-runtime pure logic except the explicit host-only
   `project-storage-contract.mjs`; renderer and domain code cannot import that host adapter.
-- Parser failures and custom-root scans fail closed so an omitted or malformed source file
-  cannot be reported as an architecture pass.
+- The default full scan requires and traverses `app/`, `bridge/`, `scripts/`,
+  `desktop/`, and `shared/`, including `.js`, `.mjs`, `.ts`, and `.tsx` source.
+  A missing root, unreadable directory or file, unsupported explicit source, or parser
+  failure aborts the check instead of becoming an empty pass.
+- Fixture checks use `--scope limited` with one or more explicit relative `--include`
+  paths. The CLI reports the declared scope and scanned file count, and refuses a
+  zero-file scan; `--root` alone never weakens the full production contract.
 - Retired modules stay deleted.
 - Global Notice growth is frozen to `scripts/notice-disposition-ledger.json`.
   Generic `setToast` is retired. Remaining interruptions are closed

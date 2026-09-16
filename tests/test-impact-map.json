@@ -668,6 +668,7 @@
         "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
         "^scripts/verify-source-receipt-typecheck\\.mjs$",
         "^tests/source-receipt-contract\\.typecheck\\.ts$",
+        "^tests/source-receipt-typecheck-verifier\\.test\\.mjs$",
         "^tsconfig\\.source-receipt\\.json$"
       ],
       "suites": [
@@ -683,7 +684,8 @@
         "tests/project-workflow.test.mjs",
         "tests/version-workflow.test.mjs",
         "tests/run-workflow.test.mjs",
-        "tests/workspace-controller.test.mjs"
+        "tests/workspace-controller.test.mjs",
+        "tests/source-receipt-typecheck-verifier.test.mjs"
       ]
     },
     {
@@ -1768,7 +1770,8 @@
       "id": "browser-open-workflow",
       "patterns": [
         "^app/application/browser-open-workflow\\.(?:js|d\\.ts)$",
-        "^tests/browser-open-workflow\\.test\\.mjs$"
+        "^tests/browser-open-workflow\\.test\\.mjs$",
+        "^tsconfig\\.browser-open-workflow\\.json$"
       ],
       "suites": [
         "typecheck",

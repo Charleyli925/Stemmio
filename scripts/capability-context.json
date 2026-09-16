@@ -79,6 +79,7 @@
         "^app/application/source-receipt",
         "^scripts/verify-source-receipt-typecheck",
         "^tests/source-receipt-contract\\.typecheck",
+        "^tests/source-receipt-typecheck-verifier",
         "^tsconfig\\.source-receipt",
         "^tests/document-"
       ],
@@ -105,6 +106,7 @@
         "tests/document-workflow.test.mjs",
         "tests/document-save-plan.test.mjs",
         "tests/document-session.test.mjs",
+        "tests/source-receipt-typecheck-verifier.test.mjs",
         "tests/source-receipt-contract.typecheck.ts",
         "tests/project-workflow.test.mjs"
       ],
@@ -695,6 +697,7 @@
         "^app/workbench\\.tsx$",
         "^app/workbench/(?:workbench-header-projection|workbench-more-menu|types)\\.(?:ts|tsx)$",
         "^desktop/(?:main|preload|open-in-default-browser)\\.mjs$",
+        "^tsconfig\\.browser-open-workflow\\.json$",
         "^tests/(?:browser-open-workflow|open-in-default-browser|desktop-preload-ipc|workbench-presentation)\\.test\\.mjs$",
         "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$"
       ],
@@ -710,6 +713,7 @@
       ],
       "implementationFiles": [
         "app/application/browser-open-workflow.js",
+        "tsconfig.browser-open-workflow.json",
         "app/application/workspace-controller.js",
         "app/workbench.tsx",
         "app/workbench/workbench-header-projection.ts",

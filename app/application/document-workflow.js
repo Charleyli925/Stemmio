@@ -1652,7 +1652,7 @@ export class DocumentWorkflow {
       );
       this.#auditPending = recoveredEvents;
       this.#commentSession.setChangeEvents(mergedEvents);
-      this.#documentSession.publishAuthority({
+      const recoveredPublication = this.#documentSession.publishAuthority({
         html: recoveredHtml,
         persistedSourceSha256: currentSourceSha256,
         workingHtmlSha256: targetSha256,
@@ -1677,10 +1677,12 @@ export class DocumentWorkflow {
       }
       await this.#acknowledgeCanvas(recoveredHtml, targetSha256, activeContext);
       await this.#freezeAuthority("恢复记录已加载，当前投影只读。");
-      this.#documentSession.recordPersistenceFailure({
+      const recorded = this.#documentSession.recordPersistenceFailure({
         conflict: true,
         error: "恢复记录与当前项目、版本或源文件身份不一致，请比较后选择重新载入或导出当前 HTML。",
+        receipt: recoveredPublication.sourceReceipt,
       });
+      if (recorded === false) return stale(activeContext);
       return succeeded({ recovered: true, queued: false, conflict: true });
     } catch (cause) {
       if (!this.#isCurrent(activeContext)) return stale(activeContext);
@@ -2254,8 +2256,11 @@ export class DocumentWorkflow {
     }
     if (!this.#isCurrent(writeContext)) {
       this.#documentSession.finishWrite(write);
-      if (nextWrite) {
-        this.#documentSession.restoreWrite(nextWrite);
+      if (nextWrite && queued) {
+        this.#documentSession.rebaseQueuedWrite({
+          expectedWrite: queued,
+          nextWrite,
+        });
         this.#persistRecovery(nextWrite, writeContext);
       } else {
         this.#persistRecovery(null, writeContext);
@@ -2307,6 +2312,7 @@ export class DocumentWorkflow {
         lastPersistedRevision: nextLastPersistedRevision,
         persistState: currentDocument.persistState,
         persistError: currentDocument.persistError,
+        pendingWrite: queued,
         context: acknowledgedContext,
         operationId: this.#nextOperationId("authority-autosave-route"),
       });
@@ -2516,25 +2522,37 @@ export class DocumentWorkflow {
     });
   }
 
-  #restoreWriteAfterFailure(write, context, { replacePending = false } = {}) {
+  #restoreWriteAfterFailure(
+    activeWrite,
+    context,
+    { nextWrite = activeWrite, replacePending = false } = {},
+  ) {
     const pending = this.#documentSession.pendingWrite;
     const recoveryWrite = !replacePending && pending
-      && sameContext(pending, write, this.#codecs.sameSourcePath)
-      && pending.revision > write.revision
+      && sameContext(pending, activeWrite, this.#codecs.sameSourcePath)
+      && pending.revision > activeWrite.revision
       ? pending
-      : write;
-    if (
-      this.#isCurrent(context)
-      && (
-        replacePending
-        || !pending
-        || pending.revision < recoveryWrite.revision
-      )
-    ) {
-      this.#documentSession.restoreWrite(recoveryWrite, { replacePending });
+      : nextWrite;
+    if (!this.#isCurrent(context)) {
+      this.#documentSession.finishWrite(activeWrite);
+      this.#persistRecovery(recoveryWrite, context);
+      return { recoveryWrite, failureWrite: activeWrite };
     }
-    this.#persistRecovery(recoveryWrite, context);
-    return recoveryWrite;
+    const restored = this.#documentSession.restoreWrite(activeWrite, {
+      nextWrite: recoveryWrite,
+      replacePending,
+    });
+    if (restored === false) {
+      return {
+        recoveryWrite: this.#documentSession.pendingWrite,
+        failureWrite: activeWrite,
+      };
+    }
+    this.#persistRecovery(restored, context);
+    return {
+      recoveryWrite: restored,
+      failureWrite: restored === pending ? activeWrite : restored,
+    };
   }
 
   #rebindRegistrationFailureWrite(write, writeContext, outcome) {
@@ -2620,13 +2638,19 @@ export class DocumentWorkflow {
       writeContext,
       outcome,
     );
-    const recoveryWrite = this.#restoreWriteAfterFailure(
-      rebound.write,
+    const restoration = this.#restoreWriteAfterFailure(
+      write,
       rebound.context,
-      { replacePending: rebound.replacePending },
+      {
+        nextWrite: rebound.write,
+        replacePending: rebound.replacePending,
+      },
     );
     if (outcome.status !== "stale" && this.#isCurrent(rebound.context)) {
-      this.#documentSession.recordPersistenceFailure({ error: message });
+      this.#documentSession.recordPersistenceFailure({
+        error: message,
+        write: restoration.failureWrite,
+      });
       this.#emit({
         type: "document-persistence-failed",
         context: rebound.context,
@@ -2634,7 +2658,7 @@ export class DocumentWorkflow {
         message,
         conflict: false,
         protocolError: false,
-        recoveryWrite,
+        recoveryWrite: restoration.recoveryWrite,
         fatal: false,
       });
     }
@@ -2661,7 +2685,7 @@ export class DocumentWorkflow {
       || String(cause?.message || "").includes("SOURCE_CHANGED")
     );
     const protocolError = code === "INVALID_AUTOSAVE_ACK" || cause?.code === "INVALID_AUTOSAVE_ACK";
-    const recoveryWrite = this.#restoreWriteAfterFailure(write, writeContext);
+    const restoration = this.#restoreWriteAfterFailure(write, writeContext);
     if (this.#isCurrent(writeContext)) {
       let boundaryFailure = "";
       if (conflict || protocolError) {
@@ -2675,6 +2699,7 @@ export class DocumentWorkflow {
       this.#documentSession.recordPersistenceFailure({
         conflict,
         error: visibleMessage,
+        write: restoration.failureWrite,
       });
       this.#emit({
         type: "document-persistence-failed",
@@ -2683,7 +2708,7 @@ export class DocumentWorkflow {
         message: visibleMessage,
         conflict,
         protocolError,
-        recoveryWrite,
+        recoveryWrite: restoration.recoveryWrite,
         fatal: Boolean(boundaryFailure || protocolError),
       });
     }
@@ -2836,6 +2861,7 @@ export class DocumentWorkflow {
       // Keep every routing field fixed and consume only its exact byte receipt.
       context = current;
     }
+    let actionReceipt = this.#documentSession.sourceReceipt;
     try {
       const nextRevision = this.#documentSession.editRevision + 1;
       const applied = this.#sourceHistorySession.apply(
@@ -2858,6 +2884,7 @@ export class DocumentWorkflow {
         nextRevision,
         operationId,
       });
+      actionReceipt = receipt;
       const persisted = await this.flush({ throughRevision: nextRevision });
       if (!persisted || persisted.status !== "succeeded") return persisted;
       return succeeded({
@@ -2874,7 +2901,10 @@ export class DocumentWorkflow {
           ? "撤销结果仍保留在当前页面，可重试保存。"
           : "重做结果仍保留在当前页面，可重试保存。",
       );
-      this.#documentSession.recordPersistenceFailure({ error: message });
+      this.#documentSession.recordPersistenceFailure({
+        error: message,
+        receipt: actionReceipt,
+      });
       this.#emit({
         type: "document-history-failed",
         context,

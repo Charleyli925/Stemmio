@@ -140,7 +140,10 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
   markPreviewDirty(): DocumentSessionSnapshot;
   queueWrite(write: TWrite): TWrite;
   beginWrite(): TWrite | null;
-  restoreWrite(write: TWrite, value?: { replacePending?: boolean }): TWrite;
+  restoreWrite(write: TWrite, value?: {
+    nextWrite?: TWrite;
+    replacePending?: boolean;
+  }): TWrite | false;
   rebaseQueuedWrite(value: {
     expectedWrite: TWrite;
     nextWrite: TWrite;
@@ -164,7 +167,9 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
   recordPersistenceFailure(value: {
     error: string;
     conflict?: boolean;
-  }): DocumentSessionSnapshot;
+    write?: TWrite | null;
+    receipt?: DocumentSourceReceipt | null;
+  }): DocumentSessionSnapshot | false;
   beginFlush<T extends Promise<unknown>>(promise: T): T | false;
   finishFlush(promise: Promise<unknown>): boolean;
   reconcilePersistedBoundary(value: {

@@ -40,6 +40,43 @@ function isDocumentWrite(value) {
   );
 }
 
+function sameWriteBytes(left, right) {
+  return Boolean(
+    isDocumentWrite(left)
+    && isDocumentWrite(right)
+    && revision(left.revision) === revision(right.revision)
+    && String(left.html) === String(right.html)
+  );
+}
+
+function writeMatchesContext(write, context) {
+  if (!context) return true;
+  const fields = ["epoch", "projectId", "documentId", "sourcePath"];
+  for (const field of [
+    "projectRootPath",
+    "targetKind",
+    "workingCopyId",
+    "versionId",
+    "exactSourcePath",
+    "sourceSha256",
+    "sessionEpoch",
+  ]) {
+    if (Object.hasOwn(context, field)) fields.push(field);
+  }
+  return fields.every((field) => String(write?.[field] ?? "") === String(context[field] ?? ""));
+}
+
+function writeRebaseKeepsOwner(expectedWrite, nextWrite, context) {
+  if (!sameWriteBytes(expectedWrite, nextWrite)) return false;
+  for (const field of ["projectId", "documentId"]) {
+    const expected = String(expectedWrite?.[field] || "");
+    const next = String(nextWrite?.[field] || "");
+    const current = String(context?.[field] || "");
+    if ((expected && expected !== next) || (current && current !== next)) return false;
+  }
+  return true;
+}
+
 const CANVAS_AUTHORITY_STATES = new Set([
   "idle",
   "pending",
@@ -127,6 +164,10 @@ export class DocumentSession {
 
   #activeWrite = null;
 
+  #authorityGeneration = 0;
+
+  #writeAuthorities = new WeakMap();
+
   #flushPromise = null;
 
   #receiptSequence = 0;
@@ -184,6 +225,8 @@ export class DocumentSession {
   }) {
     this.#pendingWrite = null;
     this.#activeWrite = null;
+    this.#flushPromise = null;
+    this.#authorityGeneration += 1;
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
     const receipt = this.#nextReceipt({
@@ -224,6 +267,16 @@ export class DocumentSession {
     context = null,
     operationId = "",
   }) {
+    if (pendingWrite !== undefined && pendingWrite !== null) {
+      if (
+        !isDocumentWrite(pendingWrite)
+        || revision(pendingWrite.revision) !== revision(editRevision ?? this.#snapshot.editRevision)
+        || String(pendingWrite.html) !== String(html)
+      ) {
+        throw new TypeError("Document authority pending write must match its accepted HTML and revision.");
+      }
+    }
+    this.#authorityGeneration += 1;
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
     const receipt = this.#nextReceipt({
@@ -261,6 +314,9 @@ export class DocumentSession {
     }
     if (pendingWrite !== undefined) {
       this.#pendingWrite = pendingWrite || null;
+      if (this.#pendingWrite) {
+        this.#writeAuthorities.set(this.#pendingWrite, this.#authorityGeneration);
+      }
     }
     this.#emit(next);
     return this.#snapshot;
@@ -429,7 +485,22 @@ export class DocumentSession {
     if (!isDocumentWrite(write)) {
       throw new TypeError("Document queued write requires exact HTML and a non-negative revision.");
     }
+    if (
+      revision(write.revision) !== this.#snapshot.editRevision
+      || String(write.html) !== this.#snapshot.html
+      || !writeMatchesContext(write, this.#snapshot.sourceReceipt?.context)
+    ) {
+      throw new TypeError("Document queued write must match the currently accepted document state.");
+    }
+    if (
+      this.#pendingWrite
+      && this.#pendingWrite !== write
+      && revision(write.revision) <= revision(this.#pendingWrite.revision)
+    ) {
+      throw new TypeError("Document queued write cannot replace an equal or newer pending edit.");
+    }
     this.#pendingWrite = write;
+    this.#writeAuthorities.set(write, this.#authorityGeneration);
     this.#emit({
       ...this.#snapshot,
       persistState: "queued",
@@ -439,8 +510,10 @@ export class DocumentSession {
   }
 
   beginWrite() {
+    if (this.#activeWrite) return null;
     const write = this.#pendingWrite;
     if (!write) return null;
+    if (this.#writeAuthorities.get(write) !== this.#authorityGeneration) return null;
     this.#pendingWrite = null;
     this.#activeWrite = write;
     this.#emit({
@@ -451,44 +524,70 @@ export class DocumentSession {
     return write;
   }
 
-  restoreWrite(write, { replacePending = false } = {}) {
-    if (!isDocumentWrite(write)) {
+  restoreWrite(write, { nextWrite = write, replacePending = false } = {}) {
+    if (!isDocumentWrite(write) || !isDocumentWrite(nextWrite)) {
       throw new TypeError("Document restored write requires exact HTML and a non-negative revision.");
     }
+    if (this.#activeWrite !== write) return false;
     const pending = this.#pendingWrite;
     this.#activeWrite = null;
-    if (
-      !replacePending
-      && pending
-      && revision(pending.revision) >= revision(write.revision)
-    ) {
+    if (!replacePending && pending) {
+      this.#emit({
+        ...this.#snapshot,
+        persistState: "queued",
+        persistError: "",
+      });
       return pending;
     }
-    this.#pendingWrite = write;
+    if (
+      revision(nextWrite.revision) !== this.#snapshot.editRevision
+      || String(nextWrite.html) !== this.#snapshot.html
+      || !writeMatchesContext(nextWrite, this.#snapshot.sourceReceipt?.context)
+    ) {
+      throw new TypeError("Document restored write must match the currently accepted document state.");
+    }
+    this.#pendingWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
     this.#emit({
       ...this.#snapshot,
       persistState: "queued",
       persistError: "",
     });
-    return write;
+    return nextWrite;
   }
 
   rebaseQueuedWrite({ expectedWrite, nextWrite } = {}) {
     if (this.#pendingWrite !== expectedWrite) return false;
-    if (!isDocumentWrite(nextWrite)) {
-      throw new TypeError("Document rebased write requires exact HTML and a non-negative revision.");
+    if (
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
+    ) {
+      throw new TypeError("Document rebased write must keep its accepted bytes and document owner.");
     }
     this.#pendingWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
     this.#emit(this.#snapshot);
     return true;
   }
 
   rebaseActiveWrite({ expectedWrite, nextWrite } = {}) {
     if (this.#activeWrite !== expectedWrite) return false;
-    if (!isDocumentWrite(nextWrite)) {
-      throw new TypeError("Document active write requires exact HTML and a non-negative revision.");
+    if (
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
+    ) {
+      throw new TypeError("Document active write rebase must keep its accepted bytes and document owner.");
     }
     this.#activeWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
     return true;
   }
 
@@ -505,8 +604,10 @@ export class DocumentSession {
     if (
       !isDocumentWrite(write)
       || this.#activeWrite !== write
+      || this.#writeAuthorities.get(write) !== this.#authorityGeneration
       || !SHA256.test(confirmedHash)
       || confirmedRevision < writeRevision
+      || String(html ?? "") !== String(write.html)
     ) return Object.freeze({ accepted: false, completesCurrentDocument: false });
     this.#activeWrite = null;
     const completesCurrentDocument = Boolean(
@@ -541,6 +642,7 @@ export class DocumentSession {
   reconcileRecoveredRevision(value) {
     const reconciledRevision = revision(value);
     this.#pendingWrite = null;
+    this.#activeWrite = null;
     this.#emit({
       ...this.#snapshot,
       editRevision: reconciledRevision,
@@ -552,7 +654,17 @@ export class DocumentSession {
   }
 
   markPersistenceIdle() {
-    if (this.#pendingWrite) return false;
+    if (
+      this.#pendingWrite
+      || this.#activeWrite
+      || this.#snapshot.lastPersistedRevision < this.#snapshot.editRevision
+      || this.#snapshot.persistState === "failed"
+      || this.#snapshot.persistState === "conflict"
+      || (
+        this.#snapshot.workingHtmlSha256
+        && this.#snapshot.workingHtmlSha256 !== this.#snapshot.persistedSourceSha256
+      )
+    ) return false;
     this.#emit({
       ...this.#snapshot,
       persistState: "idle",
@@ -561,7 +673,14 @@ export class DocumentSession {
     return true;
   }
 
-  recordPersistenceFailure({ error, conflict = false } = {}) {
+  recordPersistenceFailure({ error, conflict = false, write = null, receipt = null } = {}) {
+    if (
+      (write && (
+        (this.#activeWrite !== write && this.#pendingWrite !== write)
+        || this.#writeAuthorities.get(write) !== this.#authorityGeneration
+      ))
+      || (receipt && !sameSourceReceipt(receipt, this.#snapshot.sourceReceipt))
+    ) return false;
     this.#emit({
       ...this.#snapshot,
       persistState: conflict ? "conflict" : "failed",

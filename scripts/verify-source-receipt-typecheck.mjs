@@ -1,84 +1,145 @@
-import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+import ts from "typescript";
+
 const productRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = path.join(productRoot, "app/application/source-receipt.js");
+const defaultConfigPath = path.join(productRoot, "tsconfig.source-receipt.json");
+const defaultSourcePath = path.join(productRoot, "app/application/source-receipt.js");
+const mutationAnchor = "sessionIncarnation: revision(input.sessionIncarnation),";
+const mutatedAssignment = "sessionIncarnation: String(input.sessionIncarnation),";
 
-const listed = await execFileAsync("tsc", [
-  "--project",
-  path.join(productRoot, "tsconfig.source-receipt.json"),
-  "--listFilesOnly",
-], { cwd: productRoot });
-assert.ok(
-  listed.stdout.split(/\r?\n/u).includes(sourcePath),
-  "the SourceReceipt implementation must remain inside the checked program",
-);
+function diagnosticMessage(diagnostic) {
+  return ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
+}
 
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "stemmio-source-receipt-typecheck-"));
-try {
-  const applicationRoot = path.join(temporaryRoot, "app/application");
-  await mkdir(applicationRoot, { recursive: true });
-  await Promise.all([
-    copyFile(
-      path.join(productRoot, "app/application/source-receipt-contract.d.ts"),
-      path.join(applicationRoot, "source-receipt-contract.d.ts"),
-    ),
-    copyFile(
-      path.join(productRoot, "app/application/project-session.d.ts"),
-      path.join(applicationRoot, "project-session.d.ts"),
-    ),
-  ]);
+function formatDiagnostics(diagnostics) {
+  return diagnostics.map((diagnostic) => {
+    const file = diagnostic.file?.fileName || "<configuration>";
+    if (!diagnostic.file || typeof diagnostic.start !== "number") {
+      return `${file}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
+    }
+    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${file}:${position.line + 1}:${position.character + 1}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
+  }).join("\n");
+}
 
-  const source = await readFile(sourcePath, "utf8");
-  const expectedLine = "sessionIncarnation: revision(input.sessionIncarnation),";
-  assert.equal(
-    source.split(expectedLine).length,
-    2,
-    "mutation proof expects exactly one SourceReceipt implementation assignment",
+export function loadSourceReceiptTypecheckConfig(configPath = defaultConfigPath) {
+  const resolvedConfigPath = path.resolve(configPath);
+  const loaded = ts.readConfigFile(resolvedConfigPath, ts.sys.readFile);
+  if (loaded.error) {
+    throw new Error(`cannot read the official SourceReceipt typecheck config:\n${formatDiagnostics([loaded.error])}`);
+  }
+  const parsed = ts.parseJsonConfigFileContent(
+    loaded.config,
+    ts.sys,
+    path.dirname(resolvedConfigPath),
+    undefined,
+    resolvedConfigPath,
   );
-  await writeFile(
-    path.join(applicationRoot, "source-receipt.js"),
-    source.replace(
-      expectedLine,
-      "sessionIncarnation: String(input.sessionIncarnation),",
-    ),
-  );
+  if (parsed.errors.length > 0) {
+    throw new Error(`cannot parse the official SourceReceipt typecheck config:\n${formatDiagnostics(parsed.errors)}`);
+  }
+  return parsed;
+}
 
-  await assert.rejects(
-    execFileAsync("tsc", [
-      "--noEmit",
-      "--allowJs",
-      "--checkJs",
-      "--strict",
-      "--skipLibCheck",
-      "--target",
-      "ES2022",
-      "--module",
-      "esnext",
-      "--moduleResolution",
-      "bundler",
-      path.join(applicationRoot, "source-receipt.js"),
-    ], { cwd: temporaryRoot }),
-    (error) => {
-      const output = `${error.stdout || ""}\n${error.stderr || ""}`;
-      assert.match(output, /Type 'string' is not assignable to type 'number'/u);
-      return true;
-    },
-    "a wrong implementation type must fail the real JavaScript check",
+function programFor({ parsedConfig, sourcePath, sourceText }) {
+  const resolvedSourcePath = path.resolve(sourcePath);
+  const host = ts.createCompilerHost(parsedConfig.options, true);
+  const defaultReadFile = host.readFile.bind(host);
+  host.readFile = (fileName) => (
+    path.resolve(fileName) === resolvedSourcePath
+      ? sourceText
+      : defaultReadFile(fileName)
   );
-} finally {
-  await rm(temporaryRoot, { recursive: true, force: true });
+  host.getSourceFile = (fileName, languageVersion, onError) => {
+    const text = host.readFile(fileName);
+    if (text === undefined) {
+      onError?.(`cannot read ${fileName}`);
+      return undefined;
+    }
+    return ts.createSourceFile(
+      fileName,
+      text,
+      languageVersion,
+      true,
+      ts.getScriptKindFromFileName(fileName),
+    );
+  };
+  return ts.createProgram({
+    rootNames: parsedConfig.fileNames,
+    options: parsedConfig.options,
+    projectReferences: parsedConfig.projectReferences,
+    host,
+  });
+}
+
+function assertOfficialImplementationCheck(parsedConfig, sourcePath) {
+  if (parsedConfig.options.allowJs !== true || parsedConfig.options.checkJs !== true) {
+    throw new Error("official SourceReceipt config must enable allowJs and checkJs");
+  }
+  const resolvedSourcePath = path.resolve(sourcePath);
+  if (!parsedConfig.fileNames.some((fileName) => path.resolve(fileName) === resolvedSourcePath)) {
+    throw new Error("SourceReceipt implementation is missing from the official compiler inputs");
+  }
+}
+
+function mutateSource(sourceText) {
+  const matchCount = sourceText.split(mutationAnchor).length - 1;
+  if (matchCount !== 1) {
+    throw new Error(`SourceReceipt mutation anchor must match exactly once; matched ${matchCount}`);
+  }
+  return sourceText.replace(mutationAnchor, mutatedAssignment);
+}
+
+export function verifySourceReceiptTypecheck({
+  parsedConfig = loadSourceReceiptTypecheckConfig(),
+  sourcePath = defaultSourcePath,
+  sourceText = ts.sys.readFile(sourcePath),
+} = {}) {
+  const resolvedSourcePath = path.resolve(sourcePath);
+  assertOfficialImplementationCheck(parsedConfig, resolvedSourcePath);
+  if (typeof sourceText !== "string") {
+    throw new Error(`cannot read SourceReceipt implementation: ${resolvedSourcePath}`);
+  }
+  const mutatedSource = mutateSource(sourceText);
+
+  const baselineDiagnostics = ts.getPreEmitDiagnostics(programFor({
+    parsedConfig,
+    sourcePath: resolvedSourcePath,
+    sourceText,
+  }));
+  if (baselineDiagnostics.length > 0) {
+    throw new Error(`official SourceReceipt typecheck must pass before mutation:\n${formatDiagnostics(baselineDiagnostics)}`);
+  }
+
+  const mutationDiagnostics = ts.getPreEmitDiagnostics(programFor({
+    parsedConfig,
+    sourcePath: resolvedSourcePath,
+    sourceText: mutatedSource,
+  }));
+  const targetDiagnostics = mutationDiagnostics.filter((diagnostic) => (
+    diagnostic.code === 2322
+    && path.resolve(diagnostic.file?.fileName || "") === resolvedSourcePath
+    && diagnosticMessage(diagnostic).includes("Type 'string' is not assignable to type 'number'")
+    && diagnosticMessage(diagnostic).includes("sessionIncarnation")
+  ));
+  if (targetDiagnostics.length !== 1 || mutationDiagnostics.length !== 1) {
+    throw new Error([
+      "official SourceReceipt config did not isolate the expected implementation type error",
+      formatDiagnostics(mutationDiagnostics) || "<no diagnostics>",
+    ].join("\n"));
+  }
+  return Object.freeze({
+    configPath: parsedConfig.options.configFilePath || defaultConfigPath,
+    sourcePath: resolvedSourcePath,
+    diagnosticCode: targetDiagnostics[0].code,
+  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const result = verifySourceReceiptTypecheck();
+  process.stdout.write(
+    `SourceReceipt implementation mutation rejected by official config (TS${result.diagnosticCode}).\n`,
+  );
 }

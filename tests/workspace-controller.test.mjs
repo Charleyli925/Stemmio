@@ -1834,7 +1834,15 @@ test("workspace controller is the sole aggregate Session observer and disconnect
   assert.equal(snapshots.at(-1)?.versionSession, harness.versionSession.snapshot);
   assert.equal(snapshots.at(-1)?.runSession, null);
 
-  harness.documentSession.queueWrite({ revision: 1, html: harness.documentSession.html });
+  const documentHtml = harness.documentSession.html;
+  const documentRevision = harness.documentSession.beginEdit(documentHtml, {
+    context: harness.projectSession.context,
+  });
+  harness.documentSession.queueWrite({
+    ...harness.projectSession.context,
+    revision: documentRevision,
+    html: documentHtml,
+  });
   assert.equal(snapshots.at(-1)?.document?.hasPendingWrite, true);
 
   harness.commentSession.setComments([{
@@ -1862,7 +1870,15 @@ test("comments capability publishes only comment snapshots with stable commands"
   });
   const initial = capability.getSnapshot();
 
-  harness.documentSession.queueWrite({ revision: 1, html: harness.documentSession.html });
+  const documentHtml = harness.documentSession.html;
+  const documentRevision = harness.documentSession.beginEdit(documentHtml, {
+    context: harness.projectSession.context,
+  });
+  harness.documentSession.queueWrite({
+    ...harness.projectSession.context,
+    revision: documentRevision,
+    html: documentHtml,
+  });
   assert.equal(capability.getSnapshot(), initial);
   assert.equal(snapshots.length, 0);
 
@@ -2079,14 +2095,31 @@ test("workspace controller starts the disposable runtime when its initial source
   assert.equal(ready?.phase, "ready");
   assert.equal(ready?.canvasGeneration, canvasGeneration);
 
-  const staleWrite = { revision: 0, html: "" };
+  const currentContext = harness.projectSession.context;
+  const staleWrite = {
+    ...currentContext,
+    revision: harness.documentSession.beginEdit(html, {
+      sourceSha256: sha256(html),
+      context: currentContext,
+    }),
+    html,
+  };
   harness.documentSession.queueWrite(staleWrite);
   harness.documentSession.beginWrite();
+  const laterWrite = {
+    ...currentContext,
+    revision: harness.documentSession.beginEdit(html, {
+      sourceSha256: sha256(html),
+      context: currentContext,
+    }),
+    html,
+  };
+  harness.documentSession.queueWrite(laterWrite);
   harness.documentSession.confirmWrite({
     write: staleWrite,
-    html: "",
+    html,
     sourceSha256: sha256(html + "<!-- source echo -->"),
-    persistedRevision: 1,
+    persistedRevision: staleWrite.revision,
   });
   await settleAsyncRuntime();
   assert.equal(prepares.length, 1);

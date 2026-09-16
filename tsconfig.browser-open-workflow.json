@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": [
+    "app/application/browser-open-workflow.js",
+    "app/application/browser-open-workflow.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

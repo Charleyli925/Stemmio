@@ -4,30 +4,85 @@ const UNKNOWN_HOST_CODES = new Set([
   "PROJECT_SERVICE_UNAVAILABLE",
 ]);
 
+/** @typedef {import("./browser-open-workflow.d.ts").BrowserOpenRequest} BrowserOpenRequest */
+/** @typedef {import("./browser-open-workflow.d.ts").BrowserOpenResult} BrowserOpenResult */
+/** @typedef {import("./browser-open-workflow.d.ts").BrowserOpenWorkflowConstruction} BrowserOpenWorkflowConstruction */
+/** @typedef {import("./document-workflow.js").DocumentWorkflowOutcome<BrowserOpenResult>} BrowserOpenOutcome */
+/** @typedef {import("./project-session.js").ProjectContext} ProjectContext */
+/**
+ * @typedef {Readonly<{
+ *   key: string;
+ *   kind: "working-copy";
+ *   context: ProjectContext;
+ * }>} WorkingCopyOpenTarget
+ */
+/**
+ * @typedef {Readonly<{
+ *   key: string;
+ *   kind: "version";
+ *   context: ProjectContext;
+ *   versionId: string;
+ *   expectedSha256: string;
+ * }>} VersionOpenTarget
+ */
+/** @typedef {WorkingCopyOpenTarget | VersionOpenTarget} BrowserOpenTarget */
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {Readonly<{ status: "succeeded"; value: T }>}
+ */
 function succeeded(value) {
   return Object.freeze({ status: "succeeded", value });
 }
 
+/**
+ * @param {string} code
+ * @param {string} reason
+ * @returns {Readonly<{ status: "blocked"; code: string; reason: string }>}
+ */
 function blocked(code, reason) {
   return Object.freeze({ status: "blocked", code, reason });
 }
 
+/**
+ * @param {string} code
+ * @param {string} reason
+ * @returns {Readonly<{ status: "rejected"; code: string; reason: string }>}
+ */
 function rejected(code, reason) {
   return Object.freeze({ status: "rejected", code, reason });
 }
 
+/**
+ * @param {string} operationId
+ * @param {string} reason
+ * @returns {Readonly<{ status: "unknown"; operationId: string; reason: string }>}
+ */
 function unknown(operationId, reason) {
   return Object.freeze({ status: "unknown", operationId, reason });
 }
 
-function stale(identity) {
-  return Object.freeze({ status: "stale", identity });
+/**
+ * @param {ProjectContext} context
+ * @returns {Readonly<{ status: "stale"; context: ProjectContext }>}
+ */
+function stale(context) {
+  return Object.freeze({ status: "stale", context });
 }
 
+/**
+ * @param {ProjectContext | null | undefined} context
+ * @returns {ProjectContext | null}
+ */
 function copyContext(context) {
   return context ? Object.freeze({ ...context }) : null;
 }
 
+/**
+ * @param {ProjectContext} context
+ * @returns {Pick<ProjectContext, "epoch" | "projectId" | "documentId" | "sourcePath">}
+ */
 function stableIdentity(context) {
   return Object.freeze({
     epoch: context.epoch,
@@ -37,35 +92,54 @@ function stableIdentity(context) {
   });
 }
 
+/**
+ * @param {unknown} cause
+ * @param {string} fallback
+ * @returns {string}
+ */
 function errorCode(cause, fallback) {
-  return typeof cause?.code === "string" && cause.code
+  return typeof cause === "object"
+    && cause !== null
+    && "code" in cause
+    && typeof cause.code === "string"
+    && cause.code
     ? cause.code
     : fallback;
 }
 
 export class BrowserOpenWorkflow {
+  /** @type {BrowserOpenWorkflowConstruction["projectSession"]} */
   #projectSession;
 
+  /** @type {BrowserOpenWorkflowConstruction["documentSession"]} */
   #documentSession;
 
+  /** @type {BrowserOpenWorkflowConstruction["versionSession"]} */
   #versionSession;
 
+  /** @type {BrowserOpenWorkflowConstruction["documentWorkflow"]} */
   #documentWorkflow;
 
+  /** @type {BrowserOpenWorkflowConstruction["ports"]["canvas"]} */
   #canvasPort;
 
+  /** @type {BrowserOpenWorkflowConstruction["ports"]["files"]} */
   #filePort;
 
+  /** @type {(cause: unknown, fallback: string) => string} */
   #errorMessage;
 
+  /** @type {Readonly<{ now(): number }>} */
   #clock;
 
   #sequence = 0;
 
+  /** @type {Readonly<{ key: string; promise: Promise<BrowserOpenOutcome> }> | null} */
   #active = null;
 
   #disposed = false;
 
+  /** @param {BrowserOpenWorkflowConstruction} options */
   constructor({
     projectSession,
     documentSession,
@@ -111,6 +185,7 @@ export class BrowserOpenWorkflow {
     this.#disposed = true;
   }
 
+  /** @returns {Promise<BrowserOpenOutcome>} */
   openSelectedDocument() {
     const captured = this.#captureTarget();
     if (captured.status !== "succeeded") return Promise.resolve(captured);
@@ -131,6 +206,7 @@ export class BrowserOpenWorkflow {
     return promise;
   }
 
+  /** @returns {import("./document-workflow.js").DocumentWorkflowOutcome<BrowserOpenTarget>} */
   #captureTarget() {
     if (this.#disposed) {
       return blocked("BROWSER_OPEN_DISPOSED", "浏览器打开工作流已经停止。");
@@ -173,6 +249,7 @@ export class BrowserOpenWorkflow {
     }));
   }
 
+  /** @param {BrowserOpenTarget} target */
   #sameTarget(target) {
     // A successful save refreshes the managed target's byte hash without
     // navigating. Fence on the stable document identity here; the final byte
@@ -196,6 +273,11 @@ export class BrowserOpenWorkflow {
       && history.sourcePath === target.context.sourcePath;
   }
 
+  /**
+   * @param {BrowserOpenTarget} target
+   * @param {string} operationId
+   * @returns {Promise<BrowserOpenOutcome>}
+   */
   async #openTarget(target, operationId) {
     if (target.kind === "version") {
       if (!this.#sameTarget(target)) return stale(target.context);
@@ -258,6 +340,12 @@ export class BrowserOpenWorkflow {
     });
   }
 
+  /**
+   * @param {BrowserOpenTarget} target
+   * @param {string} operationId
+   * @param {BrowserOpenRequest} request
+   * @returns {Promise<BrowserOpenOutcome>}
+   */
   async #launch(target, operationId, request) {
     if (!this.#sameTarget(target)) return stale(target.context);
     try {
