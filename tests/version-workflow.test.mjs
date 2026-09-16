@@ -1489,6 +1489,7 @@ test("created history opens through verified workspace and lost opened acknowled
   assert.equal(harness.versionSession.snapshot.viewMode, "current");
   assert.ok(harness.calls.order.indexOf("current-surface") < harness.calls.order.indexOf("render"));
   assert.equal(harness.calls.currentSurface[0].context.workingCopyId, "work_ver_0002");
+  assert.equal(harness.calls.drain.length, 0);
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
   assert.equal(harness.calls.createHistory.length, 0);
 });
@@ -1648,12 +1649,17 @@ test("restart restores an unacknowledged creation and leaves acknowledged operat
 
 test("return-current reconciles committed creation rather than re-exposing the old working file", async () => {
   const operationId = "history_open_0001";
+  const currentSurfaceCommitScope = Object.freeze({});
   const harness = createHarness({ queryCreation: async () => historyCreatedResult(operationId), workspaceRead: async () => createdWorkspace() });
   await harness.workflow.viewHistory({ version: { id: "ver_0001" }, context: harness.context });
   await harness.workflow.queryHistoryCreation({ operationId, context: harness.context });
-  assert.equal((await harness.workflow.returnToCurrent({ context: harness.context })).status, "succeeded");
+  assert.equal((await harness.workflow.returnToCurrent({
+    context: harness.context,
+    currentSurfaceCommitScope,
+  })).status, "succeeded");
   assert.equal(harness.projectSession.sourcePath, HISTORY_WORKING_COPY_PATH);
   assert.equal(harness.calls.createHistory.length, 0);
+  assert.equal(harness.calls.currentSurface[0].currentSurfaceCommitScope, currentSurfaceCommitScope);
 });
 
 

@@ -772,6 +772,7 @@ export class VersionWorkflow {
 
   async returnToCurrent({
     context = this.#projectSession.context,
+    currentSurfaceCommitScope = null,
   } = {}) {
     if (this.#disposed) {
       return blocked("VERSION_WORKFLOW_DISPOSED", "版本工作流已经停止。");
@@ -841,7 +842,11 @@ export class VersionWorkflow {
             this.#versionSession.restoreView(priorView);
           }
         }
-        return this.openCreatedHistoryVersion({ operationId: creation.operationId, context: current });
+        return this.openCreatedHistoryVersion({
+          operationId: creation.operationId,
+          context: current,
+          currentSurfaceCommitScope,
+        });
       }
     }
     // Leaving a read-only projection must remain possible even when a disk
@@ -1235,7 +1240,11 @@ export class VersionWorkflow {
     }
   }
 
-  async openCreatedHistoryVersion({ operationId, context = this.#projectSession.context } = {}) {
+  async openCreatedHistoryVersion({
+    operationId,
+    context = this.#projectSession.context,
+    currentSurfaceCommitScope = null,
+  } = {}) {
     const current = copyContext(context);
     if (!current || !this.#projectSession.matches(current)) return stale(current || {});
     if (this.#runSession.activeLocked) return blocked("HISTORY_CREATION_RUN_LOCKED", "请先完成当前 AI 任务或候选的处理。");
@@ -1255,9 +1264,11 @@ export class VersionWorkflow {
       }
       this.#setHistoryCreation({ phase: "opening", operationId, context: current, result }, generation);
       if (!this.#isNavigationCurrent(operation)) return stale(current);
-      const drained = await this.#projectWorkflow.drain("history", { deadlineAt: this.#clock.now() + 15_000 });
-      if (!drained.ok) throw new Error(drained.reason || "当前修改尚未保护，暂未打开新稿。");
-      if (!this.#isNavigationCurrent(operation)) return stale(current);
+      // The creation command drained the replaced current source before its
+      // durable receipt was written. Retrying that exact receipt must not drain
+      // the now-superseded source again: the managed history creation itself
+      // may have changed those bytes, which the external-write guard correctly
+      // reports as a conflict until this verified transition takes ownership.
       const payload = await this.#bridgeClient.workspace(result.sourcePath);
       const decoded = decodeWorkspaceResponse(payload, this.#codecs);
       const target = payload.openTarget;
@@ -1312,7 +1323,10 @@ export class VersionWorkflow {
           : stale(current);
       }
       if (this.#currentSurfacePort?.commit) {
-        const surface = await this.#currentSurfacePort.commit({ context: nextContext });
+        const surface = await this.#currentSurfacePort.commit({
+          context: nextContext,
+          currentSurfaceCommitScope,
+        });
         if (surface?.status !== "succeeded") {
           throw new Error(surface?.reason || "新当前稿权威已发布，但当前稿标签未能打开。");
         }

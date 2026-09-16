@@ -872,6 +872,11 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.page.route("**/workspace?*", failCreatedOpen);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
+    // This is the second use of the same native <dialog> in this journey. Wait
+    // for the reopened modal boundary before activating its new confirmation;
+    // under the full Electron batch an immediate click can otherwise land
+    // while the prior close/open lifecycle is still settling.
+    await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "创建并编辑", exact: true }).click();
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled({ timeout: 30_000 });
     const createdSummary = await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
@@ -996,6 +1001,101 @@ test("Electron history creation recreates a closed current-draft tab", {
     removeSourceFixture(fixture.sourceDirectory);
   }
 });
+
+for (const recoveryAction of ["current-row", "close-history"]) {
+  test(`Electron created-history recovery reuses its navigation transaction: ${recoveryAction}`, {
+    tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-version-display"],
+  }, async () => {
+    test.setTimeout(180_000);
+    const fixture = createSourceFixture(`history-current-recovery-${recoveryAction}.html`);
+    const app = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+    try {
+      await loadedDiskFrame(app.page, fixture.sourcePath, "list-item");
+      await waitForProjectReady(app.page);
+      const initialPath = await managedWorkingCopyPath(app.page, fixture.sourcePath);
+      const repository = new ProjectFileRepository({
+        projectsRoot: path.dirname(path.dirname(initialPath)),
+      });
+      const target = (await repository.workspace({ sourcePath: initialPath })).target;
+      await app.page.getByRole("button", { name: "展开左侧边栏", exact: true }).click();
+      const project = app.page.locator(".sidebar-project-item").first();
+      await project.locator(".sidebar-project-history-toggle").click();
+      await project.getByRole("button", { name: "V1，历史版本", exact: true }).click();
+      const mode = app.page.getByRole("group", { name: "工作模式", exact: true });
+      await expect(mode).toHaveAttribute("data-view-label", "历史");
+
+      let creates = 0;
+      const countCreate = async (route) => {
+        creates += 1;
+        await route.continue();
+      };
+      const failCreatedWorkspace = async (route) => {
+        if (creates > 0) {
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "TEST_OPEN_FAILED", message: "测试新稿打开失败" },
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      };
+      await app.page.route("**/history-version/create", countCreate);
+      await app.page.route("**/workspace?*", failCreatedWorkspace);
+      await app.page.getByRole("button", { name: "更多", exact: true }).click();
+      await app.page.getByRole("menuitem", {
+        name: "基于此版本创建新版本…",
+        exact: true,
+      }).click();
+      await app.page.getByRole("dialog", { name: /创建新版本/u })
+        .getByRole("button", { name: "创建并编辑", exact: true }).click();
+      await expect(app.page.getByRole("button", {
+        name: "打开已创建版本",
+        exact: true,
+      })).toBeEnabled({ timeout: 30_000 });
+      await expect.poll(async () => (
+        await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })
+      ).versions.length).toBe(2);
+      expect(creates).toBe(1);
+      await app.page.unroute("**/workspace?*", failCreatedWorkspace);
+
+      if (recoveryAction === "close-history") {
+        await app.page.locator('.workbench-tab[data-kind="history"] .workbench-tab-close').click();
+      } else {
+        await project.locator(".sidebar-project-current-row").click();
+      }
+
+      const currentTab = app.page.locator('.workbench-tab[data-kind="document"]').getByRole("tab");
+      await expect(currentTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+      await expect(mode).toHaveAttribute("data-view-label", "当前");
+      await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
+      await expect(app.page.getByRole("button", {
+        name: "打开已创建版本",
+        exact: true,
+      })).toHaveCount(0);
+      expect((await repository.listRegisteredProjectVersionSummaries({
+        projectId: target.projectId,
+      })).versions).toHaveLength(2);
+      expect(creates).toBe(1);
+
+      await app.page.getByRole("button", { name: "新标签页", exact: true }).click();
+      const startTab = app.page.locator('.workbench-tab[data-kind="start"]').getByRole("tab");
+      await expect(startTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+      await project.locator(".sidebar-project-current-row").click();
+      await expect(currentTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+      await expect(mode).toHaveAttribute("data-view-label", "当前");
+      expect((await repository.listRegisteredProjectVersionSummaries({
+        projectId: target.projectId,
+      })).versions).toHaveLength(2);
+      expect(creates).toBe(1);
+    } finally {
+      await stopStemmio(app.electronApp, app.isolatedUserData);
+      removeSourceFixture(fixture.sourceDirectory);
+    }
+  });
+}
 
 test("Electron sidebar keeps multiple project lists expanded without switching identity", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
