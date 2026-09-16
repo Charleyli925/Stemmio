@@ -10,6 +10,7 @@ import {
   bridgeJson,
   clickEditHistoryMenu,
   chooseClipboardDelivery,
+  closeStemmioGracefully,
   currentEditorFrame,
   disableStructuralInPlace,
   existsSync,
@@ -2301,9 +2302,16 @@ test("explicit same-byte source reload creates a fresh Runtime authority", {
   <script>document.body.dataset.runtimeReady = "true";</script>
 </body></html>`;
 
-  await withRuntimeProject("stemmio-runtime-explicit-authority-e2e-", {
-    "runtime-report.html": html,
-  }, async ({ page, sourcePath }) => {
+  const prefix = "stemmio-runtime-explicit-authority-e2e-";
+  const sourceDirectory = mkdtempSync(path.join(tmpdir(), prefix));
+  const sourcePath = path.join(sourceDirectory, "runtime-report.html");
+  writeFileSync(sourcePath, html, "utf8");
+  let launched = null;
+  let isolatedUserData = null;
+  try {
+    launched = await launchStemmio({ activeSourcePath: sourcePath });
+    isolatedUserData = launched.isolatedUserData;
+    const { page } = launched;
     const editor = page.getByTestId("html-canvas-editor");
     let frame = (await loadedDiskFrame(page, sourcePath, "explicit-authority-target")).frame;
     const beforeToken = await documentToken(page);
@@ -2328,7 +2336,45 @@ test("explicit same-byte source reload creates a fresh Runtime authority", {
     await expect(frame.locator('[data-native-case="explicit-authority-target"]'))
       .toHaveAttribute("data-stemmio-id", beforeId);
     expect(readFileSync(sourcePath, "utf8")).toBe(html);
-  });
+
+    // Continue the same authority after the explicit reload, persist a real
+    // native edit, then cold-reopen the original project. This keeps the
+    // reload proof tied to the normal close/restart handoff instead of
+    // relying on a separate test's reopen evidence.
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    await activateNativeEdit(frame, "explicit-authority-target");
+    await setTextSelection(frame, "explicit-authority-target", "Authority text".length);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+    await page.keyboard.insertText(" 已重开");
+    await page.keyboard.press(keyShortcut("s"));
+    await expectCheckpointPersisted(page, revisionBefore);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("Authority text 已重开");
+    expect(readFileSync(sourcePath, "utf8")).toBe(html);
+
+    await closeStemmioGracefully(launched.electronApp, page);
+    launched = null;
+    launched = await launchStemmio({ isolatedUserData });
+    const reopenedFrame = (await loadedDiskFrame(
+      launched.page,
+      sourcePath,
+      "explicit-authority-target",
+    )).frame;
+    await expect(reopenedFrame.locator('[data-native-case="explicit-authority-target"]'))
+      .toHaveText("Authority text 已重开");
+    await expect(reopenedFrame.locator('[data-native-case="explicit-authority-target"]'))
+      .toHaveAttribute("data-stemmio-id", beforeId);
+    await closeStemmioGracefully(launched.electronApp, launched.page);
+    launched = null;
+  } finally {
+    if (launched) {
+      await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    } else if (isolatedUserData) {
+      removeValidatedTemporaryDirectory(isolatedUserData, "stemmio-native-e2e-");
+    }
+    removeValidatedTemporaryDirectory(sourceDirectory, prefix);
+  }
 });
 
 test("mixed-content delete refuses before creating an ambiguous undo boundary", {
@@ -2358,6 +2404,8 @@ test("mixed-content delete refuses before creating an ambiguous undo boundary", 
       "data-structure-command-reason",
       "delete-mixed-content",
     );
+    await expect(page.getByText("这个对象不在直接编辑支持范围内。", { exact: true }))
+      .toBeVisible();
     expect(readFileSync(sourcePath, "utf8")).toBe(html);
     frame = await currentEditorFrame(page);
     await expect(frame.locator('[data-native-case="mixed-host"]')).toHaveText("前中后末尾");
@@ -2556,6 +2604,7 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     expect(await invokeStructureCommand(page, "moveSelectedTo", {
       parentElementId: asideId,
     })).toBe(false);
+    await expect(page.getByText("不能跨组或跨位置移动。", { exact: true })).toBeVisible();
     expect(await readPublishedWorkingCopy(
       await managedWorkingCopyPath(page, sourcePath),
       "utf8",

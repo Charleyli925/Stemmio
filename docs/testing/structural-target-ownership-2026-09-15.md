@@ -173,3 +173,59 @@ PR 只包含源码、测试和本报告；用户 HTML、附件、截图、私有
 
 该追加记录不把公共 canary 或定向回归扩大为私有真实语料签收；最终合并仍以最终
 exact head 的任务门禁、`release-gate` 和线上 required checks 为准。
+
+## 2026-09-16 收尾：真实语料首错诊断与有限 UI/交接闭环
+
+本节只追加本轮收尾结果，不改写上文历史数字或旧清单。预检使用用户指定的本地
+HTML 目录，源代码基线为 `af9cd048185132cc378431e16b994e58eed3bac0`，树为
+`556772aa3afa528a6e04c94e7338a9bff922dc6f`。命令为：
+
+```text
+STEMMIO_REAL_HTML_DIR=/path/to/user-designated-corpus
+STEMMIO_E2E_WINDOW_MODE=hidden
+npm run test:real-html:electron -- --preflight
+```
+
+### 八文件首错（本次运行）
+
+每行保留首个具体 discovery 阶段、错误码、分类和安全标量前置条件；原始 HTML
+文件名、绝对路径、选择器和堆栈不进入报告。后续同类错误最多保留 32 条，避免
+用大量重复 probe 淹没首错。
+
+| 文件 | 首错阶段 | 首错代码 | 分类 | 关键前置条件 |
+| --- | --- | --- | --- | --- |
+| H01 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor | candidates 375；source elements 375；tab known false |
+| H02 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED` | executor | source elements 161；authored candidates 160；runtime targets 0；tab known false |
+| H03 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor | candidates 1029；source elements 1031；tab known false |
+| H04 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor | candidates 559；source elements 559；tab known false |
+| H05 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor | candidates 302；source elements 302；tab known false |
+| H06 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED` | executor | source elements 986；authored candidates 973；runtime targets 0；tab known true |
+| H07 | `runtime-generated-discovery` | `RUNTIME_GENERATED_PROBE_FAILED` | executor | source elements 246；authored candidates 245；runtime targets 1；tab known false |
+| H08 | `capability-probe` | `NO_EXACT_HIT_POINT` | executor | candidates 630；source elements 630；tab known false |
+
+八行均为 `DISCOVERY_ERROR`，不是产品“不支持”结果，也没有在执行中替换为更简单
+目标。每行 `originalUnchanged` 和 `preflightWorkingCopy.unchanged` 均为 true；本轮
+没有进入 A/B/C 正式操作、重建率或成功率分母。重复只读运行中首个 executor 代码可能
+在同一探测边界的 `NO_EXACT_HIT_POINT`、`CAPABILITY_PROBE_HOST_POINTER_INTERCEPTED`
+或选择清理类错误之间变化，因此这些代码用于定位 runner 前置条件，不被解释为用户
+任务失败率。
+
+### 本轮已完成的有限收尾
+
+- `updateMoveAvailability` 先核对源码资格和相邻方向，确定存在可执行方向后才做
+  Runtime 子树证明；命令执行仍保留完整证明。
+- 直接结构拒绝提示按“超出直接编辑范围 / 不能跨组或跨位置移动 / 当前页面内容
+  发生变化，暂时不能执行”三类呈现，内部 reason code 只用于诊断。
+- 显式同字节磁盘 reload 的 Electron canary 已补齐 reload 后真实输入、保存、正常
+  关闭、同一项目冷重开及 Stable ID 校验；立即复制、Enter、composition、dirty
+  Native Edit 和 accepted rebase recovery 定向用例共 6/6 通过。
+
+### 对照与边界
+
+旧基线 `9d7e03ce01fa1820362799c064232dd04196220e` 的一文件 discovery 预检仍为阻断，
+但与本分支各运行了一组两版本都存在的普通 Electron canary（同父重排、长页复制、
+源码删除）：旧版 3/3、6.6 s；本分支 3/3、5.9 s。该样本只说明共同支持的代表链
+仍可执行，不足以推导可靠性或性能改善，故不宣称新旧版本在任务完成率、响应/保存
+延迟、Candidate 数量或意外重建率上有改善；完整三组配对活动待 discovery 根因修复后，
+沿用同一语料、冻结身份和独立结果口径再执行。安装态、长会话 20/50/100 轮和八文件
+正式结构闭环也仍未执行。

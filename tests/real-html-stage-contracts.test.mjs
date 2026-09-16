@@ -42,6 +42,13 @@ import {
 } from "./e2e/electron/real-html/continuity-chain.mjs";
 import { summarizeRuntimeObserverRecords } from "./e2e/electron/real-html/runtime-observer.mjs";
 import { normalizeCapabilityProbeObservations } from "./e2e/electron/real-html/capability-driver.mjs";
+import {
+  REAL_HTML_DISCOVERY_STAGES,
+  createDiscoveryTrace,
+  markDiscoveryStage,
+  recordDiscoveryFailure,
+  recordDiscoveryObservation,
+} from "./e2e/electron/real-html/discovery-diagnostics.mjs";
 import { assertReadOnlyCorpusMode, frozenInitialRuntimeDecision, FROZEN_ELEMENT_OPERATIONS, FROZEN_COPY_DENIED_OPERATIONS, FROZEN_STRUCTURE_PROBE_OPERATIONS, FROZEN_STRUCTURE_OPERATIONS, FROZEN_STRUCTURE_COPY_OPERATIONS, FROZEN_STRUCTURE_CLOSED_LOOP_OPERATIONS, FROZEN_FORMAT_OPERATIONS, FROZEN_REENTRY_FORMAT_OPERATIONS, FROZEN_TEXT_OPERATIONS, frozenDigest, readFrozenSelection, verifyFrozenBytes, verifyFrozenDisplay }
   from "./e2e/electron/real-html/frozen-selection.mjs";
 import { verifiedUndoTail, requireTextOperationLedger, verifyEndedHistorySession, verifyFrozenHistory } from "./e2e/electron/real-html/frozen-text.mjs";
@@ -171,6 +178,57 @@ test("real HTML plan declares the frozen capability matrix sampling contract", (
   ).operations.some(
     ({ id }) => id === REAL_HTML_OPERATION_IDS.CAPABILITY_RUNTIME_GENERATED_BOUNDARY,
   ));
+});
+
+test("real HTML discovery keeps the first stage, code and safe preconditions", () => {
+  const trace = createDiscoveryTrace();
+  markDiscoveryStage(trace, REAL_HTML_DISCOVERY_STAGES.SOURCE_COPY, {
+    corpusFileSelected: true,
+    privatePath: "/must-not-be-retained",
+    sourceSize: 42,
+  });
+  recordDiscoveryFailure(trace, REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE, {
+    code: "CAPABILITY_PROBE_TARGET_CHANGED_DURING_SCROLL",
+    exactReason: "CAPABILITY_PROBE_TARGET_CHANGED_DURING_SCROLL",
+    details: { selector: ".private", stableId: "sm1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  }, {
+    sourceElementCount: 3,
+    workingCopyReady: true,
+  });
+  recordDiscoveryFailure(trace, REAL_HTML_DISCOVERY_STAGES.CAPABILITY_NORMALIZATION, {
+    code: "LATER_FAILURE",
+  });
+  recordDiscoveryFailure(trace, REAL_HTML_DISCOVERY_STAGES.RUNTIME_GENERATED_DISCOVERY, {
+    code: "RUNTIME_GENERATED_PROBE_FAILED",
+  });
+
+  assert.equal(trace.firstFailure.stage, REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE);
+  assert.equal(trace.firstFailure.code, "CAPABILITY_PROBE_TARGET_CHANGED_DURING_SCROLL");
+  assert.equal(trace.firstFailure.classification, "executor");
+  assert.deepEqual(trace.firstFailure.preconditions, {
+    sourceElementCount: 3,
+    workingCopyReady: true,
+  });
+  assert.equal(trace.failures.length, 3);
+  assert.equal(trace.failures[2].classification, "executor");
+  assert.equal(trace.events[0].preconditions.sourceSize, 42);
+  assert.equal(trace.events[0].preconditions.privatePath, undefined);
+});
+
+test("real HTML discovery observations do not turn a successful preflight into a failure", () => {
+  const trace = createDiscoveryTrace();
+  recordDiscoveryObservation(
+    trace,
+    REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+    "preflight-complete",
+    { status: "PENDING_REVIEW", manifestProduced: true },
+  );
+  assert.equal(trace.firstFailure, null);
+  assert.deepEqual(trace.events[0], {
+    stage: REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
+    outcome: "preflight-complete",
+    details: { status: "PENDING_REVIEW", manifestProduced: true },
+  });
 });
 
 function textSnapshot(id, overrides = {}) {
