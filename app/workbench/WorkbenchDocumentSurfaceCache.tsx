@@ -21,7 +21,7 @@ export default function WorkbenchDocumentSurfaceCache({
   candidateSourceSha256 = null,
   onVisibleReady,
   onHandoffComplete,
-  onVisibleScroll,
+  onHandoffScroll,
   onFirstScroll,
   height,
 }: {
@@ -32,7 +32,7 @@ export default function WorkbenchDocumentSurfaceCache({
   candidateSourceSha256?: string | null;
   onVisibleReady: (token: DocumentSurfaceCacheToken) => boolean;
   onHandoffComplete: (token: DocumentSurfaceCacheToken) => void;
-  onVisibleScroll: (tabId: string, scrollTop: number) => void;
+  onHandoffScroll: (token: DocumentSurfaceCacheToken, scrollTop: number) => void;
   onFirstScroll: (tabId: string, scrollTop: number) => void;
   height: string;
 }) {
@@ -186,7 +186,10 @@ export default function WorkbenchDocumentSurfaceCache({
             height={height}
             status={null}
             initialScrollTop={entry.scrollTop}
-            onScrollTopChange={(scrollTop) => onVisibleScroll(entry.tabId, scrollTop)}
+            onScrollTopChange={(scrollTop) => onHandoffScroll({
+              tabId: entry.tabId,
+              sourceSha256: entry.sourceSha256,
+            }, scrollTop)}
             onFirstScroll={(scrollTop) => onFirstScroll(entry.tabId, scrollTop)}
           />
         </div>

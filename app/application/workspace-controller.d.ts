@@ -331,6 +331,7 @@ export type RuntimeWorkspaceControllerConstruction = Readonly<{
   initial?: Readonly<{
     documentHtml?: string;
     runSourcePath?: string | null;
+    documentSurfaceCacheMaxEntries?: number;
   }>;
   draftSession?: Readonly<{
     encodeComment?: (value: never) => unknown;
@@ -429,6 +430,10 @@ export class WorkspaceController {
   ): WorkbenchTabsSnapshot | null;
   updateDocumentSurfacePresentation(
     tabId: string,
+    presentation?: Readonly<Record<string, unknown>>,
+  ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
+  updateDocumentSurfacePresentationForToken(
+    token: import("./document-surface-cache-session.js").DocumentSurfaceCacheToken,
     presentation?: Readonly<Record<string, unknown>>,
   ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
   subscribe(

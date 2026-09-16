@@ -140,6 +140,36 @@ test("light presentation state survives HTML eviction and rejects stale source c
   assert.equal(changed.pageViewContext, null);
 });
 
+test("a delayed display callback cannot relabel old-version scroll as the new source", () => {
+  const session = new DocumentSurfaceCacheSession();
+  const tabId = fixture("a").tab.tabId;
+  capture(session, "a", "<p>first</p>");
+  const firstToken = { tabId, sourceSha256: hash("a") };
+  assert.equal(
+    session.updatePresentationForToken(firstToken, { scrollTop: 420 })?.scrollTop,
+    420,
+  );
+
+  session.capture(fixture("a", "<p>second</p>", hash("b")));
+  assert.equal(
+    session.updatePresentationForToken(firstToken, { scrollTop: 840 }),
+    null,
+  );
+  assert.deepEqual(
+    session.snapshot.presentations.find((entry) => entry.tabId === tabId),
+    {
+      tabId,
+      projectId: "project_a",
+      documentId: "doc_a",
+      sourceSha256: hash("b"),
+      canvasMode: "edit",
+      pageViewContext: null,
+      scrollTop: 0,
+      byteLength: 0,
+    },
+  );
+});
+
 test("surface cache eviction makes old tabs cold without changing tab identity", () => {
   const session = new DocumentSurfaceCacheSession({
     maxEntries: 2,

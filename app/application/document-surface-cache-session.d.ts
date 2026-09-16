@@ -65,6 +65,10 @@ export class DocumentSurfaceCacheSession {
     presentation?: Readonly<Record<string, unknown>>,
     identity?: Readonly<Record<string, unknown>>,
   ): DocumentSurfacePresentation | null;
+  updatePresentationForToken(
+    token: DocumentSurfaceCacheToken,
+    presentation?: Readonly<Record<string, unknown>>,
+  ): DocumentSurfacePresentation | null;
   remove(tabId: string): boolean;
   reconcile(tabIds: readonly string[]): DocumentSurfaceCacheSnapshot;
   clear(): void;

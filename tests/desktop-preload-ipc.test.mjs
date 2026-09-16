@@ -379,6 +379,21 @@ test("preload exposes runtime commit hooks only for explicit E2E launches", asyn
   assert.equal(hooked.runtime.diagnostics.e2eRuntimeCommitHooks, true);
 });
 
+test("preload exposes a bounded document surface cache only for explicit E2E launches", async () => {
+  const ordinary = await loadPreloadApis(async () => success(null), {
+    env: { STEMMIO_E2E_DOCUMENT_SURFACE_CACHE_MAX_ENTRIES: "1" },
+  });
+  assert.equal(ordinary.runtime.diagnostics.e2eDocumentSurfaceCacheMaxEntries, null);
+
+  const bounded = await loadPreloadApis(async () => success(null), {
+    env: {
+      STEMMIO_E2E: "1",
+      STEMMIO_E2E_DOCUMENT_SURFACE_CACHE_MAX_ENTRIES: "1",
+    },
+  });
+  assert.equal(bounded.runtime.diagnostics.e2eDocumentSurfaceCacheMaxEntries, 1);
+});
+
 test("preload exposes the UI-preferences port during E2E launches", async () => {
   const { uiPreferences } = await loadPreloadApis(async () => success({}), {
     env: { STEMMIO_E2E: "1" },

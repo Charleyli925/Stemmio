@@ -268,6 +268,16 @@ export class DocumentSurfaceCacheSession {
     return this.#snapshot.presentations.find((candidate) => candidate.tabId === id) || null;
   }
 
+  updatePresentationForToken(token, presentation = {}) {
+    const id = String(token?.tabId || "");
+    const sourceSha256 = String(token?.sourceSha256 || "");
+    const entry = this.#entries.get(id);
+    if (!documentSurfaceCacheEntryMatchesToken(entry, { tabId: id, sourceSha256 })) {
+      return null;
+    }
+    return this.updatePresentation(id, presentation, entry);
+  }
+
   remove(tabId) {
     const id = String(tabId || "");
     const entry = this.#entries.get(id);

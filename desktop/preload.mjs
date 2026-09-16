@@ -483,6 +483,11 @@ const e2eRuntimeCommitHooks = typeof process !== "undefined"
   && process.env?.STEMMIO_E2E_RUNTIME_COMMIT_HOOKS === "1";
 const e2eCanvasCapabilityProbe = typeof process !== "undefined"
   && process.env?.STEMMIO_E2E === "1";
+const e2eDocumentSurfaceCacheMaxEntries = (() => {
+  if (typeof process === "undefined" || process.env?.STEMMIO_E2E !== "1") return null;
+  const value = Number(process.env?.STEMMIO_E2E_DOCUMENT_SURFACE_CACHE_MAX_ENTRIES);
+  return Number.isInteger(value) && value > 0 ? value : null;
+})();
 const runtimeConfig = Object.freeze({
   bridgePort,
   bridgeAuthToken,
@@ -503,6 +508,7 @@ const runtimeConfig = Object.freeze({
     e2eStaticCandidateFailure,
     e2eRuntimeCommitHooks,
     e2eCanvasCapabilityProbe,
+    e2eDocumentSurfaceCacheMaxEntries,
   }),
 });
 

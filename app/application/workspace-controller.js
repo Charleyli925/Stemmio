@@ -260,7 +260,9 @@ export function createRuntimeWorkspaceController({
     sourceHistorySession: new SourceHistorySession(),
     conversationSession: new ConversationSession(),
     workbenchTabsSession: new WorkbenchTabsSession(),
-    documentSurfaceCacheSession: new DocumentSurfaceCacheSession(),
+    documentSurfaceCacheSession: new DocumentSurfaceCacheSession({
+      maxEntries: initial.documentSurfaceCacheMaxEntries,
+    }),
     workbenchNavigationSession: new WorkbenchNavigationSession(),
     workbenchTabsPersistenceCoordinator: new WorkbenchTabsPersistenceCoordinator({
       port: ports.workbenchTabs || null,
@@ -1293,6 +1295,13 @@ export class WorkspaceController {
       tabId,
       presentation,
       currentIdentity,
+    ) || null;
+  }
+
+  updateDocumentSurfacePresentationForToken(token, presentation) {
+    return this.#documentSurfaceCacheSession?.updatePresentationForToken(
+      token,
+      presentation,
     ) || null;
   }
 
