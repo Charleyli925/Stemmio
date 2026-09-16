@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +16,8 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
-  architectureViolations,
+  architectureScan,
+  discoverSourceFiles,
   dialogPolicyViolations,
   escapeBoundaryViolations,
   layerBoundaryViolations,
@@ -34,9 +36,15 @@ import {
 } from "../scripts/architecture-ast-query.mjs";
 
 const execFileAsync = promisify(execFile);
+const checker = fileURLToPath(new URL("../scripts/check-architecture.mjs", import.meta.url));
 
 test("the production graph satisfies the responsibility boundaries", async () => {
-  assert.deepEqual(await architectureViolations(), []);
+  const result = await architectureScan();
+  assert.equal(result.scope, "full");
+  assert.deepEqual(result.roots, ["app", "bridge", "scripts", "desktop", "shared"]);
+  assert.ok(result.scannedCount > 0);
+  assert.equal(result.scannedCount, result.files.length);
+  assert.deepEqual(result.violations, []);
 });
 
 test("plain Node test modules never import TypeScript runtime files", async () => {
@@ -256,16 +264,117 @@ test("the checker entry fails closed for scanned violations and parse errors", a
       'import path from "node:path"; export const join = path.join;\n',
     ),
   ]);
-  const checker = fileURLToPath(new URL("../scripts/check-architecture.mjs", import.meta.url));
-
   await assert.rejects(
-    execFileAsync(process.execPath, [checker, "--root", root]),
+    execFileAsync(process.execPath, [
+      checker,
+      "--root", root,
+      "--scope", "limited",
+      "--include", "app/workbench",
+      "--include", "app/domain",
+      "--include", "shared",
+    ]),
     (error) => {
+      assert.match(error.stderr, /after scanning 3 source files across limited scope/u);
       assert.match(error.stderr, /views cannot issue raw business requests/u);
       assert.match(error.stderr, /app\/domain\/broken\.js: parse error/u);
       assert.match(error.stderr, /shared\/host-leak\.mjs: cross-runtime shared code/u);
       return true;
     },
+  );
+});
+
+test("the checker CLI rejects invalid roots, incomplete full scans and malformed arguments", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ordinaryFile = join(root, "not-a-directory");
+  await writeFile(ordinaryFile, "fixture\n");
+
+  const cases = [
+    {
+      name: "missing root",
+      args: ["--root", join(root, "missing")],
+      expected: /architecture root is unavailable/u,
+    },
+    {
+      name: "ordinary file root",
+      args: ["--root", ordinaryFile],
+      expected: /architecture root must be a directory/u,
+    },
+    {
+      name: "missing root argument",
+      args: ["--root"],
+      expected: /--root requires a value/u,
+    },
+    {
+      name: "full scan missing required source roots",
+      args: ["--root", root],
+      expected: /required architecture source app is unavailable/u,
+    },
+  ];
+  for (const fixtureCase of cases) {
+    await assert.rejects(
+      execFileAsync(process.execPath, [checker, ...fixtureCase.args]),
+      (error) => {
+        assert.match(error.stderr, /Architecture check could not complete/u, fixtureCase.name);
+        assert.match(error.stderr, fixtureCase.expected, fixtureCase.name);
+        return true;
+      },
+    );
+  }
+});
+
+test("an explicitly limited checker scan reports its scope and non-zero work", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-limited-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "app", "domain"), { recursive: true });
+  await writeFile(join(root, "app", "domain", "value.js"), "export const value = 1;\n");
+
+  const { stdout } = await execFileAsync(process.execPath, [
+    checker,
+    "--root", root,
+    "--scope", "limited",
+    "--include", "app/domain",
+  ]);
+  assert.match(
+    stdout,
+    /Architecture contract passed\. Scanned 1 source files across limited scope: app\/domain\./u,
+  );
+
+  const emptyRoot = join(root, "empty");
+  await mkdir(join(emptyRoot, "app", "domain"), { recursive: true });
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      checker,
+      "--root", emptyRoot,
+      "--scope", "limited",
+      "--include", "app/domain",
+    ]),
+    (error) => {
+      assert.match(error.stderr, /architecture scan completed no work/u);
+      return true;
+    },
+  );
+});
+
+test("source discovery preserves directory I/O failures instead of returning an empty scan", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-io-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "app"), { recursive: true });
+  const denied = new Error("fixture permission denied");
+  denied.code = "EACCES";
+
+  await assert.rejects(
+    discoverSourceFiles({
+      productRoot: root,
+      scope: "limited",
+      includes: ["app"],
+      io: {
+        stat,
+        readFile: (target, encoding) => readFile(target, encoding),
+        readdir: async () => { throw denied; },
+      },
+    }),
+    /cannot read architecture source directory app: fixture permission denied/u,
   );
 });
 
