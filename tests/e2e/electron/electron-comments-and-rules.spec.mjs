@@ -749,15 +749,17 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存为新版本", exact: true });
     await expect(saveVersionItem).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }))
-      .toBeDisabled();
+      .toHaveAttribute("aria-disabled", "true");
     await expect(saveVersionItem).toBeFocused();
     await launched.page.keyboard.press("Tab");
     await expect(moreMenu).toHaveCount(0);
-    await expect(moreButton).toBeFocused();
+    await expect(moreButton).not.toBeFocused();
 
     await moreButton.click();
     await expect(moreMenu).toBeVisible();
     await expect(saveVersionItem).toBeFocused();
+    await launched.page.keyboard.press("ArrowDown");
+    await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
     await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");

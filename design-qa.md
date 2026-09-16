@@ -567,6 +567,16 @@ explicit seven-state hierarchy.
 
 final result: passed
 
+## 2026-09-16 — 项目页面标签审查修正
+
+- Mode: DESIGN CHANGE + ACCESSIBILITY FOLLOW-UP。本节取代上一节“没有剩余 P0/P1/P2”的结论；后续独立审查发现 1 个 P1 和 4 个 P2，原视觉方向不变。
+- P1 修正：从历史创建新版本后，如果 Working Copy / Version 权威已发布而 Canvas 确认失败，当前稿标签承接错误，不再保留与可见当前源冲突的历史标签。先前关闭当前稿标签时也会重建唯一当前稿页面。
+- P2 修正：V3 → V5 的标签、侧栏与画布在 V5 验证成功前保持 V3，失败也保留 V3；禁用菜单项使用 `aria-disabled` 并参与方向键焦点循环，原因按历史、AI、审阅、切换、保存和恢复状态精确投影；Tab 直接继续页面焦点顺序。项目名前缀由 `#898690` 调整为 `#6e6b75`，在未选中 `#efeff2` 上约 4.55:1，在选中 `#fdfcf9` 上约 5.09:1。
+- 异步保护：保留稿对话框每次打开有独立会话代次；关闭后的迟到加载或恢复回调不能污染或关闭新对话框。
+- 验收边界：新增确定性故障注入覆盖“提交后 Canvas 失败”、慢 V3 → V5、V6 读取失败、关闭当前稿标签后创建/重试、禁用菜单键盘语义和恢复对话框关闭/重开的迟到加载。聚焦 Node 133/133、完整工作台标签 Electron 10/10、完整评论/规则 Electron 8/8、关联 AI 审阅 1/1 和“关闭当前稿后创建” Electron 1/1 已通过；完整任务门禁证据在交付前追加。
+
+final result: passed for the reviewed behavior, visual hierarchy and accessibility scope; the repository completion gate is tracked separately in task evidence
+
 ## Comment, safe page-switching and update-header polish
 
 Date: 2026-07-31
@@ -3512,7 +3522,7 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - 颜色与状态：当前稿保留绿色状态点；长期规则使用紫色铅笔；历史使用暖色时钟。历史页直接选中“预览”，禁用“编辑”，符合用户批注，不再增加“只读”模式或滑出横条。
 - 图像质量：品牌使用仓库内真实 `brand-logo.png`，在 @2x Electron 截图中边缘清晰；没有用 CSS 图形、文字或临时 SVG 代替品牌资产。其余图标来自现有 Phosphor 图标族，线重和尺寸一致。
 - 文案与对象关系：菜单完整保留“保存为新版本、基于此版本创建、Finder、浏览器、导出、同时保存、找回稿件、磁盘重载”；不可用项置灰并解释原因。“导出此版本…”保持可用，Finder/浏览器不会把当前稿冒充历史快照。
-- 交互与无障碍：真实 Electron 流程验证跨项目打开历史、同项目返回当前稿、键盘打开历史、历史失败保留当前页、创建确认取消、导出所见 V3、创建 V9/重启以及完整菜单禁用态。标签补充精确 `aria-label`，菜单原因通过 `aria-describedby` 关联；禁用项不进入方向键可操作集合。测试夹具故意触发一次 authored-script 错误和一次历史读取失败，均按预期恢复，没有未分类的 shell 控制台故障阻断流程。
+- 交互与无障碍：真实 Electron 流程验证跨项目打开历史、同项目返回当前稿、键盘打开历史、历史失败保留当前页、创建确认取消、导出所见 V3、创建 V9/重启以及完整菜单禁用态。标签补充精确 `aria-label`，菜单原因通过 `aria-describedby` 关联；禁用项保留在方向键焦点顺序中，`Enter` 不执行动作，`Tab` 按页面顺序离开菜单。测试夹具故意触发一次 authored-script 错误和一次历史读取失败，均按预期恢复，没有未分类的 shell 控制台故障阻断流程。
 
 ### Comparison history
 

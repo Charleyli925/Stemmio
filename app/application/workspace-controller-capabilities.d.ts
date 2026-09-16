@@ -311,6 +311,8 @@ export interface NavigationControllerCommands {
     documentId: string;
     title: string;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
+    force?: boolean;
+    committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
 }
 

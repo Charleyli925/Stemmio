@@ -179,6 +179,7 @@ function createHarness({
   workspaceRead = null,
   confirmCreation = async () => ({}),
   verifyRendered = null,
+  commitCurrentSurface = null,
   onDrain = null,
   observeExternalSourceChange = async () => ({ status: "succeeded" }),
   onCatalogAfterSettlement = null,
@@ -229,6 +230,7 @@ function createHarness({
     commit: [],
     refresh: [],
     render: [],
+    currentSurface: [],
     invalidate: 0,
     unlock: 0,
     freeze: 0,
@@ -456,6 +458,7 @@ function createHarness({
         },
         async verifyRendered(html, hash, nextContext) {
           calls.render.push({ html, hash, context: nextContext });
+          calls.order.push("render");
           if (verifyRendered) await verifyRendered(html, hash, nextContext);
         },
         invalidateRenderAcks() {
@@ -463,6 +466,15 @@ function createHarness({
         },
         unlock() {
           calls.unlock += 1;
+        },
+      },
+      currentSurface: {
+        async commit(input) {
+          calls.currentSurface.push(input);
+          calls.order.push("current-surface");
+          return commitCurrentSurface
+            ? commitCurrentSurface(input)
+            : { status: "succeeded", value: { committed: true } };
         },
       },
     },
@@ -1474,8 +1486,36 @@ test("created history opens through verified workspace and lost opened acknowled
   assert.equal(harness.documentSession.html, HISTORY_HTML);
   assert.equal(harness.versionSession.snapshot.currentBasedOnVersionId, "ver_0002");
   assert.equal(harness.versionSession.snapshot.viewMode, "current");
+  assert.ok(harness.calls.order.indexOf("current-surface") < harness.calls.order.indexOf("render"));
+  assert.equal(harness.calls.currentSurface[0].context.workingCopyId, "work_ver_0002");
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
   assert.equal(harness.calls.createHistory.length, 0);
+});
+
+test("created history stops before Canvas verification when the current surface cannot commit", async () => {
+  const operationId = "history_open_0001";
+  const harness = createHarness({
+    queryCreation: async () => historyCreatedResult(operationId),
+    workspaceRead: async () => createdWorkspace(),
+    commitCurrentSurface: async () => ({
+      status: "rejected",
+      code: "WORKBENCH_TAB_COMMIT_REJECTED",
+      reason: "current tab unavailable",
+    }),
+  });
+
+  const outcome = await harness.workflow.openCreatedHistoryVersion({
+    operationId,
+    context: harness.context,
+  });
+
+  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.code, "HISTORY_CREATED_OPEN_FAILED");
+  assert.match(outcome.reason, /current tab unavailable/u);
+  assert.equal(harness.calls.currentSurface.length, 1);
+  assert.equal(harness.calls.render.length, 0);
+  assert.equal(harness.versionSession.snapshot.viewMode, "current");
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "open-failed");
 });
 
 test("created history workspace failure keeps history usable and retries only opening", async () => {
@@ -1495,6 +1535,31 @@ test("created history workspace failure keeps history usable and retries only op
   fail = false;
   assert.equal((await harness.workflow.openCreatedHistoryVersion({ operationId, context: harness.context })).status, "succeeded");
   assert.equal(harness.calls.createHistory.length, 0);
+});
+
+test("created history reports a current-authority failure when Canvas verification fails after commit", async () => {
+  const operationId = "history_open_0001";
+  const harness = createHarness({
+    queryCreation: async () => historyCreatedResult(operationId),
+    workspaceRead: async () => createdWorkspace(),
+    verifyRendered: async (_html, _hash, nextContext) => {
+      if (nextContext.workingCopyId === "work_ver_0002") throw new Error("canvas failed after commit");
+    },
+  });
+  assert.equal((await harness.workflow.viewHistory({
+    version: { id: "ver_0001" },
+    context: harness.context,
+  })).status, "succeeded");
+
+  const outcome = await harness.workflow.openCreatedHistoryVersion({ operationId, context: harness.context });
+  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.code, "HISTORY_CREATED_OPEN_FAILED");
+  assert.match(outcome.reason, /canvas failed after commit/u);
+  assert.equal(harness.documentSession.html, HISTORY_HTML);
+  assert.equal(harness.projectSession.context.workingCopyId, "work_ver_0002");
+  assert.equal(harness.versionSession.snapshot.viewMode, "current");
+  assert.equal(harness.versionSession.snapshot.currentBasedOnVersionId, "ver_0002");
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "open-failed");
 });
 
 test("created history preserves its creation operation when managed transition outcome is unknown", async () => {

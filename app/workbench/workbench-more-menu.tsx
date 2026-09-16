@@ -37,6 +37,8 @@ export type WorkbenchMoreMenuProps = Readonly<{
   exportUnavailableReason?: string;
   onExportCurrentHtml: (saveVersion?: boolean) => void;
   canSaveCurrentVersion?: boolean;
+  saveCurrentVersionUnavailableReason?: string;
+  exportAndSaveUnavailableReason?: string;
   onSaveCurrentVersion?: () => void;
   canCreateVersionFromHistory?: boolean;
   createVersionFromHistoryUnavailableReason?: string;
@@ -74,6 +76,8 @@ export function WorkbenchMoreMenu({
   exportUnavailableReason,
   onExportCurrentHtml,
   canSaveCurrentVersion = false,
+  saveCurrentVersionUnavailableReason,
+  exportAndSaveUnavailableReason,
   onSaveCurrentVersion,
   canCreateVersionFromHistory = false,
   createVersionFromHistoryUnavailableReason,
@@ -99,7 +103,7 @@ export function WorkbenchMoreMenu({
       icon: <FloppyDiskIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onSaveCurrentVersion,
       disabled: isHistory || !canSaveCurrentVersion,
-      reason: isHistory ? "该操作只针对当前稿" : undefined,
+      reason: isHistory ? "该操作只针对当前稿" : saveCurrentVersionUnavailableReason,
     }] : []),
     ...(onCreateVersionFromHistory ? [{
       id: "create-from-history", label: "基于此版本创建新版本…",
@@ -142,7 +146,7 @@ export function WorkbenchMoreMenu({
       checked: saveVersionOnExport,
       keepOpen: true,
       disabled: isHistory || !canSaveCurrentVersion || !canExportCurrentHtml,
-      reason: isHistory ? "历史版本导出不会改变当前稿" : undefined,
+      reason: isHistory ? "历史版本导出不会改变当前稿" : exportAndSaveUnavailableReason,
     }] : []),
     ...(onOpenPreservedDrafts ? [{
       id: "preserved-drafts", label: "找回此前的稿件…",
@@ -175,6 +179,7 @@ export function WorkbenchMoreMenu({
     canSaveCurrentVersion,
     canShowInFolder,
     createVersionFromHistoryUnavailableReason,
+    exportAndSaveUnavailableReason,
     exportUnavailableReason,
     isHistory,
     onCreateVersionFromHistory,
@@ -188,17 +193,32 @@ export function WorkbenchMoreMenu({
     onSaveCurrentVersion,
     openInBrowserUnavailableReason,
     preservedDraftsUnavailableReason,
+    saveCurrentVersionUnavailableReason,
     saveVersionOnExport,
     showInFolderUnavailableReason,
   ]);
   const visibleItems = items;
-  const interactiveItems = useMemo(
-    () => visibleItems.filter((item) => !item.disabled),
-    [visibleItems],
-  );
   const close = (returnFocus = true) => {
     setOpen(false);
     if (returnFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+  const closeIntoDocumentTabOrder = (backward: boolean) => {
+    const trigger = triggerRef.current;
+    const menu = menuRef.current;
+    const focusable = Array.from(document.querySelectorAll<HTMLElement>([
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(","))).filter((element) => !menu?.contains(element) && !element.hidden);
+    const triggerIndex = trigger ? focusable.indexOf(trigger) : -1;
+    const destination = triggerIndex < 0
+      ? trigger
+      : focusable[triggerIndex + (backward ? -1 : 1)] || trigger;
+    setOpen(false);
+    window.requestAnimationFrame(() => destination?.focus());
   };
   useEffect(() => {
     if (!open) return undefined;
@@ -206,7 +226,7 @@ export function WorkbenchMoreMenu({
     if (!trigger) return undefined;
     const updatePosition = () => setPosition(menuPosition(trigger));
     const focusFirst = () => {
-      if (!menuRef.current?.contains(document.activeElement)) itemRefs.current.get(interactiveItems[0]?.id || "")?.focus();
+      if (!menuRef.current?.contains(document.activeElement)) itemRefs.current.get(visibleItems[0]?.id || "")?.focus();
     };
     updatePosition();
     window.requestAnimationFrame(focusFirst);
@@ -224,16 +244,14 @@ export function WorkbenchMoreMenu({
         return;
       }
       if (event.key === "Tab") {
-        // The menu is portalled to body, so allowing the browser's default Tab
-        // order would jump past the trigger to the first document tab. Return
-        // to the owning control first; the next Tab then follows the toolbar's
-        // normal order (and Shift+Tab follows it in reverse).
+        // The menu is portalled to body. Continue directly from the owning
+        // trigger's place in document order so one Tab exits normally.
         event.preventDefault();
-        close();
+        closeIntoDocumentTabOrder(event.shiftKey);
         return;
       }
-      if (!interactiveItems.length) return;
-      const currentIndex = interactiveItems.findIndex(
+      if (!visibleItems.length) return;
+      const currentIndex = visibleItems.findIndex(
         (item) => item.id === document.activeElement?.getAttribute("data-menu-item"),
       );
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -241,10 +259,10 @@ export function WorkbenchMoreMenu({
       const nextIndex = event.key === "Home"
         ? 0
         : event.key === "End"
-          ? interactiveItems.length - 1
-          : (currentIndex + (event.key === "ArrowUp" ? -1 : 1) + interactiveItems.length)
-            % interactiveItems.length;
-      itemRefs.current.get(interactiveItems[nextIndex]?.id || "")?.focus();
+          ? visibleItems.length - 1
+          : (currentIndex + (event.key === "ArrowUp" ? -1 : 1) + visibleItems.length)
+            % visibleItems.length;
+      itemRefs.current.get(visibleItems[nextIndex]?.id || "")?.focus();
     };
     window.addEventListener("resize", onViewportChange);
     window.addEventListener("scroll", onViewportChange, true);
@@ -256,7 +274,7 @@ export function WorkbenchMoreMenu({
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [interactiveItems, open, visibleItems]);
+  }, [open, visibleItems]);
 
   return (
     <span className="workbench-more-menu-wrap">
@@ -297,10 +315,12 @@ export function WorkbenchMoreMenu({
                 role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
                 aria-label={item.label}
                 aria-checked={item.checked}
+                aria-disabled={item.disabled || undefined}
                 data-menu-item={item.id}
-                disabled={item.disabled}
+                tabIndex={-1}
                 aria-describedby={item.reason ? `${menuId}-${item.id}-reason` : undefined}
                 onClick={() => {
+                  if (item.disabled) return;
                   if (!item.keepOpen) close();
                   item.onSelect();
                 }}
