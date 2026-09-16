@@ -19,6 +19,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { PencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import type { WorkbenchTab, WorkbenchTabsSnapshot } from "../application/workbench-tabs-session.js";
 import type {
   DocumentRecoveryJournalSummary,
@@ -129,9 +130,15 @@ export function WorkbenchTabBar({
           const projected = selected && presentation.tabId === tab.tabId;
           const title = projected ? presentation.tabTitle : tab.title;
           const viewLabel = projected ? presentation.viewLabel : null;
+          const surfaceLabel = tab.kind === "document" ? "当前稿"
+            : tab.kind === "project-rules" ? "长期规则"
+              : tab.kind === "history" ? `历史 V${tab.versionOrdinal}` : null;
+          const projectTitle = surfaceLabel ? title.replace(/\.html?$/iu, "") : title;
+          const accessibleTitle = surfaceLabel ? `${projectTitle} · ${surfaceLabel}` : title;
           return (
             <div
               className="workbench-tab"
+              data-kind={tab.kind}
               data-status={tab.status}
               data-view-label={viewLabel || undefined}
               data-selected={selected ? "true" : undefined}
@@ -142,6 +149,7 @@ export function WorkbenchTabBar({
                 id={`workbench-tab-${tab.tabId}`}
                 type="button"
                 role="tab"
+                aria-label={accessibleTitle}
                 aria-selected={selected}
                 aria-controls={tab.kind === "project-rules"
                   ? "workbench-project-rules-outlet"
@@ -169,14 +177,25 @@ export function WorkbenchTabBar({
                   onSelect(target);
                 }}
               >
-                <span className="workbench-tab-status" aria-hidden="true" />
-                <span className="workbench-tab-title" title={title}>{title}</span>
-                {viewLabel && viewLabel !== "当前" ? <span className="workbench-tab-view-label">{` · ${viewLabel}`}</span> : null}
+                {tab.kind === "document" ? <span className="workbench-tab-status" aria-hidden="true" />
+                  : tab.kind === "project-rules" ? <PencilSimpleIcon className="workbench-tab-kind-icon" aria-hidden="true" size={13} weight="bold" />
+                    : tab.kind === "history" ? <ClockCounterClockwiseIcon className="workbench-tab-kind-icon" aria-hidden="true" size={13} weight="bold" />
+                      : null}
+                <span className="workbench-tab-title" title={accessibleTitle}>
+                  {surfaceLabel ? <>
+                    <span className="workbench-tab-project">{projectTitle}</span>
+                    <span className="workbench-tab-separator" aria-hidden="true">·</span>
+                    <span className="workbench-tab-surface">{surfaceLabel}</span>
+                  </> : title}
+                </span>
+                {tab.kind === "document" && viewLabel && !["当前", "历史"].includes(viewLabel)
+                  ? <span className="workbench-tab-view-label">{` · ${viewLabel}`}</span>
+                  : null}
               </button>
               <button
                 className="workbench-tab-close"
                 type="button"
-                aria-label={`关闭 ${title}`}
+                aria-label={`关闭 ${accessibleTitle}`}
                 onClick={() => onClose(tab)}
               >
                 <XIcon aria-hidden="true" size={11} weight="bold" />
@@ -566,8 +585,11 @@ export function WorkbenchGlobalSidebar({
           </div>
           <div className="workbench-sidebar-product">
             <button type="button" onClick={onOpenAbout}>
-              <span><FileHtmlIcon aria-hidden="true" size={18} weight="duotone" /></span>
-              <strong>源页</strong>
+              <span>
+                {/* eslint-disable-next-line @next/next/no-img-element -- packaged Electron brand asset */}
+                <img src="./brand-logo.png" alt="" />
+              </span>
+              <strong>Stemmio</strong>
             </button>
             {updateActionVisible ? (
               <button

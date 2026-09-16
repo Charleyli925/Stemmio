@@ -550,6 +550,80 @@ const RUNTIME_GENERATED_DISCOVERY_SELECTOR = [
   "[role='img']",
 ].join(", ");
 
+const RUNTIME_PROBE_SUBSTAGES = Object.freeze({
+  SELECTION_CLEAR: "selection-clear",
+  TARGET_SCROLL: "target-scroll",
+  TARGET_CLICK: "target-click",
+  DIAGNOSTIC_READ: "diagnostic-read",
+  DIAGNOSTIC_VALIDATE: "diagnostic-validate",
+  DIAGNOSTIC_TARGET_MATCH: "diagnostic-target-match",
+});
+
+function safeRuntimeProbeCode(value, fallback) {
+  return typeof value === "string" && /^[A-Z0-9_.:-]{1,120}$/u.test(value)
+    ? value
+    : fallback;
+}
+
+function safeRuntimeProbeTag(value) {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,31}$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeRuntimeProbeGeneration(value) {
+  return typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeRuntimeProbeHitKind(value) {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,63}$/u.test(value)
+    ? value
+    : null;
+}
+
+async function runtimeProbeContext({ editor, target, targetIndex }) {
+  const [targetTag, connected, activeFrameCount] = await Promise.all([
+    target.evaluate((element) => element.localName).catch(() => null),
+    target.evaluate((element) => element.isConnected).catch(() => null),
+    editor.locator('iframe[data-runtime-slot-role="active"]')
+      .count()
+      .catch(() => 0),
+  ]);
+  const frameGeneration = activeFrameCount === 1
+    ? await editor.locator('iframe[data-runtime-slot-role="active"]')
+      .getAttribute("data-frame-generation")
+      .catch(() => null)
+    : null;
+  return {
+    targetIndex: Number.isInteger(targetIndex) ? targetIndex : null,
+    targetTag: safeRuntimeProbeTag(targetTag),
+    connected: typeof connected === "boolean" ? connected : null,
+    frameGeneration: safeRuntimeProbeGeneration(frameGeneration),
+  };
+}
+
+function recordRuntimeProbeFailure(diagnostics, context, {
+  substage,
+  code,
+  hitKind = null,
+  diagnostic = false,
+} = {}) {
+  if (!diagnostic) diagnostics.probeFailureCount += 1;
+  else diagnostics.rejectedDiagnosticCount += 1;
+  if (diagnostics.firstFailure) return;
+  diagnostics.firstFailure = {
+    substage: typeof substage === "string" ? substage : null,
+    code: safeRuntimeProbeCode(code, "RUNTIME_GENERATED_PROBE_FAILED"),
+    targetIndex: context?.targetIndex ?? null,
+    targetTag: context?.targetTag || null,
+    connected: context?.connected ?? null,
+    frameGeneration: context?.frameGeneration || null,
+    hitKind: safeRuntimeProbeHitKind(hitKind),
+  };
+}
+
 export function runtimeGeneratedDiagnosticsIssue(diagnostics) {
   if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
     return "RUNTIME_GENERATED_DIAGNOSTICS_MISSING";
@@ -581,6 +655,7 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
     rejectedDiagnosticCount: 0,
     diagnosticTargetMismatchCount: 0,
     probeFailureCount: 0,
+    firstFailure: null,
   };
   for (let index = 0; index < Math.min(candidateCount, 512); index += 1) {
     const target = candidates.nth(index);
@@ -588,15 +663,50 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
     const box = await target.boundingBox();
     if (!box || box.width <= 2 || box.height <= 2) continue;
     diagnostics.visibleCount += 1;
+    const context = await runtimeProbeContext({
+      editor,
+      target,
+      targetIndex: index,
+    });
     try {
       await page.keyboard.press("Escape");
       await page.evaluate(() => new Promise((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(resolve));
       }));
-      if (await editor.getAttribute("data-selection-runtime-generated") !== null) {
-        throw new Error("Selection diagnostics did not clear before the Runtime probe.");
-      }
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.SELECTION_CLEAR,
+        code: cause?.code || "RUNTIME_PROBE_SELECTION_CLEAR_FAILED",
+      });
+      continue;
+    }
+    let staleSelectionDiagnostic = null;
+    try {
+      staleSelectionDiagnostic = await editor.getAttribute("data-selection-runtime-generated");
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_READ,
+        code: cause?.code || "RUNTIME_PROBE_SELECTION_DIAGNOSTIC_READ_FAILED",
+      });
+      continue;
+    }
+    if (staleSelectionDiagnostic !== null) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.SELECTION_CLEAR,
+        code: "RUNTIME_PROBE_SELECTION_NOT_CLEARED",
+      });
+      continue;
+    }
+    try {
       await target.scrollIntoViewIfNeeded();
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.TARGET_SCROLL,
+        code: cause?.code || "RUNTIME_PROBE_TARGET_SCROLL_FAILED",
+      });
+      continue;
+    }
+    try {
       await target.click({
         position: {
           x: Math.max(1, Math.min(box.width - 1, box.width / 2)),
@@ -607,19 +717,39 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
         requestAnimationFrame(() => requestAnimationFrame(resolve));
       }));
       diagnostics.probedCount += 1;
-    } catch {
-      diagnostics.probeFailureCount += 1;
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.TARGET_CLICK,
+        code: cause?.code || "RUNTIME_PROBE_TARGET_CLICK_FAILED",
+      });
       continue;
     }
-    const snapshot = await editor.evaluate((element) => ({
-      runtimeGenerated: element.getAttribute("data-selection-runtime-generated"),
-      generation: element.getAttribute("data-selection-runtime-generation"),
-      sourceAnchorId: element.getAttribute("data-selection-runtime-source-anchor-id"),
-      kind: element.getAttribute("data-selection-runtime-kind"),
-      relativePath: element.getAttribute("data-selection-runtime-path"),
-    }));
+    let snapshot;
+    try {
+      snapshot = await editor.evaluate((element) => ({
+        runtimeGenerated: element.getAttribute("data-selection-runtime-generated"),
+        generation: element.getAttribute("data-selection-runtime-generation"),
+        sourceAnchorId: element.getAttribute("data-selection-runtime-source-anchor-id"),
+        kind: element.getAttribute("data-selection-runtime-kind"),
+        relativePath: element.getAttribute("data-selection-runtime-path"),
+      }));
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_READ,
+        code: cause?.code || "RUNTIME_GENERATED_DIAGNOSTIC_READ_FAILED",
+      });
+      continue;
+    }
+    // A successful authored selection reports an explicit "false".  A null
+    // value means the controller did not publish a selection diagnostic at
+    // all, so it is a probe failure rather than evidence that no generated
+    // target exists.  The authored-only/no-runtime case is covered by the
+    // explicit false path and leaves probeFailureCount unchanged.
     if (snapshot.runtimeGenerated === null) {
-      diagnostics.probeFailureCount += 1;
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_READ,
+        code: "RUNTIME_GENERATED_DIAGNOSTIC_MISSING",
+      });
       continue;
     }
     if (snapshot.runtimeGenerated !== "true") continue;
@@ -630,25 +760,46 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
       || !snapshot.kind
       || !snapshot.relativePath
     ) {
-      diagnostics.rejectedDiagnosticCount += 1;
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_VALIDATE,
+        code: "RUNTIME_GENERATED_DIAGNOSTIC_FIELDS_MISSING",
+        hitKind: snapshot.kind,
+        diagnostic: true,
+      });
       continue;
     }
-    const diagnosticMatchesCandidate = await target.evaluate((element, payload) => {
-      const anchors = [...document.querySelectorAll("[data-stemmio-id]")].filter(
-        (candidate) => candidate.getAttribute("data-stemmio-id") === payload.sourceAnchorId,
-      );
-      if (anchors.length !== 1) return false;
-      let resolved = null;
-      try {
-        resolved = anchors[0].querySelector(payload.relativePath);
-      } catch {
-        return false;
-      }
-      return resolved === element || element.contains(resolved) || resolved?.contains(element) === true;
-    }, snapshot);
+    let diagnosticMatchesCandidate = false;
+    try {
+      diagnosticMatchesCandidate = await target.evaluate((element, payload) => {
+        const anchors = [...document.querySelectorAll("[data-stemmio-id]")].filter(
+          (candidate) => candidate.getAttribute("data-stemmio-id") === payload.sourceAnchorId,
+        );
+        if (anchors.length !== 1) return false;
+        let resolved = null;
+        try {
+          resolved = anchors[0].querySelector(payload.relativePath);
+        } catch {
+          return false;
+        }
+        return resolved === element || element.contains(resolved) || resolved?.contains(element) === true;
+      }, snapshot);
+    } catch (cause) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_TARGET_MATCH,
+        code: cause?.code || "RUNTIME_GENERATED_DIAGNOSTIC_TARGET_MATCH_FAILED",
+        hitKind: snapshot.kind,
+        diagnostic: true,
+      });
+      continue;
+    }
     if (!diagnosticMatchesCandidate) {
-      diagnostics.rejectedDiagnosticCount += 1;
       diagnostics.diagnosticTargetMismatchCount += 1;
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.DIAGNOSTIC_TARGET_MATCH,
+        code: "RUNTIME_GENERATED_DIAGNOSTIC_TARGET_MISMATCH",
+        hitKind: snapshot.kind,
+        diagnostic: true,
+      });
       continue;
     }
     if (keys.has(snapshot.kind)) continue;
@@ -666,7 +817,23 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
     });
     diagnostics.frozenTargetCount = targets.length;
   }
-  await page.keyboard.press("Escape").catch(() => {});
+  try {
+    await page.keyboard.press("Escape");
+  } catch (cause) {
+    const activeFrame = editor.locator('iframe[data-runtime-slot-role="active"]');
+    const activeFrameCount = await activeFrame.count().catch(() => 0);
+    recordRuntimeProbeFailure(diagnostics, {
+      targetIndex: null,
+      targetTag: null,
+      connected: null,
+      frameGeneration: activeFrameCount === 1
+        ? await activeFrame.getAttribute("data-frame-generation").catch(() => null)
+        : null,
+    }, {
+      substage: RUNTIME_PROBE_SUBSTAGES.SELECTION_CLEAR,
+      code: cause?.code || "RUNTIME_PROBE_FINAL_SELECTION_CLEAR_FAILED",
+    });
+  }
   return { targets, diagnostics };
 }
 

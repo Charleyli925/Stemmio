@@ -65,6 +65,46 @@ function safeCode(value, fallback = null) {
     : fallback;
 }
 
+function safeSubstage(value) {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,79}$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeTag(value) {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,31}$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeHitKind(value) {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,63}$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeGeneration(value) {
+  return typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeFailureCause(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const cause = {
+    substage: safeSubstage(value.substage),
+    code: safeCode(value.code, null),
+    targetIndex: Number.isInteger(value.targetIndex) && value.targetIndex >= 0
+      ? value.targetIndex
+      : null,
+    targetTag: safeTag(value.targetTag),
+    connected: typeof value.connected === "boolean" ? value.connected : null,
+    frameGeneration: safeGeneration(value.frameGeneration),
+    hitKind: safeHitKind(value.hitKind),
+  };
+  return Object.values(cause).some((entry) => entry !== null) ? cause : null;
+}
+
 function discoveryFailureClass(code) {
   if (typeof code !== "string") return "unknown";
   if (code.includes("UNSUPPORTED") || code.includes("NOT_APPLICABLE")) return "unsupported";
@@ -109,6 +149,7 @@ export function recordDiscoveryFailure(
 ) {
   if (!trace || typeof trace !== "object") return null;
   const code = safeCode(diagnostic.code, "DISCOVERY_FAILED");
+  const failureBoundary = discoveryFailureClass(code);
   const failure = {
     stage: safeStage(stage),
     code,
@@ -116,9 +157,13 @@ export function recordDiscoveryFailure(
       diagnostic.exactReason,
       code,
     ),
-    classification: discoveryFailureClass(code),
+    classification: failureBoundary,
+    failureBoundary,
+    rootCause: "UNDETERMINED",
     preconditions: safePreconditions(preconditions),
   };
+  const cause = safeFailureCause(diagnostic.cause);
+  if (cause) failure.cause = cause;
   trace.currentStage = failure.stage;
   if (trace.failures.length < MAX_RECORDED_FAILURES) trace.failures.push(failure);
   else trace.suppressedFailureCount += 1;
