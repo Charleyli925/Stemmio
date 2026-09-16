@@ -1069,6 +1069,44 @@ test("capability preflight cannot pass file, cleanup, or source failures", () =>
     preflightWorkingCopy: { unchanged: true },
   };
   assert.equal(capabilityPreflightExitCode([passingRow]), 0);
+  assert.equal(capabilityPreflightExitCode([{
+    ...passingRow,
+    discovery: {
+      firstFailure: null,
+      events: [],
+      failures: [],
+    },
+    capabilityManifest: {
+      discovery: {
+        complete: true,
+        knownCandidateCount: 2,
+        authoredDenominatorCount: 2,
+        examinedCandidateCount: 2,
+        probedCandidateCount: 2,
+        unexaminedCandidateCount: 0,
+        stopReason: null,
+      },
+    },
+  }]), 0);
+  assert.equal(capabilityPreflightExitCode([{
+    ...passingRow,
+    discovery: {
+      firstFailure: null,
+      events: [],
+      failures: [],
+    },
+    capabilityManifest: {
+      discovery: {
+        complete: false,
+        knownCandidateCount: 10,
+        authoredDenominatorCount: 10,
+        examinedCandidateCount: 1,
+        probedCandidateCount: 1,
+        unexaminedCandidateCount: 9,
+        stopReason: "target-click",
+      },
+    },
+  }]), 1);
   for (const broken of [
     { ...passingRow, status: "DISCOVERY_ERROR" },
     { ...passingRow, originalUnchanged: false },

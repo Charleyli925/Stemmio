@@ -247,7 +247,7 @@ export function capabilityPreflightExitCode(rows) {
     && row.originalUnchanged === true
     && row.preflightWorkingCopy?.unchanged === true
     && row.discovery?.firstFailure == null
-    && row.discovery?.complete !== false
+    && row.capabilityManifest?.discovery?.complete !== false
     && !row.cleanupError
   )) ? 0 : 1;
 }
