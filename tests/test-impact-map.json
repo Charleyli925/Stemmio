@@ -1770,7 +1770,8 @@
       "id": "browser-open-workflow",
       "patterns": [
         "^app/application/browser-open-workflow\\.(?:js|d\\.ts)$",
-        "^tests/browser-open-workflow\\.test\\.mjs$"
+        "^tests/browser-open-workflow\\.test\\.mjs$",
+        "^tsconfig\\.browser-open-workflow\\.json$"
       ],
       "suites": [
         "typecheck",

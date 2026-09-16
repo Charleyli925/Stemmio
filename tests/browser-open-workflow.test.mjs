@@ -142,7 +142,18 @@ function harness({ history = false } = {}) {
 test("a clean current document opens without writing or rebuilding Canvas", async () => {
   const value = harness();
   const outcome = await value.workflow.openSelectedDocument();
-  assert.equal(outcome.status, "succeeded");
+  assert.deepEqual(outcome, {
+    status: "succeeded",
+    value: {
+      operationId: "browser-open_100_1",
+      target: {
+        targetKind: "working-copy",
+        sourcePath: "/project/A.html",
+        expectedSha256: HASH_A,
+      },
+      opened: { accepted: true },
+    },
+  });
   assert.equal(value.calls.checkpoint, 1);
   assert.deepEqual(value.calls.enqueue, []);
   assert.deepEqual(value.calls.flush, [{ throughRevision: 4 }]);
@@ -183,7 +194,7 @@ test("failed or unknown persistence never reaches Desktop and never repeats the 
       return flushOutcome;
     };
     const outcome = await value.workflow.openSelectedDocument();
-    assert.equal(outcome.status, flushOutcome.status);
+    assert.deepEqual(outcome, flushOutcome);
     assert.equal(value.calls.enqueue.length, 1);
     assert.equal(value.calls.open.length, 0);
   }
@@ -207,7 +218,10 @@ test("an A operation that becomes stale never opens the new B document", async (
   };
   gate.resolve();
   const outcome = await opening;
-  assert.equal(outcome.status, "stale");
+  assert.deepEqual(outcome, {
+    status: "stale",
+    context: value.context,
+  });
   assert.deepEqual(value.calls.open, []);
 });
 
@@ -230,7 +244,18 @@ test("a switch after the system request starts does not relabel the external act
     sourcePath: "/project/B.html",
   };
   gate.resolve();
-  assert.equal((await opening).status, "succeeded");
+  assert.deepEqual(await opening, {
+    status: "succeeded",
+    value: {
+      operationId: "browser-open_100_1",
+      target: {
+        targetKind: "working-copy",
+        sourcePath: "/project/A.html",
+        expectedSha256: HASH_A,
+      },
+      opened: { accepted: true },
+    },
+  });
   assert.equal(value.calls.open.length, 1);
 });
 
@@ -255,7 +280,19 @@ test("duplicate clicks for one target share one in-flight Desktop request", asyn
 test("history opens the exact selected version without current-draft input or persistence", async () => {
   const value = harness({ history: true });
   const outcome = await value.workflow.openSelectedDocument();
-  assert.equal(outcome.status, "succeeded");
+  assert.deepEqual(outcome, {
+    status: "succeeded",
+    value: {
+      operationId: "browser-open_100_1",
+      target: {
+        targetKind: "version",
+        sourcePath: "/project/A.html",
+        versionId: "ver_0002",
+        expectedSha256: HASH_B,
+      },
+      opened: { accepted: true },
+    },
+  });
   assert.equal(value.calls.checkpoint, 0);
   assert.deepEqual(value.calls.enqueue, []);
   assert.deepEqual(value.calls.flush, []);
@@ -280,15 +317,26 @@ test("new edits during the save boundary block launch instead of waiting forever
     return { status: "succeeded", value: { revision: 4 } };
   };
   const outcome = await value.workflow.openSelectedDocument();
-  assert.equal(outcome.status, "blocked");
-  assert.equal(outcome.code, "BROWSER_OPEN_SOURCE_NOT_SETTLED");
+  assert.deepEqual(outcome, {
+    status: "blocked",
+    code: "BROWSER_OPEN_SOURCE_NOT_SETTLED",
+    reason: "当前修改尚未安全写入源 HTML，因此没有打开浏览器。请稍后重试。",
+  });
   assert.deepEqual(value.calls.open, []);
 });
 
 test("definite Desktop refusal preserves the session while a lost reply stays unknown", async () => {
-  for (const [code, expectedStatus] of [
-    ["UNKNOWN_SOURCE", "rejected"],
-    ["PROJECT_SERVICE_UNAVAILABLE", "unknown"],
+  for (const [code, expectedOutcome] of [
+    ["UNKNOWN_SOURCE", {
+      status: "rejected",
+      code: "UNKNOWN_SOURCE",
+      reason: "UNKNOWN_SOURCE failure",
+    }],
+    ["PROJECT_SERVICE_UNAVAILABLE", {
+      status: "unknown",
+      operationId: "browser-open_100_1",
+      reason: "PROJECT_SERVICE_UNAVAILABLE failure",
+    }],
   ]) {
     const value = harness();
     const before = { ...value.documentSession.snapshot };
@@ -296,7 +344,7 @@ test("definite Desktop refusal preserves the session while a lost reply stays un
       throw { code, message: `${code} failure` };
     };
     const outcome = await value.workflow.openSelectedDocument();
-    assert.equal(outcome.status, expectedStatus);
+    assert.deepEqual(outcome, expectedOutcome);
     assert.deepEqual(value.documentSession.snapshot, before);
   }
 });

@@ -20,28 +20,30 @@ export type BrowserOpenResult = Readonly<{
   opened: unknown;
 }>;
 
-export class BrowserOpenWorkflow {
-  constructor(options: Readonly<{
-    projectSession: ProjectSession;
-    documentSession: DocumentSession;
-    versionSession: VersionSession;
-    documentWorkflow: Pick<DocumentWorkflow, "enqueueEdit" | "flush" | "hasHistoryAction">;
-    ports: Readonly<{
-      canvas: Readonly<{
-        checkpointSource(input?: Readonly<{ trigger?: string }>): Readonly<{
-          ok: boolean;
-          html: string;
-          pendingMutation?: unknown;
-          reason?: string;
-        }> | undefined;
-      }>;
-      files: Readonly<{
-        openInDefaultBrowser(input: BrowserOpenRequest): Promise<unknown>;
-      }>;
+export type BrowserOpenWorkflowConstruction = Readonly<{
+  projectSession: ProjectSession;
+  documentSession: DocumentSession;
+  versionSession: VersionSession;
+  documentWorkflow: Pick<DocumentWorkflow, "enqueueEdit" | "flush" | "hasHistoryAction">;
+  ports: Readonly<{
+    canvas: Readonly<{
+      checkpointSource(input?: Readonly<{ trigger?: string }>): Readonly<{
+        ok: boolean;
+        html: string;
+        pendingMutation?: unknown;
+        reason?: string;
+      }> | undefined;
     }>;
-    errorMessage?: (cause: unknown, fallback: string) => string;
-    clock?: Readonly<{ now(): number }>;
-  }>);
+    files: Readonly<{
+      openInDefaultBrowser(input: BrowserOpenRequest): Promise<unknown>;
+    }>;
+  }>;
+  errorMessage?: (cause: unknown, fallback: string) => string;
+  clock?: Readonly<{ now(): number }>;
+}>;
+
+export class BrowserOpenWorkflow {
+  constructor(options: BrowserOpenWorkflowConstruction);
   dispose(): void;
   openSelectedDocument(): Promise<DocumentWorkflowOutcome<BrowserOpenResult>>;
 }
