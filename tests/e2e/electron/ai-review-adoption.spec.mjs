@@ -461,7 +461,7 @@ ${REVIEW_MASK_UNION_BEFORE}
     const diskReloadItem = launched.page.getByRole("menuitem", {
       name: /从磁盘重新载入 HTML/u,
     });
-    await expect(diskReloadItem).toBeDisabled();
+    await expect(diskReloadItem).toHaveAttribute("aria-disabled", "true");
     await expect(diskReloadItem).toContainText(
       "请先采用或不用这次 AI 修改，再从磁盘重新载入",
     );

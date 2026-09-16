@@ -280,9 +280,12 @@ export class WorkbenchTabsSession {
       && item.projectId === projectId
       && item.documentId === documentId
     ));
+    // The existing tab names the snapshot that is actually visible. Keep that
+    // identity until WorkbenchNavigationWorkflow has loaded and verified the
+    // requested replacement, then commit both facts together in commitHistory.
+    if (existingIndex >= 0) return this.#snapshot;
     const tabs = [...this.#snapshot.tabs];
-    if (existingIndex >= 0) tabs[existingIndex] = tab;
-    else tabs.push(tab);
+    tabs.push(tab);
     return this.#publish({
       ...this.#snapshot,
       tabs,
@@ -457,14 +460,32 @@ export class WorkbenchTabsSession {
     });
   }
 
-  commitHistory(tabId) {
+  commitHistory(tabId, version = null) {
     const target = this.#snapshot.tabs.find(
       (tab) => tab.tabId === tabId && tab.kind === "history",
     );
     if (!target || this.#snapshot.pendingTabId !== tabId) return null;
+    const committedTarget = version
+      ? normalizedProjectTab({
+        ...target,
+        versionId: version.versionId,
+        versionOrdinal: version.versionOrdinal,
+        versionLabel: version.versionLabel,
+        displayFileName: version.displayFileName,
+      })
+      : target;
+    if (
+      !committedTarget
+      || committedTarget.tabId !== target.tabId
+      || committedTarget.projectId !== target.projectId
+      || committedTarget.documentId !== target.documentId
+    ) return null;
     this.#pendingPriorStatus = null;
     return this.#publish({
       ...this.#snapshot,
+      tabs: this.#snapshot.tabs.map((tab) => (
+        tab.tabId === tabId ? committedTarget : tab
+      )),
       activeTabId: tabId,
       pendingTabId: null,
       mountedDocumentTabId: null,

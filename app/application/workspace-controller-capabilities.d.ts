@@ -312,6 +312,8 @@ export interface NavigationControllerCommands {
     documentId: string;
     title: string;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
+    force?: boolean;
+    committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
 }
 
@@ -390,7 +392,10 @@ export interface NavigationWorkflowControllerCapability extends WorkspaceSnapsho
     context: ProjectContext;
     deadlineAt?: number;
   }): Promise<VersionWorkflowOutcome>;
-  returnToCurrent(input: { context: ProjectContext }): Promise<VersionWorkflowOutcome>;
+  returnToCurrent(input: {
+    context: ProjectContext;
+    currentSurfaceCommitScope?: object | null;
+  }): Promise<VersionWorkflowOutcome>;
 }
 
 export interface AiConversationControllerCapability

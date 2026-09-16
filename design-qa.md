@@ -567,6 +567,16 @@ explicit seven-state hierarchy.
 
 final result: passed
 
+## 2026-09-16 — 项目页面标签审查修正
+
+- Mode: DESIGN CHANGE + ACCESSIBILITY FOLLOW-UP。本节取代上一节“没有剩余 P0/P1/P2”的结论；后续独立审查发现 1 个 P1 和 4 个 P2，原视觉方向不变。
+- P1 修正：从历史创建新版本后，如果 Working Copy / Version 权威已发布而 Canvas 确认失败，当前稿标签承接错误，不再保留与可见当前源冲突的历史标签。先前关闭当前稿标签时也会重建唯一当前稿页面。
+- P2 修正：V3 → V5 的标签、侧栏与画布在 V5 验证成功前保持 V3，失败也保留 V3；禁用菜单项使用 `aria-disabled` 并参与方向键焦点循环，原因按历史、AI、审阅、切换、保存和恢复状态精确投影；Tab 直接继续页面焦点顺序。项目名前缀由 `#898690` 调整为 `#6e6b75`，在未选中 `#efeff2` 上约 4.55:1，在选中 `#fdfcf9` 上约 5.09:1。
+- 异步保护：保留稿对话框每次打开有独立会话代次；关闭后的迟到加载或恢复回调不能污染或关闭新对话框。
+- 验收边界：新增确定性故障注入覆盖“提交后 Canvas 失败”、慢 V3 → V5、V6 读取失败、关闭当前稿标签后创建/重试、禁用菜单键盘语义和恢复对话框关闭/重开的迟到加载。聚焦 Node 133/133、完整工作台标签 Electron 10/10、完整评论/规则 Electron 8/8、关联 AI 审阅 1/1 和“关闭当前稿后创建” Electron 1/1 已通过；完整任务门禁证据在交付前追加。
+
+final result: passed for the reviewed behavior, visual hierarchy and accessibility scope; the repository completion gate is tracked separately in task evidence
+
 ## Comment, safe page-switching and update-header polish
 
 Date: 2026-07-31
@@ -3495,15 +3505,6 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - Evidence boundary: rebuilt source Electron on the user-designated local corpus, with the source tree based on `af9cd048185132cc378431e16b994e58eed3bac0` and tree `556772aa3afa528a6e04c94e7338a9bff922dc6f`; this is not packaged/installed validation. The old-version comparison has a one-file discovery baseline (`9d7e03ce`) plus one small common-supported canary (same-parent reorder, long-page copy, source delete): 3/3 on both versions (6.6 s old, 5.9 s current). This is continuity evidence only; no paired reliability, latency or rebuild-rate claim is made. Full A/B/C real-corpus execution remains blocked behind discovery repair.
 - Final result: partial — the low-risk UI/reload closure and truthful per-file diagnostics are implemented and covered by focused Electron/Node checks; private-corpus acceptance and three-group old/new metrics remain unexecuted rather than being inferred from discovery failures.
 
-## 2026-09-16 — Transient tab display handoff
-
-- Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.
-- Presentation contract: up to 20 exact persisted and Canvas-verified HTML projections remain data-only within 32 MiB. A cache hit may mount a script-disabled display page only while handing the selected tab to its exact live Canvas; rapid overlap is bounded at two and settlement returns the mounted count to zero. Scroll, Canvas mode and bounded page context survive HTML eviction only for the same tab, Project, Document and source Hash.
-- Rebuilt source Electron evidence: the two-document Registry restart scenario restores the persisted active document without prewarm marks, begins the normal open path, observes at least one temporary iframe during a cached return, and returns to zero mounted iframes after each exact Canvas settles. Keyboard tab navigation and rapid project switching with immediate close also pass.
-- Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
-- Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
-- Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.
-
 ## 2026-09-16 — 项目作用域页面标签与历史预览
 
 ### Comparison target
@@ -3521,7 +3522,7 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 - 颜色与状态：当前稿保留绿色状态点；长期规则使用紫色铅笔；历史使用暖色时钟。历史页直接选中“预览”，禁用“编辑”，符合用户批注，不再增加“只读”模式或滑出横条。
 - 图像质量：品牌使用仓库内真实 `brand-logo.png`，在 @2x Electron 截图中边缘清晰；没有用 CSS 图形、文字或临时 SVG 代替品牌资产。其余图标来自现有 Phosphor 图标族，线重和尺寸一致。
 - 文案与对象关系：菜单完整保留“保存为新版本、基于此版本创建、Finder、浏览器、导出、同时保存、找回稿件、磁盘重载”；不可用项置灰并解释原因。“导出此版本…”保持可用，Finder/浏览器不会把当前稿冒充历史快照。
-- 交互与无障碍：真实 Electron 流程验证跨项目打开历史、同项目返回当前稿、键盘打开历史、历史失败保留当前页、创建确认取消、导出所见 V3、创建 V9/重启以及完整菜单禁用态。标签补充精确 `aria-label`，菜单原因通过 `aria-describedby` 关联；禁用项不进入方向键可操作集合。测试夹具故意触发一次 authored-script 错误和一次历史读取失败，均按预期恢复，没有未分类的 shell 控制台故障阻断流程。
+- 交互与无障碍：真实 Electron 流程验证跨项目打开历史、同项目返回当前稿、键盘打开历史、历史失败保留当前页、创建确认取消、导出所见 V3、创建 V9/重启以及完整菜单禁用态。标签补充精确 `aria-label`，菜单原因通过 `aria-describedby` 关联；禁用项保留在方向键焦点顺序中，`Enter` 不执行动作，`Tab` 按页面顺序离开菜单。测试夹具故意触发一次 authored-script 错误和一次历史读取失败，均按预期恢复，没有未分类的 shell 控制台故障阻断流程。
 
 ### Comparison history
 
@@ -3552,3 +3553,23 @@ final result: passed
 - Mode: DESIGN CHANGE, lightweight exception. 仅历史页的既有菜单项从禁用改为可用，并将文案改为“在浏览器中打开此版本”；当前稿文案、菜单顺序、布局、图标、颜色与 Finder/导出动作不变。
 - 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
 - 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。
+
+### P1 follow-up — created-history current-draft recovery
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, color, spacing or layout changed; the established direct history Preview, disabled Edit, absent top banner and complete disabled-aware More menu remain unchanged.
+- The recovery path now carries the verified Working Copy/OpenTarget identity and reuses the active navigation transaction when the newly published current authority commits its tab. Public navigation commands still use FIFO admission; no busy insertion, detached async commit or timeout workaround was introduced.
+- The durable creation operation already protects the replaced current source before it writes its receipt. Opening that exact receipt therefore validates its full workspace/HTML/Hash tuple and performs the managed transition without re-draining bytes that the same creation operation intentionally superseded.
+- Deterministic evidence: the navigation/version workflow suites pass 134/134, including an admitted current-draft recovery with another navigation queued behind it, stale transaction-scope rejection, full OpenTarget forwarding and no second drain.
+- Rebuilt source Electron evidence: both “click the same project current row” and “close the active history tab” recover after an injected created-workspace read failure, select the unique current-draft tab, release a later new-tab/current-tab round trip and retain exactly two versions from one create request. Both cases pass without retry.
+- Boundary: synthetic source Electron evidence on the managed project fixture; no private real-HTML corpus, packaged app or installed app was used for this behavior-only repair.
+
+follow-up result: passed
+
+## 2026-09-16 — Transient tab display handoff
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.
+- Presentation contract: up to 20 exact persisted and Canvas-verified HTML projections remain data-only within 32 MiB. A cache hit may mount a script-disabled display page only while handing the selected tab to its exact live Canvas; rapid overlap is bounded at two and settlement returns the mounted count to zero. Scroll, Canvas mode and bounded page context survive HTML eviction only for the same tab, Project, Document and source Hash.
+- Rebuilt source Electron evidence: the two-document Registry restart scenario restores the persisted active document without prewarm marks, begins the normal open path, observes at least one temporary iframe during a cached return, and returns to zero mounted iframes after each exact Canvas settles. Keyboard tab navigation and rapid project switching with immediate close also pass.
+- Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
+- Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
+- Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.

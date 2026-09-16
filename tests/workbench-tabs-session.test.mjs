@@ -125,13 +125,24 @@ test("长期规则在项目内去重，并保留 HTML runtime owner", () => {
   assert.match(JSON.stringify(session.serialize()), /project-rules/u);
 });
 
-test("历史标签在项目内复用并更新所选版本", () => {
+test("历史标签在项目内复用并只在提交后更新所选版本", () => {
   const session = new WorkbenchTabsSession();
   session.bindDocument(a);
   session.createHistory({ ...a, versionId: "ver_1", versionOrdinal: 1, focus: false });
   session.createHistory({ ...a, versionId: "ver_3", versionOrdinal: 3, focus: false });
-  const history = session.snapshot.tabs.filter((tab) => tab.kind === "history");
+  let history = session.snapshot.tabs.filter((tab) => tab.kind === "history");
   assert.equal(history.length, 1);
+  assert.equal(history[0].versionId, "ver_1");
+  assert.equal(history[0].versionOrdinal, 1);
+  session.beginSwitch(history[0].tabId, { force: true });
+  session.commitHistory(history[0].tabId, {
+    ...a,
+    versionId: "ver_3",
+    versionOrdinal: 3,
+    versionLabel: "V3",
+    displayFileName: "Alpha-V3.html",
+  });
+  history = session.snapshot.tabs.filter((tab) => tab.kind === "history");
   assert.equal(history[0].versionId, "ver_3");
   assert.equal(history[0].versionOrdinal, 3);
 });

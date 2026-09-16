@@ -5453,24 +5453,30 @@ export default function Workbench() {
   };
   const openCreatedHistory = async (operationId: string) => {
     const context = captureProjectContext();
-    if (!context || !workspaceController) return;
-    const outcome = await workspaceController.openCreatedHistoryVersion({ operationId, context });
+    const navigation = navigationCapability;
+    if (!context || !workspaceController || !navigation) return;
+    const opened = await workspaceController.openCreatedHistoryVersion({ operationId, context });
+    if (opened.status === "stale") return;
+    const outcome = await navigation.commands.openRegisteredProject({
+      projectId: context.projectId,
+      documentId: context.documentId,
+      title: projectName || activeWorkbenchTab?.title || "当前稿",
+      force: true,
+      ...(opened.status === "succeeded" ? {} : {
+        committedVersionTransitionFailure: {
+          code: "code" in opened ? opened.code : "VERSION_CURRENT_OPEN_FAILED",
+          reason: "reason" in opened ? opened.reason : "新版本已创建，但当前稿画布尚未准备好。",
+        },
+      }),
+    });
     if (outcome.status === "succeeded" && captureProjectContext()?.projectId === context.projectId
       && captureProjectContext()?.documentId === context.documentId) {
-      const currentTab = navigationCapability?.getSnapshot().tabs?.tabs.find((tab) => (
-        tab.kind === "document"
-        && tab.projectId === context.projectId
-        && tab.documentId === context.documentId
-      ));
-      const navigation = navigationCapability;
-      if (currentTab && navigation) {
-        const navigationOutcome = await navigation.commands.activateTab(currentTab.tabId);
-        presentWorkbenchTabOutcome(navigationOutcome);
-      }
       editorRef.current?.clearSelection();
       setFileStatusNotice("");
       setCanvasMode("edit");
-    } else if (outcome.status !== "stale" && outcome.status !== "succeeded") setFileStatusNotice(outcome.reason);
+    } else if (outcome.status !== "stale" && outcome.status !== "succeeded") {
+      presentWorkbenchTabOutcome(outcome);
+    }
   };
   const createHistoryVersion = async () => {
     const versionId = historyCreationConfirmation;
@@ -5519,8 +5525,7 @@ export default function Workbench() {
     reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, workspaceController, projectHydrating,
     projectLoadError, viewTransitioning, runInProgress, workspaceIssue, externalSourcePreview, interactionLocked, hasDocumentHistoryAction]);
-  const { reviewAvailable, canShowInFinder, canOpenSelectedHtml,
-    canExportCurrentHtml, canReloadCurrentSource } = presentation;
+  const { reviewAvailable, canReloadCurrentSource } = presentation;
   const pendingRunOutcome = Boolean(
     activeRun?.requestId === "pending" && projectLocked,
   );
@@ -6082,38 +6087,27 @@ export default function Workbench() {
           aiAssistantEntry={aiAssistantEntry}
           moreMenu={{
             isHistory: presentation.isHistory,
-            canShowInFolder: canShowInFinder,
-            showInFolderUnavailableReason: presentation.isHistory
-              ? "历史版本没有独立工作文件；请打开当前稿"
-              : !canShowInFinder ? "当前页面没有可在 Finder 中显示的工作文件" : undefined,
+            canShowInFolder: presentation.actions.showInFolder.enabled,
+            showInFolderUnavailableReason: presentation.actions.showInFolder.reason,
             onShowInFolder: () => void showProjectInFolder(),
-            canOpenInBrowser: canOpenSelectedHtml,
-            openInBrowserUnavailableReason: !canOpenSelectedHtml
-              ? "当前页面没有可验证的 HTML 文件"
-              : undefined,
+            canOpenInBrowser: presentation.actions.openInBrowser.enabled,
+            openInBrowserUnavailableReason: presentation.actions.openInBrowser.reason,
             onOpenInBrowser: () => void openSelectedHtmlInDefaultBrowser(),
-            canExportCurrentHtml,
-            exportUnavailableReason: !canExportCurrentHtml ? "当前页面还没有可导出的 HTML" : undefined,
+            canExportCurrentHtml: presentation.actions.exportHtml.enabled,
+            exportUnavailableReason: presentation.actions.exportHtml.reason,
             onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),
-            canSaveCurrentVersion: !presentation.isHistory && !runInProgress && !readyReviewOverlay && !projectHydrating && !projectLoadError && !viewTransitioning,
+            canSaveCurrentVersion: presentation.actions.saveVersion.enabled,
+            saveCurrentVersionUnavailableReason: presentation.actions.saveVersion.reason,
+            exportAndSaveUnavailableReason: presentation.actions.exportAndSave.reason,
             onSaveCurrentVersion: () => { void workspaceController?.saveCurrentVersion(); },
-            canCreateVersionFromHistory: presentation.isHistory && !runInProgress && !projectHydrating && !projectLoadError && !viewTransitioning,
-            createVersionFromHistoryUnavailableReason: presentation.isHistory
-              && (runInProgress || projectHydrating || Boolean(projectLoadError) || viewTransitioning)
-              ? "项目就绪后可以基于此版本继续编辑"
-              : undefined,
+            canCreateVersionFromHistory: presentation.actions.createFromHistory.enabled,
+            createVersionFromHistoryUnavailableReason: presentation.actions.createFromHistory.reason,
             onCreateVersionFromHistory: requestHistoryCreation,
-            canOpenPreservedDrafts: !presentation.isHistory,
-            preservedDraftsUnavailableReason: presentation.isHistory
-              ? "请先打开当前稿，再找回以前保留的稿件"
-              : undefined,
+            canOpenPreservedDrafts: presentation.actions.preservedDrafts.enabled,
+            preservedDraftsUnavailableReason: presentation.actions.preservedDrafts.reason,
             onOpenPreservedDrafts: () => setPreservedDraftDialogOpen(true),
-            canReloadCurrentSource: canReloadCurrentSource && !readyReviewOverlay,
-            reloadCurrentSourceUnavailableReason: readyReviewOverlay
-              ? "请先采用或不用这次 AI 修改，再从磁盘重新载入"
-              : presentation.isHistory
-                ? "历史版本不会从磁盘重载；请打开当前稿"
-              : undefined,
+            canReloadCurrentSource: presentation.actions.reloadSource.enabled,
+            reloadCurrentSourceUnavailableReason: presentation.actions.reloadSource.reason,
             onReloadCurrentSource: () => void reloadCurrentSource(),
             onRetryDynamicContent: canReloadCurrentSource && editRuntimeSnapshot?.retryAvailable
               ? () => {

@@ -28,6 +28,23 @@ test("history gives sidebar and tab the viewed Version while retaining distinct 
   assert.equal(p.canExportCurrentHtml, true);
   assert.equal(p.canReloadCurrentSource, false);
   assert.equal(p.mode, "preview");
+  assert.deepEqual(p.actions.saveVersion, {
+    enabled: false, reason: "该操作只针对当前稿", target: "current",
+  });
+  assert.deepEqual(p.actions.createFromHistory, { enabled: true, reason: undefined, target: "history" });
+  assert.deepEqual(p.actions.showInFolder, {
+    enabled: false, reason: "历史版本没有独立工作文件；请打开当前稿", target: "current",
+  });
+  assert.deepEqual(p.actions.openInBrowser, {
+    enabled: true, reason: undefined, target: "history",
+  });
+  assert.deepEqual(p.actions.exportHtml, { enabled: true, reason: undefined, target: "history" });
+  assert.deepEqual(p.actions.preservedDrafts, {
+    enabled: false, reason: "请先打开当前稿，再找回以前保留的稿件", target: "current",
+  });
+  assert.deepEqual(p.actions.reloadSource, {
+    enabled: false, reason: "历史版本不会从磁盘重载；请打开当前稿", target: "current",
+  });
   assert.equal(source.version.currentBasedOnVersionId, "v2");
 });
 test("current and review share a selected baseline and change only their display and permissions", () => {
@@ -54,6 +71,34 @@ test("safety conditions continue to control file and mode buttons", () => {
   const p = deriveWorkbenchPresentation(source);
   assert.equal(p.edit.enabled, false); assert.equal(p.preview.enabled, false);
   assert.equal(p.canOpenSelectedHtml, true); assert.equal(p.canReloadCurrentSource, false);
+  assert.match(p.actions.saveVersion.reason, /AI 任务/u);
+  assert.equal(p.actions.exportHtml.enabled, true);
+  assert.equal(p.actions.openInBrowser.enabled, true);
+  assert.match(p.actions.reloadSource.reason, /AI 任务/u);
+});
+
+test("menu availability explains review, transition and persistence locks without hiding actions", () => {
+  const reviewing = input();
+  reviewing.reviewActive = true;
+  assert.match(deriveWorkbenchPresentation(reviewing).actions.saveVersion.reason, /采用或不用/u);
+  assert.equal(deriveWorkbenchPresentation(reviewing).actions.exportHtml.enabled, true);
+
+  const transitioning = input();
+  transitioning.viewTransitioning = true;
+  const transition = deriveWorkbenchPresentation(transitioning);
+  for (const key of ["saveVersion", "showInFolder", "openInBrowser", "exportHtml", "preservedDrafts", "reloadSource"]) {
+    assert.equal(transition.actions[key].enabled, false, key);
+    assert.match(transition.actions[key].reason, /切换/u, key);
+  }
+
+  const saving = input();
+  saving.persistState = "saving";
+  saving.editRevision = 2;
+  saving.lastPersistedRevision = 1;
+  const persistence = deriveWorkbenchPresentation(saving);
+  assert.equal(persistence.actions.openInBrowser.enabled, true);
+  assert.match(persistence.actions.reloadSource.reason, /保存完成/u);
+  assert.equal(persistence.actions.exportHtml.enabled, true);
 });
 test("a branching lineage still renders V1 through Vn without mutating input", () => {
   const versions = [{ versionId: "v3", ordinal: 3, basedOnVersionId: "v1" }, { versionId: "v1", ordinal: 1 }, { versionId: "v2", ordinal: 2, basedOnVersionId: "v1" }];
