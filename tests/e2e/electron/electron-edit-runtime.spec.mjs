@@ -1462,9 +1462,15 @@ test("same-parent Runtime reorder keeps one document and does not rerun its scri
     const { frame } = await loadedDiskFrame(page, sourcePath, "runtime-first");
     await expect(frame.locator("#runtime-order")).toHaveText("丙甲乙");
     await expect(frame.locator("section > p").first()).toHaveAttribute("id", "third");
+    // Hosted startup may replace the pre-interaction Runtime candidate. The
+    // operation contract begins at the settled frame returned above: direct
+    // reorders must keep this count stable, while Undo/Redo each rebuild once.
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_REORDER_EXECUTIONS__ || 0
-    ))).toBe(1);
+    ))).toBeGreaterThan(0);
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_REORDER_EXECUTIONS__ || 0
+    ));
     const beforeDocument = await documentToken(page);
     const stableId = await frame.locator('[data-native-case="runtime-first"]')
       .getAttribute("data-stemmio-id");
@@ -1506,7 +1512,7 @@ test("same-parent Runtime reorder keeps one document and does not rerun its scri
     await expect(nextFrame.locator("section > p").nth(2)).toHaveAttribute("id", "third");
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_REORDER_EXECUTIONS__ || 0
-    ))).toBe(1);
+    ))).toBe(initialRuntimeExecutions);
     await expect(nextFrame.locator(
       `[data-stemmio-id="${stableId}"][data-html-canvas-selected]`,
     )).toHaveAttribute("data-html-canvas-selected", "module");
@@ -1550,7 +1556,7 @@ test("same-parent Runtime reorder keeps one document and does not rerun its scri
     await expect.poll(() => documentToken(page)).not.toBe(beforeUndoDocument);
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_REORDER_EXECUTIONS__ || 0
-    ))).toBe(2);
+    ))).toBe(initialRuntimeExecutions + 1);
     const undoFrame = await currentEditorFrame(page);
     await expect(undoFrame.locator("#runtime-order")).toHaveText("乙丙甲");
     await expect(undoFrame.locator("section > p").first()).toHaveAttribute("id", "second");
@@ -1565,7 +1571,7 @@ test("same-parent Runtime reorder keeps one document and does not rerun its scri
     await expect.poll(() => documentToken(page)).not.toBe(beforeRedoDocument);
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_REORDER_EXECUTIONS__ || 0
-    ))).toBe(3);
+    ))).toBe(initialRuntimeExecutions + 2);
     const redoFrame = await currentEditorFrame(page);
     await expect(redoFrame.locator("#runtime-order")).toHaveText("乙丙甲");
     await expect(redoFrame.locator("section > p").first()).toHaveAttribute("id", "second");
