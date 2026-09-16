@@ -72,9 +72,16 @@ The renderer's main workspace facts are partitioned as follows:
   through complete actions: accept an edit, queue/begin/restore/rebase/confirm
   a write, record persistence failure, publish authority, or reset the session.
   There is no public arbitrary field patch or raw persistence/pending-write
-  setter. Write confirmation advances only the acknowledged durable revision;
-  it preserves a newer queued edit, while flush completion releases only the
-  matching Promise owner;
+  setter. Ordinary queueing must match the accepted HTML, revision and source
+  context; registration/path changes use the explicit same-byte rebase actions.
+  `beginWrite` grants execution only when no write is already active, and
+  `restoreWrite` can retire only that exact active object. Write confirmation
+  advances only the acknowledged durable revision and exact bytes; it preserves
+  a newer queued edit. Idle publication requires no active/pending write and
+  confirmed current revision/Hash, but does not wait for recovery-journal
+  retirement; flush completion releases only the matching Promise owner. Reset
+  fences both old writes and the old flush owner, and operation-bound failures
+  cannot change a newer receipt/write;
 - `CommentSession`: disposable comment working copy, composer, tombstones and
   saved-comment edit session;
 - `DraftSession`: acknowledged Draft revision, pending mutation and

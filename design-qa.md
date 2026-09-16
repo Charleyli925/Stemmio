@@ -3574,3 +3574,13 @@ follow-up result: passed
 - Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
 - Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
 - Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.
+
+## 2026-09-17 — Document write-state ownership fences
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, layout, color, focus order or editing gesture changed. The existing save, conflict, recovery and registration presentation remains intact.
+- `DocumentSession` now refuses a second execution grant while W1 is active, retains a newer W2 when W1 fails, rejects late restore/ACK/failure after reset or authority publication, and requires an exact current identity for ordinary queueing and same-byte rebase. Source persistence may settle while the owned flush still retires recovery evidence; the old flush cannot clear a newer owner.
+- `DocumentWorkflow` supplies the exact active write or source receipt when delayed save, recovery and history failures return. It no longer restores an arbitrary object after stale completion, so an older operation cannot describe a newer edit or session as failed.
+- Deterministic evidence: focused Session/Document/Project/Version/Workspace suites pass 362/362 after the final identity-fence changes. The edit gate passes 577/577 selected Node checks plus architecture and type checks. The first edit-gate run exposed two Version test fixtures that injected a malformed pending write; the fixtures now use the public edit → queue → begin → confirm sequence, without relaxing production guards.
+- Evidence boundary: no new visible state requires a screenshot. Real rebuilt-source Electron coverage and any configured private-corpus run remain owned by the completion gate; Node evidence is not presented as proof of IME, selection, iframe or installed-app continuity.
+
+final result: passed for the scoped non-visual state contract; completion-gate evidence is recorded separately.

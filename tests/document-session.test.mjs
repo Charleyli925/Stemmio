@@ -110,7 +110,8 @@ test("document session clears only the matching flush promise", async () => {
 
 test("document snapshot exposes only derived write and flush state", () => {
   const session = new DocumentSession({ html: "<main>source</main>" });
-  const write = { revision: 1, html: session.html };
+  const revision = session.beginEdit("<main>edited</main>");
+  const write = { revision, html: session.html };
   session.queueWrite(write);
   assert.equal(session.snapshot.hasPendingWrite, true);
   assert.equal(session.snapshot.isFlushing, false);
@@ -121,10 +122,11 @@ test("document snapshot exposes only derived write and flush state", () => {
   assert.equal(session.snapshot.isFlushing, true);
 
   assert.equal(session.finishFlush(flush), true);
-  session.beginWrite();
-  session.markPersistenceIdle();
+  assert.equal(session.beginWrite(), write);
+  assert.equal(session.markPersistenceIdle(), false);
   assert.equal(session.snapshot.hasPendingWrite, false);
   assert.equal(session.snapshot.isFlushing, false);
+  assert.equal(session.persistState, "writing");
 });
 
 test("an old write receipt advances durable evidence without clearing a newer edit", () => {
@@ -209,13 +211,34 @@ test("an old flush completion cannot clear a newer flush owner", () => {
   assert.equal(session.snapshot.isFlushing, true);
 });
 
+test("a reset lets a new flush start without granting the old finally block authority", () => {
+  const session = new DocumentSession({ html: "<main>old</main>" });
+  const oldFlush = Promise.resolve("old");
+  const newFlush = Promise.resolve("new");
+  session.beginFlush(oldFlush);
+  session.reset({ html: "<main>new</main>" });
+  assert.equal(session.beginFlush(newFlush), newFlush);
+
+  assert.equal(session.finishFlush(oldFlush), false);
+  assert.equal(session.flushPromise, newFlush);
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
 test("write recovery and rebase keep the newest owned operation", () => {
   const session = new DocumentSession({ html: "<main>source</main>" });
-  const first = { revision: 1, html: "<main>one</main>", operationId: "write-1" };
-  const second = { revision: 2, html: "<main>two</main>", operationId: "write-2" };
-  const rebased = { ...second, operationId: "write-2-rebased" };
+  const first = {
+    revision: session.beginEdit("<main>one</main>"),
+    html: "<main>one</main>",
+    operationId: "write-1",
+  };
   session.queueWrite(first);
   session.beginWrite();
+  const second = {
+    revision: session.beginEdit("<main>two</main>"),
+    html: "<main>two</main>",
+    operationId: "write-2",
+  };
+  const rebased = { ...second, operationId: "write-2-rebased" };
   session.queueWrite(second);
 
   assert.equal(session.restoreWrite(first), second);
@@ -228,10 +251,220 @@ test("write recovery and rebase keep the newest owned operation", () => {
     expectedWrite: second,
     nextWrite: rebased,
   }), true);
-  session.recordPersistenceFailure({ error: "write result unknown" });
+  assert.equal(session.recordPersistenceFailure({
+    error: "write result unknown",
+    write: first,
+  }), false);
   assert.equal(session.pendingWrite, rebased);
-  assert.equal(session.persistState, "failed");
-  assert.equal(session.persistError, "write result unknown");
+  assert.equal(session.persistState, "queued");
+  assert.equal(session.persistError, "");
+});
+
+test("an active write keeps execution authority when beginWrite is called again", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = {
+    revision: session.beginEdit("<main>one</main>"),
+    html: "<main>one</main>",
+  };
+  session.queueWrite(first);
+  assert.equal(session.beginWrite(), first);
+  const second = {
+    revision: session.beginEdit("<main>two</main>"),
+    html: "<main>two</main>",
+  };
+  session.queueWrite(second);
+
+  assert.equal(session.beginWrite(), null);
+  assert.equal(session.pendingWrite, second);
+  assert.deepEqual(session.confirmWrite({
+    write: first,
+    html: first.html,
+    sourceSha256: sha256(first.html),
+    persistedRevision: first.revision,
+  }), { accepted: true, completesCurrentDocument: false });
+  assert.equal(session.beginWrite(), second);
+});
+
+test("a late restore cannot clear a newer active write", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = {
+    revision: session.beginEdit("<main>one</main>"),
+    html: "<main>one</main>",
+  };
+  session.queueWrite(first);
+  session.beginWrite();
+  assert.equal(session.finishWrite(first), true);
+  const second = {
+    revision: session.beginEdit("<main>two</main>"),
+    html: "<main>two</main>",
+  };
+  session.queueWrite(second);
+  assert.equal(session.beginWrite(), second);
+
+  assert.equal(session.restoreWrite(first), false);
+  assert.deepEqual(session.confirmWrite({
+    write: second,
+    html: second.html,
+    sourceSha256: sha256(second.html),
+    persistedRevision: second.revision,
+  }), { accepted: true, completesCurrentDocument: true });
+});
+
+test("write confirmation accepts only the exact active bytes", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = {
+    revision: session.beginEdit("<main>accepted</main>"),
+    html: "<main>accepted</main>",
+  };
+  session.queueWrite(write);
+  session.beginWrite();
+
+  assert.deepEqual(session.confirmWrite({
+    write,
+    html: "<main>different</main>",
+    sourceSha256: sha256(write.html),
+    persistedRevision: write.revision,
+  }), { accepted: false, completesCurrentDocument: false });
+  assert.equal(session.markPersistenceIdle(), false);
+  assert.equal(session.persistState, "writing");
+});
+
+test("reset fences old write acknowledgements and operation failures", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const oldReceipt = session.sourceReceipt;
+  const oldWrite = {
+    revision: session.beginEdit("<main>old edit</main>"),
+    html: "<main>old edit</main>",
+  };
+  session.queueWrite(oldWrite);
+  session.beginWrite();
+  const reset = session.reset({
+    html: "<main>new session</main>",
+    persistedSourceSha256: sha256("<main>new session</main>"),
+  });
+
+  assert.deepEqual(session.confirmWrite({
+    write: oldWrite,
+    html: oldWrite.html,
+    sourceSha256: sha256(oldWrite.html),
+    persistedRevision: oldWrite.revision,
+  }), { accepted: false, completesCurrentDocument: false });
+  assert.equal(session.recordPersistenceFailure({
+    error: "late failure",
+    receipt: oldReceipt,
+  }), false);
+  assert.equal(session.snapshot, reset);
+  assert.equal(session.html, "<main>new session</main>");
+  assert.equal(session.persistState, "idle");
+});
+
+test("publishing new authority fences an old active write until it is explicitly rebased", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const oldWrite = {
+    revision: session.beginEdit("<main>old edit</main>"),
+    html: "<main>old edit</main>",
+  };
+  session.queueWrite(oldWrite);
+  session.beginWrite();
+  const newHtml = "<main>new authority</main>";
+  const published = session.publishAuthority({
+    html: newHtml,
+    persistedSourceSha256: sha256(newHtml),
+    workingHtmlSha256: sha256(newHtml),
+    editRevision: 0,
+    lastPersistedRevision: 0,
+    persistState: "idle",
+  });
+
+  assert.deepEqual(session.confirmWrite({
+    write: oldWrite,
+    html: oldWrite.html,
+    sourceSha256: sha256(oldWrite.html),
+    persistedRevision: oldWrite.revision,
+  }), { accepted: false, completesCurrentDocument: false });
+  assert.equal(session.recordPersistenceFailure({
+    error: "late failure",
+    write: oldWrite,
+  }), false);
+  assert.equal(session.snapshot, published);
+  assert.equal(session.finishWrite(oldWrite), true);
+  assert.equal(session.html, newHtml);
+  assert.equal(session.persistState, "idle");
+});
+
+test("source persistence can be idle while recovery retirement still owns the flush", () => {
+  const html = "<main>saved while retiring recovery</main>";
+  const digest = sha256(html);
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = { revision: session.beginEdit(html), html };
+  session.queueWrite(write);
+  session.beginWrite();
+  session.confirmWrite({
+    write,
+    html,
+    sourceSha256: digest,
+    persistedRevision: write.revision,
+  });
+  const retirement = Promise.resolve(true);
+  session.beginFlush(retirement);
+
+  assert.equal(session.markPersistenceIdle(), true);
+  assert.equal(session.persistState, "idle");
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
+test("ordinary queueing cannot overwrite accepted bytes or an existing pending write", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = {
+    revision: session.beginEdit("<main>accepted</main>"),
+    html: "<main>accepted</main>",
+  };
+  session.queueWrite(write);
+  assert.throws(
+    () => session.queueWrite({ ...write, html: "<main>different</main>" }),
+    /must match the currently accepted document state/u,
+  );
+  assert.throws(
+    () => session.queueWrite({ ...write }),
+    /cannot replace an equal or newer pending edit/u,
+  );
+  assert.equal(session.pendingWrite, write);
+});
+
+test("write rebase requires the complete current authority identity", () => {
+  const session = new DocumentSession({
+    html: "<main>one</main>",
+    persistedSourceSha256: RECEIPT_CONTEXT.sourceSha256,
+    context: RECEIPT_CONTEXT,
+  });
+  const html = "<main>two</main>";
+  const revision = session.beginEdit(html, { context: RECEIPT_CONTEXT });
+  const write = { ...RECEIPT_CONTEXT, revision, html };
+  session.queueWrite(write);
+  const nextContext = {
+    ...RECEIPT_CONTEXT,
+    sourcePath: "/tmp/rebased-document.html",
+    exactSourcePath: "/tmp/rebased-document.html",
+  };
+  session.publishAuthority({
+    html,
+    persistedSourceSha256: RECEIPT_CONTEXT.sourceSha256,
+    workingHtmlSha256: sha256(html),
+    editRevision: revision,
+    context: nextContext,
+  });
+
+  assert.throws(
+    () => session.rebaseQueuedWrite({
+      expectedWrite: write,
+      nextWrite: { ...write, sourcePath: nextContext.sourcePath },
+    }),
+    /requires exact HTML and a non-negative revision/u,
+  );
+  const rebased = { ...write, ...nextContext };
+  assert.equal(session.rebaseQueuedWrite({ expectedWrite: write, nextWrite: rebased }), true);
+  assert.equal(session.pendingWrite, rebased);
+  assert.equal(session.beginWrite(), rebased);
 });
 
 test("document snapshot contract remains read-only and shape-stable", () => {

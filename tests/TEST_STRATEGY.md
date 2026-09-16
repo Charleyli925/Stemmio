@@ -99,6 +99,9 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   验证 100ms 非 checkpoint 合并写入、native-edit checkpoint 立即 flush、单飞 flush、未登记首次登记、精确 HTML/Hash/revision/history
   回执、未知 history action 的权威核对与同一 actionId 重放、恢复记录与 stale context；首次登记若改绑
   managed path，等待期间形成的较新 queued write 也必须连同 epoch 改绑，随后只向新路径写入最新 HTML。
+  `tests/document-session.test.mjs` 直接冻结 W1 active/W2 pending 的重复 begin、失败恢复、迟到恢复、
+  旧 ACK、reset 后旧 ACK/失败、旧 flush finally、合法同字节 rebase 和“源码已确认但恢复日志仍在退役”的顺序；
+  不得用未先接受编辑的非法 `queueWrite` 构造这些 fixture。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`

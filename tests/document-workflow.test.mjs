@@ -2402,7 +2402,8 @@ test("observeExternalSourceChange ignores stale paths and in-flight writes", asy
   assert.equal(stale.status, "succeeded");
   assert.equal(stale.value.ignored, true);
 
-  harness.documentSession.queueWrite({ revision: 1, html });
+  const revision = harness.documentSession.beginEdit(html);
+  harness.documentSession.queueWrite({ revision, html });
   harness.documentSession.beginWrite();
   const deferred = await harness.workflow.observeExternalSourceChange({
     sourcePath: SOURCE_PATH,
