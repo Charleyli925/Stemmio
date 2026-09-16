@@ -116,6 +116,14 @@ inverse operations and integrity; it is not a second public edit API. Do not
 bypass hash, identity, scope or persistence checks, and do not serialize
 Runtime DOM as the save source.
 
+`DocumentSession` publishes SourceReceipt authority through the shared
+`source-receipt-contract.d.ts` contract. Its JavaScript constructor and guard
+live in `source-receipt.js` and are checked, together with a typed caller, by
+`tsconfig.source-receipt.json`; the verification command also proves that the
+implementation file is in the TypeScript program and that an invalid receipt
+field assignment fails that check. This is a focused implementation loop, not
+a repository-wide `checkJs` migration.
+
 **Current fact.** `HtmlCanvasEditor.applySourceCommand()` materializes once
 for an accepted edit: it receives a semantic operation, applies the kernel,
 and publishes that complete HTML/Hash plus the kernel's

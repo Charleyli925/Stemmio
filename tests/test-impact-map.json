@@ -665,7 +665,10 @@
     {
       "id": "document-session",
       "patterns": [
-        "^app/application/document-session\\.(?:js|d\\.ts)$"
+        "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
+        "^scripts/verify-source-receipt-typecheck\\.mjs$",
+        "^tests/source-receipt-contract\\.typecheck\\.ts$",
+        "^tsconfig\\.source-receipt\\.json$"
       ],
       "suites": [
         "typecheck"

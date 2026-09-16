@@ -76,11 +76,16 @@
         "^app/application/document/",
         "^app/application/verified-project-context",
         "^app/application/document-session",
+        "^app/application/source-receipt",
+        "^scripts/verify-source-receipt-typecheck",
+        "^tests/source-receipt-contract\\.typecheck",
+        "^tsconfig\\.source-receipt",
         "^tests/document-"
       ],
       "entryInterfaces": [
         "app/application/document-workflow.d.ts",
         "app/application/document-session.d.ts",
+        "app/application/source-receipt-contract.d.ts",
         "app/application/document/save-plan.d.ts",
         "app/application/verified-project-context.d.ts",
         "app/application/workspace-controller-capabilities.d.ts"
@@ -92,6 +97,7 @@
       "implementationFiles": [
         "app/application/document-workflow.js",
         "app/application/document-session.js",
+        "app/application/source-receipt.js",
         "app/application/document/save-plan.js",
         "app/application/verified-project-context.js"
       ],
@@ -99,6 +105,7 @@
         "tests/document-workflow.test.mjs",
         "tests/document-save-plan.test.mjs",
         "tests/document-session.test.mjs",
+        "tests/source-receipt-contract.typecheck.ts",
         "tests/project-workflow.test.mjs"
       ],
       "requiredDocs": [
