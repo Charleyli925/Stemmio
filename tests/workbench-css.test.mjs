@@ -115,6 +115,10 @@ test("global sidebar owns the full shell column and start page has no card surfa
 
 test("sidebar controls share inset and tab chrome is vertically centered without a grip line", async () => {
   const css = await readWorkbenchCascadeCss();
+  const conversationCss = await readFile(
+    new URL("../app/workbench/ai-conversation-sidebar.module.css", import.meta.url),
+    "utf8",
+  );
   const tabs = css.match(/\.workbench-tablist\s*\{[\s\S]*?\}/u)?.[0];
   assert.ok(tabs, "missing base tablist rule");
   assert.match(tabs, /align-items:\s*center/u);
@@ -133,6 +137,17 @@ test("sidebar controls share inset and tab chrome is vertically centered without
   }
   assert.match(css, /\.workbench-resizer-grip\s*\{[\s\S]*?display:\s*none/u);
   assert.match(css, /\.workbench-resizer\s*\{[\s\S]*?width:\s*18px/u);
+  assert.match(
+    conversationCss,
+    /\.sidebar\s*\{[\s\S]*?border-left:\s*1px solid var\(--chrome-divider,/u,
+  );
+  assert.doesNotMatch(
+    lastCssRule(
+      css,
+      '.workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside > :not(.workbench-resizer)',
+    ),
+    /border-color/u,
+  );
 });
 
 test("project version lists retain compact unweighted rows", async () => {

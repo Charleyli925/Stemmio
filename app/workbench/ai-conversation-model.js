@@ -557,11 +557,13 @@ export function sidebarExecutionStatus({
   const bytes = Number.isSafeInteger(receivedBytes) && receivedBytes > 0
     ? receivedBytes
     : 0;
+  const receivedKilobytes = Math.ceil(bytes / 1_024);
   return Object.freeze({
-    title: `${boundedAgentName(providerName)} 正在生成`,
-    detail: `${bytes > 0 ? "正在接收结果" : "正在等待响应"} · 已用时 ${formatElapsedDuration(elapsedMs)}`,
+    agentName: boundedAgentName(providerName),
+    meta: `${formatElapsedDuration(elapsedMs)} · ${receivedKilobytes} KB`,
     elapsedMs,
     receivedBytes: bytes,
+    receivedKilobytes,
   });
 }
 

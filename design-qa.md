@@ -3618,3 +3618,11 @@ final result: passed for the scoped explicit-exit contract; completion-gate evid
 - Evidence boundary: Electron caret screenshots for both blink phases are `NOT_EXECUTED` because this run did not have a deterministic way to capture and classify both native caret blink phases; DOM geometry proves only the overlay offset and is not substituted for visual caret evidence. Private-corpus acceptance is also `NOT_EXECUTED` because no frozen corpus plan/Hash was provided.
 
 final result: partial — scoped Browser behavior and rebuilt-source Electron real input are covered; Electron blink-phase screenshots and private-corpus acceptance are `NOT_EXECUTED`.
+
+## 2026-09-17 — AI 对话单一执行状态与细分隔线
+
+- Mode: DESIGN CHANGE. 执行中的 Agent 只保留一条当前消息：头像旁是服务名与 `mm:ss · n KB`，正文只是 Agent 公开说明。“正在生成”、“正在接收结果”和“完整结果校验后可查看”不再重复占用正文。
+- 尚无公开说明时显示一个无文案的三点指示，并保留稳定、不随计时或字节数变化的 `role=status` 语义；出现公开文本后安静退出，避免文字与动画重复表达“正在处理”。
+- 复制动作仍只读公开说明；计时、KB、处理指示和墙钟时间不进入剪贴板。停止仍固定在 Composer，Request/Attempt 身份与 run key 未改。
+- 侧栏与画布的视觉分隔收口为侧栏自身的 1px `--chrome-divider`；18px resizer 只作为透明命中区，继续保留键盘与 ARIA 行为，不额外绘制 grip 或内层边线。
+- Verification boundary: 确定性 Node/CSS 与 Electron 执行流证据由本分支门禁记录；未以静态源码断言真实运行时视觉效果。

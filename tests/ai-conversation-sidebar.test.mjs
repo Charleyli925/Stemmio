@@ -520,8 +520,9 @@ test("execution status derives elapsed time and received bytes from the public p
     receivedBytes: 2_048,
     now: startedAt + 125_000,
   });
-  assert.equal(status.title, "Codex 正在生成");
-  assert.equal(status.detail, "正在接收结果 · 已用时 02:05");
+  assert.equal(status.agentName, "Codex");
+  assert.equal(status.meta, "02:05 · 2 KB");
+  assert.equal(status.receivedKilobytes, 2);
   assert.equal(
     sidebarExecutionStatus({
       state: "processing",
@@ -529,9 +530,16 @@ test("execution status derives elapsed time and received bytes from the public p
       startedAt: null,
       receivedBytes: 0,
       now: startedAt,
-    }).detail,
-    "正在等待响应 · 已用时 00:00",
+    }).meta,
+    "00:00 · 0 KB",
   );
+  assert.equal(sidebarExecutionStatus({
+    state: "processing",
+    providerName: "DeepSeek",
+    startedAt: new Date(startedAt).toISOString(),
+    receivedBytes: 15_001,
+    now: startedAt + 145_000,
+  }).meta, "02:25 · 15 KB");
   assert.equal(sidebarExecutionStatus({ state: "validating" }), null);
 });
 
