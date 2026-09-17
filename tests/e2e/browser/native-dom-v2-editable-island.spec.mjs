@@ -36,6 +36,10 @@ const source = Buffer.from(`<!doctype html>
   <pre data-native-case="pre"><code>const value = 1;</code></pre>
   <p class="vertical" data-native-case="vertical">Vertical 竖排文字</p>
   <p data-native-case="comment">甲<!-- authored boundary -->乙</p>
+  <p data-native-case="nested-break">外层<span data-native-case="nested-break-inline">内层<br>尾部</span></p>
+  <p data-native-case="occluded-break" style="position:relative">遮挡前<br>遮挡后<svg
+    data-native-case="break-occluder" viewBox="0 0 20 20"
+    style="position:absolute;width:20px;height:20px"><circle cx="10" cy="10" r="10"></circle></svg></p>
 </body>
 </html>
 `, "utf8");
@@ -97,6 +101,57 @@ async function authoredInnerHtml(target) {
   });
 }
 
+async function firstGlyphPoint(target) {
+  return target.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = node.textContent ?? "";
+      const index = text.search(/\S/u);
+      if (index >= 0) {
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const glyph = range.getBoundingClientRect();
+        const box = element.getBoundingClientRect();
+        if (glyph.width > 0 && glyph.height > 0) {
+          return {
+            x: glyph.left - box.left + glyph.width / 2,
+            y: glyph.top - box.top + glyph.height / 2,
+          };
+        }
+      }
+      node = walker.nextNode();
+    }
+    throw new Error("Fixture host has no rendered text glyph.");
+  });
+}
+
+async function firstGlyphClientPoint(target) {
+  return target.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = node.textContent ?? "";
+      const index = text.search(/\S/u);
+      if (index >= 0) {
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const glyph = range.getBoundingClientRect();
+        if (glyph.width > 0 && glyph.height > 0) {
+          return {
+            clientX: glyph.left + glyph.width / 2,
+            clientY: glyph.top + glyph.height / 2,
+          };
+        }
+      }
+      node = walker.nextNode();
+    }
+    throw new Error("Fixture host has no rendered text glyph.");
+  });
+}
+
 test("V2 editable-island census activates every safe HTML text host", async ({ page }) => {
   const { frame } = await openFixture(page);
   for (const fixtureCase of editableCases) {
@@ -106,6 +161,346 @@ test("V2 editable-island census activates every safe HTML text host", async ({ p
       await page.keyboard.press("Escape");
     });
   }
+});
+
+test("switching text hosts retires the old lease before the new host enters", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const first = await activateNativeEdit(frame, "plain");
+  const second = frame.locator('[data-native-case="heading"]');
+  await expect(first).toHaveAttribute("contenteditable", "true");
+
+  await second.dispatchEvent("dblclick", {
+    ...await firstGlyphClientPoint(second),
+    bubbles: true,
+    cancelable: true,
+    detail: 2,
+  });
+  await expect(second).toHaveAttribute("contenteditable", "true");
+  await expect(first).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+  await expect(second).toHaveAttribute("data-html-canvas-editing", "true");
+  await expect(editor).toHaveAttribute("data-native-start-status", "started");
+});
+
+test("a comment marker commits uncheckpointed text before changing selection authority", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const heading = frame.locator('[data-native-case="heading"]');
+  await heading.click();
+  await editor.getByRole("toolbar").getByRole("button", { name: /留评论/u }).click();
+  const composer = page.getByRole("region", { name: "添加评论" });
+  await composer.getByRole("textbox", { name: "评论内容" })
+    .fill("标记模块排序。");
+  await composer.getByRole("button", { name: "评论", exact: true }).click();
+  const marker = editor.locator('button[title*="模块排序"]');
+  await expect(marker).toBeVisible();
+
+  const plain = await activateNativeEdit(frame, "plain");
+  const firstToken = "__BEFORE_COMMENT_MARKER_SWITCH__";
+  await setTextSelection(frame, "plain", "普通段落末尾".length);
+  await page.keyboard.insertText(firstToken);
+  await marker.click();
+
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(plain).not.toHaveAttribute("data-html-canvas-editing", /.+/u);
+  await expect(heading).toHaveAttribute("data-html-canvas-selected", /.+/u);
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toContain(firstToken);
+
+  const atom = frame.locator('[data-native-case="atom"] svg');
+  await atom.dblclick();
+  await expect(frame.locator(
+    'svg [data-html-canvas-selected], svg[data-html-canvas-selected]',
+  )).toHaveCount(1);
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+
+  const next = await activateNativeEdit(frame, "heading");
+  const secondToken = "__AFTER_COMMENT_MARKER_SWITCH__";
+  await setTextSelection(frame, "heading", "模块排序".length);
+  await page.keyboard.insertText(secondToken);
+  await expect(next).toContainText(secondToken);
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toEqual(expect.stringContaining(firstToken));
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toEqual(expect.stringContaining(secondToken));
+});
+
+test("a host switch waits for composition and then re-resolves the target identity", async ({ page }) => {
+  const { frame } = await openFixture(page);
+  const first = await activateNativeEdit(frame, "plain");
+  const second = frame.locator('[data-native-case="heading"]');
+  await first.dispatchEvent("compositionstart", { data: "" });
+
+  await second.dispatchEvent("dblclick", {
+    ...await firstGlyphClientPoint(second),
+    bubbles: true,
+    cancelable: true,
+    detail: 2,
+  });
+  await expect(first).toHaveAttribute("contenteditable", "true");
+  await expect(second).not.toHaveAttribute("contenteditable", "true");
+
+  await first.dispatchEvent("compositionend", { data: "" });
+  await expect(second).toHaveAttribute("contenteditable", "true");
+  await expect(first).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+});
+
+test("double-clicking a frozen SVG commits the active text island before structural selection", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const target = await activateNativeEdit(frame, "atom");
+  const atom = target.locator("svg");
+  const firstToken = "__BEFORE_FROZEN_ATOM__";
+  const secondToken = "__AFTER_STRUCTURAL_SWITCH__";
+  await setTextSelection(frame, "atom", "图标前图标后".length);
+  await page.keyboard.insertText(firstToken);
+
+  await atom.dblclick();
+  await expect(target).not.toHaveAttribute("contenteditable", "true");
+  const selectedAtom = frame.locator('svg [data-html-canvas-selected], svg[data-html-canvas-selected]');
+  await expect(selectedAtom).toHaveCount(1);
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "编辑中", exact: true })).toHaveCount(0);
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toContain(firstToken);
+
+  const next = await activateNativeEdit(frame, "heading");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+  await setTextSelection(frame, "heading", "模块排序".length);
+  await page.keyboard.insertText(secondToken);
+  await expect(next).toContainText(secondToken);
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toEqual(expect.stringContaining(firstToken));
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toEqual(expect.stringContaining(secondToken));
+});
+
+test("a frozen SVG structural switch waits for composition before resolving its current identity", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const target = await activateNativeEdit(frame, "atom");
+  const atom = target.locator("svg");
+  const token = "__BEFORE_COMPOSED_STRUCTURAL_SWITCH__";
+  await setTextSelection(frame, "atom", "图标前图标后".length);
+  await page.keyboard.insertText(token);
+  await target.dispatchEvent("compositionstart", { data: "" });
+  const point = await atom.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+  });
+  await atom.dispatchEvent("dblclick", {
+    ...point,
+    bubbles: true,
+    cancelable: true,
+    detail: 2,
+  });
+  await expect(target).toHaveAttribute("contenteditable", "true");
+  await expect(atom).not.toHaveAttribute("data-html-canvas-selected", /.+/u);
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+
+  await target.dispatchEvent("compositionend", { data: "" });
+  await expect(target).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator(
+    'svg [data-html-canvas-selected], svg[data-html-canvas-selected]',
+  )).toHaveCount(1);
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "编辑中", exact: true })).toHaveCount(0);
+  await expect.poll(async () => (
+    await exportCurrentHtml(page)
+  ).toString("utf8")).toContain(token);
+});
+
+test("failed focus establishment leaves no active marker and the next entry can succeed", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const target = frame.locator('[data-native-case="plain"]');
+  await target.evaluate((element) => {
+    Object.defineProperty(element, "isContentEditable", {
+      configurable: true,
+      get: () => false,
+    });
+  });
+
+  await target.dispatchEvent("dblclick", {
+    ...await firstGlyphClientPoint(target),
+    bubbles: true,
+    cancelable: true,
+    detail: 2,
+  });
+  await expect(target).not.toHaveAttribute("contenteditable", "true");
+  await expect(target).not.toHaveAttribute("data-html-canvas-editing", /.+/u);
+  await expect(target).not.toHaveAttribute("data-stemmio-editing", /.+/u);
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "编辑中", exact: true })).toHaveCount(0);
+
+  await target.evaluate((element) => {
+    delete element.isContentEditable;
+  });
+  await target.dblclick({ position: await firstGlyphPoint(target) });
+  await expect(target).toHaveAttribute("contenteditable", "true");
+  await expect(target).toHaveAttribute("data-html-canvas-editing", "true");
+});
+
+test("session and frozen-subtree attributes restore to each original DOM object", async ({ page }) => {
+  const { frame } = await openFixture(page);
+  const target = frame.locator('[data-native-case="atom"]');
+  const atom = target.locator("svg");
+  await target.evaluate((element) => {
+    element.setAttribute("contenteditable", "inherit");
+    element.setAttribute("spellcheck", "true");
+    element.setAttribute("role", "note");
+    element.setAttribute("aria-label", "原始说明");
+    element.setAttribute("data-stemmio-editing", "authored-value");
+    element.querySelector("svg")?.setAttribute("contenteditable", "plaintext-only");
+  });
+
+  await target.dblclick({ position: await firstGlyphPoint(target) });
+  await expect(target).toHaveAttribute("contenteditable", "true");
+  await expect(atom).toHaveAttribute("contenteditable", "false");
+  await atom.evaluate((element) => {
+    element.ownerDocument.defaultView.__stemmioFrozenAtomBeforeRestore = element;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await target.dispatchEvent("compositionstart", { data: "" });
+    await target.dispatchEvent("compositionend", { data: "" });
+  }
+  await expect.poll(() => atom.evaluate((element) => (
+    element !== element.ownerDocument.defaultView.__stemmioFrozenAtomBeforeRestore
+  ))).toBe(true);
+  await target.evaluate((element) => {
+    const view = element.ownerDocument.defaultView;
+    const prototype = view.Element.prototype;
+    const originalSetAttribute = prototype.setAttribute;
+    const counts = { connected: 0, disconnected: 0 };
+    prototype.setAttribute = function setAttribute(name, value) {
+      if (
+        this.localName === "svg"
+        && name === "contenteditable"
+        && value === "plaintext-only"
+      ) {
+        counts[this.isConnected ? "connected" : "disconnected"] += 1;
+      }
+      return originalSetAttribute.call(this, name, value);
+    };
+    view.__stemmioFrozenRestoreProbe = {
+      counts,
+      restore: () => {
+        prototype.setAttribute = originalSetAttribute;
+      },
+    };
+  });
+  await page.keyboard.press("Escape");
+
+  await expect(target).toHaveAttribute("contenteditable", "inherit");
+  await expect(target).toHaveAttribute("spellcheck", "true");
+  await expect(target).toHaveAttribute("role", "note");
+  await expect(target).toHaveAttribute("aria-label", "原始说明");
+  await expect(target).toHaveAttribute("data-stemmio-editing", "authored-value");
+  await expect(atom).toHaveAttribute("contenteditable", "plaintext-only");
+  const restoreCounts = await target.evaluate((element) => {
+    const probe = element.ownerDocument.defaultView.__stemmioFrozenRestoreProbe;
+    probe.restore();
+    delete element.ownerDocument.defaultView.__stemmioFrozenRestoreProbe;
+    return probe.counts;
+  });
+  expect(restoreCounts).toEqual({ connected: 1, disconnected: 0 });
+});
+
+test("constructor failure restores temporary attributes and every installed listener", async ({ page }) => {
+  const { editor, frame } = await openFixture(page);
+  const target = frame.locator('[data-native-case="atom"]');
+  const atom = target.locator("svg");
+  await target.evaluate((element) => {
+    element.setAttribute("contenteditable", "inherit");
+    element.setAttribute("spellcheck", "true");
+    element.setAttribute("role", "note");
+    element.setAttribute("aria-label", "构造失败前");
+    element.setAttribute("data-stemmio-editing", "authored-value");
+    element.querySelector("svg")?.setAttribute("contenteditable", "plaintext-only");
+
+    const view = element.ownerDocument.defaultView;
+    const prototype = view.EventTarget.prototype;
+    const originalAdd = prototype.addEventListener;
+    const originalRemove = prototype.removeEventListener;
+    const counts = {
+      hostAdded: 0,
+      hostRemoved: 0,
+      documentAdded: 0,
+      documentRemoved: 0,
+    };
+    prototype.addEventListener = function addEventListener(type, listener, options) {
+      if (this === element) counts.hostAdded += 1;
+      if (this === element.ownerDocument) counts.documentAdded += 1;
+      return originalAdd.call(this, type, listener, options);
+    };
+    prototype.removeEventListener = function removeEventListener(type, listener, options) {
+      if (this === element) counts.hostRemoved += 1;
+      if (this === element.ownerDocument) counts.documentRemoved += 1;
+      return originalRemove.call(this, type, listener, options);
+    };
+    view.__stemmioConstructorFailureListenerProbe = {
+      counts,
+      restore: () => {
+        prototype.addEventListener = originalAdd;
+        prototype.removeEventListener = originalRemove;
+      },
+    };
+  });
+  await page.evaluate(() => {
+    const OriginalMutationObserver = window.MutationObserver;
+    window.__stemmioOriginalMutationObserver = OriginalMutationObserver;
+    window.MutationObserver = class ThrowingMutationObserver extends OriginalMutationObserver {
+      observe(target, options) {
+        if (target?.getAttribute?.("data-native-case") === "atom") {
+          throw new Error("controlled constructor failure");
+        }
+        return super.observe(target, options);
+      }
+    };
+  });
+
+  try {
+    await target.dblclick({ position: await firstGlyphPoint(target) });
+    await expect(target).toHaveAttribute("contenteditable", "inherit");
+    await expect(target).toHaveAttribute("spellcheck", "true");
+    await expect(target).toHaveAttribute("role", "note");
+    await expect(target).toHaveAttribute("aria-label", "构造失败前");
+    await expect(target).toHaveAttribute("data-stemmio-editing", "authored-value");
+    await expect(target).not.toHaveAttribute("data-html-canvas-editing", /.+/u);
+    await expect(atom).toHaveAttribute("contenteditable", "plaintext-only");
+    await expect(editor.getByRole("button", { name: "编辑中", exact: true })).toHaveCount(0);
+    await expect.poll(() => target.evaluate((element) => (
+      element.ownerDocument.defaultView.__stemmioConstructorFailureListenerProbe.counts
+    ))).toEqual({
+      hostAdded: 7,
+      hostRemoved: 7,
+      documentAdded: 1,
+      documentRemoved: 1,
+    });
+  } finally {
+    await page.evaluate(() => {
+      window.MutationObserver = window.__stemmioOriginalMutationObserver;
+      delete window.__stemmioOriginalMutationObserver;
+    });
+    await target.evaluate((element) => {
+      element.ownerDocument.defaultView.__stemmioConstructorFailureListenerProbe.restore();
+      delete element.ownerDocument.defaultView.__stemmioConstructorFailureListenerProbe;
+    });
+  }
+
+  await target.dblclick({ position: await firstGlyphPoint(target) });
+  await expect(target).toHaveAttribute("contenteditable", "true");
+  await expect(target).toHaveAttribute("data-html-canvas-editing", "true");
+  await page.keyboard.press("Escape");
+  await expect(target).toHaveAttribute("contenteditable", "inherit");
+  await expect(atom).toHaveAttribute("contenteditable", "plaintext-only");
 });
 
 test("start, middle and end all support insert, delete and line break", async ({ page }) => {
@@ -180,6 +575,110 @@ test("start, middle and end all support insert, delete and line break", async ({
       );
     });
   }
+});
+
+test("double-clicking an authored blank line restores its caret without granting host padding", async ({ page }) => {
+  const { frame } = await openFixture(page);
+  const target = await activateNativeEdit(frame, "plain");
+  await setTextSelection(frame, "plain", "普通段落末尾".length);
+  await target.press("Enter");
+  await expect(target.locator(":scope > br")).toHaveCount(1);
+  await activateNativeEdit(frame, "plain");
+  await target.evaluate((element) => {
+    const range = element.ownerDocument.createRange();
+    range.setStart(element, element.childNodes.length);
+    range.collapse(true);
+    const selection = element.ownerDocument.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await target.press("Enter");
+  await expect(target.locator(":scope > br")).toHaveCount(2);
+  if (await target.getAttribute("contenteditable")) await page.keyboard.press("Escape");
+  await expect(target).not.toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+
+  const blankLinePoint = await target.evaluate((element) => {
+    const lineBreak = element.querySelectorAll(":scope > br")[1];
+    if (!(lineBreak instanceof HTMLBRElement)) throw new Error("Authored blank line is missing.");
+    const range = document.createRange();
+    range.setStartBefore(lineBreak);
+    range.setEndAfter(lineBreak);
+    const caret = range.getBoundingClientRect();
+    const host = element.getBoundingClientRect();
+    return {
+      x: caret.width >= 1 ? caret.left - host.left + Math.max(4, caret.width / 2) : 8,
+      y: caret.height >= 1 ? caret.top - host.top + Math.max(2, caret.height / 2) : host.height - 8,
+    };
+  });
+  await target.dblclick({ position: blankLinePoint });
+  await expect(target).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+  await page.keyboard.insertText("BLANK_LINE_MARKER");
+  await expect.poll(() => authoredInnerHtml(target)).toContain(
+    "<br>BLANK_LINE_MARKER<br>",
+  );
+  await page.keyboard.press("Escape");
+
+  const paddingPoint = await target.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || 24;
+    return { x: Math.max(1, rect.width - 8), y: Math.min(rect.height - 1, lineHeight / 2) };
+  });
+  await target.dblclick({ position: paddingPoint });
+  await expect(target).not.toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+});
+
+test("nested authored breaks keep exact caret identity and an occluding branch cannot borrow it", async ({ page }) => {
+  const { frame } = await openFixture(page);
+  const nestedHost = frame.locator('[data-native-case="nested-break"]');
+  const nestedBreakPoint = await nestedHost.evaluate((element) => {
+    const lineBreak = element.querySelector("br");
+    if (!(lineBreak instanceof HTMLBRElement)) throw new Error("Nested BR is missing.");
+    const range = document.createRange();
+    range.setStartBefore(lineBreak);
+    range.setEndAfter(lineBreak);
+    const caret = range.getBoundingClientRect();
+    const host = element.getBoundingClientRect();
+    return {
+      x: caret.left - host.left + 4,
+      y: caret.top - host.top + Math.max(2, caret.height / 2),
+    };
+  });
+  await nestedHost.dblclick({ position: nestedBreakPoint });
+  await expect(nestedHost).toHaveAttribute("contenteditable", "true");
+  await page.keyboard.insertText("EXACT_NESTED_BR");
+  await expect.poll(() => authoredInnerHtml(nestedHost)).toContain(
+    "内层EXACT_NESTED_BR<br>尾部",
+  );
+  await page.keyboard.press("Escape");
+
+  const occludedHost = frame.locator('[data-native-case="occluded-break"]');
+  const occludedPoint = await occludedHost.evaluate((element) => {
+    const lineBreak = element.querySelector("br");
+    const occluder = element.querySelector('[data-native-case="break-occluder"]');
+    if (!(lineBreak instanceof HTMLBRElement) || !(occluder instanceof SVGElement)) {
+      throw new Error("Occluded BR fixture is incomplete.");
+    }
+    const range = document.createRange();
+    range.setStartBefore(lineBreak);
+    range.setEndAfter(lineBreak);
+    const caret = range.getBoundingClientRect();
+    const host = element.getBoundingClientRect();
+    const left = caret.left - host.left;
+    const top = caret.top - host.top;
+    occluder.style.left = `${left - 2}px`;
+    occluder.style.top = `${top - 2}px`;
+    return {
+      x: left + 4,
+      y: top + Math.max(2, caret.height / 2),
+    };
+  });
+  await occludedHost.dblclick({ position: occludedPoint });
+  await expect(occludedHost).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(frame.locator(
+    '[data-native-case="break-occluder"] [data-html-canvas-selected], '
+      + '[data-native-case="break-occluder"][data-html-canvas-selected]',
+  )).toHaveCount(1);
 });
 
 test("paste is plain text, multiline paste becomes br, and cut stays local", async ({ page }) => {

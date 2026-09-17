@@ -106,6 +106,34 @@ export function nativeEditHostForElement(
   return nearestSafeCandidate;
 }
 
+/**
+ * Resolves a keyboard/toolbar edit request from a structural selection.
+ *
+ * Pointer entry already identifies one exact glyph host. A structural target
+ * can cover several independent text hosts, so it may enter Native Edit only
+ * when every source-backed descendant resolves to the same minimal host.
+ * Direct text owned by a complex parent remains eligible because the parent
+ * itself participates in the resolution.
+ */
+export function uniqueNativeEditHostForStructuralTarget(
+  element: HTMLElement,
+  sourceIndex: SourceIndexValue,
+): HTMLElement | null {
+  const candidates = [
+    element,
+    ...Array.from(element.querySelectorAll<HTMLElement>(
+      `[${SOURCE_ELEMENT_ATTRIBUTE}]`,
+    )),
+  ];
+  const hosts = new Set<HTMLElement>();
+  for (const candidate of candidates) {
+    const host = nativeEditHostForElement(candidate, sourceIndex);
+    if (host) hosts.add(host);
+    if (hosts.size > 1) return null;
+  }
+  return hosts.size === 1 ? [...hosts][0] ?? null : null;
+}
+
 export function sourceTextParentsForSegments(
   rootElement: HTMLElement,
   segments: readonly TextRangeSegment[],

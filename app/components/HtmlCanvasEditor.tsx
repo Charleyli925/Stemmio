@@ -181,6 +181,7 @@ import {
   reconcileRangeStyleInPlace,
   runtimeSurfacesReady,
   nativeEditHostForElement,
+  uniqueNativeEditHostForStructuralTarget,
   refreshStableMountedPreviewSourceNodeIds,
   sourceBackedPreviewElements,
   alignPreviewSourceSurface,
@@ -194,10 +195,11 @@ import {
   findDedicatedSourceSurfaceAtPoint,
   findNativeActionTarget,
   historySelectionFromMutationValue,
-  identifyingTextRangeAtPoint,
+  nativeEditTargetAtPoint,
   sourceHistoryDirectionForShortcut,
   textLocatorForActiveRange,
   type TextCaretPoint,
+  type NativeEditCaretPoint,
 } from "./html-canvas-interaction";
 import {
   canvasVisualTargetElement,
@@ -466,7 +468,7 @@ const EDITOR_DOCUMENT_STYLES = `
     outline: none !important;
   }
 
-  [data-html-canvas-native-editing] {
+  [data-html-canvas-editing] {
     -webkit-user-select: text !important;
     user-select: text !important;
     caret-color: currentColor !important;
@@ -568,8 +570,27 @@ type RuntimeHandoffContext = {
   presentationAnchor: RuntimePresentationAnchor;
   pendingSelection: HtmlCanvasSelection | null;
   pendingToolbarVisible: boolean;
+  selectionIntentEpoch: number;
+  pendingNativeEditIntent: PostNativeEditIntent & { kind: "native-edit" } | null;
   restoreCanvasFocus: boolean;
 };
+
+type PostNativeEditIntent =
+  | {
+      kind: "structural";
+      epoch: number;
+      selection: HtmlCanvasSelection | null;
+      toolbarVisible: boolean;
+    }
+  | {
+      kind: "native-edit";
+      epoch: number;
+      target: HtmlCanvasSelection;
+      receipt: DocumentSourceReceipt;
+      sourceSha256: string;
+      canvasGeneration: number;
+      focusPreference: "restore-native-focus";
+    };
 
 type RuntimeSlotRetirement = {
   slotId: RuntimeFrameSlotId;
@@ -768,6 +789,7 @@ function canvasTargetOutlineStyle(
   iframe: HTMLIFrameElement | null,
   element: HTMLElement | null,
   global = false,
+  outset = 0,
 ): ReturnType<typeof layoutCanvasHoverChrome>["outline"] | undefined {
   if (!container || !iframe || !element?.isConnected) return undefined;
   const containerRect = container.getBoundingClientRect();
@@ -790,11 +812,12 @@ function canvasTargetOutlineStyle(
       height: iframe.clientHeight,
     });
   if (!targetRect) return undefined;
+  const safeOutset = Math.max(0, outset);
   const chrome = layoutCanvasHoverChrome({
-    left: iframeRect.left - containerRect.left + targetRect.left,
-    top: iframeRect.top - containerRect.top + targetRect.top,
-    width: targetRect.width,
-    height: targetRect.height,
+    left: iframeRect.left - containerRect.left + targetRect.left - safeOutset,
+    top: iframeRect.top - containerRect.top + targetRect.top - safeOutset,
+    width: targetRect.width + safeOutset * 2,
+    height: targetRect.height + safeOutset * 2,
   });
   return chrome.outline;
 }
@@ -874,6 +897,8 @@ type NativeEditCommitResult = {
   reason?: string;
   frameReloading?: boolean;
 };
+
+type NativeEditEntryResult = "entered" | "deferred" | "not-entered";
 
 type FinishNativeEditingOptions = {
   replayQueuedUserCommand?: boolean;
@@ -1198,6 +1223,13 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }>({ source: html, sourceIndex: null });
   const pendingSelectionRef = useRef<HtmlCanvasSelection | null>(null);
   const pendingToolbarVisibleRef = useRef(false);
+  const selectionIntentEpochRef = useRef(0);
+  const postNativeEditSelectionIntentRef = useRef<PostNativeEditIntent | null>(null);
+  const pendingNativeEditFrameReloadRef = useRef<{
+    receipt: DocumentSourceReceipt;
+    sourceSha256: string;
+    canvasGeneration: number;
+  } | null>(null);
   const pendingFrameRestoreEpochRef = useRef(0);
   const toolbarVisibleRef = useRef(false);
   const pointerCapabilityHoverEnabledRef = useRef(pointerCapabilityHoverEnabled);
@@ -1282,6 +1314,152 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const onCommentLayoutRef = useRef(onCommentLayout);
   const onRequestCommentRef = useRef(onRequestComment);
   const onRequestFlushRef = useRef(onRequestFlush);
+
+  const replaceExplicitSelectionIntent = useCallback((
+    selection: HtmlCanvasSelection | null,
+    toolbarVisible: boolean,
+    { forceHandoff = false }: { forceHandoff?: boolean } = {},
+  ) => {
+    if (postNativeEditSelectionIntentRef.current?.kind === "native-edit") {
+      containerRef.current?.setAttribute("data-native-intent-status", "superseded");
+    }
+    const epoch = selectionIntentEpochRef.current + 1;
+    selectionIntentEpochRef.current = epoch;
+    const tracksHandoff = Boolean(
+      forceHandoff
+      || postNativeEditSelectionIntentRef.current
+      || runtimeCandidateRef.current
+      || runtimePromotionRef.current,
+    );
+    if (!tracksHandoff) {
+      postNativeEditSelectionIntentRef.current = null;
+      return epoch;
+    }
+    const intent: PostNativeEditIntent = {
+      kind: "structural",
+      epoch,
+      selection,
+      toolbarVisible: Boolean(selection && toolbarVisible),
+    };
+    postNativeEditSelectionIntentRef.current = intent;
+    pendingSelectionRef.current = intent.selection;
+    pendingToolbarVisibleRef.current = intent.toolbarVisible;
+    return epoch;
+  }, []);
+
+  const replaceNativeEditIntent = useCallback((
+    pendingSelection: HtmlCanvasSelection,
+  ): number | null => {
+    const currentReceipt = lastSourceReceiptRef.current;
+    const pendingReload = pendingNativeEditFrameReloadRef.current;
+    const sourceIndex = sourceIndexRef.current;
+    const receipt = isSourceReceipt(currentReceipt)
+      && currentReceipt.sourceSha256 === sourceIndex?.sourceSha256
+      ? currentReceipt
+      : pendingReload?.receipt;
+    if (
+      !pendingSelection.elementId
+      || !isValidStemmioElementId(pendingSelection.elementId)
+      || !isSourceReceipt(receipt)
+      || !sourceIndex
+      || receipt.canvasGeneration < 0
+    ) return null;
+    // A newer explicit edit target owns the continuation. Retire recovery for
+    // the previous native host before promotion can restore that older target
+    // and supersede this receipt-bound intent.
+    nativeEditRecoveryRef.current.cancel();
+    const epoch = selectionIntentEpochRef.current + 1;
+    selectionIntentEpochRef.current = epoch;
+    postNativeEditSelectionIntentRef.current = {
+      kind: "native-edit",
+      epoch,
+      target: pendingSelection,
+      receipt,
+      sourceSha256: receipt.sourceSha256,
+      canvasGeneration: receipt.canvasGeneration,
+      focusPreference: "restore-native-focus",
+    };
+    containerRef.current?.setAttribute("data-native-intent-status", "pending");
+    pendingSelectionRef.current = pendingSelection;
+    pendingToolbarVisibleRef.current = true;
+    return epoch;
+  }, []);
+
+  const selectionForPostNativeEditIntent = useCallback((
+    intent: PostNativeEditIntent | null,
+  ): HtmlCanvasSelection | null => {
+    if (!intent) return null;
+    if (intent.kind === "structural") return intent.selection;
+    const documentNode = iframeRef.current?.contentDocument;
+    const sourceIndex = sourceIndexRef.current;
+    let target: HTMLElement | null = null;
+    if (documentNode && sourceIndex) {
+      try {
+        const resolution = resolveTargetRef(
+          sourceIndex,
+          sourceTargetRefForSelection(intent.target),
+        );
+        const elementId = resolution.target?.type === "element"
+          ? String(resolution.target.stemmioId ?? "")
+          : "";
+        target = elementId ? uniqueSourceElement(documentNode, elementId) : null;
+      } catch {
+        target = null;
+      }
+    }
+    const host = target && sourceIndex
+      ? nativeEditHostForElement(target, sourceIndex)
+      : null;
+    return host
+      ? selectionForElement(host, sourceIndex, intent.target, undefined, "part")
+      : pendingSelectionRef.current;
+  }, []);
+
+  const applyPostNativeEditIntentToHandoff = useCallback((
+    handoffContext: RuntimeHandoffContext,
+    intent: PostNativeEditIntent,
+  ) => {
+    handoffContext.pendingSelection = selectionForPostNativeEditIntent(intent);
+    handoffContext.pendingToolbarVisible = intent.kind === "native-edit"
+      ? true
+      : intent.toolbarVisible;
+    handoffContext.selectionIntentEpoch = intent.epoch;
+    handoffContext.pendingNativeEditIntent = intent.kind === "native-edit"
+      ? intent
+      : null;
+  }, [selectionForPostNativeEditIntent]);
+
+  useEffect(() => {
+    const ownerDocument = containerRef.current?.ownerDocument;
+    if (!ownerDocument) return undefined;
+    const retireNativeIntentForExternalFocus = (event: FocusEvent) => {
+      const intent = postNativeEditSelectionIntentRef.current;
+      if (intent?.kind !== "native-edit") return;
+      const target = event.target;
+      if (
+        target === ownerDocument.body
+        || target === iframeRef.current
+        || (
+          target instanceof HTMLIFrameElement
+          && containerRef.current?.contains(target)
+          && target.hasAttribute("data-runtime-slot")
+        )
+      ) return;
+      const latestSelection = pendingSelectionRef.current
+        ?? selectedSourceSelectionRef.current;
+      replaceExplicitSelectionIntent(
+        latestSelection,
+        Boolean(latestSelection && pendingToolbarVisibleRef.current),
+        { forceHandoff: true },
+      );
+    };
+    ownerDocument.addEventListener("focusin", retireNativeIntentForExternalFocus, true);
+    return () => ownerDocument.removeEventListener(
+      "focusin",
+      retireNativeIntentForExternalFocus,
+      true,
+    );
+  }, [replaceExplicitSelectionIntent]);
 
   const syncProjectionHashDiagnostics = useCallback(() => {
     const workingSourceSha256 = sourceIndexRef.current?.sourceSha256 || "";
@@ -2377,19 +2555,33 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     }
     abortInFlightRuntimeCommitRef.current?.("superseded");
     const supersededCandidate = runtimeCandidateRef.current;
+    const postNativeEditIntent = postNativeEditSelectionIntentRef.current;
     if (supersededCandidate) {
-      supersededCandidate.handoffContext.pendingSelection =
-        selectedSourceSelectionRef.current ?? pendingSelectionRef.current;
-      supersededCandidate.handoffContext.pendingToolbarVisible = Boolean(
-        supersededCandidate.handoffContext.pendingSelection && toolbarVisibleRef.current,
-      );
+      if (postNativeEditIntent) {
+        applyPostNativeEditIntentToHandoff(
+          supersededCandidate.handoffContext,
+          postNativeEditIntent,
+        );
+      } else {
+        supersededCandidate.handoffContext.pendingSelection =
+          selectedSourceSelectionRef.current ?? pendingSelectionRef.current;
+        supersededCandidate.handoffContext.pendingToolbarVisible = Boolean(
+          supersededCandidate.handoffContext.pendingSelection && toolbarVisibleRef.current,
+        );
+        supersededCandidate.handoffContext.pendingNativeEditIntent = null;
+        supersededCandidate.handoffContext.selectionIntentEpoch = Math.max(
+          supersededCandidate.handoffContext.selectionIntentEpoch,
+          selectionIntentEpochRef.current,
+        );
+      }
       cancelRuntimeCandidateRef.current(supersededCandidate, "superseded");
     }
-    const previousPendingSelection = selectedSourceSelectionRef.current
-      ?? pendingSelectionRef.current;
-    const previousPendingToolbarVisible = Boolean(
-      previousPendingSelection && toolbarVisibleRef.current,
-    );
+    const previousPendingSelection = postNativeEditIntent
+      ? selectionForPostNativeEditIntent(postNativeEditIntent)
+      : selectedSourceSelectionRef.current ?? pendingSelectionRef.current;
+    const previousPendingToolbarVisible = postNativeEditIntent
+      ? postNativeEditIntent.kind === "native-edit" || postNativeEditIntent.toolbarVisible
+      : Boolean(previousPendingSelection && toolbarVisibleRef.current);
     const currentFrame = iframeRef.current;
     const sharedScrollElement = containerRef.current?.closest<HTMLElement>(
       ".review-scroll-stage",
@@ -2451,6 +2643,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       presentationAnchor,
       pendingSelection: pendingSelectionRef.current ?? previousPendingSelection,
       pendingToolbarVisible: pendingToolbarVisibleRef.current,
+      selectionIntentEpoch: postNativeEditIntent?.epoch ?? selectionIntentEpochRef.current,
+      pendingNativeEditIntent: postNativeEditIntent?.kind === "native-edit"
+        ? postNativeEditIntent
+        : null,
       restoreCanvasFocus: false,
     };
     containerRef.current?.setAttribute("data-runtime-handoff", "preparing");
@@ -2798,6 +2994,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     recordRuntimeContinuityEvent("framePrepared", { reason: candidateKind });
     return true;
   }, [
+    applyPostNativeEditIntentToHandoff,
     beginRuntimeAttempt,
     clearRuntimeInactiveSlot,
     completeRuntimeAttempt,
@@ -2805,6 +3002,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     editRuntimeGrant,
     frameRender.elementGeneration,
     publishRuntimeDegradation,
+    selectionForPostNativeEditIntent,
     runtimeDocumentAnalysis,
     scheduleLatestStaticFallbackAfterFailure,
     staticAssetBaseHref,
@@ -2909,6 +3107,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     // Candidate; keeping retiredSlot would retain every prior frame cleanup.
     candidate.retiredSlot = null;
     clearRuntimeRefreshPending(candidate.attempt.sourceRevision);
+    if (
+      pendingNativeEditFrameReloadRef.current?.sourceSha256
+      === candidate.attempt.sourceRevision
+    ) pendingNativeEditFrameReloadRef.current = null;
     runtimePromotionRef.current = null;
     containerRef.current?.setAttribute("data-runtime-handoff", "active");
     if (retired) scheduleRuntimeInactiveSlotClear(retired.generation);
@@ -2935,13 +3137,26 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       selectedElement: selectedElementRef.current,
       selectedSourceSelection: selectedSourceSelectionRef.current,
     });
-    handoffContext.pendingSelection = selectedSourceSelectionRef.current;
-    handoffContext.pendingToolbarVisible = Boolean(
-      selectedSourceSelectionRef.current && toolbarVisibleRef.current,
-    );
+    const postNativeEditIntent = postNativeEditSelectionIntentRef.current;
+    if (
+      postNativeEditIntent
+      && postNativeEditIntent.epoch >= handoffContext.selectionIntentEpoch
+    ) {
+      applyPostNativeEditIntentToHandoff(handoffContext, postNativeEditIntent);
+    } else {
+      handoffContext.pendingSelection = selectedSourceSelectionRef.current;
+      handoffContext.pendingToolbarVisible = Boolean(
+        selectedSourceSelectionRef.current && toolbarVisibleRef.current,
+      );
+      handoffContext.pendingNativeEditIntent = null;
+      handoffContext.selectionIntentEpoch = Math.max(
+        handoffContext.selectionIntentEpoch,
+        selectionIntentEpochRef.current,
+      );
+    }
     pendingSelectionRef.current = handoffContext.pendingSelection;
     pendingToolbarVisibleRef.current = handoffContext.pendingToolbarVisible;
-  }, []);
+  }, [applyPostNativeEditIntentToHandoff]);
 
   const commitRuntimeCandidate = useCallback((
     candidate: RuntimeCandidate,
@@ -3246,11 +3461,23 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           : candidate.handoffContext.presentationAnchor.selectedStableId,
       };
     }
-    candidate.handoffContext.pendingSelection = selectedSourceSelectionRef.current
-      ?? candidate.handoffContext.pendingSelection;
-    candidate.handoffContext.pendingToolbarVisible = Boolean(
-      candidate.handoffContext.pendingSelection && toolbarVisibleRef.current,
-    );
+    const postNativeEditIntent = postNativeEditSelectionIntentRef.current;
+    if (
+      postNativeEditIntent
+      && postNativeEditIntent.epoch >= candidate.handoffContext.selectionIntentEpoch
+    ) {
+      applyPostNativeEditIntentToHandoff(candidate.handoffContext, postNativeEditIntent);
+    } else if (
+      selectionIntentEpochRef.current > candidate.handoffContext.selectionIntentEpoch
+    ) {
+      candidate.handoffContext.pendingSelection = selectedSourceSelectionRef.current
+        ?? candidate.handoffContext.pendingSelection;
+      candidate.handoffContext.pendingToolbarVisible = Boolean(
+        candidate.handoffContext.pendingSelection && toolbarVisibleRef.current,
+      );
+      candidate.handoffContext.pendingNativeEditIntent = null;
+      candidate.handoffContext.selectionIntentEpoch = selectionIntentEpochRef.current;
+    }
     const cancelled = cancelRuntimeCandidateRef.current(
       candidate,
       outcome,
@@ -3267,7 +3494,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       candidate.handoffContext,
     );
     return true;
-  }, [publishRuntimeDegradation, scheduleLatestStaticFallbackAfterFailure]);
+  }, [
+    applyPostNativeEditIntentToHandoff,
+    publishRuntimeDegradation,
+    scheduleLatestStaticFallbackAfterFailure,
+  ]);
   failRuntimeCandidateActivationRef.current = failRuntimeCandidate;
 
   const connectRuntimeCandidate = useCallback((
@@ -4378,6 +4609,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
             }
           : {}),
       };
+      const receiptBeforeChange = lastSourceReceiptRef.current;
       const acceptedReceipt = onChangeRef.current(
         result.html,
         appliedMutation,
@@ -4388,6 +4620,42 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         return null;
       }
       lastSourceReceiptRef.current = acceptedReceipt;
+      const pendingNativeIntent = postNativeEditSelectionIntentRef.current;
+      if (
+        pendingNativeIntent?.kind === "native-edit"
+        && pendingNativeIntent.epoch === selectionIntentEpochRef.current
+        && isSourceReceipt(receiptBeforeChange)
+        && sameSourceReceipt(pendingNativeIntent.receipt, receiptBeforeChange)
+        && pendingNativeIntent.sourceSha256 === sourceIndex.sourceSha256
+      ) {
+        try {
+          const resolution = resolveTargetRef(
+            result.sourceIndex,
+            sourceTargetRefForSelection(pendingNativeIntent.target),
+          );
+          const elementId = resolution.target?.type === "element"
+            ? String(resolution.target.stemmioId ?? "")
+            : "";
+          if (elementId) {
+            const reboundTarget = sourceSelectionForElementId(
+              result.sourceIndex,
+              elementId,
+              pendingNativeIntent.target,
+            );
+            postNativeEditSelectionIntentRef.current = {
+              ...pendingNativeIntent,
+              target: reboundTarget,
+              receipt: acceptedReceipt,
+              sourceSha256: result.sourceSha256,
+              canvasGeneration: acceptedReceipt.canvasGeneration,
+            };
+            pendingSelectionRef.current = reboundTarget;
+          }
+        } catch {
+          // The promotion replay validates the retained target again and
+          // retires it if the authoritative source no longer resolves it.
+        }
+      }
       acceptedOutcome = Object.freeze({
         result,
         projection: "refresh-required",
@@ -4968,8 +5236,14 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     documentNode.getSelection()?.removeAllRanges();
     const acceptedReceipt = lastSourceReceiptRef.current;
     const acceptedIndex = sourceIndexRef.current;
+    const newerNativeIntent = postNativeEditSelectionIntentRef.current;
+    const newerNativeTargetOwnsHandoff = Boolean(
+      newerNativeIntent?.kind === "native-edit"
+      && newerNativeIntent.target.id !== target.id,
+    );
     if (
       resumeEditingAfterReload
+      && !newerNativeTargetOwnsHandoff
       && isSourceReceipt(acceptedReceipt)
       && acceptedReceipt.sourceSha256 === acceptedIndex?.sourceSha256
       && acceptedIndex.source === source
@@ -4987,6 +5261,17 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       });
     } else {
       nativeEditRecoveryRef.current.cancel();
+    }
+    if (
+      isSourceReceipt(acceptedReceipt)
+      && acceptedReceipt.sourceSha256 === acceptedIndex?.sourceSha256
+      && acceptedIndex.source === source
+    ) {
+      pendingNativeEditFrameReloadRef.current = {
+        receipt: acceptedReceipt,
+        sourceSha256: acceptedReceipt.sourceSha256,
+        canvasGeneration: acceptedReceipt.canvasGeneration,
+      };
     }
     queueNativeFenceReloadRef.current(
       source,
@@ -5224,6 +5509,49 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     nativeEditRecoveryRef.current.cancel();
     const active = activeNativeEditRef.current;
     if (!active) return { ok: true, mutation: null };
+    const activeContinuation = postNativeEditSelectionIntentRef.current;
+    if (
+      activeContinuation?.kind === "native-edit"
+      && activeContinuation.target.id === active.target.id
+    ) {
+      postNativeEditSelectionIntentRef.current = null;
+      selectionIntentEpochRef.current += 1;
+      containerRef.current?.setAttribute(
+        "data-native-intent-status",
+        "retired-session-ended",
+      );
+    }
+    if (!nativeEditAuthorityIsCurrent(active)) {
+      const source = frameSourceHtmlRef.current;
+      const target = active.target;
+      clearNativeEditCheckpointTimer();
+      currentNativeEditLeaseRef.current = null;
+      activeNativeEditRef.current = null;
+      endRuntimeNativeEdit();
+      discardPendingNativeCommands("stale-session");
+      retainNativeEditFocusRef.current = null;
+      active.rootElement.removeAttribute("data-html-canvas-editing");
+      active.session.fenceDispose();
+      nativeEditNeedsReloadRef.current = false;
+      activeTextRangeRef.current = null;
+      setIsEditing(false);
+      setHasTextRange(false);
+      containerRef.current?.removeAttribute("data-native-host-mode");
+      containerRef.current?.removeAttribute("data-native-event-delivery-mode");
+      selectedSourceSelectionRef.current = target;
+      replaceExplicitSelectionIntent(target, true, { forceHandoff: true });
+      setSelection(target);
+      setToolbarVisible(true);
+      onSelectRef.current?.(target);
+      renderedSourceHtmlRef.current = null;
+      loadFrameSource(source, { preserveViewport: true });
+      return {
+        ok: false,
+        mutation: null,
+        reason: "文字编辑会话已经失效。",
+        frameReloading: true,
+      };
+    }
     if (nativeEditFinishingRef.current) {
       return { ok: false, mutation: null, reason: "文字编辑正在提交。" };
     }
@@ -5271,7 +5599,19 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       activeTextRangeRef.current = null;
       setIsEditing(false);
       setHasTextRange(false);
+      containerRef.current?.removeAttribute("data-native-host-mode");
+      containerRef.current?.removeAttribute("data-native-event-delivery-mode");
       rootElement.ownerDocument.getSelection()?.removeAllRanges();
+      if (committed.frameReloading) {
+        // checkpointNativeEdit already fenced the retired document and queued
+        // the authoritative source for a replacement Runtime. Preserve that
+        // result: reporting a current frame here would let the caller start a
+        // second session against the retired DOM before Candidate promotion.
+        pendingSelectionRef.current = target;
+        pendingToolbarVisibleRef.current = true;
+        replayCompletedUserCommand();
+        return { ...committed, frameReloading: true };
+      }
       if (
         settledRuntimeFrame
         && runtimeRefreshPendingRef.current
@@ -5294,7 +5634,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       if (frameReloadRequired && !settledRuntimeFrame) {
         // An explicit finish never resumes native editing after the new frame
       // is connected.
-      selectedElementRef.current = null;
+        selectedElementRef.current = null;
         pendingSelectionRef.current = target;
         pendingToolbarVisibleRef.current = true;
         renderedSourceHtmlRef.current = null;
@@ -5350,7 +5690,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     endRuntimeNativeEdit,
     loadFrameSource,
     observeSelectedElement,
+    nativeEditAuthorityIsCurrent,
     publishRenderedProjectionIdentity,
+    replaceExplicitSelectionIntent,
     requestDynamicRuntimeRefresh,
     updateMoveAvailability,
     updateOverlayPosition,
@@ -5395,8 +5737,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     });
     if (!committed.ok) return;
     pendingFrameRestoreEpochRef.current += 1;
-    pendingSelectionRef.current = null;
-    pendingToolbarVisibleRef.current = false;
+    replaceExplicitSelectionIntent(null, false);
     selectedElementRef.current?.removeAttribute("data-html-canvas-selected");
     selectedElementRef.current?.removeAttribute(GLOBAL_SELECTION_ATTRIBUTE);
     selectedElementRef.current = null;
@@ -5414,7 +5755,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     setSpacingMenuOpen(false);
     setMoveAvailability({ up: false, down: false });
     onSelectRef.current?.(null);
-  }, [finishNativeEditing]);
+  }, [finishNativeEditing, replaceExplicitSelectionIntent]);
 
   const clearSelection = useCallback((refreshRuntime = false) => {
     resetSelection(true, false, !refreshRuntime);
@@ -5468,6 +5809,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         selectionOverride?: HtmlCanvasSelection;
         commentAnchor?: HtmlCanvasSelection | null;
         visualHint?: HtmlCanvasRuntimeVisualHint | null;
+        preserveSelectionIntentEpoch?: number;
       } = {},
     ): HtmlCanvasSelection => {
       pendingFrameRestoreEpochRef.current += 1;
@@ -5505,8 +5847,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         });
         if (!committed.ok) return activeNativeEdit.target;
         if (committed.frameReloading) {
-          pendingSelectionRef.current = requestedTarget;
-          pendingToolbarVisibleRef.current = options.showToolbar ?? true;
+          replaceExplicitSelectionIntent(
+            requestedTarget,
+            options.showToolbar ?? true,
+            { forceHandoff: true },
+          );
           return requestedTarget;
         }
       }
@@ -5533,6 +5878,16 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         ...(options.commentAnchor ? { commentAnchor: options.commentAnchor } : {}),
         ...(options.visualHint ? { visualHint: options.visualHint } : {}),
       };
+      const preservesCurrentIntent = options.preserveSelectionIntentEpoch !== undefined
+        && options.preserveSelectionIntentEpoch === selectionIntentEpochRef.current
+        && postNativeEditSelectionIntentRef.current?.epoch
+          === options.preserveSelectionIntentEpoch;
+      if (!preservesCurrentIntent) {
+        replaceExplicitSelectionIntent(
+          nextSelectionWithContext,
+          options.showToolbar ?? true,
+        );
+      }
       selectedElementRef.current = element;
       setSpacingMenuOpen(false);
       if (!options.preserveTextSelection) {
@@ -5578,13 +5933,24 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         previousSelectionId !== null
         && previousSelectionId !== nextSelectionWithContext.id
       ) {
-        requestPendingRuntimeRefresh("selection-changed");
+        if (requestPendingRuntimeRefresh("selection-changed")) {
+          // requestDynamicRuntimeRefresh may clear the pending-refresh flag
+          // before the Candidate object is installed. Keep the user's latest
+          // structural owner across that short gap so a following second
+          // click can upgrade the same Stable ID to a Native Edit intent.
+          replaceExplicitSelectionIntent(
+            nextSelectionWithContext,
+            options.showToolbar ?? true,
+            { forceHandoff: true },
+          );
+        }
       }
       return nextSelectionWithContext;
     },
     [
       finishNativeEditing,
       observeSelectedElement,
+      replaceExplicitSelectionIntent,
       requestPendingRuntimeRefresh,
       updateMoveAvailability,
       updateOverlayPosition,
@@ -5689,7 +6055,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [currentRuntimeSourceProof]);
 
   const startEditing = useCallback((
-    caretPoint?: TextCaretPoint,
+    caretPoint?: NativeEditCaretPoint,
     restoredSelection?: NativeEditSelection,
   ): boolean => {
     hoverControllerRef.current?.hide();
@@ -5770,50 +6136,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         "target",
       );
     }
-    const islandHostElement = nativeEditHostForElement(selectedElement, sourceIndex);
+    const islandHostElement = caretPoint
+      ? nativeEditHostForElement(selectedElement, sourceIndex)
+      : uniqueNativeEditHostForStructuralTarget(selectedElement, sourceIndex);
     if (!islandHostElement) {
-      let blockedCause: Error = new Error(
-        "这段可见内容不是当前源码中的唯一静态文字，无法安全进入原位编辑。",
-      );
-      const selectedSource = sourceElementId(selectedElement)
-        ? sourceIndex.byStemmioId.get(sourceElementId(selectedElement)!)
-        : null;
-      if (selectedSource?.type === "element") {
-        try {
-          const selectedTargetRef = createTargetRef(
-            sourceIndex,
-            selectedSource,
-            { level: "subregion" },
-          ) as SourceTargetRef;
-          const islandCapability = isEditableIslandTarget(
-            sourceIndex,
-            selectedTargetRef,
-          );
-          if (!islandCapability.editable) {
-            containerRef.current?.setAttribute(
-              "data-native-start-status",
-              `island:${islandCapability.code}`,
-            );
-            containerRef.current?.setAttribute(
-              "data-native-capability-detail",
-              `${islandCapability.code}:${JSON.stringify(
-                islandCapability.details,
-              )}`.slice(0, 2400),
-            );
-            blockedCause = new Error(
-              islandCapability.message
-              || "这处内容包含不能由文字编辑器改写的网页结构。",
-            );
-          }
-        } catch {
-          // The existing no-host path below remains the fail-closed fallback.
-        }
-      }
-      containerRef.current?.setAttribute(
-        "data-native-start-status",
-        containerRef.current.getAttribute("data-native-start-status") || "no-host",
-      );
-      reportBlockedEdit(blockedCause);
+      containerRef.current?.setAttribute("data-native-start-status", "no-unique-host");
       return false;
     }
     const selectionElement = islandHostElement;
@@ -5822,6 +6149,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       showToolbar: true,
     });
     let createdSession: IslandEditingController | null = null;
+    let attemptedLease: ActiveNativeEdit["lease"] | null = null;
     let runtimeNativeEditStarted = false;
     try {
       const rootTargetRef = sourceTargetRefForSelection(target);
@@ -5936,6 +6264,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         sourceRevision: projection.sourceSha256,
         hostId: rootTargetRef.targetId,
       };
+      attemptedLease = lease;
       currentNativeEditLeaseRef.current = lease;
       const handleSessionState = (state: NativeEditSessionState) => {
         const active = activeNativeEditRef.current;
@@ -6098,18 +6427,37 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       containerRef.current?.setAttribute("data-native-start-status", "started");
       return true;
     } catch (cause) {
+      clearNativeEditCheckpointTimer();
+      const failedActive = activeNativeEditRef.current;
+      if (createdSession && failedActive?.session === createdSession) {
+        activeNativeEditRef.current = null;
+      }
+      if (
+        attemptedLease
+        && nativeEditLeasesMatch(currentNativeEditLeaseRef.current, attemptedLease)
+      ) currentNativeEditLeaseRef.current = null;
       if (runtimeNativeEditStarted) endRuntimeNativeEdit();
+      createdSession?.hostElement.removeAttribute("data-html-canvas-editing");
       createdSession?.dispose();
+      discardPendingNativeCommands("session-ended");
+      retainNativeEditFocusRef.current = null;
+      activeTextRangeRef.current = null;
+      nativeEditNeedsReloadRef.current = false;
+      nativeSessionNeedsCanonicalFenceRef.current = false;
+      setIsEditing(false);
+      setHasTextRange(false);
+      containerRef.current?.removeAttribute("data-native-host-mode");
+      containerRef.current?.removeAttribute("data-native-event-delivery-mode");
       containerRef.current?.setAttribute(
         "data-native-start-status",
         `error:${cause instanceof Error ? cause.message : String(cause)}`.slice(0, 500),
       );
-      currentNativeEditLeaseRef.current = null;
       reportBlockedEdit(cause);
       return false;
     }
   }, [
     clearNativeEditCheckpointTimer,
+    discardPendingNativeCommands,
     endRuntimeNativeEdit,
     finishNativeEditing,
     nativeEditAuthorityIsCurrent,
@@ -6584,13 +6932,19 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       setToolbarVisible(false);
       setHasTextRange(false);
       setMoveAvailability({ up: false, down: false });
+      replaceExplicitSelectionIntent(point.selection, false);
       setSelection(point.selection);
       onSelectRef.current?.(point.selection);
       requestAnimationFrame(() => updateOverlayPosition());
       if (requestComment) requestCommentForTarget(point.selection);
       return point.selection;
     },
-    [finishNativeEditing, requestCommentForTarget, updateOverlayPosition],
+    [
+      finishNativeEditing,
+      replaceExplicitSelectionIntent,
+      requestCommentForTarget,
+      updateOverlayPosition,
+    ],
   );
 
   const selectTarget = useCallback(
@@ -6600,14 +6954,48 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         reveal?: boolean;
         showToolbar?: boolean;
         visualHint?: HtmlCanvasRuntimeVisualHint | null;
+        fromQueuedCommand?: boolean;
       } = {},
     ): HtmlCanvasSelection | null => {
-      pendingFrameRestoreEpochRef.current += 1;
       if (lockedRef.current) return null;
-      const documentNode = iframeRef.current?.contentDocument;
-      const sourceIndex = sourceIndexRef.current;
+      let documentNode = iframeRef.current?.contentDocument;
+      let sourceIndex = sourceIndexRef.current;
       if (!documentNode || !sourceIndex) return null;
       const sourceTarget = target.commentAnchor ?? target;
+      const active = activeNativeEditRef.current;
+      if (active && !nativeEditAuthorityIsCurrent(active)) {
+        finishNativeEditing(false, "manual");
+        return active.target;
+      }
+      if (
+        active
+        && !options.fromQueuedCommand
+        && deferNativeCommandRef.current(
+          "target-switch",
+          () => selectTarget(target, {
+            ...options,
+            fromQueuedCommand: true,
+          }),
+          { targetId: sourceTarget.elementId ?? sourceTarget.id },
+          { authority: "user-explicit" },
+        )
+      ) return active.target;
+      if (active) {
+        const committed = finishNativeEditing(true, "manual");
+        if (!committed.ok) return active.target;
+        if (committed.frameReloading) {
+          replaceExplicitSelectionIntent(
+            target,
+            Boolean(options.showToolbar),
+            { forceHandoff: true },
+          );
+          return target;
+        }
+      }
+      documentNode = iframeRef.current?.contentDocument;
+      sourceIndex = sourceIndexRef.current;
+      if (!documentNode || !sourceIndex) return null;
+      pendingFrameRestoreEpochRef.current += 1;
       activeTextRangeRef.current = null;
       setHasTextRange(false);
       setToolbarVisible(Boolean(options.showToolbar));
@@ -6623,6 +7011,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
               ...sourceTarget,
               resolution: resolution.resolution as HtmlCanvasTargetResolution,
             };
+            replaceExplicitSelectionIntent(unresolved, Boolean(options.showToolbar));
             setSelection(unresolved);
             onSelectRef.current?.(unresolved);
             return unresolved;
@@ -6649,6 +7038,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
             ...sourceTarget,
             resolution: resolution.resolution as HtmlCanvasTargetResolution,
           };
+          replaceExplicitSelectionIntent(unresolved, Boolean(options.showToolbar));
           selectedSourceSelectionRef.current = unresolved;
           setSelection(unresolved);
           onSelectRef.current?.(unresolved);
@@ -6738,6 +7128,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         const sourceSelection = visualHint
           ? { ...selectedValue, visualHint }
           : selectedValue;
+        replaceExplicitSelectionIntent(sourceSelection, Boolean(options.showToolbar));
         selectedElementRef.current?.removeAttribute("data-html-canvas-selected");
         selectedElementRef.current?.removeAttribute(GLOBAL_SELECTION_ATTRIBUTE);
         selectedElementRef.current = element;
@@ -6783,6 +7174,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     [
       observeSelectedElement,
       currentRuntimeSourceProof,
+      finishNativeEditing,
+      nativeEditAuthorityIsCurrent,
+      replaceExplicitSelectionIntent,
       reportBlockedEdit,
       selectElement,
       selectInsertionPoint,
@@ -8135,6 +8529,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         runtimeFrame ? "runtime-loaded" : "static-complete",
       );
       fencedDocumentCleanupRef.current();
+      if (
+        pendingNativeEditFrameReloadRef.current?.sourceSha256
+        === sourceIndexRef.current?.sourceSha256
+      ) pendingNativeEditFrameReloadRef.current = null;
       if (!runtimeFrame) {
         // A source reload may end in a verified static frame when author
         // preparation fails. Retire the previous frame's read-only fallback
@@ -8279,15 +8677,249 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       selectResolvedTarget(resolvedTarget);
     };
 
+    const enterNativeTextHost = (
+      hostElement: HTMLElement,
+      caretPoint: NativeEditCaretPoint | undefined,
+      {
+        fromDeferred = false,
+        selectionIntentEpoch,
+      }: {
+        fromDeferred?: boolean;
+        selectionIntentEpoch?: number;
+      } = {},
+    ): NativeEditEntryResult => {
+      const hostId = sourceElementId(hostElement);
+      const active = activeNativeEditRef.current;
+      const entrySourceIndex = sourceIndexRef.current;
+      if (!hostId || !entrySourceIndex?.byStemmioId.has(hostId)) {
+        return "not-entered";
+      }
+      const requestedSelection = selectionForElement(
+        hostElement,
+        entrySourceIndex,
+        undefined,
+        undefined,
+        "part",
+      );
+      if (active && !nativeEditAuthorityIsCurrent(active)) {
+        finishNativeEditing(false, "manual");
+        return "not-entered";
+      }
+      if (
+        active
+        && active.rootElement === hostElement
+      ) {
+        // Let Chromium keep the word Selection produced by a second double
+        // click inside the already leased host. Rebuilding the controller here
+        // would collapse that Selection back to the activation caret.
+        return "entered";
+      }
+      const handoffPhase = containerRef.current?.getAttribute("data-runtime-handoff");
+      const targetsRetiringFrame = Boolean(
+        hostElement.ownerDocument !== iframeRef.current?.contentDocument
+        || pendingNativeEditFrameReloadRef.current
+      );
+      if (
+        !active
+        && !fromDeferred
+        && targetsRetiringFrame
+        && (
+          runtimeCandidateRef.current
+          || runtimePromotionRef.current
+          || runtimeRefreshPendingRef.current
+          || activeFrameConnectionPendingRef.current
+          || handoffPhase === "preparing"
+          || handoffPhase === "positioning"
+        )
+      ) {
+        return replaceNativeEditIntent(requestedSelection) !== null
+          ? "deferred"
+          : "not-entered";
+      }
+      if (active?.session.isComposing() && !fromDeferred) {
+        const intentDocument = hostElement.ownerDocument;
+        const deferred = deferNativeCommandRef.current(
+          "target-switch-edit",
+          () => {
+            const currentDocument = iframeRef.current?.contentDocument;
+            const currentIndex = sourceIndexRef.current;
+            const currentElement = currentDocument && currentIndex
+              ? uniqueSourceElement(currentDocument, hostId)
+              : null;
+            const currentHost = currentElement && currentIndex
+              ? nativeEditHostForElement(currentElement, currentIndex)
+              : null;
+            if (!currentHost || sourceElementId(currentHost) !== hostId) return;
+            enterNativeTextHost(
+              currentHost,
+              currentDocument === intentDocument ? caretPoint : undefined,
+              { fromDeferred: true },
+            );
+          },
+          { targetId: hostId },
+          { authority: "user-explicit" },
+        );
+        return deferred ? "deferred" : "not-entered";
+      }
+      if (active) {
+        const continuationEpoch = replaceNativeEditIntent(requestedSelection);
+        const committed = finishNativeEditing(true, "manual");
+        if (!committed.ok) return "not-entered";
+        if (committed.frameReloading) {
+          return continuationEpoch !== null
+            ? "deferred"
+            : "not-entered";
+        }
+      }
+      if (
+        hostElement.ownerDocument !== iframeRef.current?.contentDocument
+        || !hostElement.isConnected
+      ) return "not-entered";
+      selectElement(hostElement, "part", {
+        preserveTextSelection: false,
+        showToolbar: true,
+        ...(selectionIntentEpoch !== undefined
+          ? { preserveSelectionIntentEpoch: selectionIntentEpoch }
+          : {}),
+      });
+      if (!startEditing(caretPoint)) return "not-entered";
+      const entered = activeNativeEditRef.current;
+      if (
+        entered?.rootElement === hostElement
+        && nativeEditAuthorityIsCurrent(entered)
+        && nativeEditFocusIsCurrent(entered)
+      ) {
+        const retainedIntent = postNativeEditSelectionIntentRef.current;
+        if (
+          selectionIntentEpoch !== undefined
+          && retainedIntent?.kind === "native-edit"
+          && retainedIntent.epoch === selectionIntentEpoch
+          && selectionIntentEpochRef.current === selectionIntentEpoch
+        ) postNativeEditSelectionIntentRef.current = null;
+        return "entered";
+      }
+      finishNativeEditing(false, "manual");
+      return "not-entered";
+    };
+
+    const selectSourceStructuralTarget = (
+      targetId: string,
+      level: HtmlCanvasSelectionLevel,
+      { fromDeferred = false }: { fromDeferred?: boolean } = {},
+    ): boolean => {
+      const active = activeNativeEditRef.current;
+      if (active && !nativeEditAuthorityIsCurrent(active)) {
+        finishNativeEditing(false, "manual");
+        return false;
+      }
+      if (active?.session.isComposing() && !fromDeferred) {
+        return deferNativeCommandRef.current(
+          "target-switch",
+          () => {
+            const currentDocument = iframeRef.current?.contentDocument;
+            const currentIndex = sourceIndexRef.current;
+            if (
+              !currentDocument
+              || !currentIndex
+              || !uniqueSourceElement(currentDocument, targetId)
+            ) return;
+            selectSourceStructuralTarget(targetId, level, { fromDeferred: true });
+          },
+          { targetId },
+          { authority: "user-explicit" },
+        );
+      }
+      const currentDocument = iframeRef.current?.contentDocument;
+      const currentIndex = sourceIndexRef.current;
+      const currentTarget = currentDocument && currentIndex
+        ? uniqueSourceElement(currentDocument, targetId)
+        : null;
+      if (!currentTarget) return false;
+      const requestedSelection = selectionForElement(
+        currentTarget,
+        currentIndex,
+        undefined,
+        undefined,
+        level,
+      );
+      if (active) {
+        const committed = finishNativeEditing(true, "manual");
+        if (!committed.ok) return false;
+        if (committed.frameReloading) {
+          replaceExplicitSelectionIntent(
+            requestedSelection,
+            true,
+            { forceHandoff: true },
+          );
+          return true;
+        }
+      }
+      const latestDocument = iframeRef.current?.contentDocument;
+      const latestIndex = sourceIndexRef.current;
+      const latestTarget = latestDocument && latestIndex
+        ? uniqueSourceElement(latestDocument, targetId)
+        : null;
+      if (!latestTarget) return false;
+      selectElement(latestTarget, level, {
+        fromQueuedCommand: true,
+        showToolbar: true,
+      });
+      return true;
+    };
+
+    const selectRuntimeStructuralTarget = (
+      resolvedTarget: ResolvedCanvasTarget,
+    ): boolean => {
+      const active = activeNativeEditRef.current;
+      if (active?.session.isComposing()) return false;
+      if (active) {
+        const committed = finishNativeEditing(true, "manual");
+        if (!committed.ok || committed.frameReloading) return false;
+      }
+      if (
+        !isAuthoritativeConnectedDocument()
+        || !resolvedTarget.operationTarget.isConnected
+        || resolvedTarget.operationTarget.ownerDocument !== iframeRef.current?.contentDocument
+      ) return false;
+      selectResolvedTarget(resolvedTarget, { fromQueuedCommand: true });
+      return true;
+    };
+
     const handleDoubleClick = (event: MouseEvent) => {
-      if (!isAuthoritativeConnectedDocument()) return;
+      const authoritativeDocument = isAuthoritativeConnectedDocument();
+      const handoffPhase = containerRef.current?.getAttribute("data-runtime-handoff");
+      const canCaptureDeferredIntent = Boolean(
+        !authoritativeDocument
+        && (
+          runtimeCandidateRef.current
+          || runtimePromotionRef.current
+          || handoffPhase === "preparing"
+          || handoffPhase === "positioning"
+        )
+      );
+      if (!authoritativeDocument && !canCaptureDeferredIntent) return;
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
       if (findNativeActionTarget(event.target)) event.preventDefault();
       const caretPoint = caretPointFromMouseEvent(event);
       const resolvedTarget = resolveTargetAtEvent(event);
       if (!resolvedTarget) return;
-      const target = resolvedTarget.targetElement;
+      const sourceIndex = sourceIndexRef.current;
+      const textTarget = !resolvedTarget.runtimeGenerated && sourceIndex
+        ? nativeEditTargetAtPoint(documentNode, caretPoint, sourceIndex)
+        : null;
+      const textHost = textTarget?.host ?? null;
+      const nativeCaretPoint = textTarget
+        ? { ...caretPoint, lineBreakId: textTarget.lineBreakId }
+        : undefined;
+      if (!authoritativeDocument) {
+        if (textHost && !lockedRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          enterNativeTextHost(textHost, nativeCaretPoint);
+        }
+        return;
+      }
       const dedicatedSurface = findDedicatedSourceSurfaceAtPoint(
         documentNode,
         caretPoint,
@@ -8296,7 +8928,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         event.preventDefault();
         event.stopPropagation();
         if (!lockedRef.current) {
-          selectResolvedTarget(resolvedTarget);
+          selectRuntimeStructuralTarget(resolvedTarget);
         }
         return;
       }
@@ -8313,44 +8945,33 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         event.stopPropagation();
         return;
       }
-      if (activeNativeEditRef.current?.rootElement.contains(event.target as Node)) return;
+      const activeNativeEdit = activeNativeEditRef.current;
+      if (
+        textHost
+        && activeNativeEdit?.rootElement === textHost
+        && nativeEditAuthorityIsCurrent(activeNativeEdit)
+      ) return;
       if (lockedRef.current) return;
       setSpacingMenuOpen(false);
       event.preventDefault();
       event.stopPropagation();
-      const editTarget = dedicatedSurface ?? target;
-      const sourceIndex = sourceIndexRef.current;
-      const islandHostElement = sourceIndex
-        ? nativeEditHostForElement(editTarget, sourceIndex)
-        : null;
-      if (!islandHostElement && !dedicatedSurface) {
-        const identifyingRange = identifyingTextRangeAtPoint(
-          documentNode,
-          editTarget,
-          caretPoint,
-        );
+      if (!textHost || dedicatedSurface) {
+        const structuralTargetId = sourceElementId(resolvedTarget.operationTarget);
         if (
-          identifyingRange
-          && identifyingRange.startContainer.isConnected
-          && identifyingRange.endContainer.isConnected
-        ) {
-          const selection = documentNode.getSelection();
-          selection?.removeAllRanges();
-          selection?.addRange(identifyingRange);
-          captureTextRange();
-        } else {
-          containerRef.current?.setAttribute(
-            "data-native-start-status",
-            "direct-text-hit-required",
+          activeNativeEdit
+          && resolvedTarget.operationTarget === activeNativeEdit.rootElement
+        ) return;
+        if (structuralTargetId) {
+          selectSourceStructuralTarget(
+            structuralTargetId,
+            resolvedTarget.selection.level,
           );
+        } else if (!activeNativeEdit) {
+          selectResolvedTarget(resolvedTarget);
         }
+        return;
       }
-      selectResolvedTarget(resolvedTarget, {
-        preserveTextSelection: Boolean(activeTextRangeRef.current),
-      });
-      if (dedicatedSurface) return;
-      const editingStarted = startEditing(caretPoint);
-      if (!editingStarted) selectResolvedTarget(resolvedTarget);
+      enterNativeTextHost(textHost, nativeCaretPoint);
     };
 
     let disabledButtonPointer:
@@ -8651,6 +9272,117 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
 
     const pendingSelection = pendingSelectionRef.current;
     const pendingToolbarVisible = pendingToolbarVisibleRef.current;
+    const currentPostEditIntent = postNativeEditSelectionIntentRef.current;
+    const handoffNativeEditIntent = isRuntimePromotion
+      ? promotedCandidate?.handoffContext.pendingNativeEditIntent ?? null
+      : null;
+    const pendingNativeEditIntent = currentPostEditIntent?.kind === "native-edit"
+      && currentPostEditIntent.epoch >= (
+        handoffNativeEditIntent?.epoch
+          ?? promotedCandidate?.handoffContext.selectionIntentEpoch
+          ?? -1
+      )
+      ? currentPostEditIntent
+      : handoffNativeEditIntent
+        && selectionIntentEpochRef.current === handoffNativeEditIntent.epoch
+        ? handoffNativeEditIntent
+        : null;
+    const retireAppliedPendingSelectionIntent = () => {
+      const intent = postNativeEditSelectionIntentRef.current;
+      const matchesPendingSelection = Boolean(
+        intent?.kind === "structural"
+        && (
+          (!pendingSelection && !intent.selection)
+          || (
+            pendingSelection?.id === intent.selection?.id
+            && pendingSelection?.elementId === intent.selection?.elementId
+          )
+        ),
+      );
+      if (
+        intent?.kind === "structural"
+        && intent.epoch === selectionIntentEpochRef.current
+        && matchesPendingSelection
+      ) postNativeEditSelectionIntentRef.current = null;
+    };
+    const replayPendingNativeEditIntent = (): boolean => {
+      const intent = pendingNativeEditIntent;
+      if (!intent) return false;
+      const retainedIntent = postNativeEditSelectionIntentRef.current;
+      const currentReceipt = lastSourceReceiptRef.current;
+      const currentIndex = sourceIndexRef.current;
+      const ownerDocument = iframe.ownerDocument;
+      const outerActiveElement = ownerDocument.activeElement;
+      const focusAllowed = Boolean(
+        intent?.focusPreference === "restore-native-focus"
+        && (
+          !outerActiveElement
+          || outerActiveElement === ownerDocument.body
+          || outerActiveElement === iframe
+        )
+      );
+      const retirementReason = retainedIntent?.kind !== "native-edit"
+          ? "superseded"
+          : retainedIntent.epoch !== intent.epoch
+            ? "epoch-replaced"
+            : selectionIntentEpochRef.current !== intent.epoch
+              ? "epoch-advanced"
+              : !isSourceReceipt(currentReceipt)
+                ? "receipt-missing"
+                : !sameSourceReceipt(currentReceipt, intent.receipt)
+                  ? "receipt-replaced"
+                  : currentReceipt.sourceSha256 !== intent.sourceSha256
+                    ? "receipt-source-changed"
+                    : currentReceipt.canvasGeneration !== intent.canvasGeneration
+                      ? "receipt-generation-changed"
+                      : currentIndex?.sourceSha256 !== intent.sourceSha256
+                        ? "projection-changed"
+                        : !focusAllowed
+                          ? "external-focus"
+                          : null;
+      if (retirementReason) {
+        if (retainedIntent === intent) {
+          postNativeEditSelectionIntentRef.current = null;
+          containerRef.current?.setAttribute(
+            "data-native-intent-status",
+            `retired-${retirementReason}`,
+          );
+        }
+        return false;
+      }
+      let target: HTMLElement | null = null;
+      if (currentIndex) {
+        try {
+          const resolution = resolveTargetRef(
+            currentIndex,
+            sourceTargetRefForSelection(intent.target),
+          );
+          const elementId = resolution.target?.type === "element"
+            ? String(resolution.target.stemmioId ?? "")
+            : "";
+          target = elementId ? uniqueSourceElement(documentNode, elementId) : null;
+        } catch {
+          target = null;
+        }
+      }
+      const host = target && currentIndex
+        ? nativeEditHostForElement(target, currentIndex)
+        : null;
+      if (!host) {
+        postNativeEditSelectionIntentRef.current = null;
+        containerRef.current?.setAttribute("data-native-intent-status", "target-missing");
+        return false;
+      }
+      const entered = enterNativeTextHost(host, undefined, {
+        fromDeferred: true,
+        selectionIntentEpoch: intent.epoch,
+      }) === "entered";
+      containerRef.current?.setAttribute(
+        "data-native-intent-status",
+        entered ? "entered" : "entry-failed",
+      );
+      return entered;
+    };
     const pendingViewport = pendingFrameViewportRef.current;
     const pendingSharedViewport = pendingSharedViewportRef.current;
     const pendingStaticAnchor = pendingStaticPresentationAnchorRef.current;
@@ -8711,12 +9443,15 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         && expectedFrameTokenRef.current === expectedToken
         && containerRef.current?.getAttribute("data-runtime-handoff") === "positioning"
       );
-      const restoreLogicalSelection = () => {
-        if (!pendingSelection || lockedRef.current) return;
-        selectTarget(pendingSelection, {
+      const restoreLogicalSelection = (): boolean => {
+        if (pendingNativeEditIntent) return true;
+        if (!pendingSelection) return true;
+        if (lockedRef.current) return false;
+        const restored = selectTarget(pendingSelection, {
           reveal: false,
           showToolbar: pendingToolbarVisible,
         });
+        return Boolean(restored);
       };
       const readingAnchorElement = () => runtimeSourceElementForStableId(
         documentNode,
@@ -8759,7 +9494,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           abortInFlightRuntimeCommitRef.current?.("superseded");
           return;
         }
-        restoreLogicalSelection();
+        const selectionRestored = restoreLogicalSelection();
         const ownerDocument = iframe.ownerDocument;
         const retiredIframe = candidate.retiredSlot?.slotId === "a"
           ? runtimeSlotARef.current
@@ -8782,6 +9517,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           // recovery intent before the promoted iframe can reclaim it.
           nativeEditRecoveryRef.current.cancel();
         }
+        if (selectionRestored) retireAppliedPendingSelectionIntent();
         // Keyboard focus follows the accepted Canvas slot, never the hidden
         // Candidate. Re-read outer focus after asynchronous positioning so a
         // newer comment/composer destination wins. The source-accepted native
@@ -8818,10 +9554,12 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         fencedDocumentCleanupRef.current();
         activeFrameConnectionPendingRef.current = false;
         finalizeRuntimePromotionRef.current(candidate);
-        completeNativeEditRecovery(
-          connectedFrameGeneration,
-          pendingSelection?.id ?? "",
-        );
+        if (!replayPendingNativeEditIntent()) {
+          completeNativeEditRecovery(
+            connectedFrameGeneration,
+            pendingSelection?.id ?? "",
+          );
+        }
       };
       const activateHandoff = () => {
         if (window.stemmioRuntime?.diagnostics?.e2eRuntimeCommitHooks === true) {
@@ -8962,21 +9700,26 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           String(documentNode.querySelectorAll("[data-stemmio-edit-runtime-bootstrap]").length),
         );
       }
-      if (pendingSelection && !lockedRef.current) {
-        selectTarget(pendingSelection, {
+      let selectionRestored = Boolean(pendingNativeEditIntent) || !pendingSelection;
+      if (pendingSelection && !pendingNativeEditIntent && !lockedRef.current) {
+        selectionRestored = Boolean(selectTarget(pendingSelection, {
           reveal: false,
           showToolbar: pendingToolbarVisible,
-        });
+        }));
       } else {
         updateOverlayPosition();
       }
+      let settlementAccepted = !connectedRuntimeFrameIsCurrent;
       if (
         connectedRuntimeFrameIsCurrent
         && connectedRuntimeFrame
         && runtimeActivationUsable(connectedRuntimeFrame)
       ) {
-        if (!runtimeReadyReportedRef.current.has(connectedRuntimeFrame)) {
+        if (runtimeReadyReportedRef.current.has(connectedRuntimeFrame)) {
+          settlementAccepted = true;
+        } else {
           const settlement = completeRuntimeAttempt(connectedRuntimeFrame, "ready");
+          settlementAccepted = settlement.accepted;
           if (settlement.accepted) {
             runtimeReadyReportedRef.current.add(connectedRuntimeFrame);
           }
@@ -8987,10 +9730,17 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ) {
         activeFrameConnectionPendingRef.current = false;
       }
-      completeNativeEditRecovery(
-        connectedFrameGeneration,
-        pendingSelection?.id ?? "",
-      );
+      const explicitNativeEditRestored = settlementAccepted
+        && replayPendingNativeEditIntent();
+      if (!explicitNativeEditRestored) {
+        completeNativeEditRecovery(
+          connectedFrameGeneration,
+          pendingSelection?.id ?? "",
+        );
+      }
+      if (settlementAccepted && selectionRestored) {
+        retireAppliedPendingSelectionIntent();
+      }
     };
     if (isRuntimePromotion && promotedCandidate) {
       positionRuntimeHandoff(promotedCandidate);
@@ -9008,9 +9758,14 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     executePagePresentationAction,
     finishNativeEditing,
     moveSelected,
+    nativeEditAuthorityIsCurrent,
+    nativeEditFocusIsCurrent,
     publishRenderedProjectionIdentity,
     publishRuntimeDegradation,
+    replaceExplicitSelectionIntent,
+    replaceNativeEditIntent,
     resolvePagePresentationAction,
+    selectElement,
     selectResolvedTarget,
     selectTarget,
     selectedElementHasSourceMutationAuthority,
@@ -9722,6 +10477,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         iframeRef.current,
         selectedVisualTargetElement,
         Boolean(selection && isPageRootSelection(selection)),
+        isEditing ? 3 : 0,
       );
   const showHoverOutline = Boolean(
     !runtimeHandoffPositioning
