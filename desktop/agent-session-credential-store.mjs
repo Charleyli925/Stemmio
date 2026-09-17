@@ -192,7 +192,6 @@ export function createAgentSessionCredentialStore({
     const timer = setTimeout(() => reject(Object.assign(new Error("Credential encryption timed out."), {
       code: "AGENT_CREDENTIAL_STORE_TIMEOUT",
     })), boundedEncryptionTimeoutMs);
-    timer.unref?.();
     Promise.resolve()
       .then(operation)
       .then(resolve, reject)
