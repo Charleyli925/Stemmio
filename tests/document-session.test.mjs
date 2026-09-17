@@ -11,6 +11,20 @@ function sha256(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function acceptQueuedEdit(session, html, options = {}, write = {}) {
+  const accepted = session.acceptEdit({ html, ...options, write });
+  assert.equal(accepted.accepted, true);
+  assert.ok(accepted.write);
+  return accepted;
+}
+
+function acceptPreviewEdit(session, html, options = {}) {
+  const accepted = session.acceptEdit({ html, ...options, write: null });
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.write, null);
+  return accepted;
+}
+
 const RECEIPT_CONTEXT = Object.freeze({
   epoch: 7,
   projectId: "project_receipt",
@@ -25,17 +39,181 @@ const RECEIPT_CONTEXT = Object.freeze({
   sessionEpoch: 7,
 });
 
+function cloneReceipt(receipt) {
+  return {
+    ...receipt,
+    context: receipt.context ? { ...receipt.context } : null,
+  };
+}
+
+test("source receipt guard validates the original value without coercion", () => {
+  const html = "<main>strict receipt</main>";
+  const session = new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  });
+  const receipt = session.sourceReceipt;
+  assert.equal(isSourceReceipt(receipt), true);
+
+  for (const [field, invalid] of [
+    ["sessionIncarnation", String(receipt.sessionIncarnation)],
+    ["sequence", String(receipt.sequence)],
+    ["operationId", 123],
+    ["editRevision", String(receipt.editRevision)],
+    ["canvasGeneration", String(receipt.canvasGeneration)],
+    ["sourceSha256", 123],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...receipt, [field]: invalid }),
+      false,
+      `${field} must keep its declared runtime type`,
+    );
+  }
+
+  for (const [field, invalid] of [
+    ["epoch", String(receipt.context.epoch)],
+    ["projectId", 123],
+    ["documentId", 123],
+    ["sourcePath", 123],
+    ["sessionEpoch", String(receipt.context.sessionEpoch)],
+  ]) {
+    const context = { ...receipt.context, [field]: invalid };
+    const projected = field === "epoch" || field === "sessionEpoch"
+      ? { [field]: invalid }
+      : {};
+    assert.equal(
+      isSourceReceipt({ ...receipt, ...projected, context }),
+      false,
+      `context.${field} must keep its declared runtime type`,
+    );
+  }
+});
+
+test("source receipt guard rejects invalid numbers, missing fields and structures", () => {
+  const html = "<main>receipt matrix</main>";
+  const receipt = new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt;
+
+  for (const [field, invalid] of [
+    ["sessionIncarnation", 0],
+    ["sequence", Number.NaN],
+    ["sequence", Number.POSITIVE_INFINITY],
+    ["sequence", 1.5],
+    ["sequence", Number.MAX_SAFE_INTEGER + 1],
+    ["editRevision", -1],
+    ["canvasGeneration", 0.5],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...receipt, [field]: invalid }),
+      false,
+      `${field} must satisfy its integer boundary`,
+    );
+  }
+
+  for (const field of [
+    "sessionIncarnation",
+    "sequence",
+    "origin",
+    "operationId",
+    "editRevision",
+    "canvasGeneration",
+    "sourceSha256",
+    "context",
+    "epoch",
+    "projectId",
+    "documentId",
+    "sourcePath",
+    "sessionEpoch",
+  ]) {
+    const incomplete = cloneReceipt(receipt);
+    delete incomplete[field];
+    assert.equal(isSourceReceipt(incomplete), false, `${field} is required`);
+  }
+
+  assert.equal(isSourceReceipt([]), false);
+  assert.equal(isSourceReceipt({ ...receipt, context: [] }), false);
+  assert.equal(isSourceReceipt({ ...receipt, origin: "preview" }), false);
+  assert.equal(isSourceReceipt({ ...receipt, operationId: "" }), false);
+  assert.equal(isSourceReceipt({ ...receipt, sourceSha256: "sha256:not-a-hash" }), false);
+  assert.equal(isSourceReceipt({
+    ...receipt,
+    context: { ...receipt.context, targetKind: "preview" },
+  }), false);
+});
+
+test("source receipt guard keeps context projections exact and accepts legal boundaries", () => {
+  const html = "<main>receipt projection</main>";
+  const digest = sha256(html);
+  const initialReceipt = new DocumentSession({ html }).sourceReceipt;
+  assert.equal(isSourceReceipt(initialReceipt), true, "an initial empty-hash receipt is legal");
+
+  const registeredContext = {
+    epoch: 3,
+    projectId: "project_registered",
+    documentId: "document_registered",
+    sourcePath: "/tmp/registered.html",
+  };
+  const registeredReceipt = new DocumentSession({
+    html,
+    persistedSourceSha256: digest,
+    context: registeredContext,
+  }).sourceReceipt;
+  assert.equal(isSourceReceipt(registeredReceipt), true, "a registered source receipt is legal");
+
+  const managedReceipt = new DocumentSession({
+    html,
+    persistedSourceSha256: digest,
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt;
+  assert.equal(isSourceReceipt(managedReceipt), true, "a complete managed receipt is legal");
+  for (const [field, invalid] of [
+    ["epoch", managedReceipt.epoch + 1],
+    ["projectId", "other-project"],
+    ["documentId", "other-document"],
+    ["sourcePath", "/tmp/other.html"],
+    ["sessionEpoch", managedReceipt.sessionEpoch + 1],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...managedReceipt, [field]: invalid }),
+      false,
+      `${field} must match the nested context projection`,
+    );
+  }
+  assert.equal(isSourceReceipt({ ...initialReceipt, epoch: 0 }), false);
+});
+
+test("source receipt guard has no input side effects", () => {
+  const html = "<main>immutable receipt</main>";
+  const receipt = cloneReceipt(new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt);
+  const before = structuredClone(receipt);
+
+  assert.equal(isSourceReceipt(receipt), true);
+  assert.deepEqual(receipt, before);
+});
+
 test("document session owns source bytes, revisions and pending write", () => {
   const session = new DocumentSession({
     html: "<main>one</main>",
     persistedSourceSha256: "sha256:one",
   });
-  const revision = session.beginEdit("<main>two</main>");
-  const write = { revision, html: session.html };
-  session.setPendingWrite(write);
-  session.setPersistence({ state: "queued", error: "" });
+  const observed = [];
+  session.setObserver((snapshot) => observed.push(snapshot));
+  const accepted = acceptQueuedEdit(session, "<main>two</main>");
+  const { revision, write } = accepted;
 
   assert.equal(revision, 1);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].html, "<main>two</main>");
+  assert.equal(observed[0].hasPendingWrite, true);
+  assert.equal(observed[0].persistState, "queued");
   assert.equal(session.html, "<main>two</main>");
   assert.equal(session.pendingWrite, write);
   assert.equal(session.snapshot.persistState, "queued");
@@ -86,9 +264,13 @@ test("canvas recovery advances only the disposable render generation", () => {
 
 test("document conflict rejects later edit revisions until reset", () => {
   const session = new DocumentSession({ html: "one" });
-  session.beginEdit("two");
-  session.setPersistence({ state: "conflict", error: "changed" });
-  assert.equal(session.beginEdit("three"), 1);
+  acceptPreviewEdit(session, "two");
+  session.recordPersistenceFailure({ conflict: true, error: "changed" });
+  assert.deepEqual(session.acceptEdit({ html: "three", write: null }), {
+    accepted: false,
+    revision: 1,
+    write: null,
+  });
   assert.equal(session.html, "two");
 
   session.reset({ html: "external", persistedSourceSha256: "sha256:external" });
@@ -102,38 +284,432 @@ test("document session clears only the matching flush promise", async () => {
   const session = new DocumentSession();
   const first = Promise.resolve(true);
   const second = Promise.resolve(false);
-  session.setFlushPromise(first);
-  assert.equal(session.clearFlushPromise(second), false);
+  session.beginFlush(first);
+  assert.equal(session.finishFlush(second), false);
   assert.equal(session.flushPromise, first);
-  assert.equal(session.clearFlushPromise(first), true);
+  assert.equal(session.finishFlush(first), true);
   assert.equal(session.flushPromise, null);
 });
 
 test("document snapshot exposes only derived write and flush state", () => {
   const session = new DocumentSession({ html: "<main>source</main>" });
-  const write = { revision: 1, html: session.html };
-  session.setPendingWrite(write);
-  session.setPersistence({ state: "queued" });
+  const { write } = acceptQueuedEdit(session, "<main>edited</main>");
   assert.equal(session.snapshot.hasPendingWrite, true);
   assert.equal(session.snapshot.isFlushing, false);
 
   const flush = Promise.resolve(true);
-  session.setFlushPromise(flush);
+  session.beginFlush(flush);
   assert.equal(session.snapshot.hasPendingWrite, true);
   assert.equal(session.snapshot.isFlushing, true);
 
-  assert.equal(session.clearFlushPromise(flush), true);
-  session.takePendingWrite();
-  session.setPersistence({ state: "idle" });
+  assert.equal(session.finishFlush(flush), true);
+  assert.equal(session.beginWrite(), write);
+  assert.equal(session.markPersistenceIdle(), false);
   assert.equal(session.snapshot.hasPendingWrite, false);
   assert.equal(session.snapshot.isFlushing, false);
+  assert.equal(session.persistState, "writing");
+});
+
+test("an old write receipt advances durable evidence without clearing a newer edit", () => {
+  const firstHtml = "<main>first edit</main>";
+  const secondHtml = "<main>second edit</main>";
+  const session = new DocumentSession({
+    html: "<main>source</main>",
+    persistedSourceSha256: sha256("<main>source</main>"),
+  });
+  const firstAccepted = acceptQueuedEdit(session, firstHtml, {
+    sourceSha256: sha256(firstHtml),
+  });
+  const firstRevision = firstAccepted.revision;
+  const firstWrite = firstAccepted.write;
+  assert.equal(session.beginWrite(), firstWrite);
+
+  const secondAccepted = acceptQueuedEdit(session, secondHtml, {
+    sourceSha256: sha256(secondHtml),
+  });
+  const secondWrite = secondAccepted.write;
+  const confirmation = session.acceptWriteConfirmation({
+    write: firstWrite,
+    html: firstHtml,
+    sourceSha256: sha256(firstHtml),
+    persistedRevision: firstRevision,
+  });
+
+  assert.deepEqual(confirmation, {
+    accepted: true,
+    completesCurrentDocument: false,
+    authorityChanged: false,
+  });
+  assert.equal(session.html, secondHtml);
+  assert.equal(session.workingHtmlSha256, sha256(secondHtml));
+  assert.equal(session.persistedSourceSha256, sha256(firstHtml));
+  assert.equal(session.lastPersistedRevision, firstRevision);
+  assert.equal(session.pendingWrite, secondWrite);
+  assert.equal(session.persistState, "queued");
+});
+
+test("write confirmation publishes current bytes and hashes atomically", () => {
+  const html = "<main>saved atomically</main>";
+  const digest = sha256(html);
+  const session = new DocumentSession({
+    html: "<main>source</main>",
+    persistedSourceSha256: sha256("<main>source</main>"),
+  });
+  const { write } = acceptQueuedEdit(session, html, { sourceSha256: digest });
+  session.beginWrite();
+  const observed = [];
+  session.setObserver((snapshot) => observed.push(snapshot));
+
+  const result = session.acceptWriteConfirmation({
+    write,
+    html,
+    sourceSha256: digest,
+    persistedRevision: write.revision,
+  });
+
+  assert.equal(result.completesCurrentDocument, true);
+  assert.equal(result.authorityChanged, false);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].html, html);
+  assert.equal(observed[0].workingHtmlSha256, digest);
+  assert.equal(observed[0].persistedSourceSha256, digest);
+  assert.equal(observed[0].persistState, "idle");
+});
+
+test("a routed write confirmation keeps newer work and publishes one new authority", () => {
+  const initialHtml = "<main>source</main>";
+  const firstHtml = "<main>first</main>";
+  const secondHtml = "<main>second</main>";
+  const nextContext = {
+    ...RECEIPT_CONTEXT,
+    sourcePath: "/tmp/moved-document.html",
+    exactSourcePath: "/tmp/moved-document.html",
+    sourceSha256: sha256(firstHtml),
+  };
+  const session = new DocumentSession({
+    html: initialHtml,
+    persistedSourceSha256: sha256(initialHtml),
+    context: RECEIPT_CONTEXT,
+  });
+  const first = acceptQueuedEdit(
+    session,
+    firstHtml,
+    { context: RECEIPT_CONTEXT, sourceSha256: sha256(firstHtml) },
+    RECEIPT_CONTEXT,
+  ).write;
+  assert.equal(session.beginWrite(), first);
+  const second = acceptQueuedEdit(
+    session,
+    secondHtml,
+    { context: RECEIPT_CONTEXT, sourceSha256: sha256(secondHtml) },
+    RECEIPT_CONTEXT,
+  ).write;
+  const observed = [];
+  session.setObserver((snapshot) => observed.push(snapshot));
+  const rebased = {
+    ...second,
+    ...nextContext,
+    expectedSourceSha256: sha256(firstHtml),
+  };
+
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: first,
+    html: firstHtml,
+    sourceSha256: sha256(firstHtml),
+    persistedRevision: first.revision,
+    context: nextContext,
+    routingChanged: true,
+    operationId: "route-confirmation-without-pending-rebase",
+  }), {
+    accepted: false,
+    completesCurrentDocument: false,
+    authorityChanged: false,
+  });
+  assert.equal(observed.length, 0);
+  assert.equal(session.pendingWrite, second);
+  assert.equal(session.beginWrite(), null, "the original active write keeps execution authority");
+
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: first,
+    html: firstHtml,
+    sourceSha256: sha256(firstHtml),
+    persistedRevision: first.revision,
+    context: nextContext,
+    routingChanged: true,
+    operationId: "route-confirmation",
+    nextWrite: rebased,
+  }), {
+    accepted: true,
+    completesCurrentDocument: false,
+    authorityChanged: true,
+  });
+
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].html, secondHtml);
+  assert.equal(observed[0].workingHtmlSha256, sha256(secondHtml));
+  assert.equal(observed[0].persistedSourceSha256, sha256(firstHtml));
+  assert.equal(observed[0].persistState, "queued");
+  assert.equal(observed[0].sourceReceipt.context.sourcePath, nextContext.sourcePath);
+  assert.equal(session.pendingWrite, rebased);
+  assert.equal(session.beginWrite(), rebased);
+});
+
+test("an old flush completion cannot clear a newer flush owner", () => {
+  const session = new DocumentSession();
+  const first = Promise.resolve("first");
+  const second = Promise.resolve("second");
+  session.beginFlush(first);
+  assert.equal(session.finishFlush(first), true);
+  session.beginFlush(second);
+
+  assert.equal(session.finishFlush(first), false);
+  assert.equal(session.flushPromise, second);
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
+test("a reset lets a new flush start without granting the old finally block authority", () => {
+  const session = new DocumentSession({ html: "<main>old</main>" });
+  const oldFlush = Promise.resolve("old");
+  const newFlush = Promise.resolve("new");
+  session.beginFlush(oldFlush);
+  session.reset({ html: "<main>new</main>" });
+  assert.equal(session.beginFlush(newFlush), newFlush);
+
+  assert.equal(session.finishFlush(oldFlush), false);
+  assert.equal(session.flushPromise, newFlush);
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
+test("write recovery and rebase keep the newest owned operation", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = acceptQueuedEdit(
+    session,
+    "<main>one</main>",
+    {},
+    { operationId: "write-1" },
+  ).write;
+  session.beginWrite();
+  const second = acceptQueuedEdit(
+    session,
+    "<main>two</main>",
+    {},
+    { operationId: "write-2" },
+  ).write;
+  const rebased = { ...second, operationId: "write-2-rebased" };
+
+  assert.equal(session.restoreWrite(first), second);
+  assert.equal(session.pendingWrite, second);
+  assert.equal(session.rebaseQueuedWrite({
+    expectedWrite: first,
+    nextWrite: rebased,
+  }), false);
+  assert.equal(session.rebaseQueuedWrite({
+    expectedWrite: second,
+    nextWrite: rebased,
+  }), true);
+  assert.equal(session.recordPersistenceFailure({
+    error: "write result unknown",
+    write: first,
+  }), false);
+  assert.equal(session.pendingWrite, rebased);
+  assert.equal(session.persistState, "queued");
+  assert.equal(session.persistError, "");
+});
+
+test("an active write keeps execution authority when beginWrite is called again", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = acceptQueuedEdit(session, "<main>one</main>").write;
+  assert.equal(session.beginWrite(), first);
+  const second = acceptQueuedEdit(session, "<main>two</main>").write;
+
+  assert.equal(session.beginWrite(), null);
+  assert.equal(session.pendingWrite, second);
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: first,
+    html: first.html,
+    sourceSha256: sha256(first.html),
+    persistedRevision: first.revision,
+  }), { accepted: true, completesCurrentDocument: false, authorityChanged: false });
+  assert.equal(session.beginWrite(), second);
+});
+
+test("a late restore cannot clear a newer active write", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = acceptQueuedEdit(session, "<main>one</main>").write;
+  session.beginWrite();
+  assert.equal(session.finishWrite(first), true);
+  const second = acceptQueuedEdit(session, "<main>two</main>").write;
+  assert.equal(session.beginWrite(), second);
+
+  assert.equal(session.restoreWrite(first), false);
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: second,
+    html: second.html,
+    sourceSha256: sha256(second.html),
+    persistedRevision: second.revision,
+  }), { accepted: true, completesCurrentDocument: true, authorityChanged: true });
+});
+
+test("write confirmation accepts only the exact active bytes", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = acceptQueuedEdit(session, "<main>accepted</main>").write;
+  session.beginWrite();
+
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write,
+    html: "<main>different</main>",
+    sourceSha256: sha256(write.html),
+    persistedRevision: write.revision,
+  }), { accepted: false, completesCurrentDocument: false, authorityChanged: false });
+  assert.equal(session.markPersistenceIdle(), false);
+  assert.equal(session.persistState, "writing");
+});
+
+test("reset fences old write acknowledgements and operation failures", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const oldReceipt = session.sourceReceipt;
+  const oldWrite = acceptQueuedEdit(session, "<main>old edit</main>").write;
+  session.beginWrite();
+  const reset = session.reset({
+    html: "<main>new session</main>",
+    persistedSourceSha256: sha256("<main>new session</main>"),
+  });
+
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: oldWrite,
+    html: oldWrite.html,
+    sourceSha256: sha256(oldWrite.html),
+    persistedRevision: oldWrite.revision,
+  }), { accepted: false, completesCurrentDocument: false, authorityChanged: false });
+  assert.equal(session.recordPersistenceFailure({
+    error: "late failure",
+    receipt: oldReceipt,
+  }), false);
+  assert.equal(session.snapshot, reset);
+  assert.equal(session.html, "<main>new session</main>");
+  assert.equal(session.persistState, "idle");
+});
+
+test("publishing new authority fences an old active write until it is explicitly rebased", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const oldWrite = acceptQueuedEdit(session, "<main>old edit</main>").write;
+  session.beginWrite();
+  const newHtml = "<main>new authority</main>";
+  const published = session.publishAuthority({
+    html: newHtml,
+    persistedSourceSha256: sha256(newHtml),
+    workingHtmlSha256: sha256(newHtml),
+    editRevision: 0,
+    lastPersistedRevision: 0,
+    persistState: "idle",
+  });
+
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: oldWrite,
+    html: oldWrite.html,
+    sourceSha256: sha256(oldWrite.html),
+    persistedRevision: oldWrite.revision,
+  }), { accepted: false, completesCurrentDocument: false, authorityChanged: false });
+  assert.equal(session.recordPersistenceFailure({
+    error: "late failure",
+    write: oldWrite,
+  }), false);
+  assert.equal(session.snapshot, published);
+  assert.equal(session.finishWrite(oldWrite), true);
+  assert.equal(session.html, newHtml);
+  assert.equal(session.persistState, "idle");
+});
+
+test("source persistence can be idle while recovery retirement still owns the flush", () => {
+  const html = "<main>saved while retiring recovery</main>";
+  const digest = sha256(html);
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = acceptQueuedEdit(session, html).write;
+  session.beginWrite();
+  session.acceptWriteConfirmation({
+    write,
+    html,
+    sourceSha256: digest,
+    persistedRevision: write.revision,
+  });
+  const retirement = Promise.resolve(true);
+  session.beginFlush(retirement);
+
+  assert.equal(session.markPersistenceIdle(), true);
+  assert.equal(session.persistState, "idle");
+  assert.equal(session.snapshot.isFlushing, true);
+});
+
+test("pending-write restoration cannot overwrite accepted bytes or owned work", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const write = acceptQueuedEdit(session, "<main>accepted</main>").write;
+  assert.throws(
+    () => session.restorePendingWrite({ ...write, html: "<main>different</main>" }),
+    /must match the currently accepted document state/u,
+  );
+  assert.throws(
+    () => session.restorePendingWrite({ ...write }),
+    /cannot replace owned write work/u,
+  );
+  assert.equal(session.pendingWrite, write);
+});
+
+test("write rebase keeps the document owner while permitting a verified route and hash refresh", () => {
+  const session = new DocumentSession({
+    html: "<main>one</main>",
+    persistedSourceSha256: RECEIPT_CONTEXT.sourceSha256,
+    context: RECEIPT_CONTEXT,
+  });
+  const html = "<main>two</main>";
+  const write = acceptQueuedEdit(
+    session,
+    html,
+    { context: RECEIPT_CONTEXT },
+    RECEIPT_CONTEXT,
+  ).write;
+  assert.throws(
+    () => session.rebaseQueuedWrite({
+      expectedWrite: write,
+      nextWrite: { ...write, projectId: "project_other" },
+    }),
+    /must keep its accepted bytes and document owner/u,
+  );
+  const rebased = {
+    ...write,
+    exactSourcePath: "/private/tmp/document.html",
+    sourceSha256: sha256(html),
+    expectedSourceSha256: sha256(html),
+  };
+  assert.equal(session.rebaseQueuedWrite({ expectedWrite: write, nextWrite: rebased }), true);
+  assert.equal(session.pendingWrite, rebased);
+  assert.equal(session.beginWrite(), rebased);
+});
+
+test("document snapshot contract remains read-only and shape-stable", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  assert.deepEqual(Object.keys(session.snapshot).sort(), [
+    "canvasAuthority",
+    "canvasGeneration",
+    "editRevision",
+    "hasPendingWrite",
+    "html",
+    "isFlushing",
+    "lastPersistedRevision",
+    "persistError",
+    "persistState",
+    "persistedSourceSha256",
+    "sourceReceipt",
+    "workingHtmlSha256",
+  ]);
+  assert.equal(Object.isFrozen(session.snapshot), true);
 });
 
 test("a stale canvas hash does not block a boundary whose exact bytes were safely persisted", async () => {
   const html = "<main>saved</main>";
   const sourceSha256 = sha256(html);
-  const session = new DocumentSession({ html, persistedSourceSha256: sourceSha256 });
-  session.update({
+  const session = new DocumentSession({
+    html,
+    persistedSourceSha256: sourceSha256,
     editRevision: 4,
     lastPersistedRevision: 6,
   });
@@ -167,8 +743,9 @@ test("a stale persisted projection is silently repaired from authoritative sourc
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 3,
+    lastPersistedRevision: 2,
   });
-  session.update({ editRevision: 3, lastPersistedRevision: 2 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -200,8 +777,9 @@ test("only confirmed authoritative divergence becomes a source conflict", async 
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -227,8 +805,9 @@ test("a transient authoritative read failure stays recoverable and does not inve
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -252,8 +831,9 @@ test("invalid authoritative content integrity is confirmed before recovery is es
   const session = new DocumentSession({
     html,
     persistedSourceSha256: sha256("<main>old</main>"),
+    editRevision: 2,
+    lastPersistedRevision: 1,
   });
-  session.update({ editRevision: 2, lastPersistedRevision: 1 });
 
   const result = await session.reconcilePersistedBoundary({
     frozenHtml: html,
@@ -304,7 +884,7 @@ test("source publication puts the new canvas generation into pending until an ex
   });
 });
 
-test("beginEdit pending the current canvas generation without rebuilding it", () => {
+test("accepted edits pending the current canvas generation without rebuilding it", () => {
   const html = "<main>one</main>";
   const digest = sha256(html);
   const session = new DocumentSession({ html, persistedSourceSha256: digest });
@@ -316,7 +896,7 @@ test("beginEdit pending the current canvas generation without rebuilding it", ()
 
   const edited = "<main>two</main>";
   const editedDigest = sha256(edited);
-  session.beginEdit(edited, { sourceSha256: editedDigest });
+  acceptPreviewEdit(session, edited, { sourceSha256: editedDigest });
   assert.equal(session.canvasGeneration, 1);
   assert.equal(session.canvasAuthority.status, "pending");
   assert.equal(session.canvasAuthority.generation, 1);
@@ -342,7 +922,7 @@ test("a receipt with no working hash cannot self-certify a Canvas", () => {
   const edited = "<main>two</main>";
   const editedDigest = sha256(edited);
   const session = new DocumentSession({ html, persistedSourceSha256: digest });
-  session.beginEdit(edited);
+  acceptPreviewEdit(session, edited);
   assert.equal(session.confirmWorkingHtml({
     revision: 1,
     htmlSha256: editedDigest,
@@ -438,14 +1018,14 @@ test("local and history receipts keep the current canvas generation", () => {
   });
   const generation = session.canvasGeneration;
 
-  session.beginEdit("<main>two</main>", {
+  acceptPreviewEdit(session, "<main>two</main>", {
     origin: "local-edit",
     operationId: "local-edit-one",
     sourceSha256: sha256("<main>two</main>"),
     context: RECEIPT_CONTEXT,
   });
   const localReceipt = session.sourceReceipt;
-  session.beginEdit("<main>three</main>", {
+  acceptPreviewEdit(session, "<main>three</main>", {
     origin: "history",
     operationId: "history-one",
     sourceSha256: sha256("<main>three</main>"),
@@ -468,14 +1048,14 @@ test("a late A receipt cannot acknowledge or overwrite newer B source", () => {
     persistedSourceSha256: sha256("<main>start</main>"),
     context: RECEIPT_CONTEXT,
   });
-  session.beginEdit(htmlA, {
+  acceptPreviewEdit(session, htmlA, {
     origin: "local-edit",
     operationId: "edit-A",
     sourceSha256: sha256(htmlA),
     context: RECEIPT_CONTEXT,
   });
   const receiptA = session.sourceReceipt;
-  session.beginEdit(htmlB, {
+  acceptPreviewEdit(session, htmlB, {
     origin: "local-edit",
     operationId: "edit-B",
     sourceSha256: sha256(htmlB),
@@ -581,7 +1161,7 @@ test("duplicate, stale and context-mismatched receipts are discarded", () => {
   }
 });
 
-test("receipt target context never infers exact path or session epoch", () => {
+test("receipt target context never infers a missing managed-target field", () => {
   const html = "<main>strict-target</main>";
   const session = new DocumentSession({
     html,
@@ -594,7 +1174,15 @@ test("receipt target context never infers exact path or session epoch", () => {
     context: RECEIPT_CONTEXT,
     operationId: "strict-target-context",
   }).sourceReceipt;
-  for (const field of ["exactSourcePath", "sessionEpoch"]) {
+  for (const field of [
+    "projectRootPath",
+    "targetKind",
+    "workingCopyId",
+    "versionId",
+    "exactSourcePath",
+    "sourceSha256",
+    "sessionEpoch",
+  ]) {
     const incompleteReceipt = {
       ...receipt,
       context: Object.fromEntries(
@@ -676,6 +1264,8 @@ test("session incarnation fences lower and equal sequence receipts across rebuil
   });
   const receiptB = rebuiltSession.sourceReceipt;
 
+  assert.equal(isSourceReceipt(receiptA), true);
+  assert.equal(isSourceReceipt(receiptB), true);
   assert.notEqual(receiptA.sessionIncarnation, receiptB.sessionIncarnation);
   assert.equal(receiptA.sequence, receiptB.sequence);
   assert.equal(rebuiltSession.confirmCanvas({

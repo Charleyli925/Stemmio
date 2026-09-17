@@ -53,6 +53,21 @@ test("real HTML observer changes select the paired Browser trust probe", () => {
   assert.ok(plan.selectedNodeTests.includes("tests/real-html-stage-contracts.test.mjs"));
 });
 
+test("browser-open workflow changes select its application, Desktop and presentation proofs", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["app/application/browser-open-workflow.js"],
+  });
+  assert.ok(suiteIds(plan).includes("electron-project-lifecycle-smoke"));
+  for (const file of [
+    "tests/browser-open-workflow.test.mjs",
+    "tests/open-in-default-browser.test.mjs",
+    "tests/desktop-preload-ipc.test.mjs",
+    "tests/workbench-presentation.test.mjs",
+  ]) assert.ok(plan.selectedNodeTests.includes(file), file);
+});
+
 const TASK_OWNER_CASES = [
   {
     file: "app/lib/comment-rail-layout.js",
@@ -337,6 +352,24 @@ test("a changed owned Node test still runs only itself", () => {
   });
   assert.deepEqual(suiteIds(plan), ["node-targeted"]);
   assert.deepEqual(plan.selectedNodeTests, ["tests/comment-session.test.mjs"]);
+});
+
+test("SourceReceipt implementation type checks keep their runtime owner coverage", () => {
+  for (const file of [
+    "app/application/source-receipt.js",
+    "app/application/source-receipt-contract.d.ts",
+    "scripts/verify-source-receipt-typecheck.mjs",
+    "tests/source-receipt-contract.typecheck.ts",
+    "tsconfig.source-receipt.json",
+  ]) {
+    const plan = selectGatePlan({
+      map,
+      lane: "task",
+      changedFiles: [file],
+    });
+    assert.ok(suiteIds(plan).includes("typecheck"), file);
+    assert.ok(plan.selectedNodeTests.includes("tests/document-session.test.mjs"), file);
+  }
 });
 
 test("owner rules select only the direct regression coverage for representative files", () => {

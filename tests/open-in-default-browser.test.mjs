@@ -13,12 +13,12 @@ import {
 import { ProjectFileError } from "../desktop/project-files.mjs";
 
 function createHarness({
-  assertKnownProjectPath = async () => {},
+  authorizeTarget = async (target) => target,
   inspectHtmlFile = async () => {},
 } = {}) {
   const openedUrls = [];
   const operation = createOpenInDefaultBrowserOperation({
-    assertKnownProjectPath,
+    authorizeTarget,
     inspectHtmlFile,
     openExternal: async (sourceUrl) => {
       openedUrls.push(sourceUrl);
@@ -34,31 +34,35 @@ test("the default-browser operation launches one validated known HTML file URL",
     "页面 A.html",
   );
   const checks = [];
+  const target = { targetKind: "working-copy", sourcePath };
   const { openedUrls, operation } = createHarness({
-    assertKnownProjectPath: async (candidate) => {
-      checks.push(["known", candidate]);
+    authorizeTarget: async (candidate) => {
+      checks.push(["authorized", candidate]);
+      return candidate;
     },
     inspectHtmlFile: async (candidate) => {
       checks.push(["file", candidate]);
     },
   });
 
-  assert.deepEqual(await operation(sourcePath), {
+  assert.deepEqual(await operation(target), {
     sourcePath: path.resolve(sourcePath),
+    targetKind: "working-copy",
   });
   assert.deepEqual(checks, [
-    ["known", path.resolve(sourcePath)],
+    ["authorized", target],
     ["file", path.resolve(sourcePath)],
   ]);
   assert.deepEqual(openedUrls, [pathToFileURL(path.resolve(sourcePath)).href]);
 });
 
-test("malformed and non-HTML paths fail before project or shell authority", async () => {
-  let knownChecks = 0;
+test("malformed authorized targets and non-HTML paths fail before shell authority", async () => {
+  let authorizationChecks = 0;
   let fileChecks = 0;
   const { openedUrls, operation } = createHarness({
-    assertKnownProjectPath: async () => {
-      knownChecks += 1;
+    authorizeTarget: async (target) => {
+      authorizationChecks += 1;
+      return target;
     },
     inspectHtmlFile: async () => {
       fileChecks += 1;
@@ -71,9 +75,12 @@ test("malformed and non-HTML paths fail before project or shell authority", asyn
     "invalid\0path.html",
     path.join(os.tmpdir(), "report.txt"),
   ]) {
-    await assert.rejects(() => operation(sourcePath), TypeError);
+    await assert.rejects(
+      () => operation({ targetKind: "working-copy", sourcePath }),
+      TypeError,
+    );
   }
-  assert.equal(knownChecks, 0);
+  assert.equal(authorizationChecks, 4);
   assert.equal(fileChecks, 0);
   assert.deepEqual(openedUrls, []);
 });
@@ -81,7 +88,7 @@ test("malformed and non-HTML paths fail before project or shell authority", asyn
 test("unknown projects and unsafe HTML filesystem entries never launch the shell", async () => {
   let fileChecks = 0;
   const unknown = createHarness({
-    assertKnownProjectPath: async (sourcePath) => {
+    authorizeTarget: async ({ sourcePath }) => {
       throw new ProjectFileError(
         "UNKNOWN_SOURCE",
         "只能打开已经由工作台打开的 HTML 文件。",
@@ -94,7 +101,10 @@ test("unknown projects and unsafe HTML filesystem entries never launch the shell
   });
 
   await assert.rejects(
-    () => unknown.operation(path.join(os.tmpdir(), "unknown.html")),
+    () => unknown.operation({
+      targetKind: "working-copy",
+      sourcePath: path.join(os.tmpdir(), "unknown.html"),
+    }),
     (error) => error?.code === "UNKNOWN_SOURCE",
   );
   assert.equal(fileChecks, 0);
@@ -110,7 +120,10 @@ test("unknown projects and unsafe HTML filesystem entries never launch the shell
     },
   });
   await assert.rejects(
-    () => unsafe.operation(path.join(os.tmpdir(), "unsafe.html")),
+    () => unsafe.operation({
+      targetKind: "working-copy",
+      sourcePath: path.join(os.tmpdir(), "unsafe.html"),
+    }),
     (error) => error?.code === "UNSAFE_SOURCE",
   );
   assert.deepEqual(unsafe.openedUrls, []);
@@ -130,7 +143,10 @@ test("untrusted renderer senders and frames are rejected before shell launch", a
       mainWindow,
       isTrustedRendererUrl: (url) => url === trustedUrl,
     });
-    return operation(path.join(os.tmpdir(), "known.html"));
+    return operation({
+      targetKind: "working-copy",
+      sourcePath: path.join(os.tmpdir(), "known.html"),
+    });
   };
 
   const untrustedEvents = [

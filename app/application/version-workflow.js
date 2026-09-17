@@ -1564,7 +1564,7 @@ export class VersionWorkflow {
     }
 
     this.#documentWorkflow.clearAudit();
-    this.#documentSession.setPersistence({ state: "idle", error: "" });
+    this.#documentSession.markPersistenceIdle();
 
     this.#commentWorkflow.queueDraft();
     this.#documentWorkflow.clearRecovery(context);

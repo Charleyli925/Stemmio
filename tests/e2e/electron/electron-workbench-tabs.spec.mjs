@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { pathToFileURL } from "node:url";
 import { loadedDiskFrame as loadedStaticDiskFrame } from "./helpers/stemmio-app-fixture.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import {
@@ -39,6 +40,35 @@ function identityPreservingCandidateHtml(target, title) {
 
 function currentProjectTabName(filePath) {
   return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
+}
+
+async function interceptExternalBrowserOpen(electronApp) {
+  await electronApp.evaluate(({ shell }) => {
+    globalThis.__stemmioOpenedExternalUrls = [];
+    shell.openExternal = async (sourceUrl) => {
+      globalThis.__stemmioOpenedExternalUrls.push(sourceUrl);
+    };
+  });
+}
+
+async function openedExternalUrls(electronApp) {
+  return electronApp.evaluate(() => (
+    globalThis.__stemmioOpenedExternalUrls || []
+  ));
+}
+
+async function confirmHistoryCreation(page) {
+  const dialog = page.getByRole("dialog", { name: /创建新版本/u });
+  const confirm = dialog.getByRole("button", { name: "创建并编辑", exact: true });
+  const cancel = dialog.getByRole("button", { name: "取消", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(cancel).toBeFocused();
+  // These journeys verify durable history creation and restart recovery, not
+  // native pointer injection. A saturated Electron batch can acknowledge a
+  // Playwright click before the renderer consumes it, so order the test after
+  // the React handler through the renderer, as the AI cancellation dialog does.
+  await confirm.dispatchEvent("click");
+  await expect(dialog).not.toBeVisible();
 }
 
 test("Electron tab keyboard navigation manages focus and a persisted Start suppresses activePath restart", {
@@ -811,12 +841,15 @@ test("Electron sidebar opens an imported historical version in the existing proj
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });
     }, exportPath);
     await expect(launched.page.getByText("测试历史快照校验失败", { exact: true })).toHaveCount(0);
+    const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
+    await interceptExternalBrowserOpen(launched.electronApp);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     const saveHistoryItem = launched.page.getByRole("menuitem", { name: "保存为新版本", exact: true });
     await expect(saveHistoryItem).toHaveAttribute("aria-disabled", "true");
     await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeEnabled();
     await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toHaveAttribute("aria-disabled", "true");
-    await expect(launched.page.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toHaveAttribute("aria-disabled", "true");
+    const openHistoryInBrowser = launched.page.getByRole("menuitem", { name: "在浏览器中打开此版本", exact: true });
+    await expect(openHistoryInBrowser).toBeEnabled();
     await expect(launched.page.getByRole("menuitemcheckbox", { name: "同时保存为新版本", exact: true })).toHaveAttribute("aria-disabled", "true");
     await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toHaveAttribute("aria-disabled", "true");
     await expect(launched.page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true })).toHaveAttribute("aria-disabled", "true");
@@ -830,8 +863,13 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.page.keyboard.press("Enter");
     await expect(launched.page.getByRole("menu", { name: "更多操作" })).toBeVisible();
     await launched.page.screenshot({ path: test.info().outputPath("version-history-menu.png") });
+    await openHistoryInBrowser.click();
+    await expect.poll(() => openedExternalUrls(launched.electronApp)).toEqual([
+      pathToFileURL(realpathSync(historicalBytes.path)).href,
+    ]);
+    expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
+    await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "导出此版本…", exact: true }).click();
-    const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
     await expect.poll(() => { try { return readFileSync(exportPath, "utf8"); } catch { return null; } }).toBe(historicalBytes.content);
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
 
@@ -849,11 +887,8 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     // This is the second use of the same native <dialog> in this journey. Wait
-    // for the reopened modal boundary before activating its new confirmation;
-    // under the full Electron batch an immediate click can otherwise land
-    // while the prior close/open lifecycle is still settling.
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "创建并编辑", exact: true }).click();
+    // for the reopened modal boundary before activating its new confirmation.
+    await confirmHistoryCreation(launched.page);
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled({ timeout: 30_000 });
     const createdSummary = await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
     expect(createdSummary.versions).toHaveLength(9);
@@ -957,8 +992,7 @@ test("Electron history creation recreates a closed current-draft tab", {
 
     await app.page.getByRole("button", { name: "更多", exact: true }).click();
     await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
-    await app.page.getByRole("dialog", { name: /创建新版本/u })
-      .getByRole("button", { name: "创建并编辑", exact: true }).click();
+    await confirmHistoryCreation(app.page);
 
     await expect.poll(async () => (
       await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })
@@ -1025,8 +1059,8 @@ for (const recoveryAction of ["current-row", "close-history"]) {
         name: "基于此版本创建新版本…",
         exact: true,
       }).click();
-      await app.page.getByRole("dialog", { name: /创建新版本/u })
-        .getByRole("button", { name: "创建并编辑", exact: true }).click();
+      await confirmHistoryCreation(app.page);
+      await expect.poll(() => creates).toBe(1);
       await expect(app.page.getByRole("button", {
         name: "打开已创建版本",
         exact: true,
@@ -1244,9 +1278,9 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
       await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
       await app.page.getByRole("button", { name: "更多", exact: true }).click();
       await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
-      await app.page.getByRole("dialog").getByRole("button", { name: "创建并编辑", exact: true }).click();
-      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true }))
-        .toBeEnabled({ timeout: 60_000 });
+      await confirmHistoryCreation(app.page);
+      await expect.poll(() => operationId).toMatch(/^history_[A-Za-z0-9-]+$/u);
+      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled();
       else {
         // Creating and validating the immutable V9 snapshot performs real
         // filesystem work. Under the full Electron gate it can legitimately
@@ -1462,7 +1496,29 @@ test("Electron local current draft saves immutable versions and exports with an 
     await expect(mode).toHaveAttribute("data-view-label", "当前");
     await expect(current).toHaveAttribute("aria-current", "page");
     await expect(project.locator('.sidebar-version-row[data-selected="true"]')).toHaveCount(0);
-    const secondEdit = await editCurrent("LOCAL_EXPORT_TWO");
+    let secondEdit = await editCurrent("LOCAL_EXPORT_TWO");
+
+    await interceptExternalBrowserOpen(launched.electronApp);
+    const pendingBrowserFrame = await loadedStaticDiskFrame(
+      launched.page,
+      currentPath,
+      { expectedCase: "list-item", includeEditor: true },
+    );
+    await activateNativeEdit(pendingBrowserFrame.frame, "list-item");
+    await setTextSelection(pendingBrowserFrame.frame, "list-item", 0, 3);
+    await launched.page.keyboard.insertText("BROWSER_NATIVE_INPUT");
+    await more.click();
+    await launched.page.getByRole("menuitem", {
+      name: "在浏览器中打开工作文件",
+      exact: true,
+    }).click();
+    await expect.poll(() => openedExternalUrls(launched.electronApp)).toEqual([
+      pathToFileURL(identity.exactSourcePath).href,
+    ]);
+    await expect.poll(() => readFileSync(currentPath, "utf8")).toContain(
+      "BROWSER_NATIVE_INPUT",
+    );
+    secondEdit = readFileSync(currentPath, "utf8");
 
     const exportPath = path.join(fixture.sourceDirectory, "exported-current.html");
     await launched.electronApp.evaluate(({ dialog }, filePath) => {

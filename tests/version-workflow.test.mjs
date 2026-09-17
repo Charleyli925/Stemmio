@@ -570,7 +570,10 @@ test("local checkpoint refuses unpersisted content and releases navigation", asy
   let writes = 0;
   const h = createHarness({ currentDraft: true,
     createCurrent: async (input) => { writes++; return currentVersionReceipt(input); },
-    onDrain: async ({ documentSession }) => { documentSession.update({ html: DRAINED_HTML }); return { ok: true }; },
+    onDrain: async ({ documentSession }) => {
+      documentSession.acceptEdit({ html: DRAINED_HTML, write: null });
+      return { ok: true };
+    },
   });
   assert.equal((await h.workflow.saveCurrentVersion()).status, "rejected");
   assert.equal(writes, 0);
@@ -595,7 +598,10 @@ test("project switch during local checkpoint discards old UI response", async ()
 test("plain export includes latest native edits and does not create a version", async () => {
   const exports = []; let writes = 0; let h;
   h = createHarness({ currentDraft: true,
-    checkpointSource: () => { h.documentSession.update({ html: DRAINED_HTML }); return { ok: true }; },
+    checkpointSource: () => {
+      h.documentSession.acceptEdit({ html: DRAINED_HTML, write: null });
+      return { ok: true };
+    },
     exportHtmlCopy: async (input) => { exports.push(input); return { path: "/tmp/shared.html", sha256: sha256(input.html) }; },
     createCurrent: async () => { writes++; },
   });
@@ -614,7 +620,7 @@ for (const saveVersion of [false, true]) {
     let h;
     h = createHarness({ currentPath: null,
       checkpointSource: () => {
-        h.documentSession.update({ html: latest, editRevision: 1, persistState: "preview-dirty" });
+        h.documentSession.acceptEdit({ html: latest, write: null });
         return { ok: true };
       },
       hashSource: async (html) => { hashed.push(html); return sha256(html); },
@@ -1276,32 +1282,27 @@ test("history preview never publishes historical bytes or renders the working Ca
 });
 
 test("failed history read retains persistence advanced by a successful drain", async () => {
+  let write;
   const harness = createHarness({
     onDrain: async ({ documentSession }) => {
-      documentSession.publishAuthority({
-        html: DRAINED_HTML,
-        persistedSourceSha256: sha256(DRAINED_HTML),
-        editRevision: 1,
-        lastPersistedRevision: 1,
-        persistState: "idle",
-        persistError: "",
-        pendingWrite: null,
+      documentSession.acceptWriteConfirmation({
+        write,
+        html: write.html,
+        sourceSha256: sha256(write.html),
+        persistedRevision: write.revision,
       });
       return { ok: true };
     },
     versionRead: async () => { throw new Error("history read failed"); },
   });
-  harness.documentSession.publishAuthority({
+  const accepted = harness.documentSession.acceptEdit({
     html: DRAINED_HTML,
-    persistedSourceSha256: sha256(BASE_HTML),
-    editRevision: 1,
-    lastPersistedRevision: 0,
-    persistState: "writing",
-    pendingWrite: {
-      revision: 1,
+    write: {
       targetHtmlSha256: sha256(DRAINED_HTML),
     },
   });
+  write = accepted.write;
+  harness.documentSession.beginWrite();
 
   const outcome = await harness.workflow.viewHistory({
     version: {
@@ -1322,31 +1323,26 @@ test("failed history read retains persistence advanced by a successful drain", a
 });
 
 test("history rollback retains persistence advanced before a later drain failure", async () => {
+  let write;
   const harness = createHarness({
     onDrain: async ({ documentSession }) => {
-      documentSession.publishAuthority({
-        html: DRAINED_HTML,
-        persistedSourceSha256: sha256(DRAINED_HTML),
-        editRevision: 1,
-        lastPersistedRevision: 1,
-        persistState: "idle",
-        persistError: "",
-        pendingWrite: null,
+      documentSession.acceptWriteConfirmation({
+        write,
+        html: write.html,
+        sourceSha256: sha256(write.html),
+        persistedRevision: write.revision,
       });
       return { ok: false, reason: "draft persistence failed" };
     },
   });
-  harness.documentSession.publishAuthority({
+  const accepted = harness.documentSession.acceptEdit({
     html: DRAINED_HTML,
-    persistedSourceSha256: sha256(BASE_HTML),
-    editRevision: 1,
-    lastPersistedRevision: 0,
-    persistState: "writing",
-    pendingWrite: {
-      revision: 1,
+    write: {
       targetHtmlSha256: sha256(DRAINED_HTML),
     },
   });
+  write = accepted.write;
+  harness.documentSession.beginWrite();
 
   const outcome = await harness.workflow.viewHistory({
     version: {

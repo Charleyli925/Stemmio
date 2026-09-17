@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -24,6 +32,155 @@ test("atomic writes support a 255-byte output filename", async (t) => {
   await atomicWriteFile(filePath, "complete");
 
   assert.equal(await readFile(filePath, "utf8"), "complete");
+});
+
+function fault(code, message = code) {
+  return Object.assign(new Error(message), { code });
+}
+
+async function atomicWriteFixture(t, name) {
+  const directory = await mkdtemp(join(tmpdir(), `stemmio-atomic-${name}-`));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "document.html");
+  await writeFile(filePath, "before", "utf8");
+  return { directory, filePath };
+}
+
+function instrumentedOperations({
+  onOpen,
+  onWrite,
+  onFileSync,
+  onClose,
+  onRename,
+  onDirectorySync,
+  onRemove,
+} = {}) {
+  return {
+    async open(temporary, flags, mode) {
+      await onOpen?.(temporary);
+      const handle = await open(temporary, flags, mode);
+      return {
+        async writeFile(content) {
+          await onWrite?.(temporary);
+          return handle.writeFile(content);
+        },
+        async sync() {
+          await onFileSync?.(temporary);
+          return handle.sync();
+        },
+        async close() {
+          if (onClose) return onClose(handle, temporary);
+          return handle.close();
+        },
+      };
+    },
+    async rename(temporary, filePath) {
+      await onRename?.(temporary, filePath);
+      return rename(temporary, filePath);
+    },
+    async syncDirectory(directory) {
+      await onDirectorySync?.(directory);
+    },
+    async rm(temporary, options) {
+      await onRemove?.(temporary);
+      return rm(temporary, options);
+    },
+  };
+}
+
+async function assertOnlyTargetRemains(directory, expected = "before") {
+  assert.deepEqual(await readdir(directory), ["document.html"]);
+  assert.equal(await readFile(join(directory, "document.html"), "utf8"), expected);
+}
+
+test("atomic writes preserve normal overwrite and consecutive-write behavior", async (t) => {
+  const { directory, filePath } = await atomicWriteFixture(t, "normal");
+
+  await atomicWriteFile(filePath, "first");
+  await atomicWriteFile(filePath, "second");
+
+  await assertOnlyTargetRemains(directory, "second");
+  const createdPath = join(directory, "created.html");
+  await atomicWriteFile(createdPath, "created");
+  assert.equal(await readFile(createdPath, "utf8"), "created");
+});
+
+for (const stage of ["create", "write", "file-sync", "close", "rename"]) {
+  test(`atomic write cleans the temporary file after ${stage} failure`, async (t) => {
+    const { directory, filePath } = await atomicWriteFixture(t, stage);
+    const primary = fault(`PRIMARY_${stage.toUpperCase().replace("-", "_")}`);
+    const hooks = {};
+    if (stage === "create") hooks.onOpen = async () => { throw primary; };
+    if (stage === "write") hooks.onWrite = async () => { throw primary; };
+    if (stage === "file-sync") hooks.onFileSync = async () => { throw primary; };
+    if (stage === "close") {
+      hooks.onClose = async (handle) => {
+        await handle.close();
+        throw primary;
+      };
+    }
+    if (stage === "rename") hooks.onRename = async () => { throw primary; };
+
+    await assert.rejects(
+      atomicWriteFile(filePath, "after", {
+        operations: instrumentedOperations(hooks),
+      }),
+      (error) => {
+        assert.equal(error, primary);
+        assert.equal(error.atomicWriteOutcome, "not-replaced");
+        assert.deepEqual(error.cleanupErrors, []);
+        return true;
+      },
+    );
+    await assertOnlyTargetRemains(directory);
+  });
+}
+
+test("atomic write reports replacement when directory sync fails", async (t) => {
+  const { directory, filePath } = await atomicWriteFixture(t, "directory-sync");
+  const primary = fault("DIRECTORY_SYNC_FAILED");
+
+  await assert.rejects(
+    atomicWriteFile(filePath, "after", {
+      operations: instrumentedOperations({
+        onDirectorySync: async () => { throw primary; },
+      }),
+    }),
+    (error) => {
+      assert.equal(error, primary);
+      assert.equal(error.atomicWriteOutcome, "replaced-unconfirmed");
+      assert.deepEqual(error.cleanupErrors, []);
+      return true;
+    },
+  );
+  await assertOnlyTargetRemains(directory, "after");
+});
+
+test("atomic write keeps the primary failure when cleanup also fails", async (t) => {
+  const { filePath } = await atomicWriteFixture(t, "cleanup");
+  const primary = fault("RENAME_FAILED", "rename failed first");
+  const cleanup = fault("CLEANUP_FAILED", "temporary cleanup failed second");
+  let temporaryPath = "";
+
+  await assert.rejects(
+    atomicWriteFile(filePath, "after", {
+      operations: instrumentedOperations({
+        onOpen: async (temporary) => { temporaryPath = temporary; },
+        onRename: async () => { throw primary; },
+        onRemove: async () => { throw cleanup; },
+      }),
+    }),
+    (error) => {
+      assert.equal(error, primary);
+      assert.equal(error.code, "RENAME_FAILED");
+      assert.equal(error.message, "rename failed first");
+      assert.equal(error.atomicWriteOutcome, "not-replaced");
+      assert.deepEqual(error.cleanupErrors, [cleanup]);
+      return true;
+    },
+  );
+  assert.equal(await readFile(filePath, "utf8"), "before");
+  assert.equal(await readFile(temporaryPath, "utf8"), "after");
 });
 
 function directoryEntry(name, kind = "file") {

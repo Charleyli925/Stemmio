@@ -99,8 +99,18 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   验证 100ms 非 checkpoint 合并写入、native-edit checkpoint 立即 flush、单飞 flush、未登记首次登记、精确 HTML/Hash/revision/history
   回执、未知 history action 的权威核对与同一 actionId 重放、恢复记录与 stale context；首次登记若改绑
   managed path，等待期间形成的较新 queued write 也必须连同 epoch 改绑，随后只向新路径写入最新 HTML。
+  `tests/document-session.test.mjs` 直接冻结 W1 active/W2 pending 的重复 begin、失败恢复、迟到恢复、
+  旧 ACK、reset 后旧 ACK/失败、旧 flush finally、合法同字节 rebase 和“源码已确认但恢复日志仍在退役”的顺序；
+  普通编辑 fixture 必须通过 `acceptEdit` 同时建立已接受内容和 pending write；
+  `restorePendingWrite` 只用于已验证恢复证据的重建路径。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
+- `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
+  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
+  `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
+  再以内存源码覆盖完成定向错误变异。证明必须在目标实现位置得到指定类型错误；若正式配置
+  关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
+  也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`
   与既有 Session owner 直接验证
   hydration generation fence、accepted-result FIFO、drain 后 native input 延后与恢复、
@@ -213,7 +223,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
 - 外部打开与 Prepared Intent：`tests/prepared-html-open.test.mjs` 拥有公开 descriptor 不含路径、commit action 拒绝 `view-initial`、幂等 commit/finalize、取消旧 intent，以及同源 prepared/committing 复用。`tests/project-workflow.test.mjs` 拥有 local/recent/startup/external 同操作自动打开、同请求 C→B 最多一次且清除删除同意、其他分类/Hash 变化不重试、epoch 0 不围栏不存在的 Canvas、Canvas 失败不 finalize 删除、未知提交同 ID 重放、ACK-only 重试与关闭/销毁迟到结果。`tests/external-file-open-session.test.mjs` 拥有执行期间完成或取消后的迟到结果不复活队首。`tests/workbench-navigation-workflow.test.mjs` 拥有 Prepared 收口前不释放准入、成功应用后失败仍对齐 Tab/Controller，以及 ACK-only 无新应用回执。既有 copy 测试仅校验保留文案的事实，不证明普通确认 UI 存在。Controller 仍拒绝 `view-initial`，Document 测试仍拥有 Canvas 的 pending/verified/failed 边界。真实 Electron 必须证明普通打开无需第二次点击、失败/取消不误切换、连续 OS 请求按 FIFO 收口；argv 与运行中 open-file 均须到真实 managed V1。删除原稿确认另走显式同意并核对新画布成功后才执行。不得把 descriptor 的空 `sourcePath` 当成已导入成功，也不得以 Node 结果代替 UI 或打包验收。
 - Workbench 订阅边界：`tests/workspace-controller.test.mjs` 对真实 Controller facet 计数，证明草稿/Agent narration/clock/bytes 只通知局部消费者；Shell 不含这些字段且引用稳定，评论结构、空/非空、run phase/error/lifecycle、规则 composition/save/restore 仍通知。Conversation facet 与实时 aggregate 引用一致，切文档拒绝旧响应，unsubscribe/dispose 不续发；草稿 flush 保留原文档与最后文本。类型合同禁止 shell 访问省略正文。`tests/ai-conversation-sidebar.test.mjs` 验证新文档载入前不显示旧消息与草稿，关闭输入锁保留正文。ProjectRules/Conversation Workflow 既有故障与 drain 测试继续拥有持久化边界；真实 IME、caret、滚动及侧栏 UI 仍须 Electron 验收，不能由订阅计数代替。
 - 通知合同：TypeScript 封闭 `GlobalInterruption` kind 联合拥有允许的中断事实；文案只来自 `globalInterruptionPresentation()`。Node 测试拥有产品错误清洗与工作区安全状态优先级。Browser 测试拥有 `aria-live`、键盘、按钮和 hover/focus pause。不得再扫描 Workbench AST 或内部 helper 名称来证明某个 `setToast` 调用是否合法；生产 `setToast` 创建调用必须保持为 0。
-- 源码字符串合同只保留显式 architecture/security/packaging/dependency/workflow boundary。应用架构形状由 `scripts/check-architecture.mjs` 唯一拥有，`tests/architecture-boundaries.test.mjs` 只执行该 checker；当前显式清单为层级 import/retired operation，Workbench Bridge 调用为 0、final runtime factory、aggregate Session observer、唯一 Session construction owner、typed drain owner、Controller 反向 UI import 和 generic Bridge escape，及 SourcePatch + SourceTransaction 发布、精确 source freeze 及 AI 请求绑定、Edit runtime projection 禁止、native user/system priority、DOM replacement 前 lease retirement，以及 pointer capability 不得引用 `isNativeDirectEditRoot`。该集还必须保留 View Bridge call、Controller React import、generic Bridge escape、duplicate Session owner、missing drain command 的负 fixture。业务测试不得读取、拼接 Workbench/Canvas 大文件或扫描 JSX/CSS/copy/callback 顺序；它们使用 Session、算法、Browser 或 Electron 的可观察结果。`tests/rendered-html.test.mjs` 是独立例外：它必须执行真实 `dist/server/index.js`/`worker.fetch`，只验证公开 SSR 入口与已退役托管/编辑器 surface，不读取生产实现源码。`tests/workbench-css.test.mjs` 拥有 Workbench 级联入口：`app/globals.css` 必须只含固定顺序的 `@import`，拼接后的 `app/styles/` 字节保留顶栏与 tooltip 的源码顺序合同。
+- 源码字符串合同只保留显式 architecture/security/packaging/dependency/workflow boundary。应用架构形状由 `scripts/check-architecture.mjs` 唯一拥有，`tests/architecture-boundaries.test.mjs` 执行该 checker；完整入口必须扫描 `app/`、`bridge/`、`scripts/`、`desktop/`、`shared/` 的 `.js`、`.mjs`、`.ts`、`.tsx`，并在根目录无效、必需目录缺失、读取失败、语法错误或零文件时失败。小型 fixture 只能通过 `--scope limited` 和显式 `--include` 声明范围，CLI 必须报告范围和文件数。当前显式清单为层级 import/retired operation，Workbench Bridge 调用为 0、final runtime factory、aggregate Session observer、唯一 Session construction owner、typed drain owner、Controller 反向 UI import 和 generic Bridge escape，及 SourcePatch + SourceTransaction 发布、精确 source freeze 及 AI 请求绑定、Edit runtime projection 禁止、native user/system priority、DOM replacement 前 lease retirement，以及 pointer capability 不得引用 `isNativeDirectEditRoot`。该集还必须保留 View Bridge call、Controller React import、generic Bridge escape、duplicate Session owner、missing drain command 的负 fixture。业务测试不得读取、拼接 Workbench/Canvas 大文件或扫描 JSX/CSS/copy/callback 顺序；它们使用 Session、算法、Browser 或 Electron 的可观察结果。`tests/rendered-html.test.mjs` 是独立例外：它必须执行真实 `dist/server/index.js`/`worker.fetch`，只验证公开 SSR 入口与已退役托管/编辑器 surface，不读取生产实现源码。`tests/workbench-css.test.mjs` 拥有 Workbench 级联入口：`app/globals.css` 必须只含固定顺序的 `@import`，拼接后的 `app/styles/` 字节保留顶栏与 tooltip 的源码顺序合同。
 - 交付合同按 owner 分层：desktop-package.test.mjs 拥有 package.json allowlist、Stemmio 自有打包 JavaScript 导入推导的生产包闭包、Bridge/Schema/资源闭包、安装态启动目录隔离、CSP、entitlements、Info.plist 清理和固定包身份；任何被打包 Bridge provider 或其 shared runtime import 变更都必须选中该闭包 owner。packaged-artifact-gate.test.mjs 必须调用真实 verifier，拥有 app.asar、源码推导的 `node_modules`、Bridge、Schema、metadata、retired closure、签名 profile 和 DMG/ZIP 边界；packaged startup/runtime 必须复制 `.app` 到仓库外且无父级 `node_modules` 的临时目录后启动。预加载 IPC、更新、Preview、窗口、Bridge 生命周期、遥测和 Workbench 行为必须留在各自 Node 或 Electron owner，不能因它们被打包而回流到 package 测试。
 - Developer Preview、Release Dry Run、Candidate 和 Release 是四个显式 trust profile。公共 release fixture 每次创建独立 package/build-info/telemetry/application-update/identity 值和独立临时目录；它不签名、不调用 Apple 命令、不访问网络，也不能以无 profile 的宽泛对象混淆正式与非正式通道。fixture Hash 期望值必须继续由测试侧独立 crypto 计算，不能调用被测 evaluator。
 - Workflow 源码扫描只证明凭证、exact Tree、权限和阶段顺序等 release architecture 边界；普通步骤文案和已由 verifier/owner 覆盖的行为不得作为第二个字符串 oracle。
@@ -420,7 +430,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
 - 审阅滚动回归必须直接证明页面概览会递增手势代次、取消待执行跟随帧并保留语义映射；评论布局契约还必须接受超出 100,000px 的有限长文档坐标，同时继续拒绝非有限值和超过安全上限的坐标。
 - 评论标记必须覆盖无 `id`、`data-*`、`name`、`aria-label` 的 class-only 普通目标；私有绑定、评论正文和 locator map 不进入 authored HTML 或后续 bootstrap，恶意作者 listener 不能抢先伪造评论端口。
 - 应用更新：Node 用伪 updater 证明 stable-only、点击后单次下载、差分开启、普通退出不安装、仅 downloaded 状态可安装和错误降级；Preload/Workbench 合同证明状态快照、下载/安装意图、无 Canvas 完成横幅与重启确认保持窄边界。
-- 本地外部动作：Finder、默认浏览器和项目文件外部动作由 Node 以真实调用计数证明一次用户意图只执行一次副作用，失败会保留可见错误和可用项目，等待超过旧 retry delay 也不会重放；第二次调用只能来自新的用户意图。Bridge 的只读 GET/HEAD 重试保留在 transport 层，`openFolder` 等命令不复用它。默认浏览器打开还直接执行主进程操作与 sender 权限门，证明 malformed、非 HTML、未知项目、非普通文件和非可信 frame 均不会调用 shell；Workbench 合同只补充证明精确 edit revision 的围栏、写回和 IPC 顺序。
+- 本地外部动作：Finder、默认浏览器和项目文件外部动作由 Node 以真实调用计数证明一次用户意图只执行一次副作用，失败会保留可见错误和可用项目，等待超过旧 retry delay 也不会重放；第二次调用只能来自新的用户意图。Bridge 的只读 GET/HEAD 重试保留在 transport 层，`openFolder` 等命令不复用它。默认浏览器打开还直接执行主进程操作与 sender 权限门，证明 malformed、非 HTML、未知项目、非普通文件和非可信 frame 均不会调用 shell。`tests/browser-open-workflow.test.mjs` 覆盖当前稿无修改/待收口原生输入、持久化失败或未知、A→B 过期、同目标双击单飞、事后新编辑和精确历史对象，并断言完整 Outcome 字段；`tsconfig.browser-open-workflow.json` 直接检查生产 JavaScript 的窄合同。Electron 必须真实证明未按下保存的 Native Edit 先落盘再打开当前工作文件，以及历史菜单打开所见不可变 Version 而不改变当前稿。
 - 使用数据：Node 使用伪网络端点证明安装 ID 持久、会话 ID 轮换、
   项目 ID 只以 HMAC 假名出现、编辑聚合、队列上限和失败重试。负向样本
   必须同时注入 HTML、评论、Prompt、附件名、文件路径和原始异常，最终
@@ -638,6 +648,33 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 每次门禁写入 `output/test-runs/<run-id>/selection.json` 和 `results.json`，记录 HEAD、工作区内容 Hash、改动文件、选择原因、命令、耗时和首个失败。Playwright 的失败截图、trace、视频和 HTML report 继续位于 `output/playwright/`。
 
 新增测试至少要回答四件事：对应哪个真实故障；使用哪个独立 oracle；属于哪个门禁层；是否已经被更低成本测试覆盖。不能给出明确答案的重复排列或纯“代码里存在某个字符串”测试，不应加入常规门禁。
+
+### 关键保证与最短证据链
+
+下表是这些边界的定位索引，不是新的 Harness。修改命中的生产 owner
+时仍由 `tests/test-impact-map.json` 选测；表中命令用于定向复现和
+解释为什么某项保证可信。
+
+| 关键保证 | 最直接的独立 oracle | 具体位置 | 定向执行入口 |
+|---|---|---|---|
+| 非法 SourceReceipt 不能被放行 | 固定的非法值、缺失字段、超界数字和 context 投影与生产守卫结果对比；不调用守卫自己生成期望 | `tests/document-session.test.mjs` 的 `source receipt guard ...` 正反例 | `node --test tests/document-session.test.mjs` |
+| 原子写入异常不掩盖真实结果 | 故障注入后独立读取目标字节、目录项和主错误，区分 replace 前后的 cleanup | `tests/lifecycle-core.test.mjs` 的 255-byte、directory-sync 和 cleanup failure 用例 | `node --test tests/lifecycle-core.test.mjs` |
+| 禁止的架构依赖必须失败 | 独立临时源码中的合法/非法 AST 固定样例，再执行完整生产图检查 | `tests/architecture-boundaries.test.mjs` 与 `scripts/check-architecture.mjs` | `npm run architecture:check && node --test tests/architecture-boundaries.test.mjs` |
+| SourceReceipt 核心实现真正受类型检查 | 编译输入列表核对加定向错误变异；变异未报错则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
+| 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
+| 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
+| 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |
+
+交付结果不得只记录“PASS”。至少保留：精确 commit 与工作区内容
+Hash、base、OS/architecture、Node/Electron 版本、`selection.json` 中的计划场景、
+reconciliation 中的实际发现/执行场景、独立断言结果，以及首个失败的阶段与
+诊断。标准门禁由 `output/test-runs/<run-id>/selection.json`、`results.json` 和
+Playwright reconciliation/report 承载这些事实；交付摘要只引用对应 run id，不手工改写
+计数。
+
+私人真实 HTML 语料不存在、不可读或发现失败时，结果必须记为
+`NOT_EXECUTED` 或明确环境阻塞，并保留受影响的验收限制。不得记为“不适用”，也不得用合成
+fixture、DOM 编辑兼容性扫描或仓库 Electron 通过代替真实语料验收。
 
 ### 第一批版本展示快速回归
 

@@ -1,4 +1,5 @@
 import { workspaceShellSnapshot } from "./workspace-shell-snapshot.js";
+import { BrowserOpenWorkflow } from "./browser-open-workflow.js";
 import { loadCatalogVersionSummaries } from "./project-catalog-query.js";
 import { createRuntimeBridgeClient, isBridgeRequestError } from "./bridge-client.js";
 import { CommentSession } from "./comment-session.js";
@@ -225,6 +226,7 @@ export function createRuntimeWorkspaceController({
   projectWorkflow,
   runWorkflow,
   versionWorkflow,
+  browserOpen,
   clock,
   recoveryStore = createRendererRecoveryStore(),
 } = {}) {
@@ -235,6 +237,7 @@ export function createRuntimeWorkspaceController({
     || !projectWorkflow
     || !runWorkflow
     || !versionWorkflow
+    || !browserOpen
   ) {
     throw new TypeError(
       "Runtime WorkspaceController requires every application workflow.",
@@ -294,6 +297,7 @@ export function createRuntimeWorkspaceController({
       ...versionWorkflow,
       runSession,
     },
+    browserOpen,
     clock,
   });
 }
@@ -337,6 +341,7 @@ export class WorkspaceController {
   #runWorkflowUnsubscribe = null;
   #versionWorkflow = null;
   #versionWorkflowUnsubscribe = null;
+  #browserOpenWorkflow = null;
   #workbenchTabsSession = null;
   #documentSurfaceCacheSession = null;
   #documentSurfaceCacheUnsubscribe = null;
@@ -453,6 +458,7 @@ export class WorkspaceController {
     projectWorkflow = null,
     runWorkflow = null,
     versionWorkflow = null,
+    browserOpen = null,
     clock,
   } = {}) {
     if (!bridgeClient || typeof bridgeClient.ensureProject !== "function") {
@@ -461,7 +467,7 @@ export class WorkspaceController {
     if (!projectSession || typeof projectSession.register !== "function") {
       throw new TypeError("WorkspaceController requires ProjectSession injection.");
     }
-    if (!documentSession || typeof documentSession.update !== "function") {
+    if (!documentSession || typeof documentSession.publishAuthority !== "function") {
       throw new TypeError("WorkspaceController requires DocumentSession injection.");
     }
     if (!commentSession || typeof commentSession.setComments !== "function") {
@@ -1027,6 +1033,22 @@ export class WorkspaceController {
       });
       this.#versionWorkflow.subscribeEvents((event) => this.#emitEvent(event));
     }
+    if (browserOpen) {
+      if (!this.#documentWorkflow) {
+        throw new TypeError(
+          "WorkspaceController browser open requires DocumentWorkflow.",
+        );
+      }
+      this.#browserOpenWorkflow = new BrowserOpenWorkflow({
+        projectSession,
+        documentSession,
+        versionSession,
+        documentWorkflow: this.#documentWorkflow,
+        ports: browserOpen,
+        errorMessage: browserOpen.errorMessage,
+        clock,
+      });
+    }
     this.#observeSessionSnapshots();
     this.#editRuntimeUnsubscribe = this.#editRuntimeSession.subscribe((snapshot) => {
       if (this.#disposed) return;
@@ -1113,6 +1135,8 @@ export class WorkspaceController {
     this.#versionWorkflowUnsubscribe = null;
     this.#versionWorkflow?.dispose();
     this.#versionWorkflow = null;
+    this.#browserOpenWorkflow?.dispose();
+    this.#browserOpenWorkflow = null;
     this.#workbenchTabsUnsubscribe?.();
     this.#workbenchTabsUnsubscribe = null;
     this.#documentSurfaceCacheUnsubscribe?.();
@@ -1910,6 +1934,16 @@ export class WorkspaceController {
 
   exportHtml(input) {
     return this.#requireVersionWorkflow().exportHtml(input);
+  }
+
+  openSelectedDocumentInDefaultBrowser() {
+    if (!this.#browserOpenWorkflow) {
+      return Promise.resolve(blocked(
+        "BROWSER_OPEN_UNAVAILABLE",
+        "当前环境不能在系统浏览器中打开 HTML。",
+      ));
+    }
+    return this.#browserOpenWorkflow.openSelectedDocument();
   }
 
   openCreatedHistoryVersion(input) {

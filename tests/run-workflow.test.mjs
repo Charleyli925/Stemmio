@@ -328,11 +328,14 @@ function createHarness({
   }));
   const documentWorkflow = {
     enqueueEdit({ html: nextHtml }) {
-      const revision = documentSession.beginEdit(nextHtml);
-      documentSession.update({
-        persistedSourceSha256: sha256(nextHtml),
-        lastPersistedRevision: revision,
-        persistState: "idle",
+      const accepted = documentSession.acceptEdit({ html: nextHtml, write: {} });
+      const { revision, write } = accepted;
+      documentSession.beginWrite();
+      documentSession.acceptWriteConfirmation({
+        write,
+        html: nextHtml,
+        sourceSha256: sha256(nextHtml),
+        persistedRevision: revision,
       });
       return succeeded({ revision, queued: true });
     },

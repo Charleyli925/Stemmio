@@ -25,7 +25,7 @@ type PresentationInput = {
   hasReadyReviewSession: boolean;
   reviewPreparing: boolean;
   canShowCurrentFileInFolder: boolean;
-  canOpenCurrentHtmlInDefaultBrowser: boolean;
+  canOpenSelectedHtmlInDefaultBrowser: boolean;
   persistState: string;
   editRevision: number;
   lastPersistedRevision: number;
@@ -97,13 +97,12 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
       : !sameDocument || !project.sourcePath ? "当前页面没有可在 Finder 中显示的工作文件"
         : !input.canShowCurrentFileInFolder ? "当前系统暂时无法在 Finder 中显示工作文件"
           : undefined;
-  const openInBrowserReason = isHistory ? "浏览器只能打开当前工作文件；历史版本可直接导出"
-    : switching ? "页面正在切换，完成后可以在浏览器中打开"
-      : !sameDocument || !project.sourcePath ? "当前页面没有可在浏览器中打开的工作文件"
-        : input.persistState !== "idle" || input.editRevision !== input.lastPersistedRevision
-          ? "当前修改保存完成后可以在浏览器中打开"
-          : !input.canOpenCurrentHtmlInDefaultBrowser ? "当前系统暂时无法打开工作文件"
-            : undefined;
+  const openInBrowserReason = switching ? "页面正在切换，完成后可以在浏览器中打开"
+    : input.projectLoadError ? "当前页面加载失败，恢复后可以在浏览器中打开"
+      : !sameDocument || !project.sourcePath || !input.hasWorkspaceController
+        ? "当前页面没有可在浏览器中打开的 HTML 文件"
+        : !input.canOpenSelectedHtmlInDefaultBrowser ? "当前系统暂时无法打开 HTML 文件"
+          : undefined;
   const exportReason = !hasDocumentTarget || !input.hasWorkspaceController
     ? "当前页面还没有可导出的 HTML"
     : switching ? "页面正在切换，完成后可以导出"
@@ -145,15 +144,19 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     review: { enabled: !reviewActive && !input.reviewPreparing && reviewAvailable, selected: reviewActive, reason: reviewReason },
     reviewAvailable,
     canShowInFinder: !isHistory && sameDocument && input.canShowCurrentFileInFolder,
-    canOpenCurrentHtml: !isHistory && sameDocument && input.canOpenCurrentHtmlInDefaultBrowser && input.persistState === "idle"
-      && input.editRevision === input.lastPersistedRevision,
+    canOpenSelectedHtml: Boolean(
+      fileReady
+      && sameDocument
+      && project.sourcePath
+      && input.canOpenSelectedHtmlInDefaultBrowser,
+    ),
     canExportCurrentHtml: fileReady,
     canReloadCurrentSource,
     actions: Object.freeze({
       saveVersion: actionAvailability(canSaveCurrentVersion, currentActionReason, "current"),
       createFromHistory: actionAvailability(!createHistoryReason, createHistoryReason, "history"),
       showInFolder: actionAvailability(!showInFolderReason, showInFolderReason, "current"),
-      openInBrowser: actionAvailability(!openInBrowserReason, openInBrowserReason, "current"),
+      openInBrowser: actionAvailability(!openInBrowserReason, openInBrowserReason, isHistory ? "history" : "current"),
       exportHtml: actionAvailability(!exportReason && fileReady, exportReason, isHistory ? "history" : "visible"),
       exportAndSave: actionAvailability(
         !exportReason && fileReady && canSaveCurrentVersion,

@@ -672,6 +672,9 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
     sourceSha256: sha256(before),
   };
   const calls = [];
+  let markFirstStarted;
+  const firstStarted = new Promise((resolve) => { markFirstStarted = resolve; });
+  let resolveFirst;
   const harness = createHarness({
     html: before,
     bridge: {
@@ -683,7 +686,7 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
           exactSourcePath: movedPath,
           sourceSha256: sha256(body.html),
         };
-        return {
+        const response = {
           ok: true,
           content: body.html,
           sha256: sha256(body.html),
@@ -697,6 +700,11 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
             deletedCommentIds: [],
           },
         };
+        if (calls.length === 1) {
+          markFirstStarted();
+          return new Promise((resolve) => { resolveFirst = () => resolve(response); });
+        }
+        return response;
       },
     },
   });
@@ -709,7 +717,11 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
   harness.workflow.subscribeEvents((event) => events.push(event));
 
   harness.workflow.enqueueEdit({ html: after });
-  assert.equal((await harness.workflow.flush()).status, "succeeded");
+  const flushing = harness.workflow.flush();
+  await firstStarted;
+  harness.workflow.enqueueEdit({ html: final });
+  resolveFirst();
+  assert.equal((await flushing).status, "succeeded");
   assert.equal(harness.projectSession.context?.sourcePath, movedPath);
   assert.equal(harness.projectSession.context?.projectRootPath, "/tmp/project-renamed");
   assert.equal(
@@ -717,8 +729,6 @@ test("DocumentWorkflow rebinds a moved Working Copy before the next autosave", a
     movedPath,
   );
 
-  harness.workflow.enqueueEdit({ html: final });
-  assert.equal((await harness.workflow.flush()).status, "succeeded");
   assert.equal(calls.length, 2);
   assert.equal(calls[1].sourcePath, movedPath);
   assert.equal(calls[1].exactSourcePath, movedPath);
@@ -864,12 +874,22 @@ test("DocumentWorkflow rejects an unchainable source transaction without publish
   assert.equal(harness.canvas.invalidations, 0);
 });
 
-test("DocumentWorkflow drains a newer queued write after an earlier acknowledgement", async () => {
+test("DocumentWorkflow drains a newer managed write after the earlier ACK refreshes its source hash", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const middle = before.replace("one", "two");
   const after = before.replace("one", "three");
   const calls = [];
   let resolveFirst;
+  const openTarget = (sourceSha256) => ({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    projectRootPath: "/tmp/document-workflow-project",
+    targetKind: "working-copy",
+    workingCopyId: "working_document_workflow",
+    versionId: "version_document_workflow",
+    exactSourcePath: SOURCE_PATH,
+    sourceSha256,
+  });
   const harness = createHarness({
     html: before,
     bridge: {
@@ -884,10 +904,15 @@ test("DocumentWorkflow drains a newer queued write after an earlier acknowledgem
           sha256: sha256(body.html),
           persistedRevision: body.editRevision,
           lastModifiedAt: "2026-08-11T00:00:02.000Z",
+          openTarget: openTarget(sha256(body.html)),
         });
       },
     },
   });
+  assert.ok(harness.projectSession.adoptOpenTarget({
+    previousSourcePath: SOURCE_PATH,
+    target: openTarget(sha256(before)),
+  }));
 
   harness.workflow.enqueueEdit({ html: middle });
   const flushing = harness.workflow.flush();
@@ -900,6 +925,7 @@ test("DocumentWorkflow drains a newer queued write after an earlier acknowledgem
     sha256: sha256(middle),
     persistedRevision: 1,
     lastModifiedAt: "2026-08-11T00:00:01.000Z",
+    openTarget: openTarget(sha256(middle)),
   });
 
   assert.equal((await flushing).status, "succeeded");
@@ -1017,7 +1043,17 @@ test("DocumentWorkflow reconstructs a missing pending write and rebinds comment 
     sourceAnchor: { id: "target_rebind", selector: "p", resolution: "exact" },
     attachments: [],
   }]);
-  harness.documentSession.beginEdit(after);
+  harness.documentSession.publishAuthority({
+    html: after,
+    persistedSourceSha256: sha256(before),
+    workingHtmlSha256: sha256(after),
+    editRevision: 1,
+    lastPersistedRevision: 0,
+    persistState: "queued",
+    pendingWrite: null,
+    context: harness.context,
+    operationId: "restore-missing-pending-write",
+  });
 
   const outcome = await harness.workflow.flush({ throughRevision: 1 });
 
@@ -1762,7 +1798,11 @@ test("DocumentWorkflow fences delayed replacement proof against a newer local ed
   const recovering = h.recover();
   await proofStarted;
   const localHtml = h.currentHtml.replace("V9 current", "new local edit");
-  h.documentSession.beginEdit(localHtml);
+  h.documentSession.acceptEdit({
+    html: localHtml,
+    context: h.context,
+    write: h.context,
+  });
   releaseProof();
   const result = await recovering;
   assert.equal(result.status, "stale");
@@ -2213,11 +2253,16 @@ test("DocumentWorkflow force-unlock adopts disk HTML and clears persistence conf
       },
     },
   });
-  harness.documentSession.setPersistence({
-    state: "conflict",
-    error: "源文件在磁盘上被其他程序修改了。",
+  harness.documentSession.publishAuthority({
+    html: before,
+    persistedSourceSha256: sha256(before),
+    workingHtmlSha256: sha256(before),
+    editRevision: 3,
+    lastPersistedRevision: 0,
+    persistState: "conflict",
+    persistError: "源文件在磁盘上被其他程序修改了。",
+    operationId: "test-force-unlock-conflict",
   });
-  harness.documentSession.setEditRevision(3);
 
   const outcome = await harness.workflow.forceUnlockConflict({
     context: harness.context,
@@ -2254,8 +2299,8 @@ test("DocumentWorkflow reloadAuthority adopts a Working Copy conflict through fo
       },
     },
   });
-  harness.documentSession.setPersistence({
-    state: "conflict",
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
     error: "源文件在磁盘上被其他程序修改了。",
   });
 
@@ -2397,7 +2442,8 @@ test("observeExternalSourceChange ignores stale paths and in-flight writes", asy
   assert.equal(stale.status, "succeeded");
   assert.equal(stale.value.ignored, true);
 
-  harness.documentSession.setPersistence({ state: "writing" });
+  harness.documentSession.acceptEdit({ html, write: {} });
+  harness.documentSession.beginWrite();
   const deferred = await harness.workflow.observeExternalSourceChange({
     sourcePath: SOURCE_PATH,
   });
@@ -2479,11 +2525,13 @@ test("local and history observations with a receipt hash mismatch never verify",
   const wrongSha256 = sha256("different rendered bytes");
   for (const origin of ["local-edit", "history"]) {
     const harness = createHarness({ html });
-    harness.documentSession.beginEdit(nextHtml, {
+    harness.documentSession.acceptEdit({
+      html: nextHtml,
       origin,
       sourceSha256: nextSha256,
       context: harness.context,
       operationId: `${origin}-hash-fence`,
+      write: null,
     });
     const receipt = harness.documentSession.sourceReceipt;
     assert.equal(harness.workflow.confirmCanvas({
@@ -2634,9 +2682,11 @@ test("ensureCurrentCanvas repairs a clean persisted hash mismatch with the autho
       },
     },
   });
-  harness.documentSession.update({
+  harness.documentSession.publishAuthority({
+    html: oldHtml,
     persistedSourceSha256: sha256("stale persisted bytes"),
     workingHtmlSha256: sha256(oldHtml),
+    operationId: "test-stale-persisted-hash",
   });
   const beforeReceipt = harness.documentSession.sourceReceipt;
 
@@ -2814,7 +2864,11 @@ test("leave readiness is current evidence, not a permission retained across an e
   const boundary = h.workflow.captureLeaveBoundary();
   assert.equal(h.workflow.verifyLeaveBoundary(boundary, { needsSourceProtection: true,
     committedSourceSha256: sha256(h.documentSession.html) }).kind, "ready");
-  h.documentSession.beginEdit(h.documentSession.html.replace("one", "newer"));
+  h.documentSession.acceptEdit({
+    html: h.documentSession.html.replace("one", "newer"),
+    context: h.context,
+    write: h.context,
+  });
   assert.equal(h.workflow.inspectLeaveReadiness().action, "full-check");
   assert.equal(h.workflow.verifyLeaveBoundary(boundary).code, "PROJECT_SWITCH_SOURCE_CHANGED");
 });
@@ -2825,7 +2879,11 @@ test("leave boundary cannot cross a same-byte document switch or source replacem
     t.after(() => h.workflow.dispose());
     const boundary = h.workflow.captureLeaveBoundary();
     if (change === "context") h.projectSession.openLocator("/tmp/another-document.html");
-    else h.documentSession.update({ html: h.documentSession.html.replace("one", "replacement") });
+    else h.documentSession.acceptEdit({
+      html: h.documentSession.html.replace("one", "replacement"),
+      context: h.context,
+      write: h.context,
+    });
     assert.equal(h.workflow.verifyLeaveBoundary(boundary).code, "PROJECT_SWITCH_SOURCE_CHANGED", change);
   }
 });

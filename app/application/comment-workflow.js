@@ -244,7 +244,7 @@ export class CommentWorkflow {
     if (!projectSession || typeof projectSession.matches !== "function") {
       throw new TypeError("CommentWorkflow requires ProjectSession injection.");
     }
-    if (!documentSession || typeof documentSession.update !== "function") {
+    if (!documentSession || typeof documentSession.acceptEdit !== "function") {
       throw new TypeError("CommentWorkflow requires DocumentSession injection.");
     }
     if (!commentSession || typeof commentSession.subscribe !== "function") {

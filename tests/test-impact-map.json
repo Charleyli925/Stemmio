@@ -665,13 +665,27 @@
     {
       "id": "document-session",
       "patterns": [
-        "^app/application/document-session\\.(?:js|d\\.ts)$"
+        "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
+        "^scripts/verify-source-receipt-typecheck\\.mjs$",
+        "^tests/source-receipt-contract\\.typecheck\\.ts$",
+        "^tests/source-receipt-typecheck-verifier\\.test\\.mjs$",
+        "^tsconfig\\.source-receipt\\.json$"
       ],
       "suites": [
-        "typecheck"
+        "typecheck",
+        "browser-editing-smoke",
+        "electron-editing-smoke",
+        "electron-recovery-smoke",
+        "electron-project-lifecycle-smoke"
       ],
       "nodeTests": [
-        "tests/document-session.test.mjs"
+        "tests/document-session.test.mjs",
+        "tests/document-workflow.test.mjs",
+        "tests/project-workflow.test.mjs",
+        "tests/version-workflow.test.mjs",
+        "tests/run-workflow.test.mjs",
+        "tests/workspace-controller.test.mjs",
+        "tests/source-receipt-typecheck-verifier.test.mjs"
       ]
     },
     {
@@ -1750,6 +1764,24 @@
       ],
       "nodeTests": [
         "tests/open-in-default-browser.test.mjs"
+      ]
+    },
+    {
+      "id": "browser-open-workflow",
+      "patterns": [
+        "^app/application/browser-open-workflow\\.(?:js|d\\.ts)$",
+        "^tests/browser-open-workflow\\.test\\.mjs$",
+        "^tsconfig\\.browser-open-workflow\\.json$"
+      ],
+      "suites": [
+        "typecheck",
+        "electron-project-lifecycle-smoke"
+      ],
+      "nodeTests": [
+        "tests/browser-open-workflow.test.mjs",
+        "tests/open-in-default-browser.test.mjs",
+        "tests/desktop-preload-ipc.test.mjs",
+        "tests/workbench-presentation.test.mjs"
       ]
     },
     {

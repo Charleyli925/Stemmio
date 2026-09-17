@@ -3548,6 +3548,13 @@ Remaining: full 200% zoom, long-history keyboard/scroll matrix, real accounts, a
 
 final result: passed
 
+## 2026-09-16 — 默认浏览器打开精确所见 HTML
+
+- Mode: DESIGN CHANGE, lightweight exception. 仅历史页的既有菜单项从禁用改为可用，并将文案改为“在浏览器中打开此版本”；当前稿文案、菜单顺序、布局、图标、颜色与 Finder/导出动作不变。
+- 对象语义：当前稿先收口 Native Edit 并安全落盘，再打开已核验工作文件；历史页只打开当前所见的不可变 Version。任一失败都保留当前项目和可恢复提示，不打开其他文档。
+- 证据：聚焦 Node 矩阵 63/63 通过；真实 Electron 历史路径打开精确 V3 文件且当前稿字节不变，当前稿路径直接从未保存文字输入收口。完成门禁与最终计数见本 PR 测试证据；本批不声称打包或安装应用验收。
+- 2026-09-17 合同补核：A 等待保存时切换到 B 的结果现在完整断言为原始 A 的 `stale.context`；成功、阻塞、拒绝和未知结果也断言完整字段。生产工作流进入窄范围 `checkJs`，不改变菜单、切换、输入收口或系统打开行为。局部 Node 65/65 与 edit gate 通过；真实 Electron 与私人语料结论仍沿用本 PR 后续精确 head 的完成证据，不以本次 Node 结果替代。
+
 ### P1 follow-up — created-history current-draft recovery
 
 - Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, color, spacing or layout changed; the established direct history Preview, disabled Edit, absent top banner and complete disabled-aware More menu remain unchanged.
@@ -3567,3 +3574,14 @@ follow-up result: passed
 - Deterministic evidence: 73 focused Node/CSS/navigation checks pass; session coverage verifies admission fences, byte/entry LRU, cold identity, exact-version lightweight restoration and stale-source reset. Type and architecture checks pass. The complete edit gate passes after installing the worktree's locked dependencies; the earlier environment-only run lacked local ECharts package files and is not product-failure evidence.
 - Boundary: this is isolated rebuilt-source evidence, not installed or packaged validation. No private real-HTML corpus, startup/RSS benchmark or long-resource-session measurement was run, so no quantitative speed or memory claim is made. Review analysis caching and the verified immutable script-byte store are intentionally unchanged.
 - Result: passed for the scoped lifecycle, authority and resource-release behavior. Final task-gate evidence is recorded separately by the existing runner.
+
+## 2026-09-17 — Document write-state ownership fences
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. No control, copy, layout, color, focus order or editing gesture changed. The existing save, conflict, recovery and registration presentation remains intact.
+- `DocumentSession` now refuses a second execution grant while W1 is active, retains a newer W2 when W1 fails, rejects late restore/ACK/failure after reset or authority publication, requires exact current context for ordinary queueing, and confines explicit rebase to the same accepted bytes, logical document owner and authority generation. Source persistence may settle while the owned flush still retires recovery evidence; the old flush cannot clear a newer owner.
+- `DocumentWorkflow` supplies the exact active write or source receipt when delayed save, recovery and history failures return. It no longer restores an arbitrary object after stale completion, so an older operation cannot describe a newer edit or session as failed.
+- Deterministic evidence: focused Session/Document/Project/Version/Workspace suites pass 362/362 after the final identity-fence changes. The edit gate passes 577/577 selected Node checks plus architecture and type checks. The first edit-gate run exposed two Version test fixtures that injected a malformed pending write; the fixtures now use the public edit → queue → begin → confirm sequence, without relaxing production guards.
+- The first completion gate retained eight Electron failures. Seven save-continuity cases exposed a product regression in the new rebase guard: a verified Hash refresh and the macOS aliases `/private/var/...` and `/var/...` were treated as different write owners, leaving newer revisions queued behind revision 1. Ordinary queueing remains exact; the explicit rebase action now preserves the same HTML, revision, logical Project/Document owner and authority generation while accepting only Workflow-verified route/Hash refreshes. The six remaining continuity cases then passed together; the command-port case had already passed after the Hash repair. The eighth failure, a history confirmation dialog, passed its focused rerun and remains unclassified rather than being relabeled as an environment failure.
+- Evidence boundary: no new visible state requires a screenshot. Real rebuilt-source Electron coverage and any configured private-corpus run remain owned by the completion gate; Node evidence is not presented as proof of IME, selection, iframe or installed-app continuity.
+
+final result: passed for the scoped non-visual state contract; completion-gate evidence is recorded separately.

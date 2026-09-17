@@ -1,3 +1,16 @@
+import {
+  createSourceReceipt,
+  isSourceReceipt,
+  sameSourceReceipt,
+  sameSourceReceiptContext,
+} from "./source-receipt.js";
+
+export {
+  isSourceReceipt,
+  sameSourceReceipt,
+  sameSourceReceiptContext,
+};
+
 const PERSIST_STATES = new Set([
   "idle",
   "preview-dirty",
@@ -16,6 +29,54 @@ function persistState(value) {
   return PERSIST_STATES.has(value) ? value : "idle";
 }
 
+function isDocumentWrite(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Number.isSafeInteger(value.revision)
+    && value.revision >= 0
+    && typeof value.html === "string"
+  );
+}
+
+function sameWriteBytes(left, right) {
+  return Boolean(
+    isDocumentWrite(left)
+    && isDocumentWrite(right)
+    && revision(left.revision) === revision(right.revision)
+    && String(left.html) === String(right.html)
+  );
+}
+
+function writeMatchesContext(write, context) {
+  if (!context) return true;
+  const fields = ["epoch", "projectId", "documentId", "sourcePath"];
+  for (const field of [
+    "projectRootPath",
+    "targetKind",
+    "workingCopyId",
+    "versionId",
+    "exactSourcePath",
+    "sourceSha256",
+    "sessionEpoch",
+  ]) {
+    if (Object.hasOwn(context, field)) fields.push(field);
+  }
+  return fields.every((field) => String(write?.[field] ?? "") === String(context[field] ?? ""));
+}
+
+function writeRebaseKeepsOwner(expectedWrite, nextWrite, context) {
+  if (!sameWriteBytes(expectedWrite, nextWrite)) return false;
+  for (const field of ["projectId", "documentId"]) {
+    const expected = String(expectedWrite?.[field] || "");
+    const next = String(nextWrite?.[field] || "");
+    const current = String(context?.[field] || "");
+    if ((expected && expected !== next) || (current && current !== next)) return false;
+  }
+  return true;
+}
+
 const CANVAS_AUTHORITY_STATES = new Set([
   "idle",
   "pending",
@@ -23,11 +84,6 @@ const CANVAS_AUTHORITY_STATES = new Set([
   "failed",
 ]);
 
-const SOURCE_RECEIPT_ORIGINS = new Set([
-  "local-edit",
-  "history",
-  "authority",
-]);
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
 // A sequence is scoped to one DocumentSession.  Keep the session incarnation
@@ -41,152 +97,6 @@ function nextSourceSessionIncarnation() {
     sourceSessionIncarnationSequence = 1;
   }
   return sourceSessionIncarnationSequence;
-}
-
-function sourceReceiptContext(context) {
-  if (!context || typeof context !== "object" || Array.isArray(context)) return null;
-  const epoch = Number(context.epoch);
-  const projectId = String(context.projectId || "");
-  const documentId = String(context.documentId || "");
-  const sourcePath = String(context.sourcePath || "");
-  if (!Number.isSafeInteger(epoch) || !projectId || !documentId || !sourcePath) return null;
-  const hasTarget = [
-    "projectRootPath",
-    "targetKind",
-    "workingCopyId",
-    "versionId",
-    "exactSourcePath",
-    "sourceSha256",
-    "sessionEpoch",
-  ].some((key) => Object.hasOwn(context, key));
-  if (!hasTarget) {
-    return Object.freeze({
-      epoch,
-      projectId,
-      documentId,
-      sourcePath,
-    });
-  }
-  const requiredTargetFields = [
-    "projectRootPath",
-    "targetKind",
-    "workingCopyId",
-    "versionId",
-    "exactSourcePath",
-    "sourceSha256",
-    "sessionEpoch",
-  ];
-  if (!requiredTargetFields.every((key) => Object.hasOwn(context, key))) return null;
-  const targetKind = String(context.targetKind || "");
-  if (targetKind !== "working-copy" && targetKind !== "version") return null;
-  const projectRootPath = String(context.projectRootPath || "");
-  const exactSourcePath = String(context.exactSourcePath || "");
-  const sourceSha256 = String(context.sourceSha256 || "");
-  const sessionEpoch = Number(context.sessionEpoch);
-  if (
-    !projectRootPath
-    || !exactSourcePath
-    || !/^sha256:[a-f0-9]{64}$/u.test(sourceSha256)
-    || !Number.isSafeInteger(sessionEpoch)
-    || (targetKind === "working-copy" && !String(context.workingCopyId || ""))
-    || (targetKind === "version" && !String(context.versionId || ""))
-  ) return null;
-  return Object.freeze({
-    epoch,
-    projectId,
-    documentId,
-    sourcePath,
-    projectRootPath,
-    targetKind,
-    workingCopyId: context.workingCopyId ? String(context.workingCopyId) : null,
-    versionId: context.versionId ? String(context.versionId) : null,
-    exactSourcePath,
-    sourceSha256,
-    sessionEpoch,
-  });
-}
-
-function sourceReceipt({
-  sessionIncarnation,
-  sequence,
-  origin,
-  operationId,
-  editRevision,
-  canvasGeneration,
-  sourceSha256,
-  context,
-} = {}) {
-  const normalizedSequence = revision(sequence);
-  const normalizedOrigin = SOURCE_RECEIPT_ORIGINS.has(origin) ? origin : "authority";
-  const normalizedContext = sourceReceiptContext(context);
-  return Object.freeze({
-    sessionIncarnation: revision(sessionIncarnation),
-    sequence: normalizedSequence,
-    origin: normalizedOrigin,
-    operationId: String(operationId || `${normalizedOrigin}-${normalizedSequence}`),
-    editRevision: revision(editRevision),
-    canvasGeneration: revision(canvasGeneration),
-    sourceSha256: String(sourceSha256 || ""),
-    context: normalizedContext,
-    epoch: normalizedContext?.epoch ?? null,
-    projectId: normalizedContext?.projectId || null,
-    documentId: normalizedContext?.documentId || null,
-    sourcePath: normalizedContext?.sourcePath || null,
-    sessionEpoch: normalizedContext?.sessionEpoch ?? null,
-  });
-}
-
-export function isSourceReceipt(value) {
-  return Boolean(
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && Number.isSafeInteger(Number(value.sessionIncarnation))
-    && Number(value.sessionIncarnation) > 0
-    && Number.isSafeInteger(Number(value.sequence))
-    && Number(value.sequence) > 0
-    && SOURCE_RECEIPT_ORIGINS.has(value.origin)
-    && String(value.operationId || "")
-    && Number.isSafeInteger(Number(value.editRevision))
-    && Number.isSafeInteger(Number(value.canvasGeneration))
-    && (value.context == null || sourceReceiptContext(value.context))
-    && (value.sourceSha256 === "" || /^sha256:[a-f0-9]{64}$/u.test(String(value.sourceSha256)))
-  );
-}
-
-export function sameSourceReceiptContext(left, right) {
-  if (left?.context == null && right?.context == null) return true;
-  const a = sourceReceiptContext(left?.context || left);
-  const b = sourceReceiptContext(right?.context || right);
-  if (!a || !b) return false;
-  return (
-    a.epoch === b.epoch
-    && a.projectId === b.projectId
-    && a.documentId === b.documentId
-    && a.sourcePath === b.sourcePath
-    && String(a.projectRootPath || "") === String(b.projectRootPath || "")
-    && String(a.targetKind || "") === String(b.targetKind || "")
-    && String(a.workingCopyId || "") === String(b.workingCopyId || "")
-    && String(a.versionId || "") === String(b.versionId || "")
-    && a.exactSourcePath === b.exactSourcePath
-    && a.sessionEpoch === b.sessionEpoch
-    && String(a.sourceSha256 || "") === String(b.sourceSha256 || "")
-  );
-}
-
-export function sameSourceReceipt(left, right) {
-  return Boolean(
-    isSourceReceipt(left)
-    && isSourceReceipt(right)
-    && left.sessionIncarnation === right.sessionIncarnation
-    && left.sequence === right.sequence
-    && left.origin === right.origin
-    && left.operationId === right.operationId
-    && left.editRevision === right.editRevision
-    && left.canvasGeneration === right.canvasGeneration
-    && left.sourceSha256 === right.sourceSha256
-    && sameSourceReceiptContext(left, right)
-  );
 }
 
 function canvasAuthority({
@@ -223,6 +133,10 @@ function initialSnapshot({
   html = "",
   persistedSourceSha256 = null,
   workingHtmlSha256 = persistedSourceSha256,
+  editRevision = 0,
+  lastPersistedRevision = editRevision,
+  persistState: initialPersistState = "idle",
+  persistError = "",
 } = {}) {
   const persistedHash = persistedSourceSha256 ? String(persistedSourceSha256) : null;
   return Object.freeze({
@@ -231,10 +145,10 @@ function initialSnapshot({
     workingHtmlSha256: workingHtmlSha256 ? String(workingHtmlSha256) : null,
     canvasGeneration: 0,
     sourceReceipt: null,
-    editRevision: 0,
-    lastPersistedRevision: 0,
-    persistState: "idle",
-    persistError: "",
+    editRevision: revision(editRevision),
+    lastPersistedRevision: revision(lastPersistedRevision),
+    persistState: persistState(initialPersistState),
+    persistError: String(persistError || ""),
     hasPendingWrite: false,
     isFlushing: false,
     canvasAuthority: canvasAuthority({ generation: 0 }),
@@ -247,6 +161,12 @@ export class DocumentSession {
   #snapshot;
 
   #pendingWrite = null;
+
+  #activeWrite = null;
+
+  #authorityGeneration = 0;
+
+  #writeAuthorities = new WeakMap();
 
   #flushPromise = null;
 
@@ -294,53 +214,6 @@ export class DocumentSession {
     }
   }
 
-  update({
-    html,
-    persistedSourceSha256,
-    workingHtmlSha256,
-    editRevision,
-    lastPersistedRevision,
-    persistState: nextPersistState,
-    persistError,
-    pendingWrite,
-  }) {
-    const next = { ...this.#snapshot };
-    if (html !== undefined) {
-      const nextHtml = String(html);
-      if (nextHtml !== next.html && workingHtmlSha256 === undefined) {
-        next.workingHtmlSha256 = null;
-      }
-      next.html = nextHtml;
-    }
-    if (persistedSourceSha256 !== undefined) {
-      next.persistedSourceSha256 = persistedSourceSha256
-        ? String(persistedSourceSha256)
-        : null;
-    }
-    if (workingHtmlSha256 !== undefined) {
-      next.workingHtmlSha256 = workingHtmlSha256
-        ? String(workingHtmlSha256)
-        : null;
-    }
-    if (editRevision !== undefined) {
-      next.editRevision = revision(editRevision);
-    }
-    if (lastPersistedRevision !== undefined) {
-      next.lastPersistedRevision = revision(lastPersistedRevision);
-    }
-    if (nextPersistState !== undefined) {
-      next.persistState = persistState(nextPersistState);
-    }
-    if (persistError !== undefined) {
-      next.persistError = String(persistError || "");
-    }
-    if (pendingWrite !== undefined) {
-      this.#pendingWrite = pendingWrite || null;
-    }
-    this.#emit(next);
-    return this.#snapshot;
-  }
-
   reset({
     html,
     persistedSourceSha256 = null,
@@ -351,6 +224,9 @@ export class DocumentSession {
     operationId = "",
   }) {
     this.#pendingWrite = null;
+    this.#activeWrite = null;
+    this.#flushPromise = null;
+    this.#authorityGeneration += 1;
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
     const receipt = this.#nextReceipt({
@@ -391,6 +267,16 @@ export class DocumentSession {
     context = null,
     operationId = "",
   }) {
+    if (pendingWrite !== undefined && pendingWrite !== null) {
+      if (
+        !isDocumentWrite(pendingWrite)
+        || revision(pendingWrite.revision) !== revision(editRevision ?? this.#snapshot.editRevision)
+        || String(pendingWrite.html) !== String(html)
+      ) {
+        throw new TypeError("Document authority pending write must match its accepted HTML and revision.");
+      }
+    }
+    this.#authorityGeneration += 1;
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
     const receipt = this.#nextReceipt({
@@ -428,6 +314,9 @@ export class DocumentSession {
     }
     if (pendingWrite !== undefined) {
       this.#pendingWrite = pendingWrite || null;
+      if (this.#pendingWrite) {
+        this.#writeAuthorities.set(this.#pendingWrite, this.#authorityGeneration);
+      }
     }
     this.#emit(next);
     return this.#snapshot;
@@ -548,17 +437,24 @@ export class DocumentSession {
     return true;
   }
 
-  beginEdit(html, {
+  acceptEdit({
+    html,
     origin = "local-edit",
     operationId = "",
     sourceSha256 = "",
     context = null,
+    write: writeDetails = null,
   } = {}) {
     if (this.#snapshot.persistState === "conflict") {
-      return this.#snapshot.editRevision;
+      return Object.freeze({
+        accepted: false,
+        revision: this.#snapshot.editRevision,
+        write: null,
+      });
     }
     this.#confirmedReceiptSequence = null;
     const nextRevision = this.#snapshot.editRevision + 1;
+    const nextHtml = String(html);
     const nextWorkingHash = SHA256.test(String(sourceSha256 || ""))
       ? String(sourceSha256)
       : null;
@@ -570,89 +466,321 @@ export class DocumentSession {
       sourceSha256: nextWorkingHash || "",
       context,
     });
+    const write = writeDetails === null || writeDetails === undefined
+      ? null
+      : {
+        ...writeDetails,
+        html: nextHtml,
+        revision: nextRevision,
+      };
+    if (write && (
+      !isDocumentWrite(write)
+      || !writeMatchesContext(write, receipt.context)
+    )) {
+      throw new TypeError("Document accepted edit write must match its document owner.");
+    }
+    this.#pendingWrite = write;
+    if (write) this.#writeAuthorities.set(write, this.#authorityGeneration);
     this.#emit({
       ...this.#snapshot,
-      html: String(html),
+      html: nextHtml,
       editRevision: nextRevision,
       sourceReceipt: receipt,
+      persistState: write ? "queued" : "preview-dirty",
       persistError: "",
       workingHtmlSha256: nextWorkingHash,
       canvasAuthority: pendingCanvasAuthority(this.#snapshot.canvasGeneration),
     });
-    return nextRevision;
-  }
-
-  setHtml(html) {
-    const nextHtml = String(html);
-    this.#emit({
-      ...this.#snapshot,
-      html: nextHtml,
-      workingHtmlSha256: nextHtml === this.#snapshot.html
-        ? this.#snapshot.workingHtmlSha256
-        : null,
+    return Object.freeze({
+      accepted: true,
+      revision: nextRevision,
+      write,
     });
   }
 
-  setPersistedSourceSha256(persistedSourceSha256) {
+  restorePendingWrite(write) {
+    if (!isDocumentWrite(write)) {
+      throw new TypeError("Document restored pending write requires exact HTML and a non-negative revision.");
+    }
+    if (
+      revision(write.revision) !== this.#snapshot.editRevision
+      || String(write.html) !== this.#snapshot.html
+      || !writeMatchesContext(write, this.#snapshot.sourceReceipt?.context)
+    ) {
+      throw new TypeError("Document restored pending write must match the currently accepted document state.");
+    }
+    if (this.#pendingWrite || this.#activeWrite) {
+      throw new TypeError("Document restored pending write cannot replace owned write work.");
+    }
+    this.#pendingWrite = write;
+    this.#writeAuthorities.set(write, this.#authorityGeneration);
     this.#emit({
       ...this.#snapshot,
-      persistedSourceSha256: persistedSourceSha256
-        ? String(persistedSourceSha256)
-        : null,
+      persistState: "queued",
+      persistError: "",
     });
-  }
-
-  setEditRevision(value) {
-    this.#emit({ ...this.#snapshot, editRevision: revision(value) });
-  }
-
-  setLastPersistedRevision(value) {
-    this.#emit({
-      ...this.#snapshot,
-      lastPersistedRevision: revision(value),
-    });
-  }
-
-  setPersistence({
-    state = this.#snapshot.persistState,
-    error = this.#snapshot.persistError,
-  } = {}) {
-    this.#emit({
-      ...this.#snapshot,
-      persistState: persistState(state),
-      persistError: String(error || ""),
-    });
-  }
-
-  setPersistState(state) {
-    this.setPersistence({ state });
-  }
-
-  setPersistError(error) {
-    this.setPersistence({ error });
-  }
-
-  setPendingWrite(write) {
-    this.#pendingWrite = write || null;
-    return this.#pendingWrite;
-  }
-
-  takePendingWrite() {
-    const write = this.#pendingWrite;
-    this.#pendingWrite = null;
     return write;
   }
 
-  setFlushPromise(promise) {
-    if (promise !== null && typeof promise?.then !== "function") {
+  beginWrite() {
+    if (this.#activeWrite) return null;
+    const write = this.#pendingWrite;
+    if (!write) return null;
+    if (this.#writeAuthorities.get(write) !== this.#authorityGeneration) return null;
+    this.#pendingWrite = null;
+    this.#activeWrite = write;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "writing",
+      persistError: "",
+    });
+    return write;
+  }
+
+  restoreWrite(write, { nextWrite = write, replacePending = false } = {}) {
+    if (!isDocumentWrite(write) || !isDocumentWrite(nextWrite)) {
+      throw new TypeError("Document restored write requires exact HTML and a non-negative revision.");
+    }
+    if (this.#activeWrite !== write) return false;
+    const pending = this.#pendingWrite;
+    this.#activeWrite = null;
+    if (!replacePending && pending) {
+      this.#emit({
+        ...this.#snapshot,
+        persistState: "queued",
+        persistError: "",
+      });
+      return pending;
+    }
+    if (
+      revision(nextWrite.revision) !== this.#snapshot.editRevision
+      || String(nextWrite.html) !== this.#snapshot.html
+      || !writeMatchesContext(nextWrite, this.#snapshot.sourceReceipt?.context)
+    ) {
+      throw new TypeError("Document restored write must match the currently accepted document state.");
+    }
+    this.#pendingWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "queued",
+      persistError: "",
+    });
+    return nextWrite;
+  }
+
+  rebaseQueuedWrite({ expectedWrite, nextWrite } = {}) {
+    if (this.#pendingWrite !== expectedWrite) return false;
+    if (
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
+    ) {
+      throw new TypeError("Document rebased write must keep its accepted bytes and document owner.");
+    }
+    this.#pendingWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
+    this.#emit(this.#snapshot);
+    return true;
+  }
+
+  rebaseActiveWrite({ expectedWrite, nextWrite } = {}) {
+    if (this.#activeWrite !== expectedWrite) return false;
+    if (
+      this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
+      || !writeRebaseKeepsOwner(
+        expectedWrite,
+        nextWrite,
+        this.#snapshot.sourceReceipt?.context,
+      )
+    ) {
+      throw new TypeError("Document active write rebase must keep its accepted bytes and document owner.");
+    }
+    this.#activeWrite = nextWrite;
+    this.#writeAuthorities.set(nextWrite, this.#authorityGeneration);
+    return true;
+  }
+
+  finishWrite(write) {
+    if (this.#activeWrite !== write) return false;
+    this.#activeWrite = null;
+    return true;
+  }
+
+  acceptWriteConfirmation({
+    write,
+    html,
+    sourceSha256,
+    persistedRevision,
+    context = null,
+    routingChanged = false,
+    operationId = "",
+    nextWrite = undefined,
+  } = {}) {
+    const writeRevision = revision(write?.revision);
+    const confirmedRevision = revision(persistedRevision);
+    const confirmedHash = String(sourceSha256 || "");
+    if (
+      !isDocumentWrite(write)
+      || this.#activeWrite !== write
+      || this.#writeAuthorities.get(write) !== this.#authorityGeneration
+      || !SHA256.test(confirmedHash)
+      || confirmedRevision < writeRevision
+      || String(html ?? "") !== String(write.html)
+    ) return Object.freeze({
+      accepted: false,
+      completesCurrentDocument: false,
+      authorityChanged: false,
+    });
+    const currentReceipt = this.#snapshot.sourceReceipt;
+    const acknowledgedContext = context || currentReceipt?.context || null;
+    const pending = this.#pendingWrite;
+    const confirmedPending = nextWrite === undefined ? pending : nextWrite;
+    if (
+      (nextWrite !== undefined && (
+        !pending
+        || !isDocumentWrite(nextWrite)
+        || !writeRebaseKeepsOwner(pending, nextWrite, acknowledgedContext)
+        || !writeMatchesContext(nextWrite, acknowledgedContext)
+      ))
+      || (routingChanged && confirmedPending && !writeMatchesContext(
+        confirmedPending,
+        acknowledgedContext,
+      ))
+    ) return Object.freeze({
+      accepted: false,
+      completesCurrentDocument: false,
+      authorityChanged: false,
+    });
+    this.#activeWrite = null;
+    const completesCurrentDocument = Boolean(
+      this.#snapshot.editRevision === writeRevision
+      && !confirmedPending
+      && this.#snapshot.html === String(html ?? "")
+      && String(write.html ?? "") === String(html ?? "")
+    );
+    const receiptNeedsHashRepair = Boolean(
+      completesCurrentDocument
+      && (!currentReceipt
+        || !SHA256.test(String(currentReceipt.sourceSha256 || ""))
+        || currentReceipt.sourceSha256 !== confirmedHash),
+    );
+    const authorityChanged = Boolean(routingChanged || receiptNeedsHashRepair);
+    const next = {
+      ...this.#snapshot,
+      persistedSourceSha256: confirmedHash,
+      lastPersistedRevision: Math.max(
+        this.#snapshot.lastPersistedRevision,
+        confirmedRevision,
+      ),
+    };
+    this.#pendingWrite = confirmedPending;
+    if (confirmedPending) {
+      this.#writeAuthorities.set(confirmedPending, this.#authorityGeneration);
+    }
+    if (completesCurrentDocument) {
+      next.html = String(html);
+      next.workingHtmlSha256 = confirmedHash;
+    }
+    if (this.#pendingWrite) {
+      next.persistState = "queued";
+      next.persistError = "";
+    } else if (completesCurrentDocument) {
+      next.persistState = "idle";
+      next.persistError = "";
+    }
+    if (authorityChanged) {
+      this.#authorityGeneration += 1;
+      this.#confirmedReceiptSequence = null;
+      const canvasGeneration = this.#snapshot.canvasGeneration + 1;
+      next.canvasGeneration = canvasGeneration;
+      next.sourceReceipt = this.#nextReceipt({
+        origin: "authority",
+        operationId,
+        editRevision: this.#snapshot.editRevision,
+        canvasGeneration,
+        sourceSha256: completesCurrentDocument
+          ? confirmedHash
+          : this.#snapshot.workingHtmlSha256 || confirmedHash,
+        context: acknowledgedContext,
+      });
+      next.canvasAuthority = pendingCanvasAuthority(canvasGeneration);
+      if (confirmedPending) {
+        this.#writeAuthorities.set(confirmedPending, this.#authorityGeneration);
+      }
+    }
+    this.#emit(next);
+    return Object.freeze({
+      accepted: true,
+      completesCurrentDocument,
+      authorityChanged,
+    });
+  }
+
+  reconcileRecoveredRevision(value) {
+    const reconciledRevision = revision(value);
+    this.#pendingWrite = null;
+    this.#activeWrite = null;
+    this.#emit({
+      ...this.#snapshot,
+      editRevision: reconciledRevision,
+      lastPersistedRevision: reconciledRevision,
+      persistState: "idle",
+      persistError: "",
+    });
+    return this.#snapshot;
+  }
+
+  markPersistenceIdle() {
+    if (
+      this.#pendingWrite
+      || this.#activeWrite
+      || this.#snapshot.lastPersistedRevision < this.#snapshot.editRevision
+      || this.#snapshot.persistState === "failed"
+      || this.#snapshot.persistState === "conflict"
+      || (
+        this.#snapshot.workingHtmlSha256
+        && this.#snapshot.workingHtmlSha256 !== this.#snapshot.persistedSourceSha256
+      )
+    ) return false;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: "idle",
+      persistError: "",
+    });
+    return true;
+  }
+
+  recordPersistenceFailure({ error, conflict = false, write = null, receipt = null } = {}) {
+    if (
+      (write && (
+        (this.#activeWrite !== write && this.#pendingWrite !== write)
+        || this.#writeAuthorities.get(write) !== this.#authorityGeneration
+      ))
+      || (receipt && !sameSourceReceipt(receipt, this.#snapshot.sourceReceipt))
+    ) return false;
+    this.#emit({
+      ...this.#snapshot,
+      persistState: conflict ? "conflict" : "failed",
+      persistError: String(error || ""),
+    });
+    return this.#snapshot;
+  }
+
+  beginFlush(promise) {
+    if (typeof promise?.then !== "function") {
       throw new TypeError("Document flush authority must be a Promise.");
     }
+    if (this.#flushPromise && this.#flushPromise !== promise) return false;
     this.#flushPromise = promise;
     this.#emit(this.#snapshot);
     return promise;
   }
 
-  clearFlushPromise(promise) {
+  finishFlush(promise) {
     if (this.#flushPromise !== promise) return false;
     this.#flushPromise = null;
     this.#emit(this.#snapshot);
@@ -783,17 +911,15 @@ export class DocumentSession {
     }
     if (content !== html || declaredSha256 !== frozenSha256) {
       const reason = "磁盘中的 HTML 已被其他操作修改。当前页面没有覆盖任何一份；请先导出当前 HTML，或重新载入磁盘文件。";
-      this.setPersistence({ state: "conflict", error: reason });
+      this.recordPersistenceFailure({ conflict: true, error: reason });
       return boundaryBlock("source-diverged", reason, true);
     }
 
-    this.update({
+    this.#emit({
+      ...this.#snapshot,
       persistedSourceSha256: frozenSha256,
       workingHtmlSha256: frozenSha256,
-      lastPersistedRevision: Math.max(
-        this.#snapshot.lastPersistedRevision,
-        cutoff,
-      ),
+      lastPersistedRevision: Math.max(this.#snapshot.lastPersistedRevision, cutoff),
       persistState: "idle",
       persistError: "",
     });
@@ -811,7 +937,7 @@ export class DocumentSession {
 
   #nextReceipt(input) {
     this.#receiptSequence += 1;
-    return sourceReceipt({
+    return createSourceReceipt({
       ...input,
       sequence: this.#receiptSequence,
       sessionIncarnation: this.#sessionIncarnation,

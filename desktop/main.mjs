@@ -2408,8 +2408,66 @@ async function openProjectsRoot() {
   return { opened: true };
 }
 
+async function authorizeDefaultBrowserTarget(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new TypeError("浏览器打开参数无效。");
+  }
+  const allowedKeys = new Set([
+    "targetKind",
+    "sourcePath",
+    "versionId",
+    "expectedSha256",
+  ]);
+  if (Object.keys(payload).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError("浏览器打开参数包含未支持的字段。");
+  }
+  const expectedSha256 = String(payload.expectedSha256 || "");
+  if (!/^sha256:[a-f0-9]{64}$/u.test(expectedSha256)) {
+    throw new TypeError("浏览器打开目标缺少可验证的 Hash。");
+  }
+  if (payload.targetKind === "working-copy") {
+    if (payload.versionId !== undefined) {
+      throw new TypeError("当前稿浏览器打开请求不能携带历史版本。");
+    }
+    const sourcePath = assertReadPayload(payload.sourcePath);
+    await assertKnownProjectPath(sourcePath);
+    const inspectedPath = await inspectHtmlFile(sourcePath);
+    const inspected = await readHtmlFile({
+      sourcePath: inspectedPath,
+      maxHtmlBytes: MAX_HTML_BYTES,
+    });
+    if (inspected.sha256 !== expectedSha256) {
+      throw new ProjectFileError(
+        "BROWSER_OPEN_WORKING_COPY_HASH_MISMATCH",
+        "当前工作文件在打开前已改变，尚未交给浏览器。",
+        { expectedSha256, actualSha256: inspected.sha256 },
+      );
+    }
+    return { targetKind: "working-copy", sourcePath: inspectedPath };
+  }
+  if (payload.targetKind === "version") {
+    const target = await resolveVersionFileTarget({
+      sourcePath: payload.sourcePath,
+      versionId: payload.versionId,
+    }, { immutableVersion: true });
+    if (target.sha256 !== expectedSha256) {
+      throw new ProjectFileError(
+        "BROWSER_OPEN_VERSION_HASH_MISMATCH",
+        "所选历史版本在打开前已改变，尚未交给浏览器。",
+        { expectedSha256, actualSha256: target.sha256 },
+      );
+    }
+    return {
+      targetKind: "version",
+      sourcePath: target.versionPath,
+      versionId: target.versionId,
+    };
+  }
+  throw new TypeError("浏览器打开目标类型无效。");
+}
+
 const openInDefaultBrowser = createOpenInDefaultBrowserOperation({
-  assertKnownProjectPath,
+  authorizeTarget: authorizeDefaultBrowserTarget,
   inspectHtmlFile,
   openExternal: (sourceUrl) => shell.openExternal(sourceUrl),
 });
@@ -3317,7 +3375,7 @@ async function activateGeneratedVersionOperation(payload) {
   };
 }
 
-async function revealVersionFile(payload) {
+async function resolveVersionFileTarget(payload, { immutableVersion = false } = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new TypeError("历史版本参数无效。");
   }
@@ -3363,6 +3421,65 @@ async function revealVersionFile(payload) {
       "VERSION_FILE_UNAVAILABLE",
       "这个历史版本文件暂时无法显示，请重新打开版本历史后再试。",
     );
+  }
+
+  if (versionRecord.projectFileSchemaVersion === "4.0.0" && immutableVersion) {
+    if (typeof versionRecord.projectRootPath !== "string") {
+      throw new ProjectFileError(
+        "VERSION_FILE_UNAVAILABLE",
+        "这个历史版本缺少可验证的项目路径。",
+      );
+    }
+    const [resolvedProjectRoot, resolvedVersionPath] = await Promise.all([
+      realpath(path.resolve(versionRecord.projectRootPath)),
+      realpath(path.resolve(versionRecord.path)),
+    ]);
+    const relativeVersionPath = path.relative(
+      resolvedProjectRoot,
+      resolvedVersionPath,
+    );
+    const pathParts = relativeVersionPath.split(path.sep);
+    if (
+      pathParts.length !== 4
+      || pathParts[0] !== PROJECT_CONTROL_DIRECTORY_NAME
+      || pathParts[1] !== "versions"
+      || pathParts[2] !== payload.versionId
+      || pathParts[3] !== "index.html"
+      || versionRecord.relativePath !== `versions/${payload.versionId}/index.html`
+    ) {
+      throw new ProjectFileError(
+        "UNSAFE_VERSION_PATH",
+        "只能打开当前项目记录中的精确历史 HTML。",
+        { versionPath: resolvedVersionPath },
+      );
+    }
+    const versionStats = await lstat(resolvedVersionPath);
+    if (!versionStats.isFile() || versionStats.isSymbolicLink()) {
+      throw new ProjectFileError(
+        "VERSION_FILE_NOT_REGULAR",
+        "这个历史版本不是可打开的普通 HTML 文件。",
+      );
+    }
+    const versionFile = await readHtmlFile({
+      sourcePath: resolvedVersionPath,
+      maxHtmlBytes: MAX_HTML_BYTES,
+    });
+    if (versionRecord.sha256 !== versionFile.sha256) {
+      throw new ProjectFileError(
+        "VERSION_FILE_HASH_MISMATCH",
+        "这个历史版本文件与项目记录不一致。",
+        {
+          expectedSha256: versionRecord.sha256,
+          actualSha256: versionFile.sha256,
+        },
+      );
+    }
+    return {
+      sourcePath,
+      versionId: payload.versionId,
+      versionPath: resolvedVersionPath,
+      sha256: versionFile.sha256,
+    };
   }
 
   if (versionRecord.projectFileSchemaVersion === "4.0.0") {
@@ -3421,11 +3538,11 @@ async function revealVersionFile(payload) {
         },
       );
     }
-    shell.showItemInFolder(resolvedWorkingCopyPath);
     return {
       sourcePath,
       versionId: payload.versionId,
       versionPath: resolvedWorkingCopyPath,
+      sha256: workingCopy.sha256,
     };
   }
 
@@ -3463,11 +3580,46 @@ async function revealVersionFile(payload) {
       "这个历史版本不是可显示的普通 HTML 文件。",
     );
   }
-  shell.showItemInFolder(resolvedVersionPath);
+  if (!immutableVersion) {
+    return {
+      sourcePath,
+      versionId: payload.versionId,
+      versionPath: resolvedVersionPath,
+      sha256: String(versionRecord.sha256 || versionRecord.contentSha256 || ""),
+    };
+  }
+  const versionFile = await readHtmlFile({
+    sourcePath: resolvedVersionPath,
+    maxHtmlBytes: MAX_HTML_BYTES,
+  });
+  const declaredSha256 = String(
+    versionRecord.sha256 || versionRecord.contentSha256 || "",
+  );
+  if (declaredSha256 && declaredSha256 !== versionFile.sha256) {
+    throw new ProjectFileError(
+      "VERSION_FILE_HASH_MISMATCH",
+      "这个历史版本文件与项目记录不一致。",
+      {
+        expectedSha256: declaredSha256,
+        actualSha256: versionFile.sha256,
+      },
+    );
+  }
   return {
     sourcePath,
     versionId: payload.versionId,
     versionPath: resolvedVersionPath,
+    sha256: versionFile.sha256,
+  };
+}
+
+async function revealVersionFile(payload) {
+  const target = await resolveVersionFileTarget(payload);
+  shell.showItemInFolder(target.versionPath);
+  return {
+    sourcePath: target.sourcePath,
+    versionId: target.versionId,
+    versionPath: target.versionPath,
   };
 }
 

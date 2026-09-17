@@ -39,7 +39,7 @@ sidebar's Grid row and column before positioning it against the right edge.
 | Domain | Fact owner | Operation owner | Entry |
 | --- | --- | --- | --- |
 | Navigation and tabs | `WorkbenchTabsSession`, `WorkbenchNavigationSession` | `WorkbenchNavigationWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.navigation`), `workbench-navigation-container.tsx` |
-| Document save and detach protection | `DocumentSession` owns current bytes/durability; Main recovery journal owns crash bytes | `DocumentWorkflow` owns source write, operation-local leave checks and verified recovery/export evidence | `document-workflow.js`, `document/save-plan.js`, `verified-project-context.js`, `desktop/recovery-journal-store.mjs` |
+| Document save and detach protection | `DocumentSession` owns current bytes/durability through semantic edit/write/failure/authority/reset actions; Main recovery journal owns crash bytes | `DocumentWorkflow` owns source write, operation-local leave checks and verified recovery/export evidence | `document-session.js`, `document-workflow.js`, `document/save-plan.js`, `verified-project-context.js`, `desktop/recovery-journal-store.mjs` |
 | Source element identity migration | `ProjectFileRepository` Working Copy state | `ProjectFileRepository` serialized migration transaction | `bridge/project-file-repository.mjs`, `bridge/project-file-repository/working-copy.mjs` |
 | Semantic source editing | immutable semantic document state, stable-ID operation intent and lineage | pure `SemanticOperationKernel`; SourcePatch is its internal materializer; Canvas owns only current-open invocation | `app/lib/semantic-operation-kernel.js`, `app/lib/source-structure-edit.js`, `app/lib/source-patch-engine.js`, `app/components/html-canvas-structure-commands.ts`, `schemas/semantic-operation.v1.schema.json` |
 | Comments | `CommentSession`; `sourceAnchor` is the only persistent source authority and resolves through `TargetResolver`; bounded `visualHint` is explanatory runtime context, including when `body` is only a safe fallback anchor | `CommentWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.comments`), `comment-workflow.js`, `comment/commit-plan.js`, `target-resolver.js`, `runtime-comment-hint.js`, `comment-text-locator.js`, `comment-rail-container.tsx`, `comment-canvas-port.js`, `comment-rail-view.tsx` |
@@ -48,6 +48,7 @@ sidebar's Grid row and column before positioning it against the right edge.
 | Review and Candidate | Repository owns immutable Candidate HTML, runtime seal, source-identity report and bounded Stable-ID impact assessment with descendant scope closure; historical Version records may still store full-array impact, which `candidateAssessmentFromRecord` projects into the same bounded facts; `VersionSession` owns only the renderer projection | Repository validates/normalizes full-HTML Candidate; `VersionWorkflow` prepares Review and accepts; the explicit Review command starts cancellable source-fact analysis, then projects comments and the current session onto those facts and presents bounded warning-only impact context | `bridge/candidate-assessment.mjs`, `bridge/candidate-assessment-decoder.mjs`, `bridge/project-file-repository/candidate-identity.mjs`, `bridge/project-file-repository/version-candidate.mjs`, `app/domain/run-lifecycle.js`, `app/application/version-workflow.js`, `app/workbench/review-analysis.ts`, `app/workbench/review-document.ts`, `app/workbench/AiReviewWorkspace.tsx` |
 | Review and Candidate | Repository owns immutable Candidate HTML, runtime seal, source-identity report and bounded Stable-ID impact assessment with descendant scope closure; historical Version records may still store full-array impact, which `candidateAssessmentFromRecord` projects into the same bounded facts; `VersionSession` owns only the renderer projection | Repository validates/normalizes full-HTML Candidate; `VersionWorkflow` prepares Review and accepts; the explicit Review command starts cancellable source-fact analysis (only canonical-fact overflow disables optional annotations), then projects comments and the current session onto those facts and presents bounded warning-only impact context | `bridge/candidate-assessment.mjs`, `bridge/candidate-assessment-decoder.mjs`, `bridge/project-file-repository/candidate-identity.mjs`, `bridge/project-file-repository/version-candidate.mjs`, `app/domain/run-lifecycle.js`, `app/application/version-workflow.js`, `app/workbench/review-analysis.ts`, `app/workbench/review-document.ts`, `app/workbench/AiReviewWorkspace.tsx` |
 | Version and history | `VersionSession` owns immutable records and verified history preview bytes; `DocumentSession` remains the current working source | `VersionWorkflow` owns local version save, recovery, exact HTML export and operation reconciliation; history is verified read-only projection over one current draft | `version-workflow.js`, `version/review-plan.js` |
+| Open selected HTML in the default browser | `ProjectSession` and `VersionSession` own the selected current/history identity; `DocumentSession` owns current bytes and persistence proof | `BrowserOpenWorkflow` checkpoints and flushes the exact current revision or carries the selected immutable Version Hash; Desktop reauthorizes the path and rereads the Hash immediately before the one external launch | `browser-open-workflow.js`, `browser-open-workflow.d.ts`, `desktop/open-in-default-browser.mjs` |
 | Project context and version navigation | `ProjectSession`, `ProjectRulesSession`, `VersionSession` | `ProjectWorkflow`, `ProjectRulesWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.projectCatalog`), `workbench-sidebar-container.tsx`, `WorkbenchChrome.tsx`, `project-rules-editor.tsx` |
 | Canvas edit runtime | `EditAuthorRuntimeSession` owns one scoped exact resource grant; Main's library store owns only verified immutable CDN bytes and reviewed same-version packaged pins; source HTML remains authoritative | `HtmlCanvasEditor` ends proven text/style/same-parent reorder and proven structural projections in place. The direct structure policy admits only safe authored text blocks for copy, adjacent same-parent moves and deletions with a provable source delete/undo boundary; a missing post-delete landing clears selection. Direct commands that would require Candidate/rebuild are rejected before a source receipt. Shared semantic insert/move primitives remain available to history and recovery. `DocumentWorkflow` persists complete HTML; test-only `runtime-continuity-probe.js` records frame/visual samples after enable | `edit-runtime-contract.js`, `HtmlCanvasEditor.tsx`, `direct-structure-policy.js`, `html-canvas-structural-projection.js`, `html-canvas-source-authority.js`, `runtime-continuity-probe.js`, `desktop/edit-runtime-protocol.mjs`, `desktop/edit-runtime-library-store.mjs`, `desktop/edit-runtime-bootstrap.mjs` |
 | Preview | disposable preview session | Desktop preview protocol | `desktop/` preview owner, `HtmlInteractionPreview` |
@@ -115,6 +116,14 @@ Working HTML. SourcePatch is the internal implementation for scope, replay,
 inverse operations and integrity; it is not a second public edit API. Do not
 bypass hash, identity, scope or persistence checks, and do not serialize
 Runtime DOM as the save source.
+
+`DocumentSession` publishes SourceReceipt authority through the shared
+`source-receipt-contract.d.ts` contract. Its JavaScript constructor and guard
+live in `source-receipt.js` and are checked, together with a typed caller, by
+`tsconfig.source-receipt.json`; the verification command also proves that the
+implementation file is in the TypeScript program and that an invalid receipt
+field assignment fails that check. This is a focused implementation loop, not
+a repository-wide `checkJs` migration.
 
 **Current fact.** `HtmlCanvasEditor.applySourceCommand()` materializes once
 for an accepted edit: it receives a semantic operation, applies the kernel,
@@ -206,10 +215,20 @@ do not split one state owner across hooks only to reduce line count.
 The gate must enforce responsibility, not private field names:
 
 - Views cannot import or call the Bridge.
+- Views cannot issue raw requests or filesystem writes; they dispatch application commands.
 - Application cannot import React, Workbench presentation, components or desktop.
-- Domain is pure.
+- Domain is pure: no React, Electron, filesystem, Bridge or application dependency.
 - Sessions are constructed only by `createRuntimeWorkspaceController()`.
-- Repository internals are not a second writer.
+- Repository internals are not a second writer; aliased filesystem imports are checked too.
+- `shared/` is cross-runtime pure logic except the explicit host-only
+  `project-storage-contract.mjs`; renderer and domain code cannot import that host adapter.
+- The default full scan requires and traverses `app/`, `bridge/`, `scripts/`,
+  `desktop/`, and `shared/`, including `.js`, `.mjs`, `.ts`, and `.tsx` source.
+  A missing root, unreadable directory or file, unsupported explicit source, or parser
+  failure aborts the check instead of becoming an empty pass.
+- Fixture checks use `--scope limited` with one or more explicit relative `--include`
+  paths. The CLI reports the declared scope and scanned file count, and refuses a
+  zero-file scan; `--root` alone never weakens the full production contract.
 - Retired modules stay deleted.
 - Global Notice growth is frozen to `scripts/notice-disposition-ledger.json`.
   Generic `setToast` is retired. Remaining interruptions are closed

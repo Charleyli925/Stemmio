@@ -4032,15 +4032,7 @@ export class ProjectWorkflow {
           // refresh only hydrates supplemental state; it must not create a
           // second receipt or Canvas transition while that reload is pending
           // or after it has verified.
-          this.#documentSession.update({
-            html: authoritativeHtml,
-            persistedSourceSha256: authoritativeHash,
-            workingHtmlSha256: nextWorkingHash,
-            editRevision: finalEditRevision,
-            lastPersistedRevision: finalLastPersistedRevision,
-            persistState: "idle",
-            persistError: "",
-          });
+          this.#documentSession.markPersistenceIdle();
         } else {
           // Independent hydration always changes the complete source context.
           // Same-byte hydration still needs a fresh authority receipt and
@@ -4243,8 +4235,8 @@ export class ProjectWorkflow {
           "冲突候选已恢复，但编辑画布尚未就绪。",
         );
         if (!frozen?.ok) throw new Error(frozen?.reason || "无法冻结已恢复的冲突候选。");
-        this.#documentSession.setPersistence({
-          state: "conflict",
+        this.#documentSession.recordPersistenceFailure({
+          conflict: true,
           error: "源 HTML 在自动写回前被外部修改。工作台候选和外部文件均已保留，请比较后重新载入或导出当前 HTML。",
         });
       }

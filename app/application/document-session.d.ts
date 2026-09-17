@@ -1,4 +1,10 @@
 import type { ProjectContext } from "./project-session.js";
+import type { DocumentSourceReceipt } from "./source-receipt-contract.js";
+
+export type { DocumentSourceReceipt } from "./source-receipt-contract.js";
+export function isSourceReceipt(value: unknown): value is DocumentSourceReceipt;
+export function sameSourceReceiptContext(left: unknown, right: unknown): boolean;
+export function sameSourceReceipt(left: unknown, right: unknown): boolean;
 
 export type DocumentPersistState =
   | "idle"
@@ -20,26 +26,6 @@ export type DocumentCanvasAuthority = {
   renderedSha256: string | null;
   error: string | null;
 };
-
-export type DocumentSourceReceipt = Readonly<{
-  sessionIncarnation: number;
-  sequence: number;
-  origin: "local-edit" | "history" | "authority";
-  operationId: string;
-  editRevision: number;
-  canvasGeneration: number;
-  sourceSha256: string;
-  context: ProjectContext | null;
-  epoch: number | null;
-  projectId: string | null;
-  documentId: string | null;
-  sourcePath: string | null;
-  sessionEpoch: number | null;
-}>;
-
-export function isSourceReceipt(value: unknown): value is DocumentSourceReceipt;
-export function sameSourceReceiptContext(left: unknown, right: unknown): boolean;
-export function sameSourceReceipt(left: unknown, right: unknown): boolean;
 
 export type DocumentCanvasRenderObservation = Readonly<{
   receipt: DocumentSourceReceipt;
@@ -83,18 +69,13 @@ export type PersistedBoundaryResult =
       confirmed: boolean;
     };
 
-export class DocumentSession<TWrite = unknown> {
+export type DocumentWrite = Readonly<{
+  revision: number;
+  html: string;
+}>;
+
+export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
   constructor(options?: {
-    html?: string;
-    persistedSourceSha256?: string | null;
-    workingHtmlSha256?: string | null;
-    context?: ProjectContext | null;
-    operationId?: string;
-  });
-  setObserver(
-    observer: ((snapshot: DocumentSessionSnapshot) => void) | null,
-  ): void;
-  update(value: {
     html?: string;
     persistedSourceSha256?: string | null;
     workingHtmlSha256?: string | null;
@@ -102,8 +83,12 @@ export class DocumentSession<TWrite = unknown> {
     lastPersistedRevision?: number;
     persistState?: DocumentPersistState;
     persistError?: string;
-    pendingWrite?: TWrite | null;
-  }): DocumentSessionSnapshot;
+    context?: ProjectContext | null;
+    operationId?: string;
+  });
+  setObserver(
+    observer: ((snapshot: DocumentSessionSnapshot) => void) | null,
+  ): void;
   reset(value: {
     html: string;
     persistedSourceSha256?: string | null;
@@ -146,28 +131,57 @@ export class DocumentSession<TWrite = unknown> {
     error?: string;
     receipt: DocumentSourceReceipt;
   }): boolean;
-  beginEdit(html: string, value?: {
+  acceptEdit(value: {
+    html: string;
     origin?: "local-edit" | "history";
     operationId?: string;
     sourceSha256?: string;
     context?: ProjectContext | null;
-  }): number;
-  setHtml(html: string): void;
-  setPersistedSourceSha256(persistedSourceSha256: string | null): void;
-  setEditRevision(value: number): void;
-  setLastPersistedRevision(value: number): void;
-  setPersistence(value?: {
-    state?: DocumentPersistState;
-    error?: string;
-  }): void;
-  setPersistState(state: DocumentPersistState): void;
-  setPersistError(error: string): void;
-  setPendingWrite(write: TWrite | null): TWrite | null;
-  takePendingWrite(): TWrite | null;
-  setFlushPromise(
-    promise: Promise<boolean> | null,
-  ): Promise<boolean> | null;
-  clearFlushPromise(promise: Promise<boolean>): boolean;
+    write?: Omit<TWrite, "html" | "revision"> | null;
+  }): Readonly<{
+    accepted: boolean;
+    revision: number;
+    write: TWrite | null;
+  }>;
+  restorePendingWrite(write: TWrite): TWrite;
+  beginWrite(): TWrite | null;
+  restoreWrite(write: TWrite, value?: {
+    nextWrite?: TWrite;
+    replacePending?: boolean;
+  }): TWrite | false;
+  rebaseQueuedWrite(value: {
+    expectedWrite: TWrite;
+    nextWrite: TWrite;
+  }): boolean;
+  rebaseActiveWrite(value: {
+    expectedWrite: TWrite;
+    nextWrite: TWrite;
+  }): boolean;
+  finishWrite(write: TWrite): boolean;
+  acceptWriteConfirmation(value: {
+    write: TWrite & { revision?: number; html?: string };
+    html: string;
+    sourceSha256: string;
+    persistedRevision: number;
+    context?: ProjectContext | null;
+    routingChanged?: boolean;
+    operationId?: string;
+    nextWrite?: TWrite;
+  }): Readonly<{
+    accepted: boolean;
+    completesCurrentDocument: boolean;
+    authorityChanged: boolean;
+  }>;
+  reconcileRecoveredRevision(value: number): DocumentSessionSnapshot;
+  markPersistenceIdle(): boolean;
+  recordPersistenceFailure(value: {
+    error: string;
+    conflict?: boolean;
+    write?: TWrite | null;
+    receipt?: DocumentSourceReceipt | null;
+  }): DocumentSessionSnapshot | false;
+  beginFlush<T extends Promise<unknown>>(promise: T): T | false;
+  finishFlush(promise: Promise<unknown>): boolean;
   reconcilePersistedBoundary(value: {
     frozenHtml: string;
     reportedSourceSha256?: string | null;
