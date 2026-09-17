@@ -36,6 +36,10 @@ const source = Buffer.from(`<!doctype html>
   <pre data-native-case="pre"><code>const value = 1;</code></pre>
   <p class="vertical" data-native-case="vertical">Vertical 竖排文字</p>
   <p data-native-case="comment">甲<!-- authored boundary -->乙</p>
+  <p data-native-case="nested-break">外层<span data-native-case="nested-break-inline">内层<br>尾部</span></p>
+  <p data-native-case="occluded-break" style="position:relative">遮挡前<br>遮挡后<svg
+    data-native-case="break-occluder" viewBox="0 0 20 20"
+    style="position:absolute;width:20px;height:20px"><circle cx="10" cy="10" r="10"></circle></svg></p>
 </body>
 </html>
 `, "utf8");
@@ -621,6 +625,60 @@ test("double-clicking an authored blank line restores its caret without granting
   });
   await target.dblclick({ position: paddingPoint });
   await expect(target).not.toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+});
+
+test("nested authored breaks keep exact caret identity and an occluding branch cannot borrow it", async ({ page }) => {
+  const { frame } = await openFixture(page);
+  const nestedHost = frame.locator('[data-native-case="nested-break"]');
+  const nestedBreakPoint = await nestedHost.evaluate((element) => {
+    const lineBreak = element.querySelector("br");
+    if (!(lineBreak instanceof HTMLBRElement)) throw new Error("Nested BR is missing.");
+    const range = document.createRange();
+    range.setStartBefore(lineBreak);
+    range.setEndAfter(lineBreak);
+    const caret = range.getBoundingClientRect();
+    const host = element.getBoundingClientRect();
+    return {
+      x: caret.left - host.left + 4,
+      y: caret.top - host.top + Math.max(2, caret.height / 2),
+    };
+  });
+  await nestedHost.dblclick({ position: nestedBreakPoint });
+  await expect(nestedHost).toHaveAttribute("contenteditable", "true");
+  await page.keyboard.insertText("EXACT_NESTED_BR");
+  await expect.poll(() => authoredInnerHtml(nestedHost)).toContain(
+    "内层EXACT_NESTED_BR<br>尾部",
+  );
+  await page.keyboard.press("Escape");
+
+  const occludedHost = frame.locator('[data-native-case="occluded-break"]');
+  const occludedPoint = await occludedHost.evaluate((element) => {
+    const lineBreak = element.querySelector("br");
+    const occluder = element.querySelector('[data-native-case="break-occluder"]');
+    if (!(lineBreak instanceof HTMLBRElement) || !(occluder instanceof SVGElement)) {
+      throw new Error("Occluded BR fixture is incomplete.");
+    }
+    const range = document.createRange();
+    range.setStartBefore(lineBreak);
+    range.setEndAfter(lineBreak);
+    const caret = range.getBoundingClientRect();
+    const host = element.getBoundingClientRect();
+    const left = caret.left - host.left;
+    const top = caret.top - host.top;
+    occluder.style.left = `${left - 2}px`;
+    occluder.style.top = `${top - 2}px`;
+    return {
+      x: left + 4,
+      y: top + Math.max(2, caret.height / 2),
+    };
+  });
+  await occludedHost.dblclick({ position: occludedPoint });
+  await expect(occludedHost).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(frame.locator(
+    '[data-native-case="break-occluder"] [data-html-canvas-selected], '
+      + '[data-native-case="break-occluder"][data-html-canvas-selected]',
+  )).toHaveCount(1);
 });
 
 test("paste is plain text, multiline paste becomes br, and cut stays local", async ({ page }) => {

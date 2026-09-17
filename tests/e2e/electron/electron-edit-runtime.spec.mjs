@@ -3844,6 +3844,149 @@ test("an accepted Native Edit survives a live-session rebase failure", {
   });
 });
 
+test("an explicit B edit intent resumes after A commits through a rebuilt Runtime Candidate", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime post-edit B intent</title><style>main { padding-top: 180px; }</style></head><body>
+  <main>
+    <p data-native-case="runtime-post-edit-a">A 原始文字</p>
+    <p data-native-case="runtime-post-edit-b">B 等待编辑</p>
+  </main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-post-edit-b-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(page, sourcePath, "runtime-post-edit-a");
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const documentBefore = await documentToken(page);
+    const generationBefore = await activeFrameGeneration(editor);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+
+    await armRuntimeCommitHold(page);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+    const first = await activateNativeEdit(frame, "runtime-post-edit-a");
+    await first.press("End");
+    await page.keyboard.insertText(" A_REAL_INPUT");
+    await expect(first).toContainText("A_REAL_INPUT");
+    await expect(first).toHaveAttribute("contenteditable", "true");
+    await expect(editor).toHaveAttribute("data-interaction-mode", "editing");
+    expect(await page.evaluate(() => window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__))
+      .toBe(true);
+
+    const requested = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await doubleClickRenderedText(requested);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+    });
+    await expectCheckpointPersisted(page, revisionBefore);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("A_REAL_INPUT");
+
+    await waitForHeldRuntimeCommit(page);
+    await advanceHeldRuntimeCommitToNextHold(page);
+    await expect(editor).toHaveAttribute("data-runtime-handoff", "positioning");
+    await waitForHeldRuntimeCommit(page);
+    await releaseHeldRuntimeCommits(page);
+    await waitForRuntimeHandoffSettled(page);
+
+    await expect.poll(() => documentToken(page)).not.toBe(documentBefore);
+    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(generationBefore);
+    frame = await currentEditorFrame(page);
+    const resumed = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await expect(resumed).toHaveAttribute("contenteditable", "true");
+    await expect(resumed).toBeFocused();
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+    await resumed.press("End");
+    await page.keyboard.insertText(" B_REAL_INPUT");
+    await page.keyboard.press("Escape");
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("B_REAL_INPUT");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
+test("external comment focus during Candidate positioning retires the earlier B edit intent", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime post-edit B focus fence</title></head><body>
+  <main>
+    <p data-native-case="runtime-post-edit-focus-a">A 原始文字</p>
+    <p data-native-case="runtime-post-edit-focus-b">B 不应重放</p>
+    <p data-native-case="runtime-post-edit-focus-c">C 评论锚点</p>
+  </main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-post-edit-focus-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(page, sourcePath, "runtime-post-edit-focus-a");
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const documentBefore = await documentToken(page);
+    const generationBefore = await activeFrameGeneration(editor);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+
+    const commentAnchor = frame.locator('[data-native-case="runtime-post-edit-focus-c"]');
+    await commentAnchor.click();
+    await editor.getByRole("button", { name: /留评论/u }).click();
+    const commentInput = page.getByRole("textbox", { name: "评论内容" });
+    await expect(commentInput).toBeVisible();
+
+    await armRuntimeCommitHold(page);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+    const first = await activateNativeEdit(frame, "runtime-post-edit-focus-a");
+    await first.press("End");
+    await page.keyboard.insertText(" A_FOCUS_INPUT");
+    const second = frame.locator('[data-native-case="runtime-post-edit-focus-b"]');
+    await doubleClickRenderedText(second, { force: true });
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+    });
+    await expectCheckpointPersisted(page, revisionBefore);
+    await waitForHeldRuntimeCommit(page);
+    await advanceHeldRuntimeCommitToNextHold(page);
+    await expect(editor).toHaveAttribute("data-runtime-handoff", "positioning");
+    await waitForHeldRuntimeCommit(page);
+
+    await commentInput.focus();
+    await expect(commentInput).toBeFocused();
+    await releaseHeldRuntimeCommits(page);
+    await waitForRuntimeHandoffSettled(page);
+    await expect.poll(() => documentToken(page)).not.toBe(documentBefore);
+    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(generationBefore);
+    await expect(commentInput).toBeFocused();
+    frame = await currentEditorFrame(page);
+    await expect(frame.locator('[data-native-case="runtime-post-edit-focus-b"]'))
+      .not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("A_FOCUS_INPUT");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
 test("Escape checkpoint reload keeps Native Edit exited", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {

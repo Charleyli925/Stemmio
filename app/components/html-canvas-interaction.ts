@@ -1,9 +1,13 @@
-import { SOURCE_ELEMENT_ATTRIBUTE } from "./html-canvas-source-element";
+import {
+  SOURCE_ELEMENT_ATTRIBUTE,
+  sourceElementId,
+} from "./html-canvas-source-element";
 import { inferSelectionLevel, selectionForElement } from "./html-canvas-selection";
 import {
   nativeEditHostForElement,
   sourceTextNodeForDomText,
 } from "./html-canvas-preview-sync";
+import { isFrozenEditableIslandSubtree } from "../lib/editable-island.js";
 import { createElementTextLocator } from "../lib/comment-text-locator.js";
 import type { ActiveTextRange, SourceIndexValue, TextRangeSegment } from "./html-canvas-internal-types";
 import type { HtmlCanvasTextLocator } from "./HtmlCanvasEditor.types";
@@ -102,6 +106,10 @@ export type TextCaretPoint = {
   clientY: number;
 };
 
+export type NativeEditCaretPoint = TextCaretPoint & {
+  lineBreakId?: string | null;
+};
+
 export function caretPointFromMouseEvent(event: MouseEvent): TextCaretPoint {
   // clientX/clientY are already in the same viewport coordinate system as
   // Range.getClientRects(). MouseEvent.offsetX/offsetY are not reliable for
@@ -182,40 +190,114 @@ function nativeLineBreakRangeContainsPoint(
   ));
 }
 
-function nativeLineBreakHostAtPoint(
+function firstVisibleSourceBackedHit(
   documentNode: Document,
   point: TextCaretPoint,
-  sourceIndex: SourceIndexValue,
-): HTMLElement | null {
+): { hit: HTMLElement; sourceSurface: HTMLElement } | null {
   const hits = typeof documentNode.elementsFromPoint === "function"
     ? documentNode.elementsFromPoint(point.clientX, point.clientY)
     : [];
-  const seen = new Set<HTMLBRElement>();
   for (const hit of hits) {
     if (!hit || hit.nodeType !== 1) continue;
     const hitElement = hit as HTMLElement;
     const sourceSurface = hitElement.closest<HTMLElement>(`[${SOURCE_ELEMENT_ATTRIBUTE}]`);
-    if (!sourceSurface) continue;
-    const candidates = sourceSurface.tagName === "BR"
-      ? [sourceSurface as HTMLBRElement]
-      : Array.from(sourceSurface.querySelectorAll<HTMLBRElement>(
-        `br[${SOURCE_ELEMENT_ATTRIBUTE}]`,
-      ));
-    for (const lineBreak of candidates) {
-      if (seen.has(lineBreak) || !nativeLineBreakRangeContainsPoint(lineBreak, point)) continue;
-      seen.add(lineBreak);
-      const host = nativeEditHostForElement(lineBreak, sourceIndex);
-      if (host) return host;
-    }
+    if (sourceSurface) return { hit: hitElement, sourceSurface };
+    if (!['HTML', 'BODY'].includes(hitElement.tagName)) return null;
   }
   return null;
 }
 
-export function nativeEditHostAtPoint(
+function frozenOrInteractiveHit(
+  hit: HTMLElement,
+  sourceSurface: HTMLElement,
+): boolean {
+  if (findNativeActionTarget(hit)) return true;
+  let current: HTMLElement | null = hit;
+  while (current) {
+    if (
+      current !== sourceSurface
+      && isFrozenEditableIslandSubtree(
+        current.localName,
+        current.namespaceURI || undefined,
+      )
+    ) return true;
+    if (current === sourceSurface) break;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+export function authoredLineBreakCaretRangeAtPoint(
+  hostElement: HTMLElement,
+  lineBreak: HTMLBRElement,
+  point: TextCaretPoint,
+): Range | null {
+  if (
+    !hostElement.isConnected
+    || !lineBreak.isConnected
+    || !hostElement.contains(lineBreak)
+    || !sourceElementId(lineBreak)
+    || !lineBreak.hasAttribute(SOURCE_ELEMENT_ATTRIBUTE)
+    || !nativeLineBreakRangeContainsPoint(lineBreak, point)
+  ) return null;
+  const visibleHit = firstVisibleSourceBackedHit(hostElement.ownerDocument, point);
+  if (!visibleHit || frozenOrInteractiveHit(visibleHit.hit, visibleHit.sourceSurface)) {
+    return null;
+  }
+  if (
+    visibleHit.sourceSurface !== lineBreak
+    && !visibleHit.sourceSurface.contains(lineBreak)
+    && !lineBreak.contains(visibleHit.sourceSurface)
+  ) return null;
+  const frozenAncestor = lineBreak.parentElement?.closest<HTMLElement>(
+    '[contenteditable="false"]',
+  );
+  if (frozenAncestor && frozenAncestor !== hostElement) return null;
+  const caret = lineBreak.ownerDocument.createRange();
+  caret.setStartBefore(lineBreak);
+  caret.collapse(true);
+  return caret;
+}
+
+export type NativeEditPointTarget = Readonly<{
+  host: HTMLElement;
+  lineBreakId: string | null;
+}>;
+
+function nativeLineBreakTargetAtPoint(
+  documentNode: Document,
+  point: TextCaretPoint,
+  sourceIndex: SourceIndexValue,
+): NativeEditPointTarget | null {
+  const visibleHit = firstVisibleSourceBackedHit(documentNode, point);
+  if (!visibleHit || frozenOrInteractiveHit(visibleHit.hit, visibleHit.sourceSurface)) {
+    return null;
+  }
+  const hitHost = nativeEditHostForElement(visibleHit.sourceSurface, sourceIndex);
+  if (!hitHost) return null;
+  const candidates = visibleHit.sourceSurface.tagName === "BR"
+    ? [visibleHit.sourceSurface as HTMLBRElement]
+    : Array.from(visibleHit.sourceSurface.querySelectorAll<HTMLBRElement>(
+      `br[${SOURCE_ELEMENT_ATTRIBUTE}]`,
+    ));
+  for (const lineBreak of candidates) {
+    const lineBreakHost = nativeEditHostForElement(lineBreak, sourceIndex);
+    const lineBreakId = sourceElementId(lineBreak);
+    if (
+      !lineBreakId
+      || lineBreakHost !== hitHost
+      || !authoredLineBreakCaretRangeAtPoint(hitHost, lineBreak, point)
+    ) continue;
+    return { host: hitHost, lineBreakId };
+  }
+  return null;
+}
+
+export function nativeEditTargetAtPoint(
   documentNode: Document,
   point: TextCaretPoint,
   sourceIndex: SourceIndexValue | null,
-): HTMLElement | null {
+): NativeEditPointTarget | null {
   if (!sourceIndex) return null;
   const caretPosition = documentNode.caretPositionFromPoint?.(point.clientX, point.clientY);
   const caretRange = !caretPosition
@@ -227,8 +309,10 @@ export function nativeEditHostAtPoint(
     `[${SOURCE_ELEMENT_ATTRIBUTE}]`,
   ) ?? null;
   const host = sourceElement ? nativeEditHostForElement(sourceElement, sourceIndex) : null;
-  if (host && identifyingTextRangeAtPoint(documentNode, host, point)) return host;
-  return nativeLineBreakHostAtPoint(documentNode, point, sourceIndex);
+  if (host && identifyingTextRangeAtPoint(documentNode, host, point)) {
+    return { host, lineBreakId: null };
+  }
+  return nativeLineBreakTargetAtPoint(documentNode, point, sourceIndex);
 }
 
 export function directTextNodeAtPoint(

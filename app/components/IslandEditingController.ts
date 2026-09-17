@@ -15,6 +15,7 @@ import {
 import {
   NATIVE_EDIT_CHECKPOINT_DELAY_MS,
 } from "../lib/native-edit-policy.js";
+import { authoredLineBreakCaretRangeAtPoint } from "./html-canvas-interaction";
 import type {
   NativeEditBaseline,
   NativeEditCheckpointTrigger,
@@ -1248,7 +1249,11 @@ export class IslandEditingController {
     this.emitState();
   }
 
-  focusAtPoint(point?: { clientX: number; clientY: number }): void {
+  focusAtPoint(point?: {
+    clientX: number;
+    clientY: number;
+    lineBreakId?: string | null;
+  }): void {
     if (!this.hasCurrentLease()) return;
     const priorSelection = this.getSelection();
     this.hostElement.focus({ preventScroll: true });
@@ -1268,29 +1273,23 @@ export class IslandEditingController {
     this.emitState();
   }
 
-  private collapsedRangeAtPoint(point: { clientX: number; clientY: number }): Range | null {
+  private collapsedRangeAtPoint(point: {
+    clientX: number;
+    clientY: number;
+    lineBreakId?: string | null;
+  }): Range | null {
     const documentNode = this.hostElement.ownerDocument;
     // Chromium may snap caretPositionFromPoint on an empty BR line back to
-    // the nearest text node. Resolve the actual line-start caret first so a
-    // validated blank-line activation cannot jump to unrelated text.
-    for (const lineBreak of this.hostElement.querySelectorAll("br")) {
-      const hitRange = documentNode.createRange();
-      hitRange.setStartBefore(lineBreak);
-      hitRange.setEndAfter(lineBreak);
-      const rects = Array.from(hitRange.getClientRects());
-      if (rects.length === 0) rects.push(hitRange.getBoundingClientRect());
-      const hitsLineStart = rects.some((rect) => (
-        rect.height > 0
-        && point.clientY >= rect.top - 2
-        && point.clientY <= rect.bottom + 2
-        && point.clientX >= rect.left - 2
-        && point.clientX <= Math.max(rect.right + 2, rect.left + 10)
-      ));
-      if (!hitsLineStart) continue;
-      const caret = documentNode.createRange();
-      caret.setStartBefore(lineBreak);
-      caret.collapse(true);
-      return caret;
+    // the nearest text node. Re-resolve only the exact authored BR proven by
+    // the entrance hit test; never scan geometrically similar descendants.
+    if (point.lineBreakId) {
+      const lineBreak = Array.from(this.hostElement.querySelectorAll<HTMLBRElement>(
+        `br[${STEMMIO_ELEMENT_ID_ATTRIBUTE}]`,
+      )).find((candidate) => (
+        candidate.getAttribute(STEMMIO_ELEMENT_ID_ATTRIBUTE) === point.lineBreakId
+      )) ?? null;
+      if (!lineBreak) return null;
+      return authoredLineBreakCaretRangeAtPoint(this.hostElement, lineBreak, point);
     }
     const caretPosition = documentNode.caretPositionFromPoint?.(
       point.clientX,
