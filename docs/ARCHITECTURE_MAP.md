@@ -125,6 +125,15 @@ implementation file is in the TypeScript program and that an invalid receipt
 field assignment fails that check. This is a focused implementation loop, not
 a repository-wide `checkJs` migration.
 
+`WorkspaceController.enqueueDocumentEdit()` is the single application command
+for a Canvas edit. Only after `DocumentWorkflow.enqueueEdit()` succeeds with a
+SourceReceipt does it ask `CommentWorkflow` to delete comment material owned by
+a removed source subtree and rebind the settled comments, direct-edit events and
+composer target. A rebind/projection failure is reported as a degraded effect;
+it cannot turn accepted source bytes into a rejected edit. The same command
+retires an active Run only when its status is already `complete`. Workbench owns
+only UI admission and the later rendered-Canvas acknowledgement.
+
 **Current fact.** `HtmlCanvasEditor.applySourceCommand()` materializes once
 for an accepted edit: it receives a semantic operation, applies the kernel,
 and publishes that complete HTML/Hash plus the kernel's

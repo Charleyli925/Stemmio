@@ -453,6 +453,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
 Browser 验证真实 DOM 中保存卡片、草稿卡片和输入框在当前/其他标签页
 切换、聚焦和展开后的相对顺序、无重叠结果，以及输入框自动聚焦、
 `Enter` 保存、`Shift + Enter` 换行。
+直接编辑的 Node 合同还必须证明单一 Controller 命令先取得 SourceReceipt，
+再完成删除评论材料、一次目标重绑与 complete Run 退休；源码拒绝路径对评论/Run 零副作用，
+而定位异常只返回 degraded effect，不改写已接受的源码结果。
 
 顶层 Node 测试在一次执行中只出现一次。精确影响映射优先；只有找不到任何精确用例时才启用 `node-core` 兜底。PR CI 在 Linux 构建一次 Web renderer，供 Node 和 Browser 共享；共享产物名称绑定唯一 `run_id` 而不绑定 `run_attempt`，并保留 30 天，因此同一 workflow run 只重跑失败 job 时可以复用已通过的构建。若 `source-build` 本身重跑，则以相同名称覆盖同一 run 的旧产物。每个 macOS Electron job 在目标系统本地构建 renderer，并先用独立 preflight 证明窗口可见、计时器和 animation frame 正常推进。Native Electron 与 AI 闭环分成两个 job，Browser 保持每个分片单 worker、零重试，但跨三个独立分片并发。测试直接提交隐藏文件 input 时不会经过真实“打开”动作的 pre-picker switch fence；共享 fixture driver 只允许在旧画布仍为 render-verified、input 仍 attached 时有限重提，不能重跑整条用例或掩盖加载后的产品断言失败。
 

@@ -5,6 +5,7 @@ import type {
 } from "./browser-open-workflow.js";
 import type {
   AttachmentBinaryPort,
+  DocumentEditCommentEffects,
   CommentWorkflowOutcome,
 } from "./comment-workflow.js";
 import type { CommentWorkflowCodecs } from "./comment-workflow-codecs.js";
@@ -157,6 +158,10 @@ export type RegistrationInput = Readonly<{
   sourcePath?: string;
   expectedSourceSha256?: string | null;
   adoptCanonicalSource?: boolean;
+}>;
+
+export type WorkspaceDocumentEditEffects = DocumentEditCommentEffects & Readonly<{
+  completedRunRetired: boolean;
 }>;
 
 export type HashPort = Readonly<{
@@ -494,10 +499,6 @@ export class WorkspaceController {
   getCurrentProjectContext(): ProjectContext | null;
   matchesCurrentProjectContext(context: ProjectContext): boolean;
   reloadDocumentCanvas(): DocumentSessionSnapshot;
-  replaceCommentWorkingCopy(
-    input: Record<string, unknown>,
-  ): CommentWorkflowOutcome;
-  clearCompletedRun(): boolean;
   dismissActiveRun(): import("../domain/run-lifecycle.js").ActiveRun | null;
   reopenRecentRunOutcome(sourcePath: string | null | undefined): boolean;
   refreshProject(input?: Record<string, unknown>): Promise<ProjectWorkflowOutcome>;
@@ -756,6 +757,7 @@ export class WorkspaceController {
     revision: number;
     queued: boolean;
     receipt: DocumentSourceReceipt | null;
+    effects: WorkspaceDocumentEditEffects;
   }>;
   flushDocument(input?: { throughRevision?: number }): Promise<DocumentWorkflowOutcome<{
     revision: number;

@@ -260,24 +260,25 @@ import {
   versionsFromWorkspace,
 } from "./workbench/version-model";
 import { projectVersionSummariesFromVersions, projectVersionSummariesFromWorkspace } from "./workbench/project-version-tree-model";
-import type {
-  ApplicationUpdateResult,
-  CanvasMode,
-  CloseAbortedDetail,
-  CloseReadiness,
-  CommentAttachment,
-  CommentEditSession,
-  CommentItem,
-  DirectEditEvent,
-  HtmlProject,
-  PersistState,
-  PrepareCloseDetail,
-  ProjectContext,
-  RegisteredProject,
-  ProjectVersionSummary,
-  StartupIssue,
-  Version,
-  WorkspaceIssue,
+import {
+  isVendorApiKeyPageOpened,
+  type ApplicationUpdateResult,
+  type CanvasMode,
+  type CloseAbortedDetail,
+  type CloseReadiness,
+  type CommentAttachment,
+  type CommentEditSession,
+  type CommentItem,
+  type DirectEditEvent,
+  type HtmlProject,
+  type PersistState,
+  type PrepareCloseDetail,
+  type ProjectContext,
+  type RegisteredProject,
+  type ProjectVersionSummary,
+  type StartupIssue,
+  type Version,
+  type WorkspaceIssue,
 } from "./workbench/types";
 const PROJECT_REPOSITORY_URL = "https://github.com/Charleyli925/Stemmio";
 const LATEST_RELEASE_PAGE_URL =
@@ -1047,6 +1048,8 @@ export default function Workbench() {
           selectionFromRecord,
           independentCommentTarget,
           commentEditSessionHasChanges,
+          canLocateTarget,
+          rebindTargetsPreservingGlobal,
           errorMessage: productErrorMessage,
         }),
         attachmentBinary: {
@@ -3421,87 +3424,6 @@ export default function Workbench() {
       });
       return false;
     }
-    // enqueueDocumentEdit synchronously publishes its direct-edit audit event.
-    // Re-read the Controller aggregate before reconciling targets so this
-    // mutation cannot overwrite that new event with the pre-command snapshot.
-    const removedElementIds = sourceTransaction?.semanticOperation?.type === "deleteElement"
-      ? [...new Set(sourceTransaction.identityDelta?.removedElementIds || [])]
-      : [];
-    if (removedElementIds.length > 0) {
-      const deletedComments = workspaceController?.comments.commands.deleteForElements({
-        elementIds: removedElementIds,
-      });
-      if (deletedComments && deletedComments.status !== "succeeded") {
-        reportInternalFailure({
-          area: "comments",
-          operation: "delete-with-source-element",
-          code: "comment-element-delete-sync-failed",
-          recovered: false,
-          cause: deletedComments.status,
-        });
-      }
-    }
-    const settledComments = currentCommentSessionSnapshot();
-    const activeTargets = [
-      ...settledComments.comments.map((comment) => (
-        comment.sourceAnchor
-      )),
-      ...settledComments.changeEvents.map((event) => event.target),
-      ...(settledComments.composerTarget
-        ? [settledComments.composerTarget.commentAnchor || settledComments.composerTarget]
-        : []),
-    ];
-    if (activeTargets.length > 0) {
-      const deterministicById = new Map(
-        (mutation?.targetUpdates || []).map((target) => [target.id, target]),
-      );
-      const trackedTargetIds = new Set(mutation?.trackedTargetIds || []);
-      const untrackedSafeTargets = activeTargets.filter((target) => (
-        !trackedTargetIds.has(target.id)
-        && canLocateTarget(target)
-      ));
-      const fallbackById = new Map(
-        rebindTargetsPreservingGlobal(nextHtml, untrackedSafeTargets)
-          .map((target) => [target.id, target]),
-      );
-      const refreshedTarget = (target: HtmlCanvasSelection): HtmlCanvasSelection => {
-        const deterministic = deterministicById.get(target.id);
-        if (deterministic) return deterministic;
-        if (!canLocateTarget(target)) return target;
-        if (trackedTargetIds.has(target.id)) {
-          return { ...target, resolution: "orphaned" };
-        }
-        return fallbackById.get(target.id) || {
-          ...target,
-          resolution: "orphaned",
-        };
-      };
-      const nextComments = settledComments.comments.map((comment) => ({
-        ...comment,
-        sourceAnchor: refreshedTarget(
-          comment.sourceAnchor,
-        ),
-      }));
-      const nextEvents = settledComments.changeEvents.map((event) => ({
-        ...event,
-        target: refreshedTarget(event.target),
-      }));
-      const currentDraftTarget = settledComments.composerTarget;
-      workspaceController?.replaceCommentWorkingCopy({
-        comments: nextComments,
-        changeEvents: nextEvents,
-        ...(currentDraftTarget
-          ? {
-              composerTarget: currentDraftTarget.commentAnchor
-                ? {
-                    ...currentDraftTarget,
-                    commentAnchor: refreshedTarget(currentDraftTarget.commentAnchor),
-                  }
-                : refreshedTarget(currentDraftTarget),
-            }
-          : {}),
-      });
-    }
     const renderGeneration = acceptedReceipt.canvasGeneration;
     void browserSha256(nextHtml).then((renderedSha256) => {
       const settledDocument = currentDocumentSessionSnapshot();
@@ -3522,11 +3444,9 @@ export default function Workbench() {
         }));
       }
     });
-    workspaceController?.clearCompletedRun();
     return acceptedReceipt;
   }, [
     acknowledgeCanvasRender,
-    currentCommentSessionSnapshot,
     currentDocumentSessionSnapshot,
     currentRunSessionSnapshot,
     enqueueAutosave,
@@ -5008,9 +4928,9 @@ export default function Workbench() {
   const openVendorApiKeyPage = useCallback(async (vendorId: string) => {
     try {
       const result = await window.stemmioIntegrations?.openVendorApiKeyPage?.(vendorId);
-      return result?.opened === false
-        ? { status: "rejected", reason: "无法打开获取 API Key 页面。" }
-        : { status: "succeeded" };
+      return isVendorApiKeyPageOpened(result)
+        ? { status: "succeeded" }
+        : { status: "rejected", reason: "无法打开获取 API Key 页面。" };
     } catch (cause) {
       return {
         status: "rejected",

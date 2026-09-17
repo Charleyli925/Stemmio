@@ -154,6 +154,29 @@ function stale(identity) {
   return Object.freeze({ status: "stale", identity });
 }
 
+function documentEditCommentEffects(status = "applied", reason = "") {
+  const degraded = status === "degraded";
+  return Object.freeze({
+    commentDeletion: Object.freeze({
+      status: degraded ? "degraded" : "applied",
+      ...(degraded ? { reason: String(reason || "COMMENT_EDIT_EFFECTS_DEGRADED") } : {}),
+    }),
+    targetRebinding: Object.freeze({
+      status: degraded ? "degraded" : "applied",
+      ...(degraded ? { reason: String(reason || "COMMENT_EDIT_EFFECTS_DEGRADED") } : {}),
+    }),
+  });
+}
+
+function commentWorkingCopyHasMaterial(snapshot) {
+  return Boolean(
+    snapshot?.comments?.length
+    || snapshot?.changeEvents?.length
+    || snapshot?.composerTarget
+    || snapshot?.editSession,
+  );
+}
+
 function registrationSnapshot({
   phase = "idle",
   operationId = null,
@@ -1247,16 +1270,6 @@ export class WorkspaceController {
     });
   }
 
-  replaceCommentWorkingCopy(input) {
-    return this.#requireCommentWorkflow().applyWorkingCopy(input);
-  }
-
-  clearCompletedRun() {
-    if (this.#runSession?.activeRun?.status !== "complete") return false;
-    this.#runSession.clearActiveRun();
-    return true;
-  }
-
   dismissActiveRun() {
     if (!this.#runSession) return null;
     const activeRun = this.#runSession.activeRun;
@@ -1966,7 +1979,67 @@ export class WorkspaceController {
         "项目身份正在核对新的源 HTML；请等待画布完成切换后再编辑。",
       );
     }
-    return this.#requireDocumentWorkflow().enqueueEdit(input);
+    const sourceOutcome = this.#requireDocumentWorkflow().enqueueEdit(input);
+    if (sourceOutcome.status !== "succeeded") return sourceOutcome;
+    if (!sourceOutcome.value.receipt) {
+      reportInternalFailure({
+        area: "document-edit",
+        operation: "apply-business-effects",
+        code: "document-edit-source-receipt-missing",
+        recovered: false,
+      });
+      return succeeded(Object.freeze({
+        ...sourceOutcome.value,
+        effects: Object.freeze({
+          ...documentEditCommentEffects(
+            "degraded",
+            "DOCUMENT_EDIT_SOURCE_RECEIPT_MISSING",
+          ),
+          completedRunRetired: false,
+        }),
+      }));
+    }
+
+    let commentEffects = documentEditCommentEffects();
+    let commentEffectFailure = null;
+    try {
+      if (this.#commentWorkflow) {
+        const commentOutcome = this.#commentWorkflow.applyDocumentEditEffects(input);
+        if (commentOutcome.status === "succeeded") {
+          commentEffects = commentOutcome.value;
+        } else {
+          throw new Error(`Comment edit effects returned ${commentOutcome.status}.`);
+        }
+      } else if (commentWorkingCopyHasMaterial(this.#commentSession.snapshot)) {
+        throw new Error("Comment edit workflow is unavailable.");
+      }
+    } catch (cause) {
+      commentEffectFailure = cause;
+      commentEffects = documentEditCommentEffects(
+        "degraded",
+        "COMMENT_EDIT_EFFECTS_FAILED",
+      );
+    }
+    if (commentEffectFailure || commentEffects.targetRebinding.status === "degraded") {
+      reportInternalFailure({
+        area: "comments",
+        operation: "apply-document-edit-effects",
+        code: commentEffectFailure
+          ? "comment-edit-effects-failed"
+          : "comment-target-rebind-degraded",
+        recovered: false,
+        cause: commentEffectFailure || commentEffects.targetRebinding.reason,
+      });
+    }
+    const completedRunRetired = this.#runSession?.activeRun?.status === "complete";
+    if (completedRunRetired) this.#runSession.clearActiveRun();
+    return succeeded(Object.freeze({
+      ...sourceOutcome.value,
+      effects: Object.freeze({
+        ...commentEffects,
+        completedRunRetired,
+      }),
+    }));
   }
 
   flushDocument(input) {

@@ -3,6 +3,7 @@ import test from "node:test";
 import { loadWorkbenchModel } from "./helpers/workbench-model-loader.mjs";
 const { deriveWorkbenchPresentation } = await loadWorkbenchModel("workbench-header-projection");
 const { orderedProjectVersions } = await loadWorkbenchModel("project-version-tree-model");
+const { isVendorApiKeyPageOpened } = await loadWorkbenchModel("types");
 function input() {
   return {
     project: { projectId: "A", documentId: "docA", sourcePath: "/A-V2.html" },
@@ -75,6 +76,13 @@ test("safety conditions continue to control file and mode buttons", () => {
   assert.equal(p.actions.exportHtml.enabled, true);
   assert.equal(p.actions.openInBrowser.enabled, true);
   assert.match(p.actions.reloadSource.reason, /AI 任务/u);
+});
+
+test("vendor API-key page capability succeeds only on an explicit opened acknowledgement", () => {
+  for (const result of [undefined, null, {}, { opened: false }]) {
+    assert.equal(isVendorApiKeyPageOpened(result), false);
+  }
+  assert.equal(isVendorApiKeyPageOpened({ opened: true }), true);
 });
 
 test("menu availability explains review, transition and persistence locks without hiding actions", () => {

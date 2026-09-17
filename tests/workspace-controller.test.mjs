@@ -123,6 +123,33 @@ const documentWorkflowCodecs = {
   errorMessage: (cause, fallback) => String(cause?.message || fallback),
 };
 
+const commentWorkflowCodecs = {
+  isRecord,
+  sameSourcePath: (left, right) => Boolean(left && right && left === right),
+  persistedComment: (value) => value,
+  persistedChangeEvent: (value) => value,
+  persistedAttachment: (value) => value,
+  persistedTargetRef: (value) => value,
+  commentsFromRecords: (value) => Array.isArray(value) ? value : [],
+  changesFromDraftRecords: (value) => Array.isArray(value) ? value : [],
+  attachmentFromRecord: (value) => value || null,
+  selectionFromRecord: (value) => value || null,
+  independentCommentTarget: (value, commentId) => ({
+    ...value,
+    id: `target_${commentId}`,
+  }),
+  commentEditSessionHasChanges: () => false,
+  canLocateTarget: (value) => Boolean(value?.elementId),
+  rebindTargetsPreservingGlobal: (_html, targets) => targets,
+  errorMessage: (cause, fallback) => String(cause?.message || fallback),
+};
+
+const commentRecoveryStore = {
+  readRecords: () => [],
+  write: () => true,
+  remove: () => true,
+};
+
 function authoritativeDraft(revision = 0) {
   return {
     draftRevision: revision,
@@ -174,6 +201,7 @@ function createHarness({
   recoveryPort = null,
   canvasPort = null,
   documentWorkflow: documentWorkflowConfig = null,
+  commentWorkflow: commentWorkflowConfig = null,
 } = {}) {
   const projectSession = new ProjectSession();
   projectSession.openLocator(SOURCE_PATH);
@@ -223,6 +251,23 @@ function createHarness({
     ...(documentWorkflowConfig
       ? { documentWorkflow: documentWorkflowConfig }
       : {}),
+    ...(commentWorkflowConfig
+      ? {
+          commentWorkflow: {
+            runSession: commentWorkflowConfig.runSession,
+            recoveryStore: commentWorkflowConfig.recoveryStore || commentRecoveryStore,
+            attachmentBinary: commentWorkflowConfig.attachmentBinary || {
+              async prepare() {
+                throw new Error("attachment preparation is not used in this harness");
+              },
+            },
+            codecs: {
+              ...commentWorkflowCodecs,
+              ...(commentWorkflowConfig.codecs || {}),
+            },
+          },
+        }
+      : {}),
     clock: { now: () => 1_726_000_000_000 },
   });
   controller.subscribeEvents((event) => events.push(event));
@@ -234,7 +279,9 @@ function createHarness({
     draftSession,
     versionSession,
     sourceHistorySession,
-    runSession: projectRulesWorkflowConfig?.runSession || null,
+    runSession: commentWorkflowConfig?.runSession
+      || projectRulesWorkflowConfig?.runSession
+      || null,
     recovery,
     events,
     client,
@@ -248,6 +295,263 @@ async function settleAsyncRuntime() {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+function editEffectTarget(id, elementId = "sm1_11111111111141118111111111111111") {
+  return {
+    id,
+    elementId,
+    selector: "main p",
+    label: "正文",
+    level: "part",
+    resolution: "exact",
+  };
+}
+
+function activateEditHarness(harness, html, suffix) {
+  const context = harness.projectSession.register({
+    epoch: harness.projectSession.epoch,
+    sourcePath: SOURCE_PATH,
+    projectId: `project_edit_effect_${suffix}`,
+    documentId: `document_edit_effect_${suffix}`,
+  });
+  harness.documentSession.publishAuthority({
+    html,
+    persistedSourceSha256: sha256(html),
+    workingHtmlSha256: sha256(html),
+    context,
+    operationId: `authority_edit_effect_${suffix}`,
+  });
+  harness.sourceHistorySession.activate(context, sha256(html), null);
+  harness.draftSession.activate(context, 0, authoritativeDraft());
+  return context;
+}
+
+function editEffectTransaction(before, after, removedElementIds = []) {
+  return {
+    operationId: "sourceop_edit_effect_001",
+    kind: "structure",
+    editRevision: 1,
+    createdAt: "2026-09-17T00:00:00.000Z",
+    beforeSourceSha256: sha256(before),
+    afterSourceSha256: sha256(after),
+    forwardPatches: [],
+    reversePatches: [],
+    beforeTarget: editEffectTarget("target_before"),
+    afterTarget: editEffectTarget("target_after"),
+    semanticOperation: { type: "deleteElement" },
+    identityDelta: { removedElementIds },
+  };
+}
+
+function createEditCommandHarness({
+  before = "<main>原文</main>",
+  rebindTargetsPreservingGlobal = (_html, targets) => targets,
+  appendDirectEditEvent = ({ events, pendingEvents }) => ({ events, pendingEvents }),
+  suffix = "case",
+} = {}) {
+  const runSession = new RunSession({ sourcePath: SOURCE_PATH });
+  const harness = createHarness({
+    html: before,
+    bridgeClient: {
+      async ensureProject() { return registrationPayload({ html: before }); },
+      async workspace() { return registrationPayload({ html: before }); },
+      async saveDraft() { return {}; },
+      async autosave() { return {}; },
+      async source() { return {}; },
+      async resolveConflict() { return {}; },
+      async attachment() { return new Blob([]); },
+      async saveAttachment() { return {}; },
+      async deleteAttachment() { return {}; },
+    },
+    documentWorkflow: {
+      codecs: {
+        ...documentWorkflowCodecs,
+        appendDirectEditEvent,
+      },
+      scheduler: { setTimeout: () => 1, clearTimeout() {} },
+    },
+    commentWorkflow: {
+      runSession,
+      codecs: { rebindTargetsPreservingGlobal },
+    },
+  });
+  const context = activateEditHarness(harness, before, suffix);
+  return { harness, context, runSession };
+}
+
+function setEditCommandRun(runSession, context, status, suffix) {
+  const run = {
+    projectId: context.projectId,
+    documentId: context.documentId,
+    sourcePath: SOURCE_PATH,
+    requestId: `request_edit_effect_${suffix}`,
+    attemptId: `attempt_edit_effect_${suffix}`,
+    status,
+  };
+  runSession.setActiveRun(run);
+  return run;
+}
+
+test("document edit command returns receipt and applied business effects", (t) => {
+  const before = "<main><p>保留</p><aside>删除</aside></main>";
+  const after = "<main><p>保留</p></main>";
+  const removedElementId = "sm1_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa";
+  const { harness, context, runSession } = createEditCommandHarness({
+    before,
+    suffix: "success",
+    appendDirectEditEvent: ({ events, pendingEvents }) => ({
+      events: [
+        ...events,
+        { eventId: "event_new_direct_edit", target: editEffectTarget("target_direct_edit") },
+      ],
+      pendingEvents,
+    }),
+    rebindTargetsPreservingGlobal: (_html, targets) => targets.map((item) => ({
+      ...item,
+      selector: `${item.selector}[data-rebound]`,
+      resolution: "rebound",
+    })),
+  });
+  t.after(() => harness.controller.dispose());
+  harness.commentSession.update({
+    comments: [
+      {
+        commentId: "comment_removed",
+        sourceAnchor: editEffectTarget("target_removed", removedElementId),
+      },
+      {
+        commentId: "comment_survivor",
+        sourceAnchor: editEffectTarget("target_survivor"),
+      },
+    ],
+    composerCommentId: "comment_composer",
+    composerDraft: "保留草稿",
+    composerTarget: editEffectTarget("target_composer"),
+  });
+  setEditCommandRun(runSession, context, "complete", "complete");
+
+  const outcome = harness.controller.enqueueDocumentEdit({
+    html: after,
+    context,
+    mutation: {
+      trackedTargetIds: ["target_survivor"],
+      targetUpdates: [{
+        ...editEffectTarget("target_survivor"),
+        selector: "main p[data-deterministic]",
+      }],
+    },
+    sourceTransaction: editEffectTransaction(before, after, [removedElementId]),
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.revision, 1);
+  assert.equal(outcome.value.queued, true);
+  assert.equal(outcome.value.receipt?.editRevision, 1);
+  assert.equal(outcome.value.effects.commentDeletion.status, "applied");
+  assert.equal(outcome.value.effects.targetRebinding.status, "applied");
+  assert.equal(outcome.value.effects.completedRunRetired, true);
+  assert.deepEqual(
+    harness.commentSession.comments.map((comment) => comment.commentId),
+    ["comment_survivor"],
+  );
+  assert.equal(
+    harness.commentSession.comments[0].sourceAnchor.selector,
+    "main p[data-deterministic]",
+  );
+  assert.match(harness.commentSession.composerTarget.selector, /data-rebound/u);
+  assert.match(harness.commentSession.changeEvents[0].target.selector, /data-rebound/u);
+  assert.deepEqual([...harness.commentSession.deletedCommentIds], ["comment_removed"]);
+  assert.equal(runSession.activeRun, null);
+});
+
+test("blocked and rejected document edits have zero comment or Run effects", async (t) => {
+  for (const status of ["blocked", "rejected"]) {
+    await t.test(status, () => {
+      const before = "<main>原文</main>";
+      const after = "<main>不应接受</main>";
+      const { harness, context, runSession } = createEditCommandHarness({
+        before,
+        suffix: status,
+      });
+      harness.commentSession.update({
+        comments: [{
+          commentId: `comment_${status}`,
+          sourceAnchor: editEffectTarget(`target_${status}`),
+        }],
+      });
+      const run = setEditCommandRun(runSession, context, "complete", status);
+      if (status === "blocked") {
+        harness.documentSession.recordPersistenceFailure({
+          conflict: true,
+          error: "injected conflict",
+        });
+      }
+      const beforeComments = harness.commentSession.snapshot;
+      const outcome = harness.controller.enqueueDocumentEdit({
+        html: after,
+        context,
+        mutation: { trackedTargetIds: [`target_${status}`], targetUpdates: [] },
+        ...(status === "rejected" ? { sourceTransaction: {
+          ...editEffectTransaction(before, after),
+          beforeSourceSha256: sha256("a different source"),
+        } } : {}),
+      });
+      assert.equal(outcome.status, status);
+      assert.equal(harness.documentSession.html, before);
+      assert.equal(harness.commentSession.snapshot, beforeComments);
+      assert.equal(runSession.activeRun, run);
+      harness.controller.dispose();
+    });
+  }
+});
+
+test("missing or failing comment rebind degrades an accepted source receipt", async (t) => {
+  for (const mode of ["missing", "throws"]) {
+    await t.test(mode, () => {
+      const before = "<main>原文</main>";
+      const after = "<main>新文</main>";
+      const { harness, context } = createEditCommandHarness({
+        before,
+        suffix: `degraded-${mode}`,
+        rebindTargetsPreservingGlobal: mode === "missing"
+          ? () => []
+          : () => { throw new Error("injected controller rebind failure"); },
+      });
+      harness.commentSession.update({
+        comments: [{
+          commentId: `comment_degraded_${mode}`,
+          sourceAnchor: editEffectTarget(`target_degraded_${mode}`),
+        }],
+      });
+      const outcome = harness.controller.enqueueDocumentEdit({ html: after, context });
+      assert.equal(outcome.status, "succeeded");
+      assert.equal(outcome.value.receipt?.editRevision, 1);
+      assert.equal(outcome.value.effects.targetRebinding.status, "degraded");
+      assert.equal(harness.documentSession.html, after);
+      harness.controller.dispose();
+    });
+  }
+});
+
+test("accepted document edit does not retire a processing run", () => {
+  const before = "<main>原文</main>";
+  const after = "<main>新文</main>";
+  const { harness, context, runSession } = createEditCommandHarness({
+    before,
+    suffix: "processing",
+  });
+  const processingRun = setEditCommandRun(
+    runSession,
+    context,
+    "processing",
+    "processing",
+  );
+  const outcome = harness.controller.enqueueDocumentEdit({ html: after, context });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.effects.completedRunRetired, false);
+  assert.equal(runSession.activeRun, processingRun);
+  harness.controller.dispose();
+});
 
 test("shell publishes queued document history as busy until the terminal action settles", async (t) => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";

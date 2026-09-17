@@ -10,6 +10,16 @@ import type {
   ValidationReview,
 } from "../domain/run-lifecycle.js";
 
+export function isVendorApiKeyPageOpened(
+  value: unknown,
+): value is Readonly<{ opened: true }> {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (value as { opened?: unknown }).opened === true,
+  );
+}
+
 export type HtmlProject = {
   path?: string;
   sourcePath: string;
@@ -338,7 +348,7 @@ export type DesktopIntegrationsApi = {
   openAgentLogin?: (payload: {
     providerId: string;
   }) => Promise<{ opened?: boolean }>;
-  openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened?: boolean }>;
+  openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
   persistSessionCredential?: (payload: {
     apiKey: string;
     vendorId?: string;
