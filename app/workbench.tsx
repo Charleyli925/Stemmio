@@ -524,6 +524,7 @@ export default function Workbench() {
     receipt?: DocumentSourceReceipt | null,
     previousFrameGeneration?: number | null,
     previousFrameDocument?: Document | null,
+    explicitRebuild?: boolean,
   ) => Promise<DocumentCanvasRenderObservation>>(async () => {
     throw new Error("画布核对尚未完成初始化。");
   });
@@ -1081,6 +1082,7 @@ export default function Workbench() {
               receipt,
               fence?.previousFrameGeneration,
               fence?.previousFrameDocument,
+              Boolean(rebuildFence),
             );
           },
           freeze: (reason) => fenceAndFreezeCurrentCanvasRef.current(reason),
@@ -2707,6 +2709,7 @@ export default function Workbench() {
     receipt?: DocumentSourceReceipt | null,
     previousFrameGeneration?: number | null,
     previousFrameDocument?: Document | null,
+    explicitRebuild = false,
   ): Promise<DocumentCanvasRenderObservation> => {
     performance.mark("stemmio:canvas:verify-start");
     const expectedGeneration = currentDocumentSessionSnapshot().canvasGeneration;
@@ -2727,7 +2730,7 @@ export default function Workbench() {
       // ordinary one-second observation window on a loaded desktop. Give that
       // explicitly requested projection rebuild the existing surface budget;
       // it still cannot repeat source acceptance or trigger another rebuild.
-      let attemptLimit = previousFrameGeneration != null || previousFrameDocument
+      let attemptLimit = explicitRebuild
         ? explicitRebuildAttemptLimit
         : 40;
       const runtimeAttemptLimit = Math.ceil(
