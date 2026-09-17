@@ -1804,12 +1804,25 @@ test("DocumentWorkflow rebuilds one timed-out accepted projection without repeat
   const external = before.replace("one", "external");
   let verifyCalls = 0;
   let conflictResolutionCalls = 0;
+  const rebuildFence = Object.freeze({ frameGeneration: 7, frameDocument: {} });
+  const observedRebuildFences = [];
   let harness;
   harness = createHarness({
     html: before,
     canvasOverrides: {
-      async verifyRendered(renderedHtml, renderedSha256, _context, receipt) {
+      rebuildActiveFrame() {
+        this.rebuilds += 1;
+        return rebuildFence;
+      },
+      async verifyRendered(
+        renderedHtml,
+        renderedSha256,
+        _context,
+        receipt,
+        receivedRebuildFence,
+      ) {
         verifyCalls += 1;
+        observedRebuildFences.push(receivedRebuildFence);
         if (verifyCalls === 1) {
           throw Object.assign(new Error("canvas acknowledgement timed out"), {
             code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
@@ -1858,6 +1871,8 @@ test("DocumentWorkflow rebuilds one timed-out accepted projection without repeat
   assert.equal(conflictResolutionCalls, 1);
   assert.equal(verifyCalls, 2);
   assert.equal(harness.canvas.rebuilds, 1);
+  assert.equal(observedRebuildFences[0], undefined);
+  assert.equal(observedRebuildFences[1], rebuildFence);
   assert.equal(harness.documentSession.html, external);
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(external));
   assert.notEqual(
