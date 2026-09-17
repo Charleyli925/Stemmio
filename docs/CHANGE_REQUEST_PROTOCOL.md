@@ -968,3 +968,18 @@ but cannot start, restart, or fall back to clipboard or another provider.
 Candidate and Version codecs contain no provider selection and remain unchanged;
 review and adoption continue to validate their existing Request, Hash and source
 authority rather than the availability of the historical provider.
+
+For the native HTTP runtime, transport completion is not Candidate completion:
+SSE `[DONE]` must follow an explicit successful model finish reason, and JSON
+responses require the same success fact. Truncation, filtering, context/resource
+exhaustion, abnormal stop and protocol-invalid termination publish no partial
+output or completion. A truncated attempt remains the same frozen Request/Attempt
+and projects `change-model`; Stemmio does not automatically resend, reduce
+reasoning, switch provider or stitch partial HTML.
+
+The Bridge-only bounded Agent event reducer may retain allowlisted HTTP transport
+facts: output-parameter name/value, capability revision, transport-attempt
+ordinal, normalized finish reason/category and numeric token usage. It must not
+retain credentials, request/response bodies, public narration or private
+reasoning in those diagnostic events, and the Renderer projection does not
+expose them as conversation content.

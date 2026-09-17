@@ -3606,6 +3606,39 @@ final result: passed for the scoped non-visual state contract; completion-gate e
 
 final result: passed for the scoped explicit-exit contract; completion-gate evidence remains to be recorded.
 
+## 2026-09-17 — HTTP Agent output completion and recovery contract
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. No new control, color, spacing, layout or diagnostics surface was added. Existing Agent progress and failure areas remain the only visible surfaces; existing failure copy was extended only for newly distinct terminal error codes.
+- Formal requests now use each supported model's exact adapter-owned maximum output parameter. Custom compatible endpoints omit that parameter. The product no longer predicts a request's capacity from byte counts or rejects ordinary frozen Requests using a client-side token estimate; the existing exact attachment-byte/hash checks and bounded local serialization resource guard remain unchanged.
+- Completion is intentionally stricter: transport `[DONE]` is not presented as success without an explicit successful finish reason. Truncation, content filtering, context/resource exhaustion, abnormal stops and protocol-invalid responses discard partial HTML and retain the frozen Request/Attempt instead of producing a Candidate or silently resending.
+- Recovery uses the established failure area and actions. Output truncation now selects the existing `change-model` route rather than a generic retry; Stemmio does not auto-switch the model or provider. Protocol-invalid output remains a protocol error and is not mislabeled as a network interruption.
+- Bridge-only transport diagnostics retain allowlisted request parameters, capability revision, attempt ordinal, normalized finish reason and numeric usage; credentials, prompts, HTML and reasoning are excluded and no new diagnostic UI is created.
+- Deterministic evidence after independent-review repairs: focused HTTP tests pass the exact parameter, Custom omission, finish-ordering, non-2xx SSE classification, success-only completion, allowlisted diagnostics, usage-only tail, cleanup and recovery cases. Independent review of `d8f95e9a` reports no remaining P0/P1/P2.
+- Edit gate `2026-09-17T09-27-55-757Z-edit` passed 4/4 steps on rebased `origin/main@2fc5cba6`: typecheck/architecture, targeted Node, contract and core. Core reported 2462 tests, 2461 passed, one existing selected skip and zero failures; the runner performed no retry or reuse.
+- Live-provider follow-up: a signed arm64 Developer Preview built from
+  `b5a024d38a1f5b21ba4ecfd5b5f93f866d23bf0d` used the already remembered,
+  encrypted Stemmio credential through the normal Settings and AI sidebar
+  flow. The formal default resolved to `stemmio:deepseek-v4-pro`, provider
+  reasoning remained `auto` / provider default, and the adapter sent
+  `max_tokens=393216`. DeepSeek returned a protocol-success response and a
+  527-byte complete document; Candidate creation then verified the exact
+  output hash, changed only `Before smoke` to `Stemmio smoke`, and preserved
+  all seven Stable IDs. The Candidate remained pending review, so this run did
+  not mutate the authoritative Working Copy. The current durable product
+  record does not retain the provider's raw finish-reason string or token
+  usage fields; success is proven by the protocol's success-only Candidate
+  boundary, while raw usage remains explicitly unrecorded rather than inferred.
+- Boundary: this smoke used a synthetic one-page project and the rebuilt,
+  packaged Developer Preview. It is not private-corpus or installed-app
+  acceptance, and it does not claim raw provider usage evidence that the
+  current durable record does not preserve. A screenshot comparison would not
+  add evidence because this change deliberately reuses the current failure
+  surface without visual or copy changes.
+
+Final result: passed for the scoped request, completion and recovery contract,
+including one real DeepSeek formal-request smoke; broader vendor and
+private-corpus coverage remains outside this package.
+
 ## 2026-09-17 — AI 对话单一执行状态与细分隔线
 
 - Mode: DESIGN CHANGE. 执行中的 Agent 只保留一条当前消息：头像旁是服务名与 `mm:ss · n KB`，正文只是 Agent 公开说明。“正在生成”、“正在接收结果”和“完整结果校验后可查看”不再重复占用正文。
