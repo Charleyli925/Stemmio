@@ -8618,14 +8618,6 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       && iframe.contentDocument === documentNode
       && frameLoadGenerationRef.current === connectedFrameGeneration
     );
-    let enterNativeTextHost: (
-      hostElement: HTMLElement,
-      caretPoint: NativeEditCaretPoint | undefined,
-      options?: {
-        fromDeferred?: boolean;
-        selectionIntentEpoch?: number;
-      },
-    ) => NativeEditEntryResult;
     const handleClick = (event: MouseEvent) => {
       if (!isAuthoritativeConnectedDocument()) return;
       cancelPendingHoverResolution();
@@ -8685,7 +8677,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       selectResolvedTarget(resolvedTarget);
     };
 
-    enterNativeTextHost = (
+    const enterNativeTextHost = (
       hostElement: HTMLElement,
       caretPoint: NativeEditCaretPoint | undefined,
       {
