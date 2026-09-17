@@ -8714,35 +8714,20 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         // would collapse that Selection back to the activation caret.
         return "entered";
       }
-      const pendingIntent = postNativeEditSelectionIntentRef.current;
       const handoffPhase = containerRef.current?.getAttribute("data-runtime-handoff");
-      const awaitsAuthoritativeFrame = (
-        renderedSourceHtmlRef.current !== frameSourceHtmlRef.current
-        || pendingNativeEditFrameReloadRef.current?.sourceSha256
-          === entrySourceIndex.sourceSha256
+      const targetsRetiringFrame = Boolean(
+        hostElement.ownerDocument !== iframeRef.current?.contentDocument
+        || pendingNativeEditFrameReloadRef.current
       );
       if (
         !active
         && !fromDeferred
-        && (
-          (
-            pendingIntent?.kind === "native-edit"
-            && pendingIntent.target.elementId === hostId
-          )
-          ||
-          (
-            pendingIntent?.kind === "structural"
-            && pendingIntent.selection?.elementId === hostId
-          )
-          || runtimeRefreshPendingRef.current
-          || awaitsAuthoritativeFrame
-        )
+        && targetsRetiringFrame
         && (
           runtimeCandidateRef.current
           || runtimePromotionRef.current
           || runtimeRefreshPendingRef.current
           || activeFrameConnectionPendingRef.current
-          || awaitsAuthoritativeFrame
           || handoffPhase === "preparing"
           || handoffPhase === "positioning"
         )
