@@ -252,9 +252,7 @@ export default function AiConversationSidebar({
   agentTextTruncated = false,
   agentWorking = false,
   agentStartedAt = null,
-  agentLastActivityAt = null,
   agentReceivedBytes = 0,
-  agentUpdatedAt = null,
   runKey = null,
   runCommentCount = null,
   agentPresentation = null,
@@ -411,7 +409,6 @@ export default function AiConversationSidebar({
               detail: `包含${contextContents}。`,
             }
     : null;
-  const liveTimestamp = sidebarTimestampLabel(agentUpdatedAt || agentStartedAt);
   const contentKey = [
     runKey || "",
     state,
@@ -647,9 +644,9 @@ export default function AiConversationSidebar({
           </section>
         ) : null}
 
-        {/* Public Agent narration and its live execution status share one stable
-            article. The timer belongs to the Agent currently speaking; later
-            Stemmio verification facts can then follow it in chronological order. */}
+        {/* Public Agent narration and its compact execution metadata share one
+            stable article. Later Stemmio verification facts can then follow it
+            in chronological order. */}
         {(runProgress?.narrationUpdates || executionStatus) && !displayedGroups.some((group) => group.kind === "current" && group.primary.some((message) => message.actor === "agent" && message.kind === "result-summary")) ? (
           <article
             ref={liveMessageRef}
@@ -660,7 +657,17 @@ export default function AiConversationSidebar({
             aria-live="off"
           >
             <AgentAvatar presentation={agentPresentation} />
-            <span className={styles.actor}>{executionDisplayName || resolvedAgentActionName}</span>
+            <span className={`${styles.actor} ${styles.liveActor}`}>
+              <span>{executionStatus?.agentName || executionDisplayName || resolvedAgentActionName}</span>
+              {executionStatus ? (
+                <small
+                  className={styles.executionMeta}
+                  data-testid="ai-conversation-execution-status"
+                >
+                  {executionStatus.meta}
+                </small>
+              ) : null}
+            </span>
             {runProgress?.narrationUpdates ? (
               <div
                 className={styles.narrationText}
@@ -671,22 +678,14 @@ export default function AiConversationSidebar({
                 ))}
               </div>
             ) : null}
-            {executionStatus ? (
-              <div className={styles.executionStatus} data-testid="ai-conversation-execution-status">
-                <span className={styles.liveStatus}>{executionStatus.title}</span>
-                <span>{executionStatus.detail}{agentLastActivityAt && clockNow - Date.parse(agentLastActivityAt) > 30_000 ? " · 暂未收到新响应" : ""}</span>
-                <span>已接收 {Math.ceil(agentReceivedBytes / 1024)} KB · 完整结果校验后可查看</span>
-              </div>
-            ) : null}
-            {agentWorking ? (
+            {agentWorking && !runProgress?.narrationUpdates ? (
               <span
                 className={styles.thinking}
                 role="status"
                 aria-live="polite"
-                aria-label={`${resolvedAgentActionName} 正在思考和处理`}
+                aria-label="AI 正在处理"
                 data-testid="ai-conversation-thinking"
               >
-                <span aria-hidden="true">正在生成</span>
                 <span className={styles.thinkingDots} aria-hidden="true">
                   <i />
                   <i />
@@ -694,13 +693,8 @@ export default function AiConversationSidebar({
                 </span>
               </span>
             ) : null}
-            {liveTimestamp || runProgress?.narration ? (
+            {runProgress?.narration ? (
               <div className={styles.messageMeta}>
-                {liveTimestamp ? (
-                  <time dateTime={agentUpdatedAt || agentStartedAt || undefined}>
-                    {liveTimestamp}
-                  </time>
-                ) : null}
                 <button
                   type="button"
                   onClick={() => copyMessage("live-agent", runProgress?.narration || "")}

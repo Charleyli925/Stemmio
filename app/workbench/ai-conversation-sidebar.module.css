@@ -15,7 +15,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   overflow: hidden;
-  border-left: 1px solid rgb(32 29 49 / 10%);
+  border-left: 1px solid var(--chrome-divider, rgb(32 29 49 / 10%));
   background: var(--paper, #fff);
   color: #25232a;
   font: 500 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -173,6 +173,22 @@
   color: #8a8797;
   font-size: 10px;
   font-weight: 680;
+}
+
+.liveActor {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.executionMeta {
+  flex: none;
+  color: #9a97a4;
+  font-size: 9px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .message[data-actor="stemmio"] .actor {
@@ -645,13 +661,6 @@
   overflow-wrap: break-word;
 }
 
-.executionStatus {
-  display: grid;
-  gap: 1px;
-  color: #8a8797;
-  font-size: 11px;
-}
-
 .narrationLine {
   margin: 0;
   white-space: pre-wrap;
@@ -660,11 +669,8 @@
 .thinking {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   min-height: 18px;
   color: #8a8797;
-  font-size: 10px;
-  font-weight: 650;
 }
 
 .thinkingDots {

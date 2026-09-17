@@ -100,7 +100,7 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     );
     await expect(narration.getByTestId("ai-conversation-narration").locator("p"))
       .toHaveCount(3);
-    await expect(launched.page.getByTestId("ai-conversation-thinking")).toBeVisible();
+    await expect(launched.page.getByTestId("ai-conversation-thinking")).toHaveCount(0);
     await expect.poll(() => launched.page.getByTestId("ai-conversation-stream").evaluate(
       (stream) => Math.round(stream.scrollHeight - stream.clientHeight - stream.scrollTop),
     )).toBeLessThanOrEqual(1);
@@ -345,7 +345,6 @@ test("Codex ACP shares the public execution stream and retains its frozen identi
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
     await expect(narration).toHaveCount(1);
-    await expect(launched.page.getByTestId("ai-conversation-thinking")).toBeVisible();
     await expect(narration).toContainText("先读取冻结任务。");
     await expect(narration).not.toContainText("最后等待校验。");
     await expect(narration).toContainText("Codex", { timeout: 10_000 });
@@ -362,6 +361,7 @@ test("Codex ACP shares the public execution stream and retains its frozen identi
     );
     await expect(narration.getByTestId("ai-conversation-narration").locator("p"))
       .toHaveCount(3);
+    await expect(launched.page.getByTestId("ai-conversation-thinking")).toHaveCount(0);
     await expect(launched.page.getByTestId("ai-conversation-action-bar"))
       .toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
     const decisionAnnouncement = launched.page
@@ -519,12 +519,11 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
       .toBeEnabled();
     await sidebar.getByRole("button", { name: /交给 源页 修改/u }).click();
     const streamingProgress = launched.page.getByTestId("ai-conversation-execution-status");
-    await expect(streamingProgress).toContainText("DeepSeek 正在生成", { timeout: 30_000 });
-    await expect.poll(() => streamingProgress.textContent()).toMatch(
-      /正在接收结果 · 已用时 \d{2}:\d{2}/u,
-    );
+    await expect(streamingProgress).toHaveText(/\d{2}:\d{2} · \d+ KB/u, { timeout: 30_000 });
     await expect(streamingProgress.locator("details")).toHaveCount(0);
-    await expect(streamingProgress).toContainText(/已接收 [1-9]\d* KB/u);
+    await expect(streamingProgress).not.toContainText("正在生成");
+    await expect(streamingProgress).not.toContainText("正在接收结果");
+    await expect(streamingProgress).not.toContainText("完整结果校验后可查看");
     await expect(streamingProgress).not.toContainText("fixture-hidden");
     await expect(launched.page.getByTestId("ai-conversation-run-progress")).toHaveCount(0);
     releaseStream();
