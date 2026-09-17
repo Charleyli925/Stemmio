@@ -125,6 +125,7 @@ import {
 import type { SourceHistoryDirection } from "./domain/source-history.js";
 import type { AgentSelection } from "./domain/agent-provider-state.js";
 import {
+  EDIT_AUTHOR_RUNTIME_BUDGET,
   EDIT_AUTHOR_RUNTIME_VERIFICATION_DEADLINE_MS,
 } from "./domain/edit-runtime-contract.js";
 import { assertDesktopHost } from "./application/desktop-host.js";
@@ -2669,7 +2670,17 @@ export default function Workbench() {
       && initialFrameDocument,
     );
     const waitForCurrentGeneration = async (): Promise<DocumentCanvasRenderObservation | null> => {
-      let attemptLimit = 40;
+      const explicitRebuildAttemptLimit = Math.ceil(
+        EDIT_AUTHOR_RUNTIME_BUDGET.runtimeSurfaceDeadlineMs / 25,
+      );
+      // The imperative rebuild invalidates the old frame synchronously, but
+      // React may not commit and verify its static replacement within the
+      // ordinary one-second observation window on a loaded desktop. Give that
+      // explicitly requested projection rebuild the existing surface budget;
+      // it still cannot repeat source acceptance or trigger another rebuild.
+      let attemptLimit = previousFrameGeneration != null || previousFrameDocument
+        ? explicitRebuildAttemptLimit
+        : 40;
       const runtimeAttemptLimit = Math.ceil(
         EDIT_AUTHOR_RUNTIME_VERIFICATION_DEADLINE_MS / 25,
       );
