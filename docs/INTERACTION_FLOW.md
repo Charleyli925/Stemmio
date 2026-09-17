@@ -456,6 +456,11 @@ Candidate 在已验证源码登记后、作者脚本执行前恢复 PageViewCont
   `data-stemmio-id` 精确解析的 selection；目标已删除或证明失败时允许安全
   清除选择，不能猜测重绑或转存 Runtime DOM。恢复锚点取自晋升前最后可见的
   Active Frame，不得覆盖 Candidate 准备期间的用户滚动。
+- Native Edit 的源码已被宿主接受、但当前岛无法原地 rebase 时，替换后的
+  Active Frame 只能消费一次绑定该 source receipt、Hash、Canvas generation、Stable-ID
+  目标与逻辑 Selection 的恢复意图；匹配后自动回到 `contenteditable`、Focus 和 Caret，
+  用户无需再次双击。任一身份不符、用户已指向评论输入等外部焦点，或显式指针/
+  Selection/Escape/模式切换，都立即退役该意图，不得在之后偷回焦点。
 - 必要刷新可以出现短暂加载，但不打断尚未完成的活跃输入。位置与选择恢复尽力而为，
   合法结构变化前后不承诺像素完全一致。局部不可编辑、动态图表未恢复与整页不可用必须分开表达。
 - 替换权威 HTML（首次打开、采纳版本、磁盘重载）只把新字节写入静态

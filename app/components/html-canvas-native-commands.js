@@ -1,3 +1,5 @@
+import { sameSourceReceipt } from "../application/document-session.js";
+
 export function nativeEditLeasesMatch(left, right) {
   return Boolean(
     left
@@ -6,6 +8,44 @@ export function nativeEditLeasesMatch(left, right) {
     && left.sourceRevision === right.sourceRevision
     && left.hostId === right.hostId
   );
+}
+
+export class NativeEditRecoveryController {
+  #pending = null;
+
+  offer(intent) {
+    this.#pending = Object.freeze({
+      ...intent,
+      receipt: intent.receipt,
+      target: Object.freeze({ ...intent.target }),
+      selection: Object.freeze({ ...intent.selection }),
+    });
+  }
+
+  cancel() {
+    const hadPending = this.#pending !== null;
+    this.#pending = null;
+    return hadPending;
+  }
+
+  takeIfCurrent(current) {
+    const pending = this.#pending;
+    if (!pending) return null;
+
+    // Every completion attempt retires the intent. A stale frame, target, or
+    // focus observation must never stay armed and steal focus later.
+    this.#pending = null;
+    if (
+      current.focusAllowed !== true
+      || !sameSourceReceipt(current.receipt, pending.receipt)
+      || current.sourceSha256 !== pending.sourceSha256
+      || current.canvasGeneration !== pending.canvasGeneration
+      || current.targetId !== pending.target.id
+      || !Number.isSafeInteger(current.frameGeneration)
+      || current.frameGeneration <= pending.retiredFrameGeneration
+    ) return null;
+    return pending;
+  }
 }
 
 function notifyDiscard(callback, reason) {

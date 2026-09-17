@@ -163,6 +163,7 @@ import {
 import { useCanvasPresentationScroll } from "./html-canvas-presentation-scroll";
 import {
   NativeDeferredCommandQueue,
+  NativeEditRecoveryController,
   nativeEditLeasesMatch,
 } from "./html-canvas-native-commands";
 import {
@@ -1110,6 +1111,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const activeTextRangeRef = useRef<ActiveTextRange | null>(null);
   const activeNativeEditRef = useRef<ActiveNativeEdit | null>(null);
   const nativeCommandQueueRef = useRef(new NativeDeferredCommandQueue());
+  const nativeEditRecoveryRef = useRef(new NativeEditRecoveryController());
   const deferNativeCommandRef = useRef<(
     kind: string,
     run: () => void,
@@ -4962,6 +4964,27 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     setIsEditing(false);
     setHasTextRange(false);
     documentNode.getSelection()?.removeAllRanges();
+    const acceptedReceipt = lastSourceReceiptRef.current;
+    const acceptedIndex = sourceIndexRef.current;
+    if (
+      isSourceReceipt(acceptedReceipt)
+      && acceptedReceipt.sourceSha256 === acceptedIndex?.sourceSha256
+      && acceptedIndex.source === source
+    ) {
+      nativeEditRecoveryRef.current.offer({
+        receipt: acceptedReceipt,
+        sourceSha256: acceptedReceipt.sourceSha256,
+        canvasGeneration: acceptedReceipt.canvasGeneration,
+        retiredFrameGeneration: frameLoadGenerationRef.current,
+        retiredSessionId: active.lease.sessionId,
+        target,
+        selection,
+        restoreFocus: true,
+        toolbarVisible: true,
+      });
+    } else {
+      nativeEditRecoveryRef.current.cancel();
+    }
     queueNativeFenceReloadRef.current(
       source,
       {
@@ -5388,6 +5411,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     const documentNode = container?.ownerDocument;
     if (!container || !documentNode) return undefined;
     const clearOnOutsidePointer = (event: PointerEvent) => {
+      nativeEditRecoveryRef.current.cancel();
       if (!selectedElementRef.current) return;
       const sharedScrollElement = container.closest<HTMLElement>(
         ".review-scroll-stage",
@@ -6894,6 +6918,49 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [loadFrameSource, requestDynamicRuntimeRefresh]);
   queueNativeFenceReloadRef.current = queueNativeFenceReload;
 
+  const completeNativeEditRecovery = useCallback((
+    connectedFrameGeneration: number,
+    expectedTargetId: string,
+  ): boolean => {
+    const ownerDocument = containerRef.current?.ownerDocument;
+    const outerActiveElement = ownerDocument?.activeElement;
+    const focusAllowed = Boolean(
+      ownerDocument
+      && (
+        !outerActiveElement
+        || outerActiveElement === ownerDocument.body
+        || outerActiveElement === iframeRef.current
+      )
+    );
+    const currentReceipt = lastSourceReceiptRef.current;
+    const currentSourceIndex = sourceIndexRef.current;
+    const intent = nativeEditRecoveryRef.current.takeIfCurrent({
+      receipt: currentReceipt,
+      sourceSha256: currentSourceIndex?.sourceSha256 ?? "",
+      canvasGeneration: currentReceipt?.canvasGeneration ?? -1,
+      frameGeneration: connectedFrameGeneration,
+      targetId: expectedTargetId,
+      focusAllowed,
+    });
+    if (!intent) return false;
+
+    const restoredTarget = selectTarget(intent.target, {
+      reveal: false,
+      showToolbar: intent.toolbarVisible,
+    });
+    if (
+      !intent.restoreFocus
+      || restoredTarget?.resolution !== "exact"
+      || restoredTarget.id !== intent.target.id
+      || !startEditing(undefined, intent.selection)
+    ) {
+      containerRef.current?.setAttribute("data-native-recovery", "retired");
+      return false;
+    }
+    containerRef.current?.setAttribute("data-native-recovery", "resumed");
+    return true;
+  }, [selectTarget, startEditing]);
+
   const currentProjectionHashes = useCallback(
     () => syncProjectionHashDiagnostics(),
     [syncProjectionHashDiagnostics],
@@ -7277,6 +7344,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       semanticOperation?: import("../lib/semantic-operation-kernel.js").SemanticOperation;
     }>,
   ): boolean => {
+    nativeEditRecoveryRef.current.cancel();
     if (activeNativeEditRef.current) detachNativeEditForFence();
     const abortInFlightCommit = abortInFlightRuntimeCommitRef.current;
     if (abortInFlightCommit) {
@@ -7676,6 +7744,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         && renderedSourceHtmlRef.current === frameSourceHtmlRef.current
         && containerRef.current?.getAttribute("data-render-verified") === "true",
       rebuildActiveFrame: () => {
+        nativeEditRecoveryRef.current.cancel();
         loadFrameSource(frameSourceHtmlRef.current, {
           forceStatic: true,
           preserveViewport: true,
@@ -7695,9 +7764,18 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         || activeNativeEditRef.current?.session.hasPendingDraft()
         || activeNativeEditRef.current?.session.isComposing()
       ),
-      clearSelection,
-      select: selectTarget,
-      startEditing,
+      clearSelection: () => {
+        nativeEditRecoveryRef.current.cancel();
+        clearSelection();
+      },
+      select: (target, options) => {
+        nativeEditRecoveryRef.current.cancel();
+        return selectTarget(target, options);
+      },
+      startEditing: () => {
+        nativeEditRecoveryRef.current.cancel();
+        return startEditing();
+      },
       moveSelected,
       duplicateSelected,
       deleteSelected,
@@ -7803,6 +7881,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       };
       return;
     }
+    nativeEditRecoveryRef.current.cancel();
     lastSourceReceiptRef.current = sourceReceipt;
     lastPropRef.current = {
       sessionIncarnation: sourceReceipt.sessionIncarnation,
@@ -7898,6 +7977,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     lockedRef.current = shouldLock;
     readOnlyRef.current = effectiveReadOnly || shouldLock;
     enableReorderRef.current = enableReorder && !shouldLock;
+    if (shouldLock || effectiveReadOnly) {
+      nativeEditRecoveryRef.current.cancel();
+    }
     // During a frame navigation Chromium can expose a transient Document before
     // its root element exists. Lock synchronization must not abort the React
     // tree while that provisional document is being replaced.
@@ -7914,6 +7996,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   ]);
 
   useEffect(() => {
+    const nativeEditRecovery = nativeEditRecoveryRef.current;
     return () => {
       clearNativeEditCheckpointTimer();
       currentNativeEditLeaseRef.current = null;
@@ -7923,6 +8006,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       activeNativeEditRef.current = null;
       endRuntimeNativeEdit();
       discardPendingNativeCommands("unmounted");
+      nativeEditRecovery.cancel();
       retainNativeEditFocusRef.current = null;
       pendingHistoryBookmarkRef.current = null;
       pendingHistoryCanonicalFenceRef.current = false;
@@ -8283,6 +8367,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") nativeEditRecoveryRef.current.cancel();
       if (
         (event.metaKey || event.ctrlKey)
         && event.shiftKey
@@ -8400,6 +8485,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      nativeEditRecoveryRef.current.cancel();
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
       onInteractionRef.current?.();
@@ -8630,7 +8716,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           adjustOuter: true,
         });
       };
-      const activateHandoff = () => {
+      const activateHandoffNow = () => {
         if (!isCurrent()) return;
         const connectedRuntimeFrame = runtimeFrameRef.current;
         let settlementAccepted = false;
@@ -8656,10 +8742,33 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           return;
         }
         restoreLogicalSelection();
+        const ownerDocument = iframe.ownerDocument;
+        const retiredIframe = candidate.retiredSlot?.slotId === "a"
+          ? runtimeSlotARef.current
+          : candidate.retiredSlot?.slotId === "b"
+            ? runtimeSlotBRef.current
+            : null;
+        const freshOuterActiveElement = ownerDocument.activeElement;
+        const focusTransferAllowed = Boolean(
+          candidate.handoffContext.restoreCanvasFocus
+          && (
+            !freshOuterActiveElement
+            || freshOuterActiveElement === ownerDocument.body
+            || freshOuterActiveElement === retiredIframe
+            || freshOuterActiveElement === iframe
+          )
+        );
+        if (!focusTransferAllowed) {
+          // The focus snapshot was captured when positioning began. A newer
+          // outer-input focus is authoritative and also retires any native
+          // recovery intent before the promoted iframe can reclaim it.
+          nativeEditRecoveryRef.current.cancel();
+        }
         // Keyboard focus follows the accepted Canvas slot, never the hidden
-        // Candidate. Do not steal focus from a comment/composer or recreate a
-        // native caret, and never let focus itself scroll the shared stage.
-        if (candidate.handoffContext.restoreCanvasFocus) {
+        // Candidate. Re-read outer focus after asynchronous positioning so a
+        // newer comment/composer destination wins. The source-accepted native
+        // recovery below is the only path allowed to reconstruct its caret.
+        if (focusTransferAllowed && freshOuterActiveElement !== iframe) {
           iframe.focus({ preventScroll: true });
         }
         flushSync(() => {
@@ -8691,6 +8800,20 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         fencedDocumentCleanupRef.current();
         activeFrameConnectionPendingRef.current = false;
         finalizeRuntimePromotionRef.current(candidate);
+        completeNativeEditRecovery(
+          connectedFrameGeneration,
+          pendingSelection?.id ?? "",
+        );
+      };
+      const activateHandoff = () => {
+        if (window.stemmioRuntime?.diagnostics?.e2eRuntimeCommitHooks === true) {
+          const releases = window.__STEMMIO_E2E_RUNTIME_COMMIT_RELEASES__;
+          if (Array.isArray(releases)) {
+            releases.push(activateHandoffNow);
+            return;
+          }
+        }
+        activateHandoffNow();
       };
       scheduleWhenReady({
         isCurrent,
@@ -8846,6 +8969,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ) {
         activeFrameConnectionPendingRef.current = false;
       }
+      completeNativeEditRecovery(
+        connectedFrameGeneration,
+        pendingSelection?.id ?? "",
+      );
     };
     if (isRuntimePromotion && promotedCandidate) {
       positionRuntimeHandoff(promotedCandidate);
@@ -8858,6 +8985,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     captureTextRange,
     clearSelection,
     completeRuntimeAttempt,
+    completeNativeEditRecovery,
     currentRuntimeSourceProof,
     executePagePresentationAction,
     finishNativeEditing,
@@ -9408,6 +9536,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       return;
     }
     if (event.key === "Escape") {
+      nativeEditRecoveryRef.current.cancel();
       event.preventDefault();
       event.stopPropagation();
       if (spacingMenuOpen) {
@@ -9718,6 +9847,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, []);
   const handleSelectCommentMarker = useCallback((markerSelection: HtmlCanvasSelection) => {
     if (lockedRef.current) return;
+    nativeEditRecoveryRef.current.cancel();
     // The marker was clicked at the user's current Canvas position. Keep that
     // viewport stable; rail navigation can still reveal the paired target.
     selectTarget(markerSelection, { reveal: false, showToolbar: true });

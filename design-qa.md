@@ -3566,6 +3566,16 @@ final result: passed
 
 follow-up result: passed
 
+## 2026-09-17 — Native Edit 重建后单次恢复
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、布局、颜色、动效或视觉状态；只修复已接受 Native Edit 在必需 iframe 替换后的既有输入连续性，因此不需要截图对比。
+- 可见结果：注入 live-session rebase 失败后，用户不再需要第二次双击；新 Active Frame 恢复同一 Stable-ID 目标、`contenteditable`、iframe/目标焦点和重建前的逻辑 Caret，随后键盘输入继续写入完整 HTML。
+- 焦点边界：恢复意图只消费一次；身份不符、显式 pointer/selection/Escape、权威或模式变更和 unmount 都退役它。Runtime positioning 完成前会重新读取外层焦点；即使旧 Active 曾经拥有焦点，更新的评论输入框焦点也会取消恢复，新 iframe 不会先抢回后再误判为合法。
+- 实际证据：纯 Node owner 用例 8/8 通过；全量 type/architecture/source-receipt/browser-open 类型检查通过；edit gate 选中的 Node 检查 215/215 通过；accepted rebase-failure、Runtime positioning 期间评论焦点不被抢回、以及 completed Save 期间外部评论焦点三条合成 Electron 用例在最新构建上合并执行 3/3 通过，没有重试。
+- Evidence boundary: 这是重建源码上的合成 Electron 行为证据，不是用户指定私有 HTML 语料、打包应用或已安装应用验收。
+
+final result: passed for the scoped non-visual recovery contract; private-corpus acceptance remains unverified.
+
 ## 2026-09-16 — Transient tab display handoff
 
 - Mode: BEHAVIOR CHANGE, lightweight design exception. No visible control, copy, token, spacing or layout changes. The change removes hidden display work: startup enters the ordinary registered-project activation immediately, inactive tabs do not prewarm, and settled tabs retain no cached iframe.
