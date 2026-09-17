@@ -15,6 +15,7 @@ import {
   bridgeJson,
   closeStemmioGracefully,
   currentEditorFrame,
+  doubleClickRenderedText,
   disableStructuralInPlace,
   documentToken,
   ECHARTS_STUB,
@@ -864,7 +865,7 @@ test("failed chart refresh keeps the latest static source quietly editable acros
     await expect(frame.locator('#chart canvas')).toHaveCount(0);
 
     let target = frame.locator('[data-native-case="format-chart"]').first();
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute('contenteditable', 'true');
     await target.press('End');
     await page.keyboard.insertText('        CONTINUED');
@@ -889,7 +890,7 @@ test("failed chart refresh keeps the latest static source quietly editable acros
     await expect(editor).toHaveAttribute('aria-readonly', 'false');
     frame = await currentEditorFrame(page);
     target = frame.locator('[data-native-case="format-chart"]').first();
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute('contenteditable', 'true');
     await target.press('End');
     await page.keyboard.insertText(' STILL_EDITABLE');
@@ -970,7 +971,7 @@ test("owned composition snapshots keep formatted source nodes editable but autho
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
     const paragraph = frame.locator('[data-native-case="format-chart"]');
     await expect(frame.locator('#chart canvas')).toHaveCount(1);
-    await paragraph.dblclick();
+    await doubleClickRenderedText(paragraph);
     await expect(paragraph).toHaveAttribute("contenteditable", "true");
     await paragraph.press(keyShortcut("ArrowRight"));
     await paragraph.dispatchEvent("compositionstart", { data: "" });
@@ -978,7 +979,7 @@ test("owned composition snapshots keep formatted source nodes editable but autho
     await paragraph.press(keyShortcut("ArrowLeft"));
     for (let i = 0; i < 7; i += 1) await page.keyboard.press("Shift+ArrowRight");
     await editor.getByRole("button", { name: "加粗", exact: true }).click();
-    await paragraph.locator("strong").dblclick();
+    await doubleClickRenderedText(paragraph.locator("strong"));
     await expect(editor.getByRole("button", { name: "斜体", exact: true })).toBeVisible();
     await editor.getByRole("button", { name: "斜体", exact: true }).click();
     await paragraph.press(keyShortcut("ArrowRight"));
@@ -1025,7 +1026,7 @@ test("the read-only recovery notice reloads source authority even when dynamic p
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
     const target = frame.locator('[data-native-case="format-chart"]').first();
     await expect(frame.locator('#chart canvas')).toHaveCount(1);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute('contenteditable', 'true');
     await target.press(keyShortcut('ArrowRight'));
     await page.keyboard.insertText(' FAIL_CHART');
@@ -1060,7 +1061,7 @@ test("the read-only recovery notice reloads source authority even when dynamic p
       frame.contentDocument
       && frame.contentDocument !== window.__M5_BEFORE_AUTHORITY_CONTENT_DOCUMENT__
     ))).toBe(true);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute('contenteditable', 'true');
     await target.press(keyShortcut('ArrowRight'));
     await page.keyboard.insertText(' RECOVERED');
@@ -1082,7 +1083,7 @@ test("Canvas shortcuts follow the promoted frame and same-source reload keeps ch
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
     const target = frame.locator('[data-native-case="format-chart"]');
     const working = await managedWorkingCopyPath(page, sourcePath);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await target.press(keyShortcut("ArrowLeft"));
     for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowRight");
     await editor.getByRole("button", { name: "加粗", exact: true }).click();
@@ -1134,7 +1135,7 @@ test("Canvas shortcuts follow the promoted frame and same-source reload keeps ch
     await expect.poll(() => frame.locator("#chart canvas").evaluateAll(canvases => canvases.filter(canvas => (
       canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value > 0)
     )).length)).toBe(1);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute("contenteditable", "true");
     await page.screenshot({ path: testInfo.outputPath("history-focus-and-reload-chart.png") });
   });
@@ -1282,7 +1283,7 @@ test("format state ignores unselected boundary text and unchanged formatting kee
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
     const target = frame.locator('[data-native-case="format-chart"]');
     const working = await managedWorkingCopyPath(page, sourcePath);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await target.evaluate(node => {
       const span = node.querySelector('span');
       const range = node.ownerDocument.createRange();
@@ -1376,7 +1377,7 @@ test("editing a published Undo projection remains available while its save recei
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
     const target = frame.locator('[data-native-case="format-chart"]');
     const working = await managedWorkingCopyPath(page, sourcePath);
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await target.press(keyShortcut('ArrowRight'));
     await page.keyboard.insertText(' BEFORE_UNDO');
     await page.keyboard.press(keyShortcut('s'));
@@ -1407,7 +1408,7 @@ test("editing a published Undo projection remains available while its save recei
       await expect(editor).toHaveAttribute('data-render-verified', 'true');
       await expect.poll(() => editor.getAttribute('data-runtime-handoff'))
         .not.toBe('positioning');
-      await target.dblclick();
+      await doubleClickRenderedText(target);
       await expect(target).toHaveAttribute('contenteditable', 'true');
       await target.press(keyShortcut('ArrowLeft'));
       for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowRight');
@@ -1442,7 +1443,7 @@ test("a completed Save does not reclaim an external comment textbox", {
     const { editor, frame } = await loadedDiskFrame(page, sourcePath, "save-focus-guard");
     const working = await managedWorkingCopyPath(page, sourcePath);
     const target = frame.locator('[data-native-case="save-focus-guard"]');
-    await target.dblclick();
+    await doubleClickRenderedText(target);
     await expect(target).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
     await target.press("End");
 

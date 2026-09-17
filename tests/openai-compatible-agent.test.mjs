@@ -9,7 +9,6 @@ import { createOpenAiCompatibleProvider } from "../bridge/agent/providers/openai
 import { openAiCompatibleVendorAdapter } from "../bridge/agent/providers/openai-compatible-vendor-adapters.mjs";
 import { createProviderRegistry } from "../bridge/agent/providers/provider-registry.mjs";
 import {
-  assertCompleteHtmlBudget,
   classifyOpenAiCompatibleHttpStatus,
   completeOpenAiCompatibleChat,
   createHttpRuntime,
@@ -17,6 +16,7 @@ import {
   completeIdentityCheckedHtml,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
   extractHtmlDocument,
+  normalizeOpenAiCompatibleFinishReason,
   readHttpAgentContext,
 } from "../bridge/agent/runtimes/http-runtime.mjs";
 import { createRuntimeRegistry } from "../bridge/agent/runtimes/runtime-registry.mjs";
@@ -37,6 +37,7 @@ import {
   SUPPORTED_AGENT_MODELS,
   SUPPORTED_AGENT_MODELS_REVISION,
 } from "../shared/supported-agent-models.mjs";
+import { HTTP_AGENT_MAX_SERIALIZED_INPUT_BYTES } from "../shared/agent-input-policy.mjs";
 
 const HTML = "<!DOCTYPE html><html><head><title>ok</title></head><body><p data-stemmio-id=\"one\">ok</p></body></html>";
 const TRUST = "trusted-local-agent-v1";
@@ -58,6 +59,7 @@ test("HTTP public progress is visible before completion while interleaved HTML s
       await blocked;
       controller.enqueue(new TextEncoder().encode(frame(record("progress", "标题已调整，正在整理完整页面。"))));
       controller.enqueue(new TextEncoder().encode(frame(record("html", HTML.slice(55)))));
+      controller.enqueue(new TextEncoder().encode("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"));
       controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
       controller.close();
     },
@@ -156,6 +158,7 @@ function createVirtualTimer() {
       }
     },
     now: () => currentTime,
+    pendingCount: () => pending.size,
   };
 }
 
@@ -199,10 +202,22 @@ test("built-in vendors use one fixed, versioned support table and never expose r
       }
       assert.ok(model.contextWindow > 0);
       assert.ok(model.maxOutputTokens > 0);
+      assert.equal(Object.hasOwn(model, "recommendedMaxInputTokens"), false);
       assert.equal(model.supportsCompleteHtml, true);
     }
   }
   assert.equal(SUPPORTED_AGENT_MODELS.some((entry) => ["deepseek-chat", "deepseek-reasoner"].includes(entry.modelId)), false);
+  assert.deepEqual(Object.fromEntries(SUPPORTED_AGENT_MODELS.map((entry) => [entry.modelId, [entry.contextWindow, entry.maxOutputTokens]])), {
+    "deepseek-v4-pro": [1_000_000, 393_216],
+    "deepseek-v4-flash": [1_000_000, 393_216],
+    "deepseek-v4-flash-vision-exp": [1_000_000, 393_216],
+    "glm-5.3": [1_000_000, 131_072],
+    "glm-5.3-flash": [1_000_000, 131_072],
+    "qwen3.8-max": [1_000_000, 131_072],
+    "qwen3.8-flash": [1_000_000, 131_072],
+    "gpt-5.4": [1_050_000, 128_000],
+    "gpt-5.4-mini": [400_000, 128_000],
+  });
 });
 
 test("built-in catalogs contain only fixed models and are gated until real smoke promotion", () => {
@@ -239,19 +254,34 @@ test("capabilities are exact-table driven and Custom sends no private reasoning 
 test("vendor adapters keep request contracts separate and normalize structured failures", () => {
   const messages = [{ role: "user", content: "task" }];
   assert.deepEqual(openAiCompatibleVendorAdapter("deepseek").buildChatRequest({
-    modelId: "deepseek-v4-pro", messages, reasoning: "low", maxOutputTokens: 1024,
+    modelId: "deepseek-v4-pro", messages, reasoning: "low",
+    modelCapability: { providerModelId: "deepseek-v4-pro", maxOutputTokens: 393_216 },
   }).body, {
-    model: "deepseek-v4-pro", messages, max_tokens: 1024,
+    model: "deepseek-v4-pro", messages, max_tokens: 393_216,
     thinking: { type: "enabled" }, reasoning_effort: "low",
   });
   assert.deepEqual(openAiCompatibleVendorAdapter("openai").buildChatRequest({
-    modelId: "gpt-5.4", messages, reasoning: "high", maxOutputTokens: 1024,
+    modelId: "gpt-5.4", messages, reasoning: "high",
+    modelCapability: { id: "stemmio:gpt-5.4", maxOutputTokens: 128_000 },
   }).body, {
-    model: "gpt-5.4", messages, max_completion_tokens: 1024, reasoning_effort: "high",
+    model: "gpt-5.4", messages, max_completion_tokens: 128_000, reasoning_effort: "high",
   });
   assert.deepEqual(openAiCompatibleVendorAdapter("custom").buildChatRequest({
     modelId: "private", messages, reasoning: "max",
   }).body, { model: "private", messages });
+  for (const [vendorId, modelId] of [["zhipu", "glm-5.3"], ["dashscope", "qwen3.8-max"]]) {
+    const request = openAiCompatibleVendorAdapter(vendorId).buildChatRequest({
+      modelId,
+      messages,
+      modelCapability: { providerModelId: modelId, maxOutputTokens: 131_072 },
+    });
+    assert.equal(request.body.max_tokens, 131_072);
+    assert.equal(Object.hasOwn(request.body, "max_completion_tokens"), false);
+  }
+  assert.throws(() => openAiCompatibleVendorAdapter("deepseek").buildChatRequest({
+    modelId: "deepseek-v4-pro", messages,
+    modelCapability: { providerModelId: "other-model", maxOutputTokens: 393_216 },
+  }), /matching maximum-output capability/u);
   assert.equal(classifyOpenAiCompatibleHttpStatus(429, JSON.stringify({ error: { code: "rate_limit_exceeded" } })), "AGENT_RATE_LIMITED");
   assert.equal(classifyOpenAiCompatibleHttpStatus(429, JSON.stringify({ error: { code: "insufficient_balance" } })), "AGENT_BALANCE_INSUFFICIENT");
   assert.equal(classifyOpenAiCompatibleHttpStatus(403, JSON.stringify({ error: { code: "model_access_denied" } })), "AGENT_MODEL_ACCESS_DENIED");
@@ -280,6 +310,7 @@ test("preflight validates the selected fixed model with chat/completions and nev
   assert.match(calls[0].url, /\/chat\/completions$/u);
   assert.doesNotMatch(calls[0].url, /\/models$/u);
   assert.equal(calls[0].body.model, "deepseek-v4-pro");
+  assert.equal(calls[0].body.max_tokens, 393_216);
 });
 
 test("HTTP execution streams SSE with UTF-8 chunking, multiline data, activity-only reasoning, usage and DONE", async () => {
@@ -298,6 +329,7 @@ test("HTTP execution streams SSE with UTF-8 chunking, multiline data, activity-o
     "data: " + JSON.stringify({ choices: [{ delta: { reasoning_content: "hidden reasoning" } }] }) + "\n\n",
     "data: " + JSON.stringify({ usage: { prompt_tokens: 2, completion_tokens: 3 } }) + "\n\n",
     "data: " + JSON.stringify({ choices: [{ delta: { content: second } }] }) + "\n\n",
+    "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }) + "\n\n",
     "data: [DONE]\n\n",
   ].join("");
   const bytes = Buffer.from(stream, "utf8");
@@ -356,6 +388,7 @@ test("HTTP sniffs headerless JSON and SSE without losing or duplicating the firs
       "da",
       "ta: " + JSON.stringify({ choices: [{ delta: { content: HTML.slice(0, split) } }] }) + "\n\n",
       "data: " + JSON.stringify({ choices: [{ delta: { content: HTML.slice(split) } }] }) + "\n\n",
+      "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }) + "\n\n",
       "data: [DONE]\n\n",
     ]),
     baseUrl: "https://api.example.com/v1",
@@ -379,6 +412,7 @@ test("HTTP joins many small HTML deltas once at protocol completion", async () =
       ...content.map((delta) => (
         "data: " + JSON.stringify({ choices: [{ delta: { content: delta } }] }) + "\n\n"
       )),
+      "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }) + "\n\n",
       "data: [DONE]\n\n",
     ]),
     baseUrl: "https://api.example.com/v1",
@@ -397,6 +431,7 @@ test("HTTP activity watchdog is sliding, classifies silence as turn timeout, and
     "data: " + JSON.stringify({ choices: [{ delta: { reasoning: "hidden" } }] }) + "\n\n",
     "data: " + JSON.stringify({ usage: { completion_tokens: 1 } }) + "\n\n",
     "data: " + JSON.stringify({ choices: [{ delta: { content: HTML.slice(20) } }] }) + "\n\n",
+    "data: " + JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }) + "\n\n",
     "data: [DONE]\n\n",
   ];
   const activeResponse = {
@@ -531,6 +566,54 @@ test("HTTP timeout remains bounded when a stream reader never finishes cancellin
   assert.ok(Date.now() - startedAt < 1_000);
 });
 
+test("HTTP cleanup clears watchdog timers and cancellation listeners across connect, cancel, and read failures", async () => {
+  const connectTimer = createVirtualTimer();
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => { throw new Error("connect failed"); },
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [], clock: connectTimer.clock, scheduler: connectTimer.scheduler,
+  }), { code: "AGENT_NETWORK_INTERRUPTED" });
+  assert.equal(connectTimer.pendingCount(), 0);
+
+  const cancellationTimer = createVirtualTimer();
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const originalAdd = signal.addEventListener.bind(signal);
+  const originalRemove = signal.removeEventListener.bind(signal);
+  let cancellationListeners = 0;
+  signal.addEventListener = (...args) => {
+    if (args[0] === "abort") cancellationListeners += 1;
+    return originalAdd(...args);
+  };
+  signal.removeEventListener = (...args) => {
+    if (args[0] === "abort") cancellationListeners -= 1;
+    return originalRemove(...args);
+  };
+  const cancelled = completeOpenAiCompatibleChat({
+    fetchImpl: () => new Promise(() => {}),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [], signal,
+    clock: cancellationTimer.clock, scheduler: cancellationTimer.scheduler,
+  });
+  controller.abort(Object.assign(new Error("cancelled"), { code: "AGENT_CANCELLED" }));
+  await assert.rejects(cancelled, { code: "AGENT_CANCELLED" });
+  assert.equal(cancellationListeners, 0);
+  assert.equal(cancellationTimer.pendingCount(), 0);
+
+  const readTimer = createVirtualTimer();
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () => { throw new Error("read failed"); },
+    }),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [], clock: readTimer.clock, scheduler: readTimer.scheduler,
+  }), { code: "AGENT_NETWORK_INTERRUPTED" });
+  assert.equal(readTimer.pendingCount(), 0);
+});
+
 test("HTTP activity watchdog permits a stream whose total virtual duration exceeds 45 minutes", async () => {
   const timer = createVirtualTimer();
   const frames = [
@@ -538,6 +621,7 @@ test("HTTP activity watchdog permits a stream whose total virtual duration excee
     { choices: [{ delta: { reasoning_content: "hidden" } }] },
     { usage: { completion_tokens: 1 } },
     { choices: [{ delta: { content: HTML.slice(20) } }] },
+    { choices: [{ delta: {}, finish_reason: "stop" }] },
   ];
   const response = {
     ok: true,
@@ -665,8 +749,13 @@ test("HTTP diagnosis distinguishes authentication and network failures", async (
 
 test("Custom requires a manual Model ID and validates that exact ID", async () => {
   let model = "";
+  let modelCapability = "unobserved";
   const provider = createOpenAiCompatibleProvider({
-    completeChat: async (input) => { model = input.modelId; return HTML; },
+    completeChat: async (input) => {
+      model = input.modelId;
+      modelCapability = input.modelCapability;
+      return HTML;
+    },
   });
   const environment = {
     STEMMIO_API_KEY: "sk-custom",
@@ -679,6 +768,7 @@ test("Custom requires a manual Model ID and validates that exact ID", async () =
   const customSelection = selection("html-editor-model");
   const evidence = await provider.preflight(installation, { environment, selection: customSelection });
   assert.equal(model, "html-editor-model");
+  assert.equal(modelCapability, null);
   assert.deepEqual(evidence.models.map(({ id }) => id), ["stemmio:html-editor-model"]);
 });
 
@@ -800,6 +890,25 @@ test("HTTP context rejects binary attachments and labels untrusted text with byt
   }), { code: "AGENT_ATTACHMENT_UNSUPPORTED" });
 });
 
+test("HTTP serialization keeps a local resource-safety bound distinct from model capacity", async (t) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "stemmio-http-resource-limit-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const filePath = path.join(root, "large.txt");
+  const bytes = Buffer.alloc(HTTP_AGENT_MAX_SERIALIZED_INPUT_BYTES, 0x61);
+  await writeFile(filePath, bytes);
+  await assert.rejects(() => readHttpAgentContext({
+    requestRoot: root,
+    readableFiles: [{
+      path: filePath,
+      relativePath: "large.txt",
+      role: "comment-attachment",
+      mediaType: "text/plain",
+      byteLength: bytes.byteLength,
+      sha256: sha256(bytes),
+    }],
+  }), { code: "AGENT_INPUT_RESOURCE_LIMIT" });
+});
+
 test("complete HTML validation distinguishes output truncation and invalid HTML", async () => {
   assert.equal(extractHtmlDocument(HTML), HTML);
   await assert.rejects(() => completeOpenAiCompatibleChat({
@@ -812,13 +921,164 @@ test("complete HTML validation distinguishes output truncation and invalid HTML"
   }), { code: "AGENT_OUTPUT_INVALID" });
 });
 
-test("complete-document budgets account for both input and expected full output", () => {
-  assert.throws(() => assertCompleteHtmlBudget("x".repeat(30_000), {
-    supportsCompleteHtml: true,
-    recommendedMaxInputTokens: 20_000,
-    maxOutputTokens: 5_000,
-    contextWindow: 40_000,
-  }, 30_000), { code: "AGENT_PROMPT_TOO_LARGE" });
+test("SSE and JSON reject every non-success finish class and DONE alone is not completion", async () => {
+  const cases = [
+    ["length", "AGENT_OUTPUT_TRUNCATED"],
+    ["content_filter", "AGENT_OUTPUT_FILTERED"],
+    ["insufficient_system_resource", "AGENT_PROVIDER_OVERLOADED"],
+    ["context_length_exceeded", "AGENT_PROMPT_TOO_LARGE"],
+    ["tool_calls", "AGENT_OUTPUT_INCOMPLETE"],
+  ];
+  for (const [finishReason, code] of cases) {
+    await assert.rejects(() => completeOpenAiCompatibleChat({
+      fetchImpl: async () => jsonResponse(200, {
+        choices: [{ finish_reason: finishReason, message: { content: HTML } }],
+      }),
+      baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+      vendorId: "custom", messages: [],
+    }), { code });
+    await assert.rejects(() => completeOpenAiCompatibleChat({
+      fetchImpl: async () => sseResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: HTML } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ]),
+      baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+      vendorId: "custom", messages: [],
+    }), { code });
+  }
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => sseResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: HTML } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ]),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [],
+  }), { code: "AGENT_PROTOCOL_INVALID" });
+  const protocolError = Object.assign(new Error("bad protocol"), {
+    code: "AGENT_PROTOCOL_INVALID",
+    status: 502,
+  });
+  assert.equal(
+    createOpenAiCompatibleProvider().normalizeRuntimeError(protocolError).code,
+    "AGENT_PROTOCOL_INVALID",
+  );
+});
+
+test("SSE rejects generated content after a successful finish reason", async () => {
+  const split = Math.floor(HTML.length / 2);
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => sseResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: HTML.slice(0, split) } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: HTML.slice(split) } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ]),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [],
+  }), { code: "AGENT_PROTOCOL_INVALID" });
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => sseResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: HTML } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+      `data: ${JSON.stringify({ reasoning_content: "late reasoning" })}\n\n`,
+      "data: [DONE]\n\n",
+    ]),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [],
+  }), { code: "AGENT_PROTOCOL_INVALID" });
+});
+
+test("SSE permits only usage and transport completion after a successful finish reason", async () => {
+  const events = [];
+  assert.equal(await completeOpenAiCompatibleChat({
+    fetchImpl: async () => sseResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: HTML } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+      `data: ${JSON.stringify({ usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 } })}\n\n`,
+      "data: [DONE]\n\n",
+    ]),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+    vendorId: "custom", messages: [], onEvent: (event) => events.push(event),
+  }), HTML);
+  assert.deepEqual(events.find((event) => (
+    event.kind === "transport-diagnostic" && event.phase === "usage"
+  )), {
+    kind: "transport-diagnostic", phase: "usage",
+    usage: { promptTokens: 3, completionTokens: 5, totalTokens: 8 },
+  });
+});
+
+test("non-success SSE preserves HTTP and structured provider failure classification", async () => {
+  for (const [status, chunks, code] of [
+    [401, ["data: [DONE]\n\n"], "AGENT_AUTH_REQUIRED"],
+    [429, ["plain vendor error\n"], "AGENT_RATE_LIMITED"],
+    [413, ["data: [DONE]\n\n"], "AGENT_PROMPT_TOO_LARGE"],
+    [429, [`event: error\ndata: ${JSON.stringify({ error: { code: "insufficient_balance" } })}\n\n`], "AGENT_BALANCE_INSUFFICIENT"],
+  ]) {
+    await assert.rejects(() => completeOpenAiCompatibleChat({
+      fetchImpl: async () => sseResponse(chunks, { status }),
+      baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "model",
+      vendorId: "custom", messages: [],
+    }), { code });
+  }
+});
+
+test("HTTP transport diagnostics retain only bounded request, finish, usage, and attempt facts", async () => {
+  const events = [];
+  assert.equal(await completeOpenAiCompatibleChat({
+    fetchImpl: async () => jsonResponse(200, {
+      choices: [{ finish_reason: "stop", message: { content: HTML } }],
+      usage: { prompt_tokens: 7, completion_tokens: 11, total_tokens: 18 },
+    }),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk-secret", modelId: "deepseek-v4-pro",
+    vendorId: "deepseek", messages: [{ role: "user", content: "private request" }],
+    modelCapability: { providerModelId: "deepseek-v4-pro", maxOutputTokens: 393_216 },
+    capabilityRevision: "2026-09-17.1", transportAttempt: 2,
+    onEvent: (event) => events.push(event),
+  }), HTML);
+  assert.deepEqual(events.filter((event) => event.kind === "transport-diagnostic"), [
+    {
+      kind: "transport-diagnostic", phase: "request", vendorId: "deepseek",
+      modelId: "deepseek-v4-pro", capabilityRevision: "2026-09-17.1",
+      transportAttempt: 2, outputParameter: "max_tokens", maxOutputTokens: 393_216,
+    },
+    {
+      kind: "transport-diagnostic", phase: "finish", finishReason: "stop",
+      finishCategory: "success",
+    },
+    {
+      kind: "transport-diagnostic", phase: "usage",
+      usage: { promptTokens: 7, completionTokens: 11, totalTokens: 18 },
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /sk-secret|private request/u);
+
+  const failedEvents = [];
+  await assert.rejects(() => completeOpenAiCompatibleChat({
+    fetchImpl: async () => jsonResponse(200, {
+      choices: [{ finish_reason: "length", message: { content: HTML } }],
+    }),
+    baseUrl: "https://api.example.com/v1", apiKey: "sk", modelId: "private-model",
+    vendorId: "custom", messages: [], onEvent: (event) => failedEvents.push(event),
+  }), { code: "AGENT_OUTPUT_TRUNCATED" });
+  assert.deepEqual(failedEvents.find((event) => (
+    event.kind === "transport-diagnostic" && event.phase === "finish"
+  )), {
+    kind: "transport-diagnostic", phase: "finish", finishReason: "length",
+    finishCategory: "truncated",
+  });
+});
+
+test("finish reasons normalize successful and unsuccessful protocol outcomes", () => {
+  assert.equal(normalizeOpenAiCompatibleFinishReason("stop").category, "success");
+  assert.equal(normalizeOpenAiCompatibleFinishReason("length").errorCode, "AGENT_OUTPUT_TRUNCATED");
+  assert.equal(normalizeOpenAiCompatibleFinishReason("content_filter").errorCode, "AGENT_OUTPUT_FILTERED");
+  assert.equal(normalizeOpenAiCompatibleFinishReason("insufficient_system_resource").errorCode, "AGENT_PROVIDER_OVERLOADED");
+  assert.equal(normalizeOpenAiCompatibleFinishReason("context_length_exceeded").errorCode, "AGENT_PROMPT_TOO_LARGE");
+  assert.equal(normalizeOpenAiCompatibleFinishReason("tool_calls").errorCode, "AGENT_OUTPUT_INCOMPLETE");
+  assert.equal(normalizeOpenAiCompatibleFinishReason(`unknown-${"x".repeat(10_000)}`).finishReason, "other");
+  assert.equal(normalizeOpenAiCompatibleFinishReason(null).errorCode, "AGENT_PROTOCOL_INVALID");
 });
 
 test("HTTP serialization rejects changed frozen attachments instead of sending bytes under an old hash", async (t) => {
@@ -837,16 +1097,19 @@ test("HTTP serialization rejects changed frozen attachments instead of sending b
 test("HTTP launch uses the selected ticket model capability snapshot", () => {
   const provider = createOpenAiCompatibleProvider();
   const selected = { id: "stemmio:deepseek-v4-pro", supportsCompleteHtml: true,
-    contextWindow: 9_999, recommendedMaxInputTokens: 8_000, maxOutputTokens: 1_000 };
+    contextWindow: 9_999, maxOutputTokens: 1_000 };
   const launch = provider.createRuntimeLaunch({
-    ticket: { selection: { resolvedModelId: selected.id }, evidence: { models: [selected] } },
+    ticket: { selection: { resolvedModelId: selected.id }, evidence: {
+      capabilityRevision: "capability-7", models: [selected],
+    } },
     policy: {}, baseEnvironment: { STEMMIO_API_KEY: "sk-synthetic", STEMMIO_API_VENDOR: "deepseek",
       STEMMIO_API_BASE_URL: "https://api.deepseek.com/v1", STEMMIO_API_CREDENTIAL_GENERATION: "1" },
   });
-  assert.equal(launch.modelBudget.contextWindow, 9_999);
+  assert.equal(launch.modelCapability.contextWindow, 9_999);
   selected.contextWindow = 1;
-  assert.equal(launch.modelBudget.contextWindow, 9_999);
-  assert.ok(Object.isFrozen(launch.modelBudget));
+  assert.equal(launch.modelCapability.contextWindow, 9_999);
+  assert.ok(Object.isFrozen(launch.modelCapability));
+  assert.equal(launch.capabilityRevision, "capability-7");
 });
 
 test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate without covering Working Copy", async (t) => {
@@ -863,8 +1126,10 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
   assert.equal(inspectSourceElementIdentity(managedBefore).complete, true);
   const candidateHtml = managedBefore.replaceAll("Before", "After");
   let callCount = 0;
-  const fetchImpl = async () => {
+  const requestBodies = [];
+  const fetchImpl = async (_url, init) => {
     callCount += 1;
+    requestBodies.push(JSON.parse(String(init?.body || "{}")));
     return jsonResponse(200, { choices: [{ finish_reason: "stop", message: { content: callCount === 1 ? HTML : callCount === 2 ? candidateHtml.replace(/sm1_[a-f0-9]+/u, `sm1_${"f".repeat(12)}4fff8${"f".repeat(15)}`) : candidateHtml } }] });
   };
   const registry = providerRegistry(
@@ -958,6 +1223,8 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
   assert.equal(status.status, "candidate-ready");
   assert.equal(await readFile(sourcePath, "utf8"), source);
   assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), managedBefore);
+  assert.ok(requestBodies.length >= 3);
+  assert.equal(requestBodies.every((body) => body.max_tokens === 393_216), true);
   await coordinator.shutdown();
 });
 

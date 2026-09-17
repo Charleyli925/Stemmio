@@ -105,8 +105,9 @@ an authority fence and submitting a new one. Candidate completion remains owned
 by the official finalizer plus Repository polling.
 
 HTTP execution requests SSE with `stream: true`; incremental document bytes
-stay inside Bridge and are written only after `[DONE]`, complete-HTML validation
-and the ordinary authority recheck. HTTP and ACP execution use a 45-minute
+stay inside Bridge and are written only after an explicit successful finish
+reason, transport `[DONE]`, complete-HTML validation and the ordinary authority
+recheck. HTTP and ACP execution use a 45-minute
 sliding inactivity watchdog. Valid content, reasoning, usage or heartbeat
 resets it, while startup/login/preflight retain short timeouts. Runtime silence
 is `AGENT_TURN_TIMEOUT`; disconnect, cancellation and timeout never finalize a

@@ -40,15 +40,20 @@ Register one product provider `pageroot` with runtime `http` and
 
 ## Consequences
 
-The current HTTP input policy is the pure `shared/agent-input-policy.mjs`, used
-by RunWorkflow and HTTP Runtime. Submission estimates reserve 256 KiB for
-unserialized task material; execution measures the final serialized messages,
-including retry feedback. Both use the same byte/token formula and selected
-ticket model capability. Complete-output estimates use frozen base HTML bytes;
-attachments increase input demand, not the expected HTML document size.
-Requested output headroom is limited by both the model output limit and context
-remaining after the measured input. Unknown model capability stays unknown and
-does not receive invented output limits; the 2 MiB HTTP input cap still applies.
+`shared/agent-input-policy.mjs` owns attachment type / UTF-8 validation and a
+2 MiB local serialized-input safety bound for Bridge parsing and memory use. It
+does not estimate tokens or model capacity. RunWorkflow therefore never blocks
+submission from byte-derived input/output guesses. The service remains the
+authority for actual context-limit failures.
+
+The vendor adapter owns the output-parameter shape. Every known model sends the
+exact maximum from the selected, capability-revision-fenced ticket on preflight,
+formal execution and Stable-ID repair (`max_completion_tokens` for OpenAI and
+`max_tokens` for the other shipped compatible vendors). OpenAI's value covers
+visible and reasoning tokens under that API contract. A Custom / unknown model
+omits the parameter rather than borrowing another vendor's limit. No path trims
+the frozen task, attachments or reasoning, and truncation does not trigger a
+smaller automatic retry or partial-output stitching.
 
 Text MIME/extension and UTF-8/NUL checks share the same policy. Empty attachments
 are unsupported, while empty rule files are legal; UTF-8 BOM content is
@@ -57,6 +62,13 @@ and Hash against its verified frozen policy. The Request's independent 25 MiB
 attachment boundary, path checks and freeze writer remain unchanged. Qoder,
 Codex and clipboard do not inherit HTTP-only attachment restrictions. Policy
 revision participates in the existing capability/configuration snapshot.
+
+SSE `[DONE]` closes the transport only. Both streaming and JSON responses need
+an explicit successful finish reason before complete HTML can reach identity
+validation. Truncation, content filtering, context/resource exhaustion,
+abnormal stops and protocol-invalid termination remain distinct structured
+failures. The HTTP watchdog and cancellation listener are cleared by one outer
+execution boundary covering connect, response detection, read and parse.
 
 - A future Anthropic or non-HTTPS vendor is a new product/security decision.
 - `agent-native` remains unregistered.

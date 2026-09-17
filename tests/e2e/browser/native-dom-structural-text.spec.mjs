@@ -167,6 +167,42 @@ test("nested list headings and wbr text edit without changing their authored str
   expect((await exportCurrentHtml(page)).equals(expected)).toBe(true);
 });
 
+test("toolbar and Enter keep a multi-host structural target selected while glyph entry stays exact", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const source = identifiedHtmlBuffer(fixtureBuffer("structural-text.html"));
+  const { editor, frame } = await loadFixture(page, "structural-text.html", {
+    buffer: source,
+    identifiedWorkingCopy: false,
+  });
+  const nested = frame.locator(caseSelector("nested-list-title"));
+  const leadingPoint = await directTextPoint(nested, "发现阶段");
+
+  await nested.click({ position: leadingPoint, force: true });
+  await expect(nested).toHaveAttribute("data-html-canvas-selected", /.+/u);
+  await editor.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(nested).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(editor).toHaveAttribute("data-native-start-status", "no-unique-host");
+  await expect(page.locator(".toast.show")).toHaveCount(0);
+
+  await nested.click({ position: leadingPoint, force: true });
+  await page.keyboard.press("Enter");
+  await expect(nested).not.toHaveAttribute("contenteditable", "true");
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(editor).toHaveAttribute("data-native-start-status", "no-unique-host");
+  await expect(nested).toHaveAttribute("data-html-canvas-selected", /.+/u);
+
+  await nested.dblclick({ position: leadingPoint, force: true });
+  await expect(nested).toHaveAttribute("contenteditable", "true");
+  await expect(nested.locator(":scope > ul")).toHaveAttribute(
+    "contenteditable",
+    "false",
+  );
+  await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+});
+
 test("mixed block parents edit as one frozen-subtree island", {
   tag: ["@gate-smoke","@smoke-editing"],
 }, async ({
