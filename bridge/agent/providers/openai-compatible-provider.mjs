@@ -116,7 +116,6 @@ function classifyHttpFailure(cause) {
     return "AGENT_PREFLIGHT_TIMEOUT";
   }
   const code = String(cause?.code || "");
-  if (code === "AGENT_PROTOCOL_INVALID") return "AGENT_NETWORK_INTERRUPTED";
   return code.startsWith("AGENT_") ? code : "AGENT_PROVIDER_UNAVAILABLE";
 }
 
@@ -259,6 +258,7 @@ export function createOpenAiCompatibleProvider({
         vendorId: credential.vendorId,
       });
       const resolved = resolvedStemmioSelection(selection || {}, { evidence });
+      const selectedModel = models.find((model) => model.id === resolved.resolvedModelId) || null;
       try {
         await completeChat({
           fetchImpl,
@@ -268,7 +268,7 @@ export function createOpenAiCompatibleProvider({
           vendorId: credential.vendorId,
           reasoning: resolved.reasoning.applied || DEFAULT_OPENAI_COMPATIBLE_REASONING,
           signal: AbortSignal.timeout(15_000),
-          maxOutputTokens: 256,
+          modelCapability: credential.vendorId === "custom" ? null : selectedModel,
           messages: Object.freeze([
             Object.freeze({ role: "system", content: "Return exactly one complete HTML document." }),
             Object.freeze({ role: "user", content: `Return this document unchanged:\n${PREFLIGHT_HTML}` }),
@@ -347,9 +347,10 @@ export function createOpenAiCompatibleProvider({
       return Object.freeze({
         securityProfile: "client-mediated",
         modelId: localId,
+        capabilityRevision: String(ticket.evidence?.capabilityRevision || ticket.evidence?.version || "1"),
         reasoning: normalizeOpenAiCompatibleReasoning(ticket.selection?.reasoning?.applied)
           || DEFAULT_OPENAI_COMPATIBLE_REASONING,
-        modelBudget: model ? Object.freeze({ ...model }) : null,
+        modelCapability: model ? Object.freeze({ ...model }) : null,
         policy,
         environment: Object.freeze({
           STEMMIO_API_KEY: String(credential?.apiKey || ""),
@@ -375,8 +376,12 @@ export function createOpenAiCompatibleProvider({
         AGENT_PROVIDER_OVERLOADED: "模型当前过载，可重试或更换模型。",
         AGENT_ENDPOINT_REGION_MISMATCH: "接口地区不匹配，请重新连接正确地区。",
         AGENT_OUTPUT_INVALID: "返回内容不是完整 HTML。本轮已保留。",
+        AGENT_OUTPUT_INCOMPLETE: "模型未正常完成输出。本轮 Request 已保留。",
+        AGENT_OUTPUT_FILTERED: "模型输出被内容策略终止。本轮 Request 已保留。",
         AGENT_OUTPUT_TRUNCATED: "模型输出被截断。本轮 Request 已保留。",
         AGENT_PROMPT_TOO_LARGE: "当前页面可能超过模型完整输出能力，请更换模型或使用 Qoder/Codex。",
+        AGENT_INPUT_RESOURCE_LIMIT: "冻结输入超出源页 Agent 的本地处理上限。本轮 Request 已保留。",
+        AGENT_PROTOCOL_INVALID: "模型接口返回了无法验证的协议结果。本轮 Request 已保留。",
         AGENT_TURN_TIMEOUT: "网络或模型超时。本轮 Request 已保留。",
         AGENT_NETWORK_INTERRUPTED: "网络连接中断。本轮 Request 已保留。",
         AGENT_ATTACHMENT_UNSUPPORTED: "源页 Agent 暂不支持此附件，可改用 Qoder、Codex 或复制给其他 AI。",

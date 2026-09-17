@@ -3585,3 +3585,16 @@ follow-up result: passed
 - Evidence boundary: no new visible state requires a screenshot. Real rebuilt-source Electron coverage and any configured private-corpus run remain owned by the completion gate; Node evidence is not presented as proof of IME, selection, iframe or installed-app continuity.
 
 final result: passed for the scoped non-visual state contract; completion-gate evidence is recorded separately.
+
+## 2026-09-17 — HTTP Agent output completion and recovery contract
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. No new control, color, spacing, layout or diagnostics surface was added. Existing Agent progress and failure areas remain the only visible surfaces; existing failure copy was extended only for newly distinct terminal error codes.
+- Formal requests now use each supported model's exact adapter-owned maximum output parameter. Custom compatible endpoints omit that parameter. The product no longer predicts a request's capacity from byte counts or rejects ordinary frozen Requests using a client-side token estimate; the existing exact attachment-byte/hash checks and bounded local serialization resource guard remain unchanged.
+- Completion is intentionally stricter: transport `[DONE]` is not presented as success without an explicit successful finish reason. Truncation, content filtering, context/resource exhaustion, abnormal stops and protocol-invalid responses discard partial HTML and retain the frozen Request/Attempt instead of producing a Candidate or silently resending.
+- Recovery uses the established failure area and actions. Output truncation now selects the existing `change-model` route rather than a generic retry; Stemmio does not auto-switch the model or provider. Protocol-invalid output remains a protocol error and is not mislabeled as a network interruption.
+- Bridge-only transport diagnostics retain allowlisted request parameters, capability revision, attempt ordinal, normalized finish reason and numeric usage; credentials, prompts, HTML and reasoning are excluded and no new diagnostic UI is created.
+- Deterministic evidence after independent-review repairs: focused HTTP tests pass the exact parameter, Custom omission, finish-ordering, non-2xx SSE classification, success-only completion, allowlisted diagnostics, usage-only tail, cleanup and recovery cases. Independent review of `d8f95e9a` reports no remaining P0/P1/P2.
+- Edit gate `2026-09-17T09-27-55-757Z-edit` passed 4/4 steps on rebased `origin/main@2fc5cba6`: typecheck/architecture, targeted Node, contract and core. Core reported 2462 tests, 2461 passed, one existing selected skip and zero failures; the runner performed no retry or reuse.
+- Boundary: no live provider, credential, real tokenizer, Electron interaction, private corpus, packaged app or installed app was used. A screenshot comparison would not add evidence because this change deliberately reuses the current failure surface without visual or copy changes.
+
+Final result: partial — the deterministic request, completion and recovery contracts pass; live vendor acceptance remains unexecuted and is not inferred from synthetic transport fixtures.

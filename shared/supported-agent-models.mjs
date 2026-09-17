@@ -4,7 +4,7 @@
 // CI fixtures.
 
 export const SUPPORTED_AGENT_MODELS_SCHEMA_VERSION = "1.0.0";
-export const SUPPORTED_AGENT_MODELS_REVISION = "2026-09-09.1";
+export const SUPPORTED_AGENT_MODELS_REVISION = "2026-09-17.1";
 
 const AUTO = Object.freeze(["auto"]);
 const EFFORT = Object.freeze(["auto", "none", "low", "high", "max"]);
@@ -32,8 +32,7 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     smokeVersion: "2026-09-06.1",
     reasoningOptions: EFFORT,
     contextWindow: 1_000_000,
-    recommendedMaxInputTokens: 500_000,
-    maxOutputTokens: 384_000,
+    maxOutputTokens: 393_216,
   }),
   model({
     vendorId: "deepseek",
@@ -44,8 +43,7 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     requestAdapter: "deepseek",
     reasoningOptions: EFFORT,
     contextWindow: 1_000_000,
-    recommendedMaxInputTokens: 500_000,
-    maxOutputTokens: 384_000,
+    maxOutputTokens: 393_216,
   }),
   model({
     vendorId: "deepseek",
@@ -56,8 +54,7 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     releaseChannel: "stable",
     reasoningOptions: EFFORT,
     contextWindow: 1_000_000,
-    recommendedMaxInputTokens: 500_000,
-    maxOutputTokens: 384_000,
+    maxOutputTokens: 393_216,
   }),
   model({
     vendorId: "zhipu",
@@ -66,9 +63,8 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     recommended: true,
     requestAdapter: "zhipu",
     reasoningOptions: REQUIRED_EFFORT,
-    contextWindow: 200_000,
-    recommendedMaxInputTokens: 96_000,
-    maxOutputTokens: 32_000,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
   }),
   model({
     vendorId: "zhipu",
@@ -77,9 +73,8 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     recommended: false,
     requestAdapter: "zhipu",
     reasoningOptions: REQUIRED_EFFORT,
-    contextWindow: 200_000,
-    recommendedMaxInputTokens: 96_000,
-    maxOutputTokens: 32_000,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
   }),
   model({
     vendorId: "dashscope",
@@ -88,9 +83,8 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     recommended: true,
     requestAdapter: "dashscope",
     reasoningOptions: Object.freeze(["auto", "none", "enabled"]),
-    contextWindow: 262_144,
-    recommendedMaxInputTokens: 128_000,
-    maxOutputTokens: 65_536,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
   }),
   model({
     vendorId: "dashscope",
@@ -99,9 +93,8 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     recommended: false,
     requestAdapter: "dashscope",
     reasoningOptions: Object.freeze(["auto", "none", "enabled"]),
-    contextWindow: 262_144,
-    recommendedMaxInputTokens: 128_000,
-    maxOutputTokens: 65_536,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
   }),
   model({
     vendorId: "openai",
@@ -110,8 +103,7 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     recommended: true,
     requestAdapter: "openai",
     reasoningOptions: OPENAI_EFFORT,
-    contextWindow: 1_000_000,
-    recommendedMaxInputTokens: 500_000,
+    contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
   }),
   model({
@@ -122,7 +114,6 @@ export const SUPPORTED_AGENT_MODELS = Object.freeze([
     requestAdapter: "openai",
     reasoningOptions: OPENAI_EFFORT,
     contextWindow: 400_000,
-    recommendedMaxInputTokens: 200_000,
     maxOutputTokens: 128_000,
   }),
 ]);

@@ -34,6 +34,7 @@ const RECOVERY_BY_ERROR = Object.freeze(new Map([
     "AGENT_MODEL_CATALOG_EMPTY",
     "AGENT_MODEL_ID_REQUIRED",
     "AGENT_MODEL_NOT_RELEASED",
+    "AGENT_OUTPUT_TRUNCATED",
     "AGENT_PROMPT_TOO_LARGE",
     "AGENT_SELECTION_UNSUPPORTED",
     "CODEX_MODEL_CATALOG_EMPTY",
@@ -69,6 +70,7 @@ const RECOVERY_BY_ERROR = Object.freeze(new Map([
     "QODER_VERSION_MISMATCH",
     "QODER_VERSION_UNSUPPORTED",
   ].map((code) => [code, "repair-installation"]),
+  ["AGENT_INPUT_RESOURCE_LIMIT", "end"],
 ]));
 
 export function agentRecoveryKindForError(code, { safeToRetry = false } = {}) {

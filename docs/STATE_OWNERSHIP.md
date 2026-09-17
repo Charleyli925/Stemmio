@@ -29,15 +29,16 @@ Pending recovery still runs independently of that budget. Identity migrations,
 history and Promotion receipts keep their existing lifetimes. No old target is
 reapplied merely to make a stock journal eligible for collection.
 
-Native HTTP input estimates and execution checks share the pure
-`shared/agent-input-policy.mjs`; it owns no state or I/O. RunWorkflow measures
-current candidate input with an explicit reserve. Runtime measures the actual
-serialized frozen messages and checks each file's reread Hash/size. Both use
-the model capability from the same preflight ticket; the Provider copies that
-snapshot into the immutable launch instead of resolving a fresh catalog model.
-The existing configuration digest and capability revision fence remain the
-authority for launch. Retry messages recalculate input and requested output
-headroom through the same policy; unknown capability is not a verified fit.
+Native HTTP attachment and local serialization-safety checks share the pure
+`shared/agent-input-policy.mjs`; it owns no state or I/O. RunWorkflow verifies
+attachment type and UTF-8 bytes but does not estimate model capacity. Runtime
+measures actual serialized frozen messages only against its local parsing /
+memory safety bound and checks each file's reread Hash/size. The Provider copies
+the selected model capability from the same preflight ticket into the immutable
+launch instead of resolving a fresh catalog model. The adapter then sends the
+known model's exact maximum-output parameter on preflight, execution and identity
+repair; Custom unknown capability omits it. The configuration digest and bumped
+capability revision fence remain the authority for launch.
 
 | Mutable fact | Sole owner | Durable authority | Consumers |
 | --- | --- | --- | --- |
