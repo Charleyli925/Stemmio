@@ -85,8 +85,7 @@ body {
   backdrop-filter: blur(22px) saturate(112%);
 }
 
-.workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside > * {
-  border-color: var(--chrome-divider);
+.workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside > :not(.workbench-resizer) {
   background: var(--chrome-inspector-surface);
 }
 

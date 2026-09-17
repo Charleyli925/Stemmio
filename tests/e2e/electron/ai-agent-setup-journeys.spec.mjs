@@ -80,14 +80,16 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     const original = readFileSync(workingPath);
     await sidebar.getByRole("button", { name: /交给.*修改/u }).click();
     const executionStatus = sidebar.getByTestId("ai-conversation-execution-status");
-    await expect(executionStatus).toContainText("DeepSeek 正在生成");
-    await expect(executionStatus).toContainText("正在接收结果");
+    await expect(executionStatus).toHaveText(/\d{2}:\d{2} · \d+ KB/u);
+    await expect(executionStatus).not.toContainText("正在生成");
+    await expect(executionStatus).not.toContainText("正在接收结果");
     await expect(sidebar.getByTestId("ai-conversation-run-progress")).toHaveCount(0);
     await expect(sidebar.getByTestId("ai-conversation-stop")).toBeVisible();
     await expect(sidebar.getByTestId("ai-conversation-action-bar")).toHaveCount(0);
     const narration = sidebar.getByTestId("ai-conversation-narration-message");
     await expect(narration.getByTestId("ai-conversation-execution-status")).toBeVisible();
     await expect(narration).toContainText("我会先检查页面结构");
+    await expect(narration.getByTestId("ai-conversation-thinking")).toHaveCount(0);
     await expect(narration).not.toContainText("标题与配色已调整");
     const draft = sidebar.getByRole("textbox", { name: "修改要求草稿" });
     await draft.fill("下一轮再调整");
@@ -134,6 +136,26 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await expect(sidebar.getByTestId("ai-turn-process").first().locator("li").first()).toBeVisible();
     await expect(sidebar.getByTestId("ai-conversation-run-summary")).toHaveCount(0);
     await expect(sidebar.getByText("Thinking", { exact: true })).toHaveCount(0);
+    const separator = await launched.page.evaluate(() => {
+      const sidebarNode = document.querySelector('[data-testid="ai-conversation-sidebar"]');
+      const resizer = document.querySelector('.workbench-resizer-inspector');
+      const grip = resizer?.querySelector('.workbench-resizer-grip');
+      const sidebarStyle = sidebarNode ? getComputedStyle(sidebarNode) : null;
+      const resizerStyle = resizer ? getComputedStyle(resizer) : null;
+      const gripStyle = grip ? getComputedStyle(grip) : null;
+      return {
+        borderWidth: sidebarStyle?.borderLeftWidth || null,
+        resizerWidth: resizerStyle?.width || null,
+        resizerBackground: resizerStyle?.backgroundColor || null,
+        gripDisplay: gripStyle?.display || null,
+      };
+    });
+    expect(separator).toEqual({
+      borderWidth: "1px",
+      resizerWidth: "18px",
+      resizerBackground: "rgba(0, 0, 0, 0)",
+      gripDisplay: "none",
+    });
     expect(readFileSync(workingPath).equals(original)).toBe(true);
     await launched.page.screenshot({ path: path.join(screenshots, "narrow-sidebar-generating.png"), animations: "disabled" });
     finish();

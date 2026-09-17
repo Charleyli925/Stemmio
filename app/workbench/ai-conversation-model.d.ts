@@ -104,10 +104,11 @@ export function sidebarFailureRetryable(
 ): boolean;
 
 export type SidebarExecutionStatus = {
-  title: string;
-  detail: string;
+  agentName: string;
+  meta: string;
   elapsedMs: number;
   receivedBytes: number;
+  receivedKilobytes: number;
 };
 
 export function sidebarExecutionStatus(options?: {
