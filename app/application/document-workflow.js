@@ -18,6 +18,7 @@ import {
 
 const AUTOSAVE_DELAY_MS = 100;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
+const DOCUMENT_CANVAS_ACK_TIMEOUT = "DOCUMENT_CANVAS_ACK_TIMEOUT";
 
 function composerTargetForDisplay(sourceTarget, selection) {
   const visualHint = selection?.visualHint;
@@ -3286,20 +3287,46 @@ export class DocumentWorkflow {
 
   async #acknowledgeCanvas(html, sourceSha256, context) {
     if (typeof this.#canvasPort.verifyRendered !== "function") return true;
+    let observation;
     try {
-      const observation = await this.#verifyRendered(html, sourceSha256, context);
-      if (context && !this.#isCurrent(context)) return false;
-      const confirmed = this.confirmCanvas(observation);
-      if (confirmed) return true;
-      this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
-      return false;
+      observation = await this.#verifyRendered(html, sourceSha256, context);
     } catch (cause) {
       if (context && !this.#isCurrent(context)) return false;
-      this.#failCurrentCanvas(
-        this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
-      );
-      return false;
+      const current = this.#documentSession.snapshot;
+      const canRebuild = sourceErrorCode(cause, "") === DOCUMENT_CANVAS_ACK_TIMEOUT
+        && typeof this.#canvasPort.rebuildActiveFrame === "function"
+        && current.html === html
+        && current.workingHtmlSha256 === sourceSha256;
+      if (!canRebuild) {
+        this.#failCurrentCanvas(
+          this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
+        );
+        return false;
+      }
+      try {
+        // A missing acknowledgement is a disposable projection failure. Retire
+        // that generation, rebuild exactly once from Document authority, and
+        // verify the new receipt without repeating source acceptance or I/O.
+        this.#documentSession.reloadCanvas({
+          context,
+          operationId: this.#nextOperationId("canvas-ack-rebuild"),
+        });
+        this.#canvasPort.invalidateRenderAcks();
+        this.#canvasPort.rebuildActiveFrame();
+        observation = await this.#verifyRendered(html, sourceSha256, context);
+      } catch (retryCause) {
+        if (context && !this.#isCurrent(context)) return false;
+        this.#failCurrentCanvas(
+          this.#codecs.errorMessage(retryCause, "当前画布尚未完成自动恢复。"),
+        );
+        return false;
+      }
     }
+    if (context && !this.#isCurrent(context)) return false;
+    const confirmed = this.confirmCanvas(observation);
+    if (confirmed) return true;
+    this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
+    return false;
   }
 
   async #verifyRendered(html, sourceSha256, context, expectedReceipt = null) {

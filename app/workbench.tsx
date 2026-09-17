@@ -2713,7 +2713,10 @@ export default function Workbench() {
     };
     const firstObservation = await waitForCurrentGeneration();
     if (firstObservation) return firstObservation;
-    throw new Error("画布没有在时限内确认载入目标 HTML。");
+    throw Object.assign(
+      new Error("画布没有在时限内确认载入目标 HTML。"),
+      { code: "DOCUMENT_CANVAS_ACK_TIMEOUT" },
+    );
   }, [
     currentControllerSnapshot,
     currentDocumentSessionSnapshot,
