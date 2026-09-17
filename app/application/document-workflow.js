@@ -787,26 +787,18 @@ export class DocumentWorkflow {
       }
     }
 
-    if (mutation) {
-      const nextEvents = this.#codecs.appendDirectEditEvent({
-        mutation,
-        revision: nextRevision,
-        createdAt: new Date(this.#clock.now()).toISOString(),
-        basedOnVersionId: this.#versionSession.snapshot.currentBasedOnVersionId,
-        events: this.#commentSession.changeEvents,
-        pendingEvents: this.#auditPending,
-        inFlightKeys: this.#auditInFlight,
-        nextEventId: () => this.#nextOperationId("change"),
-      });
-      this.#commentSession.setChangeEvents(nextEvents.events);
-      this.#auditPending = nextEvents.pendingEvents;
-      this.#emit({
-        type: "document-direct-edit-recorded",
-        context: writeContext,
-        mutation,
-        events: nextEvents.events,
-      });
-    }
+    const plannedDirectEdit = mutation
+      ? this.#codecs.appendDirectEditEvent({
+          mutation,
+          revision: nextRevision,
+          createdAt: new Date(this.#clock.now()).toISOString(),
+          basedOnVersionId: this.#versionSession.snapshot.currentBasedOnVersionId,
+          events: this.#commentSession.changeEvents,
+          pendingEvents: this.#auditPending,
+          inFlightKeys: this.#auditInFlight,
+          nextEventId: () => this.#nextOperationId("change"),
+        })
+      : null;
 
     const accepted = this.#documentSession.acceptEdit({
       html: nextHtml,
@@ -814,13 +806,27 @@ export class DocumentWorkflow {
       operationId,
       sourceSha256: sourceTransaction?.afterSourceSha256 || "",
       context: writeContext,
-      write: writeContext.sourcePath ? this.#createWriteDetails(writeContext) : null,
+      write: writeContext.sourcePath
+        ? this.#createWriteDetails(writeContext, {
+            events: plannedDirectEdit?.pendingEvents,
+          })
+        : null,
     });
     if (!accepted.accepted || accepted.revision !== nextRevision) {
       return blocked(
         "DOCUMENT_EDIT_REJECTED",
         "当前文档不接受新的编辑，请先处理现有冲突。",
       );
+    }
+    if (mutation && plannedDirectEdit) {
+      this.#commentSession.setChangeEvents(plannedDirectEdit.events);
+      this.#auditPending = plannedDirectEdit.pendingEvents;
+      this.#emit({
+        type: "document-direct-edit-recorded",
+        context: writeContext,
+        mutation,
+        events: plannedDirectEdit.events,
+      });
     }
     this.#versionSession.markSourceEdited();
     this.#canvasPort.invalidateRenderAcks();
@@ -1860,11 +1866,11 @@ export class DocumentWorkflow {
     };
   }
 
-  #createWriteDetails(context) {
+  #createWriteDetails(context, { events = this.#auditPending } = {}) {
     return {
       ...context,
       expectedSourceSha256: this.#documentSession.persistedSourceSha256,
-      events: [...this.#auditPending],
+      events: [...events],
       historyOperations: this.#sourceHistorySession.pendingOperations,
       recoveryIdentity: this.#recoveryIdentity,
     };

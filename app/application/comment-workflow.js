@@ -17,6 +17,68 @@ function commentVisualHint(target) {
   return normalizeRuntimeVisualHint(target?.visualHint);
 }
 
+function composerTargetForDisplay(sourceTarget, selection) {
+  const visualHint = selection?.visualHint;
+  return visualHint
+    ? { ...sourceTarget, label: visualHint.label, visualHint }
+    : sourceTarget;
+}
+
+function sourceDeletionPlan(commentSession, elementIds) {
+  const removedElementIds = new Set(
+    (Array.isArray(elementIds) ? elementIds : [])
+      .map((elementId) => String(elementId || ""))
+      .filter(Boolean),
+  );
+  const targetWasRemoved = (target) => removedElementIds.has(
+    String(commentSourceTarget(target)?.elementId || ""),
+  );
+  const deleted = removedElementIds.size > 0
+    ? commentSession.comments.filter((comment) => targetWasRemoved(comment.sourceAnchor))
+    : [];
+  const deletedIds = new Set(deleted.map((comment) => comment.commentId));
+  const composerDiscarded = Boolean(
+    removedElementIds.size > 0
+    && commentSession.composerTarget
+    && targetWasRemoved(commentSession.composerTarget),
+  );
+  const editSession = commentSession.editSession
+    && deletedIds.has(commentSession.editSession.commentId)
+    ? commentSession.editSession
+    : null;
+  const attachments = new Map(
+    [
+      ...deleted.flatMap((comment) => comment.attachments || []),
+      ...(editSession?.draftAttachments || []),
+      ...(composerDiscarded ? commentSession.composerAttachments : []),
+    ].map((attachment) => [attachment.attachmentId, attachment]),
+  );
+  const newlyDeletedIds = [
+    ...deletedIds,
+    ...(composerDiscarded && commentSession.composerCommentId
+      ? [commentSession.composerCommentId]
+      : []),
+  ];
+  return Object.freeze({
+    changed: deleted.length > 0 || composerDiscarded || Boolean(editSession),
+    deleted,
+    deletedIds,
+    newlyDeletedIds,
+    composerDiscarded,
+    editSession,
+    attachments,
+    comments: commentSession.comments.filter(
+      (comment) => !deletedIds.has(comment.commentId),
+    ),
+    deletedCommentIds: [
+      ...new Set([
+        ...commentSession.deletedCommentIds,
+        ...newlyDeletedIds,
+      ]),
+    ],
+  });
+}
+
 function frozenItems(value) {
   return Object.freeze(Array.isArray(value) ? [...value] : []);
 }
@@ -611,13 +673,6 @@ export class CommentWorkflow {
     return succeeded({ comments: this.#commentSession.comments });
   }
 
-  applyWorkingCopy(input) {
-    if (this.#disposed) {
-      return blocked("COMMENT_WORKFLOW_DISPOSED", "评论工作流已停止。");
-    }
-    return succeeded(this.#commentSession.update(input));
-  }
-
   confirmEdit(input) {
     return this.editComment(input);
   }
@@ -777,53 +832,16 @@ export class CommentWorkflow {
     if (this.#disposed) {
       return blocked("COMMENT_WORKFLOW_DISPOSED", "评论工作流已停止。");
     }
-    const removedElementIds = new Set(
-      (Array.isArray(elementIds) ? elementIds : [])
-        .map((elementId) => String(elementId || ""))
-        .filter(Boolean),
-    );
-    if (removedElementIds.size === 0) {
-      return succeeded({ deleted: [], composerDiscarded: false, attachments: [] });
-    }
-    const targetWasRemoved = (target) => removedElementIds.has(
-      String(commentSourceTarget(target)?.elementId || ""),
-    );
-    const deleted = this.#commentSession.comments.filter((comment) => targetWasRemoved(comment.sourceAnchor));
-    const deletedIds = new Set(deleted.map((comment) => comment.commentId));
-    const composerDiscarded = Boolean(
-      this.#commentSession.composerTarget
-      && targetWasRemoved(this.#commentSession.composerTarget),
-    );
-    const editSession = this.#commentSession.editSession
-      && deletedIds.has(this.#commentSession.editSession.commentId)
-      ? this.#commentSession.editSession
-      : null;
-    if (deleted.length === 0 && !composerDiscarded && !editSession) {
+    const plan = sourceDeletionPlan(this.#commentSession, elementIds);
+    if (!plan.changed) {
       return succeeded({ deleted: [], composerDiscarded: false, attachments: [] });
     }
     const context = copyContext(this.#projectSession.context);
-    const attachments = new Map(
-      [
-        ...deleted.flatMap((comment) => comment.attachments || []),
-        ...(editSession?.draftAttachments || []),
-        ...(composerDiscarded ? this.#commentSession.composerAttachments : []),
-      ].map((attachment) => [attachment.attachmentId, attachment]),
-    );
     this.#commentSession.update({
-      comments: this.#commentSession.comments.filter(
-        (comment) => !deletedIds.has(comment.commentId),
-      ),
-      deletedCommentIds: [
-        ...new Set([
-          ...this.#commentSession.deletedCommentIds,
-          ...deletedIds,
-          ...(composerDiscarded && this.#commentSession.composerCommentId
-            ? [this.#commentSession.composerCommentId]
-            : []),
-        ]),
-      ],
-      ...(editSession ? { editSession: null } : {}),
-      ...(composerDiscarded
+      comments: plan.comments,
+      deletedCommentIds: plan.deletedCommentIds,
+      ...(plan.editSession ? { editSession: null } : {}),
+      ...(plan.composerDiscarded
         ? {
             composerDraft: "",
             composerCommentId: null,
@@ -833,16 +851,151 @@ export class CommentWorkflow {
         : {}),
     });
     this.queueDraft();
-    for (const attachment of attachments.values()) {
+    for (const attachment of plan.attachments.values()) {
       void this.deleteAttachment({ attachment, context });
     }
     return succeeded({
-      deleted,
-      composerDiscarded,
-      editSession,
-      attachments: [...attachments.values()],
+      deleted: plan.deleted,
+      composerDiscarded: plan.composerDiscarded,
+      editSession: plan.editSession,
+      attachments: [...plan.attachments.values()],
       context,
     });
+  }
+
+  applyDocumentEditEffects({ html, mutation, sourceTransaction } = {}) {
+    if (this.#disposed) {
+      return blocked("COMMENT_WORKFLOW_DISPOSED", "评论工作流已停止。");
+    }
+    const removedElementIds = sourceTransaction?.semanticOperation?.type === "deleteElement"
+      ? [...new Set(
+          (Array.isArray(sourceTransaction?.identityDelta?.removedElementIds)
+            ? sourceTransaction.identityDelta.removedElementIds
+            : [])
+            .map((elementId) => String(elementId || ""))
+            .filter(Boolean),
+        )]
+      : [];
+    const deletion = sourceDeletionPlan(this.#commentSession, removedElementIds);
+    const currentComposerTarget = deletion.composerDiscarded
+      ? null
+      : this.#commentSession.composerTarget;
+    const activeTargets = [
+      ...deletion.comments.map((comment) => comment.sourceAnchor),
+      ...this.#commentSession.changeEvents.map((event) => event.target),
+      ...(currentComposerTarget
+        ? [currentComposerTarget.commentAnchor || currentComposerTarget]
+        : []),
+    ].filter(Boolean);
+    const deterministicById = new Map(
+      (Array.isArray(mutation?.targetUpdates) ? mutation.targetUpdates : [])
+        .filter((target) => target?.id)
+        .map((target) => [target.id, target]),
+    );
+    const trackedTargetIds = new Set(
+      (Array.isArray(mutation?.trackedTargetIds) ? mutation.trackedTargetIds : [])
+        .map((targetId) => String(targetId || ""))
+        .filter(Boolean),
+    );
+    const locatableByTarget = new Map();
+    let rebindingDegraded = false;
+    for (const target of activeTargets) {
+      try {
+        locatableByTarget.set(target, Boolean(this.#codecs.canLocateTarget(target)));
+      } catch {
+        locatableByTarget.set(target, false);
+        rebindingDegraded = true;
+      }
+    }
+    const fallbackTargets = activeTargets.filter((target) => (
+      !trackedTargetIds.has(String(target.id || ""))
+      && locatableByTarget.get(target)
+    ));
+    let fallbackById = new Map();
+    if (fallbackTargets.length > 0) {
+      try {
+        const rebound = this.#codecs.rebindTargetsPreservingGlobal(
+          String(html ?? ""),
+          fallbackTargets,
+        );
+        if (!Array.isArray(rebound)) {
+          throw new TypeError("Comment target rebind must return an array.");
+        }
+        fallbackById = new Map(
+          rebound.filter((target) => target?.id).map((target) => [target.id, target]),
+        );
+        if (fallbackTargets.some((target) => !fallbackById.has(target.id))) {
+          rebindingDegraded = true;
+        }
+      } catch {
+        rebindingDegraded = true;
+      }
+    }
+    const refreshedTarget = (target) => {
+      const targetId = String(target?.id || "");
+      const deterministic = deterministicById.get(targetId);
+      if (deterministic) return deterministic;
+      if (!locatableByTarget.get(target)) return target;
+      if (!trackedTargetIds.has(targetId)) {
+        const fallback = fallbackById.get(targetId);
+        if (fallback) return fallback;
+      }
+      return { ...target, resolution: "orphaned" };
+    };
+    const nextComments = deletion.comments.map((comment) => ({
+      ...comment,
+      sourceAnchor: refreshedTarget(comment.sourceAnchor),
+    }));
+    const nextEvents = this.#commentSession.changeEvents.map((event) => ({
+      ...event,
+      target: refreshedTarget(event.target),
+    }));
+    const nextComposerTarget = currentComposerTarget
+      ? (() => {
+          const sourceTarget = currentComposerTarget.commentAnchor || currentComposerTarget;
+          return currentComposerTarget.commentAnchor
+            ? {
+                ...currentComposerTarget,
+                commentAnchor: refreshedTarget(sourceTarget),
+              }
+            : composerTargetForDisplay(
+                refreshedTarget(sourceTarget),
+                currentComposerTarget,
+              );
+        })()
+      : null;
+    this.#commentSession.update({
+      comments: nextComments,
+      changeEvents: nextEvents,
+      deletedCommentIds: deletion.deletedCommentIds,
+      ...(deletion.editSession ? { editSession: null } : {}),
+      ...(deletion.composerDiscarded
+        ? {
+            composerDraft: "",
+            composerCommentId: null,
+            composerAttachments: [],
+            composerTarget: null,
+          }
+        : currentComposerTarget
+          ? { composerTarget: nextComposerTarget }
+          : {}),
+    });
+    if (deletion.changed) this.queueDraft();
+    const context = copyContext(this.#projectSession.context);
+    for (const attachment of deletion.attachments.values()) {
+      void this.deleteAttachment({ attachment, context });
+    }
+    return succeeded(Object.freeze({
+      commentDeletion: Object.freeze({
+        status: "applied",
+      }),
+      targetRebinding: Object.freeze({
+        status: rebindingDegraded ? "degraded" : "applied",
+        ...(rebindingDegraded
+          ? { reason: "COMMENT_TARGET_REBIND_DEGRADED" }
+          : {}),
+      }),
+    }));
   }
 
   discardComposer() {

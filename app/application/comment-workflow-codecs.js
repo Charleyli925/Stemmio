@@ -29,6 +29,11 @@ export function createCommentWorkflowCodecs(overrides = {}) {
       overrides,
       "commentEditSessionHasChanges",
     ),
+    canLocateTarget: requiredFunction(overrides, "canLocateTarget"),
+    rebindTargetsPreservingGlobal: requiredFunction(
+      overrides,
+      "rebindTargetsPreservingGlobal",
+    ),
     errorMessage: requiredFunction(overrides, "errorMessage"),
   });
 }

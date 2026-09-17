@@ -453,6 +453,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
 Browser 验证真实 DOM 中保存卡片、草稿卡片和输入框在当前/其他标签页
 切换、聚焦和展开后的相对顺序、无重叠结果，以及输入框自动聚焦、
 `Enter` 保存、`Shift + Enter` 换行。
+直接编辑的 Node 合同还必须证明单一 Controller 命令先取得 SourceReceipt，
+再完成删除评论材料、一次目标重绑与 complete Run 退休；源码拒绝路径对评论/Run 零副作用，
+而定位异常只返回 degraded effect，不改写已接受的源码结果。
 
 顶层 Node 测试在一次执行中只出现一次。精确影响映射优先；只有找不到任何精确用例时才启用 `node-core` 兜底。PR CI 在 Linux 构建一次 Web renderer，供 Node 和 Browser 共享；共享产物名称绑定唯一 `run_id` 而不绑定 `run_attempt`，并保留 30 天，因此同一 workflow run 只重跑失败 job 时可以复用已通过的构建。若 `source-build` 本身重跑，则以相同名称覆盖同一 run 的旧产物。每个 macOS Electron job 在目标系统本地构建 renderer，并先用独立 preflight 证明窗口可见、计时器和 animation frame 正常推进。Native Electron 与 AI 闭环分成两个 job，Browser 保持每个分片单 worker、零重试，但跨三个独立分片并发。测试直接提交隐藏文件 input 时不会经过真实“打开”动作的 pre-picker switch fence；共享 fixture driver 只允许在旧画布仍为 render-verified、input 仍 attached 时有限重提，不能重跑整条用例或掩盖加载后的产品断言失败。
 
@@ -664,6 +667,7 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 | 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
 | 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
 | 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |
+| 源码已接受后的 Native Edit 恢复不重复夺焦点 | 纯 owner 用例证明 intent 只消费一次且任一 receipt/Hash/generation/target/focus 不符即退役；Electron 注入 live-session rebase 失败后，不再双击便核对 contenteditable、Focus、逻辑 Caret 和续写落盘，同时交叉证明 Escape 触发同一次 checkpoint/Frame 替换时仍保持退出且后续重建不会复活编辑 | `tests/html-canvas-native-commands.test.mjs` 的 recovery controller 用例；`electron-edit-runtime.spec.mjs` 的 accepted rebase-failure、Escape checkpoint-reload 与 external comment focus 用例 | `node --test tests/html-canvas-native-commands.test.mjs`; `npx playwright test --config tests/e2e/electron/playwright.config.mjs <spec> --grep <exact-name>` |
 
 交付结果不得只记录“PASS”。至少保留：精确 commit 与工作区内容
 Hash、base、OS/architecture、Node/Electron 版本、`selection.json` 中的计划场景、

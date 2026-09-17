@@ -235,6 +235,8 @@ function createHarness({
         id: `target_${commentId}`,
       }),
       commentEditSessionHasChanges,
+      canLocateTarget: (value) => Boolean(value?.elementId),
+      rebindTargetsPreservingGlobal: (_html, targets) => targets,
       errorMessage: (cause, fallback) => String(cause?.message || fallback),
       ...codecs,
     },
@@ -748,6 +750,121 @@ test("deleting a source subtree removes its saved comments and draft in one dura
   assert.deepEqual(
     harness.draftWrites.at(-1).comments.map((comment) => comment.commentId),
     ["comment_survives"],
+  );
+});
+
+test("document edit effects delete removed comment material and rebind the settled working copy once", () => {
+  const fallbackCalls = [];
+  const harness = createHarness({
+    codecs: {
+      rebindTargetsPreservingGlobal: (html, targets) => {
+        fallbackCalls.push({ html, ids: targets.map((item) => item.id) });
+        return targets.map((item) => ({
+          ...item,
+          selector: `${item.selector}[data-fallback]`,
+          resolution: "rebound",
+        }));
+      },
+    },
+  });
+  const removedElementId = "sm1_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa";
+  harness.commentSession.update({
+    comments: [
+      {
+        commentId: "comment_document_effect_removed",
+        sourceAnchor: {
+          ...target("target_document_effect_removed"),
+          elementId: removedElementId,
+        },
+      },
+      {
+        commentId: "comment_document_effect_survivor",
+        sourceAnchor: target("target_document_effect_survivor"),
+      },
+    ],
+    changeEvents: [
+      { eventId: "event_tracked_missing", target: target("target_tracked_missing") },
+      { eventId: "event_direct_edit", target: target("target_direct_edit") },
+    ],
+    composerCommentId: "comment_document_effect_composer",
+    composerDraft: "保留草稿",
+    composerTarget: target("target_document_effect_composer"),
+  });
+
+  const outcome = harness.workflow.applyDocumentEditEffects({
+    html: "<main data-stemmio-id=\"sm1_11111111111141118111111111111111\">更新</main>",
+    mutation: {
+      trackedTargetIds: [
+        "target_document_effect_survivor",
+        "target_tracked_missing",
+      ],
+      targetUpdates: [{
+        ...target("target_document_effect_survivor"),
+        selector: "main[data-deterministic]",
+        resolution: "exact",
+      }],
+    },
+    sourceTransaction: {
+      semanticOperation: { type: "deleteElement" },
+      identityDelta: { removedElementIds: [removedElementId] },
+    },
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.commentDeletion.status, "applied");
+  assert.equal(outcome.value.targetRebinding.status, "applied");
+  assert.deepEqual(fallbackCalls, [{
+    html: "<main data-stemmio-id=\"sm1_11111111111141118111111111111111\">更新</main>",
+    ids: ["target_direct_edit", "target_document_effect_composer"],
+  }]);
+  assert.deepEqual(
+    harness.commentSession.comments.map((comment) => comment.commentId),
+    ["comment_document_effect_survivor"],
+  );
+  assert.equal(
+    harness.commentSession.comments[0].sourceAnchor.selector,
+    "main[data-deterministic]",
+  );
+  assert.equal(
+    harness.commentSession.changeEvents[0].target.resolution,
+    "orphaned",
+  );
+  assert.match(
+    harness.commentSession.changeEvents[1].target.selector,
+    /data-fallback/u,
+  );
+  assert.match(harness.commentSession.composerTarget.selector, /data-fallback/u);
+  assert.deepEqual([...harness.commentSession.deletedCommentIds], [
+    "comment_document_effect_removed",
+  ]);
+});
+
+test("document edit target rebind failure degrades without discarding the accepted working copy", () => {
+  const harness = createHarness({
+    codecs: {
+      rebindTargetsPreservingGlobal: () => {
+        throw new Error("injected rebind failure");
+      },
+    },
+  });
+  harness.commentSession.update({
+    comments: [{
+      commentId: "comment_rebind_failure",
+      sourceAnchor: target("target_rebind_failure"),
+    }],
+  });
+
+  const outcome = harness.workflow.applyDocumentEditEffects({
+    html: "<main>更新</main>",
+    mutation: { trackedTargetIds: [], targetUpdates: [] },
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.commentDeletion.status, "applied");
+  assert.equal(outcome.value.targetRebinding.status, "degraded");
+  assert.equal(
+    harness.commentSession.comments[0].sourceAnchor.resolution,
+    "orphaned",
   );
 });
 

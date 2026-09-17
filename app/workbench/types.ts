@@ -10,6 +10,16 @@ import type {
   ValidationReview,
 } from "../domain/run-lifecycle.js";
 
+export function isVendorApiKeyPageOpened(
+  value: unknown,
+): value is Readonly<{ opened: true }> {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (value as { opened?: unknown }).opened === true,
+  );
+}
+
 export type HtmlProject = {
   path?: string;
   sourcePath: string;
@@ -338,7 +348,7 @@ export type DesktopIntegrationsApi = {
   openAgentLogin?: (payload: {
     providerId: string;
   }) => Promise<{ opened?: boolean }>;
-  openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened?: boolean }>;
+  openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
   persistSessionCredential?: (payload: {
     apiKey: string;
     vendorId?: string;
@@ -460,6 +470,7 @@ declare global {
     __STEMMIO_E2E_RUNTIME_COMMIT_RELEASES__?: Array<() => void>;
     __STEMMIO_E2E_FAIL_NEXT_RUNTIME_COMMIT__?: boolean;
     __STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__?: boolean;
+    __STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__?: boolean;
     __STEMMIO_E2E_FAIL_NEXT_STRUCTURAL_PROJECTION__?: boolean;
     __STEMMIO_HYDRATION_STAGE__?: string;
     __STEMMIO_PERFORMANCE_TIMELINE__?: ReadonlyArray<Readonly<{

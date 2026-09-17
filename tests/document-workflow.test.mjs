@@ -653,6 +653,9 @@ test("DocumentWorkflow flushes a native-edit checkpoint immediately", async () =
   const outcome = await harness.workflow.flush();
   assert.equal(outcome.status, "succeeded");
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].changeEvents.length, 1);
+  assert.equal(calls[0].changeEvents[0].revision, 1);
+  assert.equal(calls[0].changeEvents[0].target.id, "island");
   assert.equal(harness.documentSession.persistState, "idle");
 });
 
@@ -859,6 +862,11 @@ test("DocumentWorkflow rejects an unchainable source transaction without publish
 
   const outcome = harness.workflow.enqueueEdit({
     html: after,
+    mutation: {
+      kind: "style",
+      target: { id: "target_rejected_source_history" },
+      stylePatch: { color: "red" },
+    },
     sourceTransaction: transaction,
   });
 
@@ -870,6 +878,7 @@ test("DocumentWorkflow rejects an unchainable source transaction without publish
   assert.equal(harness.documentSession.html, before);
   assert.equal(harness.documentSession.editRevision, 0);
   assert.equal(harness.documentSession.pendingWrite, null);
+  assert.deepEqual(harness.commentSession.changeEvents, []);
   assert.deepEqual(harness.sourceHistorySession.pendingOperations, []);
   assert.equal(harness.canvas.invalidations, 0);
 });
