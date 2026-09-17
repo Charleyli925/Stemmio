@@ -354,6 +354,24 @@ test("a changed owned Node test still runs only itself", () => {
   assert.deepEqual(plan.selectedNodeTests, ["tests/comment-session.test.mjs"]);
 });
 
+test("SourceReceipt implementation type checks keep their runtime owner coverage", () => {
+  for (const file of [
+    "app/application/source-receipt.js",
+    "app/application/source-receipt-contract.d.ts",
+    "scripts/verify-source-receipt-typecheck.mjs",
+    "tests/source-receipt-contract.typecheck.ts",
+    "tsconfig.source-receipt.json",
+  ]) {
+    const plan = selectGatePlan({
+      map,
+      lane: "task",
+      changedFiles: [file],
+    });
+    assert.ok(suiteIds(plan).includes("typecheck"), file);
+    assert.ok(plan.selectedNodeTests.includes("tests/document-session.test.mjs"), file);
+  }
+});
+
 test("owner rules select only the direct regression coverage for representative files", () => {
   let totalNodeTests = 0;
   for (const ownerCase of TASK_OWNER_CASES) {

@@ -39,6 +39,166 @@ const RECEIPT_CONTEXT = Object.freeze({
   sessionEpoch: 7,
 });
 
+function cloneReceipt(receipt) {
+  return {
+    ...receipt,
+    context: receipt.context ? { ...receipt.context } : null,
+  };
+}
+
+test("source receipt guard validates the original value without coercion", () => {
+  const html = "<main>strict receipt</main>";
+  const session = new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  });
+  const receipt = session.sourceReceipt;
+  assert.equal(isSourceReceipt(receipt), true);
+
+  for (const [field, invalid] of [
+    ["sessionIncarnation", String(receipt.sessionIncarnation)],
+    ["sequence", String(receipt.sequence)],
+    ["operationId", 123],
+    ["editRevision", String(receipt.editRevision)],
+    ["canvasGeneration", String(receipt.canvasGeneration)],
+    ["sourceSha256", 123],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...receipt, [field]: invalid }),
+      false,
+      `${field} must keep its declared runtime type`,
+    );
+  }
+
+  for (const [field, invalid] of [
+    ["epoch", String(receipt.context.epoch)],
+    ["projectId", 123],
+    ["documentId", 123],
+    ["sourcePath", 123],
+    ["sessionEpoch", String(receipt.context.sessionEpoch)],
+  ]) {
+    const context = { ...receipt.context, [field]: invalid };
+    const projected = field === "epoch" || field === "sessionEpoch"
+      ? { [field]: invalid }
+      : {};
+    assert.equal(
+      isSourceReceipt({ ...receipt, ...projected, context }),
+      false,
+      `context.${field} must keep its declared runtime type`,
+    );
+  }
+});
+
+test("source receipt guard rejects invalid numbers, missing fields and structures", () => {
+  const html = "<main>receipt matrix</main>";
+  const receipt = new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt;
+
+  for (const [field, invalid] of [
+    ["sessionIncarnation", 0],
+    ["sequence", Number.NaN],
+    ["sequence", Number.POSITIVE_INFINITY],
+    ["sequence", 1.5],
+    ["sequence", Number.MAX_SAFE_INTEGER + 1],
+    ["editRevision", -1],
+    ["canvasGeneration", 0.5],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...receipt, [field]: invalid }),
+      false,
+      `${field} must satisfy its integer boundary`,
+    );
+  }
+
+  for (const field of [
+    "sessionIncarnation",
+    "sequence",
+    "origin",
+    "operationId",
+    "editRevision",
+    "canvasGeneration",
+    "sourceSha256",
+    "context",
+    "epoch",
+    "projectId",
+    "documentId",
+    "sourcePath",
+    "sessionEpoch",
+  ]) {
+    const incomplete = cloneReceipt(receipt);
+    delete incomplete[field];
+    assert.equal(isSourceReceipt(incomplete), false, `${field} is required`);
+  }
+
+  assert.equal(isSourceReceipt([]), false);
+  assert.equal(isSourceReceipt({ ...receipt, context: [] }), false);
+  assert.equal(isSourceReceipt({ ...receipt, origin: "preview" }), false);
+  assert.equal(isSourceReceipt({ ...receipt, operationId: "" }), false);
+  assert.equal(isSourceReceipt({ ...receipt, sourceSha256: "sha256:not-a-hash" }), false);
+  assert.equal(isSourceReceipt({
+    ...receipt,
+    context: { ...receipt.context, targetKind: "preview" },
+  }), false);
+});
+
+test("source receipt guard keeps context projections exact and accepts legal boundaries", () => {
+  const html = "<main>receipt projection</main>";
+  const digest = sha256(html);
+  const initialReceipt = new DocumentSession({ html }).sourceReceipt;
+  assert.equal(isSourceReceipt(initialReceipt), true, "an initial empty-hash receipt is legal");
+
+  const registeredContext = {
+    epoch: 3,
+    projectId: "project_registered",
+    documentId: "document_registered",
+    sourcePath: "/tmp/registered.html",
+  };
+  const registeredReceipt = new DocumentSession({
+    html,
+    persistedSourceSha256: digest,
+    context: registeredContext,
+  }).sourceReceipt;
+  assert.equal(isSourceReceipt(registeredReceipt), true, "a registered source receipt is legal");
+
+  const managedReceipt = new DocumentSession({
+    html,
+    persistedSourceSha256: digest,
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt;
+  assert.equal(isSourceReceipt(managedReceipt), true, "a complete managed receipt is legal");
+  for (const [field, invalid] of [
+    ["epoch", managedReceipt.epoch + 1],
+    ["projectId", "other-project"],
+    ["documentId", "other-document"],
+    ["sourcePath", "/tmp/other.html"],
+    ["sessionEpoch", managedReceipt.sessionEpoch + 1],
+  ]) {
+    assert.equal(
+      isSourceReceipt({ ...managedReceipt, [field]: invalid }),
+      false,
+      `${field} must match the nested context projection`,
+    );
+  }
+  assert.equal(isSourceReceipt({ ...initialReceipt, epoch: 0 }), false);
+});
+
+test("source receipt guard has no input side effects", () => {
+  const html = "<main>immutable receipt</main>";
+  const receipt = cloneReceipt(new DocumentSession({
+    html,
+    persistedSourceSha256: sha256(html),
+    context: RECEIPT_CONTEXT,
+  }).sourceReceipt);
+  const before = structuredClone(receipt);
+
+  assert.equal(isSourceReceipt(receipt), true);
+  assert.deepEqual(receipt, before);
+});
+
 test("document session owns source bytes, revisions and pending write", () => {
   const session = new DocumentSession({
     html: "<main>one</main>",
@@ -1001,7 +1161,7 @@ test("duplicate, stale and context-mismatched receipts are discarded", () => {
   }
 });
 
-test("receipt target context never infers exact path or session epoch", () => {
+test("receipt target context never infers a missing managed-target field", () => {
   const html = "<main>strict-target</main>";
   const session = new DocumentSession({
     html,
@@ -1014,7 +1174,15 @@ test("receipt target context never infers exact path or session epoch", () => {
     context: RECEIPT_CONTEXT,
     operationId: "strict-target-context",
   }).sourceReceipt;
-  for (const field of ["exactSourcePath", "sessionEpoch"]) {
+  for (const field of [
+    "projectRootPath",
+    "targetKind",
+    "workingCopyId",
+    "versionId",
+    "exactSourcePath",
+    "sourceSha256",
+    "sessionEpoch",
+  ]) {
     const incompleteReceipt = {
       ...receipt,
       context: Object.fromEntries(
@@ -1096,6 +1264,8 @@ test("session incarnation fences lower and equal sequence receipts across rebuil
   });
   const receiptB = rebuiltSession.sourceReceipt;
 
+  assert.equal(isSourceReceipt(receiptA), true);
+  assert.equal(isSourceReceipt(receiptB), true);
   assert.notEqual(receiptA.sessionIncarnation, receiptB.sessionIncarnation);
   assert.equal(receiptA.sequence, receiptB.sequence);
   assert.equal(rebuiltSession.confirmCanvas({

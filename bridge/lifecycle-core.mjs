@@ -191,19 +191,70 @@ export async function atomicWriteFile(filePath, content, options = {}) {
     parent,
     nonReplaceTemporaryName(`write-${process.pid}-${randomUUID()}.tmp`),
   );
-  const handle = await open(temporary, "wx", options.mode ?? 0o600);
+  const operations = options.operations || {};
+  const openFile = operations.open || open;
+  const renameFile = operations.rename || rename;
+  const removeFile = operations.rm || rm;
+  const syncParentDirectory = operations.syncDirectory || syncDirectory;
+  let handle = null;
+  let temporaryCreated = false;
+  let replacementCompleted = false;
   try {
+    handle = await openFile(temporary, "wx", options.mode ?? 0o600);
+    temporaryCreated = true;
     await handle.writeFile(content);
     await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporary, filePath);
-    await syncDirectory(parent);
+    const closingHandle = handle;
+    handle = null;
+    await closingHandle.close();
+    await renameFile(temporary, filePath);
+    replacementCompleted = true;
+    await syncParentDirectory(parent);
   } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
+    const cleanupErrors = [];
+    if (handle) {
+      const closingHandle = handle;
+      handle = null;
+      try {
+        await closingHandle.close();
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (temporaryCreated && !replacementCompleted) {
+      try {
+        await removeFile(temporary, { force: true });
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    const details = {
+      value: replacementCompleted ? "replaced-unconfirmed" : "not-replaced",
+      configurable: true,
+      enumerable: false,
+    };
+    const cleanupDetails = {
+      value: Object.freeze([...cleanupErrors]),
+      configurable: true,
+      enumerable: false,
+    };
+    try {
+      Object.defineProperties(error, {
+        atomicWriteOutcome: details,
+        cleanupErrors: cleanupDetails,
+      });
+      throw error;
+    } catch (annotationError) {
+      if (annotationError === error) throw error;
+      const wrapped = new Error(String(error?.message || error), { cause: error });
+      wrapped.name = "AtomicWriteError";
+      if (error?.code) wrapped.code = error.code;
+      Object.defineProperties(wrapped, {
+        atomicWriteOutcome: details,
+        cleanupErrors: cleanupDetails,
+      });
+      throw wrapped;
+    }
   }
 }
 

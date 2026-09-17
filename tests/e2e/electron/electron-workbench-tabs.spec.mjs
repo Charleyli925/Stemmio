@@ -57,6 +57,20 @@ async function openedExternalUrls(electronApp) {
   ));
 }
 
+async function confirmHistoryCreation(page) {
+  const dialog = page.getByRole("dialog", { name: /创建新版本/u });
+  const confirm = dialog.getByRole("button", { name: "创建并编辑", exact: true });
+  const cancel = dialog.getByRole("button", { name: "取消", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(cancel).toBeFocused();
+  // These journeys verify durable history creation and restart recovery, not
+  // native pointer injection. A saturated Electron batch can acknowledge a
+  // Playwright click before the renderer consumes it, so order the test after
+  // the React handler through the renderer, as the AI cancellation dialog does.
+  await confirm.dispatchEvent("click");
+  await expect(dialog).not.toBeVisible();
+}
+
 test("Electron tab keyboard navigation manages focus and a persisted Start suppresses activePath restart", {
   tag: ["@gate-smoke","@smoke-project-lifecycle"],
 }, async () => {
@@ -873,11 +887,8 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     // This is the second use of the same native <dialog> in this journey. Wait
-    // for the reopened modal boundary before activating its new confirmation;
-    // under the full Electron batch an immediate click can otherwise land
-    // while the prior close/open lifecycle is still settling.
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "创建并编辑", exact: true }).click();
+    // for the reopened modal boundary before activating its new confirmation.
+    await confirmHistoryCreation(launched.page);
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled({ timeout: 30_000 });
     const createdSummary = await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
     expect(createdSummary.versions).toHaveLength(9);
@@ -981,8 +992,7 @@ test("Electron history creation recreates a closed current-draft tab", {
 
     await app.page.getByRole("button", { name: "更多", exact: true }).click();
     await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
-    await app.page.getByRole("dialog", { name: /创建新版本/u })
-      .getByRole("button", { name: "创建并编辑", exact: true }).click();
+    await confirmHistoryCreation(app.page);
 
     await expect.poll(async () => (
       await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })
@@ -1049,8 +1059,8 @@ for (const recoveryAction of ["current-row", "close-history"]) {
         name: "基于此版本创建新版本…",
         exact: true,
       }).click();
-      await app.page.getByRole("dialog", { name: /创建新版本/u })
-        .getByRole("button", { name: "创建并编辑", exact: true }).click();
+      await confirmHistoryCreation(app.page);
+      await expect.poll(() => creates).toBe(1);
       await expect(app.page.getByRole("button", {
         name: "打开已创建版本",
         exact: true,
@@ -1268,9 +1278,9 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
       await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
       await app.page.getByRole("button", { name: "更多", exact: true }).click();
       await app.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
-      await app.page.getByRole("dialog").getByRole("button", { name: "创建并编辑", exact: true }).click();
-      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true }))
-        .toBeEnabled({ timeout: 60_000 });
+      await confirmHistoryCreation(app.page);
+      await expect.poll(() => operationId).toMatch(/^history_[A-Za-z0-9-]+$/u);
+      if (recoveryCase === "pending") await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toBeEnabled();
       else {
         // Creating and validating the immutable V9 snapshot performs real
         // filesystem work. Under the full Electron gate it can legitimately

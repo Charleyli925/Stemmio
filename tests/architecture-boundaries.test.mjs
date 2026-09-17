@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import {
-  architectureViolations,
+  architectureScan,
+  discoverSourceFiles,
   dialogPolicyViolations,
   escapeBoundaryViolations,
   layerBoundaryViolations,
@@ -21,8 +35,16 @@ import {
   parseModule,
 } from "../scripts/architecture-ast-query.mjs";
 
+const execFileAsync = promisify(execFile);
+const checker = fileURLToPath(new URL("../scripts/check-architecture.mjs", import.meta.url));
+
 test("the production graph satisfies the responsibility boundaries", async () => {
-  assert.deepEqual(await architectureViolations(), []);
+  const result = await architectureScan();
+  assert.equal(result.scope, "full");
+  assert.deepEqual(result.roots, ["app", "bridge", "scripts", "desktop", "shared"]);
+  assert.ok(result.scannedCount > 0);
+  assert.equal(result.scannedCount, result.files.length);
+  assert.deepEqual(result.violations, []);
 });
 
 test("plain Node test modules never import TypeScript runtime files", async () => {
@@ -110,6 +132,249 @@ test("generic Bridge escapes remain forbidden without freezing implementation na
       source: "const internalName = value; function submit(payload) { return payload.run(internalName); }",
     }),
     [],
+  );
+});
+
+test("high-value architecture rules have explicit failing and passing forms", () => {
+  for (const source of [
+    'export * from "../../application/bridge-client.js";',
+    [
+      'import * as RuntimeBridge from "../../application/bridge-client.js";',
+      "export const bridge = RuntimeBridge.createRuntimeBridgeClient();",
+    ].join("\n"),
+  ]) {
+    assert.match(
+      layerBoundaryViolations({
+        file: "app/workbench/document-view.tsx",
+        source,
+      }).join("\n"),
+      /views cannot import the Bridge client/u,
+    );
+  }
+  assert.match(
+    escapeBoundaryViolations({
+      file: "app/workbench/document-view.tsx",
+      source: "export function open() { return window.fetch('/workspace'); }",
+    }).join("\n"),
+    /views cannot issue raw business requests/u,
+  );
+  assert.deepEqual(
+    escapeBoundaryViolations({
+      file: "app/workbench/document-view.tsx",
+      source: "export function open(commands) { return commands.openSelectedDocument(); }",
+    }),
+    [],
+  );
+
+  assert.match(
+    layerBoundaryViolations({
+      file: "app/domain/source-state.js",
+      source: 'import fs from "node:fs"; export const read = fs.readFileSync;',
+    }).join("\n"),
+    /domain code cannot import node:fs/u,
+  );
+  assert.deepEqual(
+    layerBoundaryViolations({
+      file: "app/domain/source-state.js",
+      source: 'import { transition } from "./transition.js"; export { transition };',
+    }),
+    [],
+  );
+
+  const aliasedSession = [
+    'import { DocumentSession as SessionOwner } from "./document-session.js";',
+    "export const session = new SessionOwner();",
+  ].join("\n");
+  assert.match(
+    ownershipBoundaryViolations({
+      file: "app/workbench/document-view.tsx",
+      source: aliasedSession,
+    }).join("\n"),
+    /may only be constructed by the composition root/u,
+  );
+  assert.deepEqual(
+    ownershipBoundaryViolations({
+      file: "app/application/workspace-controller.js",
+      source: aliasedSession,
+    }),
+    [],
+  );
+
+  const aliasedWriter = [
+    'import { writeFile as persist } from "node:fs/promises";',
+    "export function save(path, bytes) { return persist(path, bytes); }",
+  ].join("\n");
+  assert.match(
+    ownershipBoundaryViolations({
+      file: "app/application/example.js",
+      source: aliasedWriter,
+    }).join("\n"),
+    /persistence writes belong to an approved repository/u,
+  );
+  assert.deepEqual(
+    ownershipBoundaryViolations({
+      file: "bridge/lifecycle-core.mjs",
+      source: aliasedWriter,
+    }),
+    [],
+  );
+
+  assert.match(
+    layerBoundaryViolations({
+      file: "shared/cross-runtime.mjs",
+      source: 'import path from "node:path"; export const join = path.join;',
+    }).join("\n"),
+    /cross-runtime shared code cannot import host module node:path/u,
+  );
+  assert.deepEqual(
+    layerBoundaryViolations({
+      file: "shared/project-storage-contract.mjs",
+      source: 'import path from "node:path"; export const join = path.join;',
+    }),
+    [],
+  );
+  assert.match(
+    layerBoundaryViolations({
+      file: "app/workbench/document-view.tsx",
+      source: 'import { projectControlPath } from "../../shared/project-storage-contract.mjs";',
+    }).join("\n"),
+    /cannot import host-only shared storage paths/u,
+  );
+});
+
+test("the checker entry fails closed for scanned violations and parse errors", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-check-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await Promise.all([
+    mkdir(join(root, "app", "workbench"), { recursive: true }),
+    mkdir(join(root, "app", "domain"), { recursive: true }),
+    mkdir(join(root, "shared"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(
+      join(root, "app", "workbench", "raw-request.tsx"),
+      "export const load = () => fetch('/workspace');\n",
+    ),
+    writeFile(
+      join(root, "app", "domain", "broken.js"),
+      "export function broken( {\n",
+    ),
+    writeFile(
+      join(root, "shared", "host-leak.mjs"),
+      'import path from "node:path"; export const join = path.join;\n',
+    ),
+  ]);
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      checker,
+      "--root", root,
+      "--scope", "limited",
+      "--include", "app/workbench",
+      "--include", "app/domain",
+      "--include", "shared",
+    ]),
+    (error) => {
+      assert.match(error.stderr, /after scanning 3 source files across limited scope/u);
+      assert.match(error.stderr, /views cannot issue raw business requests/u);
+      assert.match(error.stderr, /app\/domain\/broken\.js: parse error/u);
+      assert.match(error.stderr, /shared\/host-leak\.mjs: cross-runtime shared code/u);
+      return true;
+    },
+  );
+});
+
+test("the checker CLI rejects invalid roots, incomplete full scans and malformed arguments", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ordinaryFile = join(root, "not-a-directory");
+  await writeFile(ordinaryFile, "fixture\n");
+
+  const cases = [
+    {
+      name: "missing root",
+      args: ["--root", join(root, "missing")],
+      expected: /architecture root is unavailable/u,
+    },
+    {
+      name: "ordinary file root",
+      args: ["--root", ordinaryFile],
+      expected: /architecture root must be a directory/u,
+    },
+    {
+      name: "missing root argument",
+      args: ["--root"],
+      expected: /--root requires a value/u,
+    },
+    {
+      name: "full scan missing required source roots",
+      args: ["--root", root],
+      expected: /required architecture source app is unavailable/u,
+    },
+  ];
+  for (const fixtureCase of cases) {
+    await assert.rejects(
+      execFileAsync(process.execPath, [checker, ...fixtureCase.args]),
+      (error) => {
+        assert.match(error.stderr, /Architecture check could not complete/u, fixtureCase.name);
+        assert.match(error.stderr, fixtureCase.expected, fixtureCase.name);
+        return true;
+      },
+    );
+  }
+});
+
+test("an explicitly limited checker scan reports its scope and non-zero work", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-limited-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "app", "domain"), { recursive: true });
+  await writeFile(join(root, "app", "domain", "value.js"), "export const value = 1;\n");
+
+  const { stdout } = await execFileAsync(process.execPath, [
+    checker,
+    "--root", root,
+    "--scope", "limited",
+    "--include", "app/domain",
+  ]);
+  assert.match(
+    stdout,
+    /Architecture contract passed\. Scanned 1 source files across limited scope: app\/domain\./u,
+  );
+
+  const emptyRoot = join(root, "empty");
+  await mkdir(join(emptyRoot, "app", "domain"), { recursive: true });
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      checker,
+      "--root", emptyRoot,
+      "--scope", "limited",
+      "--include", "app/domain",
+    ]),
+    (error) => {
+      assert.match(error.stderr, /architecture scan completed no work/u);
+      return true;
+    },
+  );
+});
+
+test("source discovery preserves directory I/O failures instead of returning an empty scan", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stemmio-architecture-io-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "app"), { recursive: true });
+  const denied = new Error("fixture permission denied");
+  denied.code = "EACCES";
+
+  await assert.rejects(
+    discoverSourceFiles({
+      productRoot: root,
+      scope: "limited",
+      includes: ["app"],
+      io: {
+        stat,
+        readFile: (target, encoding) => readFile(target, encoding),
+        readdir: async () => { throw denied; },
+      },
+    }),
+    /cannot read architecture source directory app: fixture permission denied/u,
   );
 });
 

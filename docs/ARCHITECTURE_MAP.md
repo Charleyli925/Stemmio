@@ -117,6 +117,14 @@ inverse operations and integrity; it is not a second public edit API. Do not
 bypass hash, identity, scope or persistence checks, and do not serialize
 Runtime DOM as the save source.
 
+`DocumentSession` publishes SourceReceipt authority through the shared
+`source-receipt-contract.d.ts` contract. Its JavaScript constructor and guard
+live in `source-receipt.js` and are checked, together with a typed caller, by
+`tsconfig.source-receipt.json`; the verification command also proves that the
+implementation file is in the TypeScript program and that an invalid receipt
+field assignment fails that check. This is a focused implementation loop, not
+a repository-wide `checkJs` migration.
+
 **Current fact.** `HtmlCanvasEditor.applySourceCommand()` materializes once
 for an accepted edit: it receives a semantic operation, applies the kernel,
 and publishes that complete HTML/Hash plus the kernel's
@@ -207,10 +215,20 @@ do not split one state owner across hooks only to reduce line count.
 The gate must enforce responsibility, not private field names:
 
 - Views cannot import or call the Bridge.
+- Views cannot issue raw requests or filesystem writes; they dispatch application commands.
 - Application cannot import React, Workbench presentation, components or desktop.
-- Domain is pure.
+- Domain is pure: no React, Electron, filesystem, Bridge or application dependency.
 - Sessions are constructed only by `createRuntimeWorkspaceController()`.
-- Repository internals are not a second writer.
+- Repository internals are not a second writer; aliased filesystem imports are checked too.
+- `shared/` is cross-runtime pure logic except the explicit host-only
+  `project-storage-contract.mjs`; renderer and domain code cannot import that host adapter.
+- The default full scan requires and traverses `app/`, `bridge/`, `scripts/`,
+  `desktop/`, and `shared/`, including `.js`, `.mjs`, `.ts`, and `.tsx` source.
+  A missing root, unreadable directory or file, unsupported explicit source, or parser
+  failure aborts the check instead of becoming an empty pass.
+- Fixture checks use `--scope limited` with one or more explicit relative `--include`
+  paths. The CLI reports the declared scope and scanned file count, and refuses a
+  zero-file scan; `--root` alone never weakens the full production contract.
 - Retired modules stay deleted.
 - Global Notice growth is frozen to `scripts/notice-disposition-ledger.json`.
   Generic `setToast` is retired. Remaining interruptions are closed

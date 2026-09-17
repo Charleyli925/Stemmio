@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": [
+    "app/application/source-receipt.js",
+    "app/application/source-receipt-contract.d.ts",
+    "app/application/project-session.d.ts",
+    "tests/source-receipt-contract.typecheck.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

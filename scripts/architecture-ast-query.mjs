@@ -85,6 +85,45 @@ export function moduleSpecifiers(handle) {
   return [...new Set(values)];
 }
 
+export function importBindings(handle) {
+  const bindings = [];
+  eachNode(handle, (node) => {
+    if (
+      !ts.isImportDeclaration(node)
+      || !node.importClause
+      || !ts.isStringLiteral(node.moduleSpecifier)
+    ) return;
+    const source = node.moduleSpecifier.text;
+    if (node.importClause.name) {
+      bindings.push({ source, imported: "default", local: node.importClause.name.text, kind: "default" });
+    }
+    const named = node.importClause.namedBindings;
+    if (named && ts.isNamespaceImport(named)) {
+      bindings.push({ source, imported: "*", local: named.name.text, kind: "namespace" });
+    }
+    if (named && ts.isNamedImports(named)) {
+      for (const element of named.elements) {
+        bindings.push({
+          source,
+          imported: element.propertyName?.text || element.name.text,
+          local: element.name.text,
+          kind: "named",
+        });
+      }
+    }
+  });
+  return bindings;
+}
+
+export function syntaxErrors(handle) {
+  return handle.sourceFile.parseDiagnostics.map((diagnostic) => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
+    if (typeof diagnostic.start !== "number") return message;
+    const position = handle.sourceFile.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${position.line + 1}:${position.character + 1} ${message}`;
+  });
+}
+
 export function importsModule(handle, specifier) {
   return moduleSpecifiers(handle).includes(specifier);
 }
@@ -216,6 +255,18 @@ export function hasFilesystemWrite(handle) {
     "writeFile",
     "writeFileSync",
   ]);
+  const calls = callExpressions(handle).map((call) => call.path);
+  const bindings = importBindings(handle)
+    .filter((binding) => /^node:fs(?:\/promises)?$/u.test(binding.source));
+  if (bindings.some((binding) => {
+    if (binding.kind === "named") {
+      return writerNames.has(binding.imported) && calls.includes(binding.local);
+    }
+    return calls.some((call) => (
+      call.startsWith(`${binding.local}.`)
+      && writerNames.has(call.split(".").at(-1))
+    ));
+  })) return true;
   return callNames(handle).some((name) => writerNames.has(name));
 }
 

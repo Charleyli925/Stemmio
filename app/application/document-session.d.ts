@@ -1,4 +1,10 @@
 import type { ProjectContext } from "./project-session.js";
+import type { DocumentSourceReceipt } from "./source-receipt-contract.js";
+
+export type { DocumentSourceReceipt } from "./source-receipt-contract.js";
+export function isSourceReceipt(value: unknown): value is DocumentSourceReceipt;
+export function sameSourceReceiptContext(left: unknown, right: unknown): boolean;
+export function sameSourceReceipt(left: unknown, right: unknown): boolean;
 
 export type DocumentPersistState =
   | "idle"
@@ -20,26 +26,6 @@ export type DocumentCanvasAuthority = {
   renderedSha256: string | null;
   error: string | null;
 };
-
-export type DocumentSourceReceipt = Readonly<{
-  sessionIncarnation: number;
-  sequence: number;
-  origin: "local-edit" | "history" | "authority";
-  operationId: string;
-  editRevision: number;
-  canvasGeneration: number;
-  sourceSha256: string;
-  context: ProjectContext | null;
-  epoch: number | null;
-  projectId: string | null;
-  documentId: string | null;
-  sourcePath: string | null;
-  sessionEpoch: number | null;
-}>;
-
-export function isSourceReceipt(value: unknown): value is DocumentSourceReceipt;
-export function sameSourceReceiptContext(left: unknown, right: unknown): boolean;
-export function sameSourceReceipt(left: unknown, right: unknown): boolean;
 
 export type DocumentCanvasRenderObservation = Readonly<{
   receipt: DocumentSourceReceipt;
