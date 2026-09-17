@@ -1799,6 +1799,74 @@ test("DocumentWorkflow keeps an externally accepted source when its canvas canno
   );
 });
 
+test("DocumentWorkflow rebuilds one timed-out accepted projection without repeating source acceptance", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  let verifyCalls = 0;
+  let conflictResolutionCalls = 0;
+  let harness;
+  harness = createHarness({
+    html: before,
+    canvasOverrides: {
+      async verifyRendered(renderedHtml, renderedSha256, _context, receipt) {
+        verifyCalls += 1;
+        if (verifyCalls === 1) {
+          throw Object.assign(new Error("canvas acknowledgement timed out"), {
+            code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+          });
+        }
+        return Object.freeze({
+          receipt,
+          renderedHtml,
+          renderedSha256,
+          frameGeneration: harness.documentSession.canvasGeneration,
+        });
+      },
+    },
+    bridge: {
+      async sourcePreview() {
+        return {
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
+      },
+      async resolveConflict() {
+        conflictResolutionCalls += 1;
+        return {
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+        };
+      },
+    },
+  });
+
+  const requested = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+  });
+  const outcome = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.source.status, "accepted");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(conflictResolutionCalls, 1);
+  assert.equal(verifyCalls, 2);
+  assert.equal(harness.canvas.rebuilds, 1);
+  assert.equal(harness.documentSession.html, external);
+  assert.equal(harness.documentSession.persistedSourceSha256, sha256(external));
+  assert.notEqual(
+    harness.documentSession.sourceReceipt.sequence,
+    outcome.value.source.receipt.sequence,
+  );
+  assert.equal(harness.documentSession.canvasAuthority.status, "verified");
+});
+
 test("DocumentWorkflow preserves a durable external acceptance after the page switches", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const external = before.replace("one", "external");
