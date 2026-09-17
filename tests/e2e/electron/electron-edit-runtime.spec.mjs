@@ -13,6 +13,7 @@ import {
   closeStemmioGracefully,
   currentEditorFrame,
   disableStructuralInPlace,
+  doubleClickRenderedText,
   existsSync,
   documentToken,
   expectCheckpointPersisted,
@@ -2583,12 +2584,35 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     const copies = frame.locator('[data-native-case="loop-p"]');
     await expect(copies).toHaveCount(2);
     const copyId = await copies.nth(1).getAttribute("data-stemmio-id");
-    await copies.nth(1).dblclick();
+    await doubleClickRenderedText(copies.nth(1));
     await expect(copies.nth(1)).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
-    await page.keyboard.press("End");
+    await copies.nth(1).evaluate((element) => {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = element.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.focus({ preventScroll: true });
+    });
     await page.keyboard.type(" 副本");
-    await page.keyboard.press(keyShortcut("a"));
-    await editor.getByRole("button", { name: "加粗", exact: true }).click();
+    await copies.nth(1).evaluate((element) => {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      const selection = element.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await expect.poll(() => copies.nth(1).evaluate((element) => (
+      element.ownerDocument.getSelection()?.toString() || ""
+    ))).toBe("普通段落 副本");
+    const boldButton = editor.getByRole("button", { name: "加粗", exact: true });
+    await expect(boldButton).toBeEnabled();
+    await boldButton.click();
+    await expect.poll(async () => readPublishedWorkingCopy(
+      await managedWorkingCopyPath(page, sourcePath),
+      "utf8",
+    )).toContain("font-weight: 700");
     await page.keyboard.press("Escape");
     const asideId = await frame.locator('[data-native-case="loop-aside"]').getAttribute("data-stemmio-id");
     const mainId = await frame.locator('[data-native-case="loop-main"]').getAttribute("data-stemmio-id");
@@ -2641,9 +2665,17 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     await clickEditHistoryMenu(launched.electronApp, page, "undo");
     frame = await currentEditorFrame(page);
     const restored = frame.locator(`[data-stemmio-id="${copyId}"]`);
-    await restored.dblclick();
+    await doubleClickRenderedText(restored);
     await expect(restored).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
-    await page.keyboard.press("End");
+    await restored.evaluate((element) => {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = element.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.focus({ preventScroll: true });
+    });
     await page.keyboard.type(" 可编辑");
     await page.keyboard.press("Escape");
     await expect.poll(async () => page.getByTestId("html-canvas-editor").evaluate((element) => (
@@ -2863,7 +2895,7 @@ test("overlapping edits promote only the latest Runtime without losing charts or
 
     const text = frame.locator('[data-native-case="runtime-supersession-text"]').first();
     await text.click();
-    await text.dblclick({ force: true });
+    await doubleClickRenderedText(text, { force: true });
     await expect.poll(async () => ({
       contenteditable: await text.getAttribute("contenteditable"),
       editor: await page.getByTestId("html-canvas-editor").evaluate((element) => ({
@@ -2893,7 +2925,7 @@ test("overlapping edits promote only the latest Runtime without losing charts or
     await expect(frame.locator("#supersession-chart canvas")).toHaveCount(1);
     const editedText = frame.locator('[data-native-case="runtime-supersession-text"]').first();
     await editedText.click();
-    await editedText.dblclick({ force: true });
+    await doubleClickRenderedText(editedText, { force: true });
     await expect(editedText).toHaveAttribute("contenteditable", "true");
     await page.keyboard.insertText("仍可继续编辑");
     await page.keyboard.press("Escape");
@@ -2958,7 +2990,7 @@ test("Runtime text and style edits stay in one document across selection and sav
       window.__STEMMIO_STYLE_RUNTIME_COUNT__ || 0
     ));
     const second = frame.locator('[data-native-case="runtime-style-second"]');
-    await first.dblclick();
+    await doubleClickRenderedText(first);
     await expect(first).toHaveAttribute("contenteditable", "true");
     await first.press("End");
     await page.keyboard.insertText(" 连续文字");
@@ -3316,7 +3348,7 @@ test("latest required Runtime candidate wins across slow ECharts, in-place text 
     await expect(async () => {
       frame = await currentActiveRuntimeFrame();
       const target = frame.locator('[data-native-case="runtime-latest-wins-text"]').first();
-      await target.dblclick();
+      await doubleClickRenderedText(target);
       await expect(target).toHaveAttribute("contenteditable", "true");
     }).toPass({ timeout: 30_000, intervals: [250, 500, 1_000] });
     frame = await currentActiveRuntimeFrame();
@@ -3465,7 +3497,7 @@ test("latest required Runtime candidate wins across slow ECharts, in-place text 
     frame = await currentEditorFrame(page);
     heading = frame.locator('[data-native-case="runtime-latest-wins-text"]').first();
     await heading.click();
-    await heading.dblclick({ force: true });
+    await doubleClickRenderedText(heading, { force: true });
     await expect(heading).toHaveAttribute("contenteditable", "true");
     await heading.press("End");
     const revisionBeforeFailure = Number(await page.locator("[data-persist-state]").first()
@@ -3529,7 +3561,7 @@ test("latest required Runtime candidate wins across slow ECharts, in-place text 
     expect(latestSource).not.toContain("pinyin");
 
     heading = frame.locator('[data-native-case="runtime-latest-wins-text"]').first();
-    await heading.dblclick();
+    await doubleClickRenderedText(heading);
     await expect(heading).toHaveAttribute("contenteditable", "true");
     await heading.press("End");
     await page.keyboard.insertText(" 部分继续编辑");
@@ -3812,6 +3844,149 @@ test("an accepted Native Edit survives a live-session rebase failure", {
   });
 });
 
+test("an explicit B edit intent resumes after A commits through a rebuilt Runtime Candidate", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime post-edit B intent</title><style>main { padding-top: 180px; }</style></head><body>
+  <main>
+    <p data-native-case="runtime-post-edit-a">A 原始文字</p>
+    <p data-native-case="runtime-post-edit-b">B 等待编辑</p>
+  </main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-post-edit-b-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(page, sourcePath, "runtime-post-edit-a");
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const documentBefore = await documentToken(page);
+    const generationBefore = await activeFrameGeneration(editor);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+
+    await armRuntimeCommitHold(page);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+    const first = await activateNativeEdit(frame, "runtime-post-edit-a");
+    await first.press("End");
+    await page.keyboard.insertText(" A_REAL_INPUT");
+    await expect(first).toContainText("A_REAL_INPUT");
+    await expect(first).toHaveAttribute("contenteditable", "true");
+    await expect(editor).toHaveAttribute("data-interaction-mode", "editing");
+    expect(await page.evaluate(() => window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__))
+      .toBe(true);
+
+    const requested = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await doubleClickRenderedText(requested);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+    });
+    await expectCheckpointPersisted(page, revisionBefore);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("A_REAL_INPUT");
+
+    await waitForHeldRuntimeCommit(page);
+    await advanceHeldRuntimeCommitToNextHold(page);
+    await expect(editor).toHaveAttribute("data-runtime-handoff", "positioning");
+    await waitForHeldRuntimeCommit(page);
+    await releaseHeldRuntimeCommits(page);
+    await waitForRuntimeHandoffSettled(page);
+
+    await expect.poll(() => documentToken(page)).not.toBe(documentBefore);
+    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(generationBefore);
+    frame = await currentEditorFrame(page);
+    const resumed = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await expect(resumed).toHaveAttribute("contenteditable", "true");
+    await expect(resumed).toBeFocused();
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(1);
+    await resumed.press("End");
+    await page.keyboard.insertText(" B_REAL_INPUT");
+    await page.keyboard.press("Escape");
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("B_REAL_INPUT");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
+test("external comment focus during Candidate positioning retires the earlier B edit intent", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime post-edit B focus fence</title></head><body>
+  <main>
+    <p data-native-case="runtime-post-edit-focus-a">A 原始文字</p>
+    <p data-native-case="runtime-post-edit-focus-b">B 不应重放</p>
+    <p data-native-case="runtime-post-edit-focus-c">C 评论锚点</p>
+  </main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-post-edit-focus-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(page, sourcePath, "runtime-post-edit-focus-a");
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const documentBefore = await documentToken(page);
+    const generationBefore = await activeFrameGeneration(editor);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+
+    const commentAnchor = frame.locator('[data-native-case="runtime-post-edit-focus-c"]');
+    await commentAnchor.click();
+    await editor.getByRole("button", { name: /留评论/u }).click();
+    const commentInput = page.getByRole("textbox", { name: "评论内容" });
+    await expect(commentInput).toBeVisible();
+
+    await armRuntimeCommitHold(page);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+    const first = await activateNativeEdit(frame, "runtime-post-edit-focus-a");
+    await first.press("End");
+    await page.keyboard.insertText(" A_FOCUS_INPUT");
+    const second = frame.locator('[data-native-case="runtime-post-edit-focus-b"]');
+    await doubleClickRenderedText(second, { force: true });
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+    });
+    await expectCheckpointPersisted(page, revisionBefore);
+    await waitForHeldRuntimeCommit(page);
+    await advanceHeldRuntimeCommitToNextHold(page);
+    await expect(editor).toHaveAttribute("data-runtime-handoff", "positioning");
+    await waitForHeldRuntimeCommit(page);
+
+    await commentInput.focus();
+    await expect(commentInput).toBeFocused();
+    await releaseHeldRuntimeCommits(page);
+    await waitForRuntimeHandoffSettled(page);
+    await expect.poll(() => documentToken(page)).not.toBe(documentBefore);
+    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(generationBefore);
+    await expect(commentInput).toBeFocused();
+    frame = await currentEditorFrame(page);
+    await expect(frame.locator('[data-native-case="runtime-post-edit-focus-b"]'))
+      .not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("A_FOCUS_INPUT");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
 test("Escape checkpoint reload keeps Native Edit exited", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
@@ -3986,7 +4161,7 @@ test("Escape commits native editing and leaves contenteditable exited", {
       element.scrollTop = 480;
     });
     await expect.poll(() => reviewStage.evaluate((element) => element.scrollTop)).toBe(480);
-    await target.dblclick({ force: true });
+    await doubleClickRenderedText(target, { force: true });
     await expect(target).toHaveAttribute("contenteditable", "true");
     await target.press("End");
     await page.keyboard.insertText(" Escape输入");
@@ -4082,7 +4257,7 @@ test("a failed dynamic candidate promotes the latest Script-disabled static page
       '[data-native-case="runtime-candidate-failure"][data-html-canvas-selected="part"]',
     );
     await staticTarget.click();
-    await staticTarget.dblclick();
+    await doubleClickRenderedText(staticTarget);
     await expect(staticTarget).toHaveAttribute("contenteditable", "true");
     await staticTarget.press("End");
     await page.keyboard.insertText(" 静态继续编辑");
@@ -4169,7 +4344,7 @@ test("a queued static fallback follows the latest Working HTML after Native Edit
 
     let frame = await currentEditorFrame(page);
     const activeTarget = frame.locator(`[data-native-case="${QUEUED_STATIC_CASE}"]`).first();
-    await activeTarget.dblclick();
+    await doubleClickRenderedText(activeTarget);
     await expect(activeTarget).toHaveAttribute("contenteditable", "true");
     await expect(activeTarget).toBeFocused();
     await expect(editor).toHaveAttribute("data-native-start-status", "started");
@@ -4225,7 +4400,7 @@ test("a queued static fallback follows the latest Working HTML after Native Edit
     await expect(page.getByTestId("edit-runtime-static-fallback")).toHaveCount(0);
     frame = await currentEditorFrame(page);
     const staticTarget = frame.locator(`[data-native-case="${QUEUED_STATIC_CASE}"]`).first();
-    await staticTarget.dblclick();
+    await doubleClickRenderedText(staticTarget);
     await expect(staticTarget).toHaveAttribute("contenteditable", "true");
     await expect(staticTarget).toContainText(QUEUED_STATIC_R2);
     await page.keyboard.press("Escape");
@@ -4420,7 +4595,7 @@ test("a failed structural candidate after in-place text editing promotes static 
       element.scrollTop = 480;
     });
     await expect.poll(() => reviewStage.evaluate((element) => element.scrollTop)).toBe(480);
-    await target.dblclick({ force: true });
+    await doubleClickRenderedText(target, { force: true });
     await expect(target).toHaveAttribute("contenteditable", "true");
     await target.press("End");
     const beforeDocument = await documentToken(page);
@@ -4709,7 +4884,7 @@ test("a ready Candidate waiting to commit still accepts Native Edit on Active", 
 
     frame = await currentEditorFrame(page);
     const activeTarget = frame.locator('[data-native-case="runtime-commit-hold-edit"]').first();
-    await activeTarget.dblclick({ force: true });
+    await doubleClickRenderedText(activeTarget, { force: true });
     await expect(activeTarget).toHaveAttribute("contenteditable", "true");
     await expect(editor).toHaveAttribute("data-native-start-status", "started");
     await expect(editor).toHaveAttribute("data-runtime-candidate-phase", "preparing");
@@ -5141,7 +5316,7 @@ test("a Candidate commit verification failure restores the visible Active", {
 
     frame = await currentEditorFrame(page);
     const editableTarget = frame.locator('[data-native-case="runtime-commit-verify-failure"]').first();
-    await editableTarget.dblclick();
+    await doubleClickRenderedText(editableTarget);
     await expect(editableTarget).toHaveAttribute("contenteditable", "true");
     await expect(editor).toHaveAttribute("data-native-start-status", "started");
     await page.keyboard.press("Escape");
@@ -5660,9 +5835,17 @@ test("a noncritical author error keeps a ready ECharts surface editable as parti
       { name: "重新加载动态内容", exact: true },
     )).toBeVisible();
     const editable = frame.locator('[data-native-case="echarts-partial-text"]');
-    await editable.dblclick();
+    await doubleClickRenderedText(editable);
     await expect(editable).toHaveAttribute("contenteditable", "true");
-    await editable.press("End");
+    await editable.evaluate((element) => {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = element.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.focus({ preventScroll: true });
+    });
     await page.keyboard.insertText("并保存");
     await page.keyboard.press("Escape");
     await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))

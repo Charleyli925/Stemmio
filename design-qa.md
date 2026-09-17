@@ -3606,6 +3606,53 @@ final result: passed for the scoped non-visual state contract; completion-gate e
 
 final result: passed for the scoped explicit-exit contract; completion-gate evidence remains to be recorded.
 
+## 2026-09-17 — Native Edit session consistency and caret visibility
+
+- Mode: DESIGN CHANGE. The existing “单击选择，双击改字” interaction is made internally consistent without adding a Toast, banner, bubble or confirmation. A structural click remains selection-only; a double click on a rendered text glyph resolves the smallest safe text host at that point. Transparent inline descendants remain one host, while block and control boundaries are not crossed.
+- Session behavior: a second double click inside the same leased host keeps Chromium's word Selection and does not recreate the Controller. Switching hosts retires the old lease before the new one enters; composition uses the existing deferred-command path and resolves the requested Stable ID against the current source/Document before entering. Failed focus establishment and stale-session retirement clear the lease, Controller attributes, Canvas marker and visible editing state, while preserving already accepted source bytes.
+- Selection handoff is monotonic: every later explicit select, insertion target or clear action replaces the previous post-edit intent with a higher epoch. Candidate preparation, promotion, rollback and frame connection can consume only the newest epoch, so an earlier post-edit target cannot overwrite a later user choice.
+- Visual treatment: the native caret remains browser-owned with `caret-color: currentColor` on the actual `data-html-canvas-editing` marker. The selected overlay is drawn outside the editing host by 3 CSS px, so a caret at the first character is not hidden by the left selection edge; user HTML and authored layout are unchanged.
+- Deterministic browser evidence: 10/10 executed focused cases pass for large structural selection → exact inner text host, same-host second-double-click word Selection, A → B unique session, composition-delayed identity re-resolution, immediate checkpoint before a frozen SVG structural selection, IME-delayed SVG selection by current Stable ID, comment-marker authority transfer after uncheckpointed real typing, failed focus cleanup/re-entry, object-specific restoration after repeated controlled composition clones without retaining detached snapshot history, and constructor-failure cleanup of temporary attributes and installed listeners before successful re-entry. The two affected Browser specs pass 45/45 with no skip; the edit gate passes architecture/type checks plus 217/217 selected Node checks. One rebuilt-source Electron real-input case passes for native typing, Backspace, Delete, Enter, continued input and persistence.
+- Post-rebase Electron follow-up: the stricter glyph contract exposed legacy Electron actions that double-clicked the geometric centre of full-width text blocks. Those actions now reuse one rendered-glyph locator without weakening their product assertions. A separate real gap for re-entering a managed blank line now accepts only the narrow line-start box of the exact authored `<br>` and restores the caret before that break; ordinary host padding and dedicated controls remain structural-only. The two affected Browser specs pass 46/46, and focused reruns of all 18 formerly failing Electron cases pass. The #574 recovery trio and the fixed real-input case also pass 4/4. Fresh type checking and edit gate `2026-09-17T12-41-44-441Z-edit` pass, including 198/198 selected Node checks. This is behavioral evidence; no caret blink-phase screenshot is inferred from DOM geometry.
+- Review follow-up closes the three P2 interaction boundaries without adding UI: toolbar/Enter now require one unique minimal text host while glyph double-click remains exact; authored blank `<br>` entry requires the top visible source-backed hit and carries one exact break identity into the Controller; and an explicit B edit target is receipt/Hash/generation-bound before A finishes, then re-resolved after a required replacement Frame. A later structural target or external input focus advances the same intent epoch and prevents B from reclaiming focus.
+- Runtime Candidate promotion is now executed in rebuilt-source Electron, not inferred from an in-place Browser double. The positive case uses real mouse double-click and real keyboard input for A, observes an actual Active document-token and frame-generation change through Candidate `preparing` → `positioning` → promotion, verifies A in the authoritative Working Copy, resumes B as the only `contenteditable` target and persists further real B input. The paired negative holds positioning, moves focus to the comment input and proves the older B intent is not replayed. The pair passes 2/2 without retry; the focused Browser regression set for unique-host entry, exact nested `<br>` identity and occlusion also passes.
+- Evidence boundary: Electron caret screenshots for both blink phases are `NOT_EXECUTED` because this run did not have a deterministic way to capture and classify both native caret blink phases; DOM geometry proves only the overlay offset and is not substituted for visual caret evidence. Private-corpus acceptance is also `NOT_EXECUTED` because no frozen corpus plan/Hash was provided.
+
+final result: passed for the scoped selection, caret-entry and session-continuity contract; Electron blink-phase screenshots and private-corpus acceptance remain `NOT_EXECUTED` and are not claimed.
+
+## 2026-09-17 — HTTP Agent output completion and recovery contract
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. No new control, color, spacing, layout or diagnostics surface was added. Existing Agent progress and failure areas remain the only visible surfaces; existing failure copy was extended only for newly distinct terminal error codes.
+- Formal requests now use each supported model's exact adapter-owned maximum output parameter. Custom compatible endpoints omit that parameter. The product no longer predicts a request's capacity from byte counts or rejects ordinary frozen Requests using a client-side token estimate; the existing exact attachment-byte/hash checks and bounded local serialization resource guard remain unchanged.
+- Completion is intentionally stricter: transport `[DONE]` is not presented as success without an explicit successful finish reason. Truncation, content filtering, context/resource exhaustion, abnormal stops and protocol-invalid responses discard partial HTML and retain the frozen Request/Attempt instead of producing a Candidate or silently resending.
+- Recovery uses the established failure area and actions. Output truncation now selects the existing `change-model` route rather than a generic retry; Stemmio does not auto-switch the model or provider. Protocol-invalid output remains a protocol error and is not mislabeled as a network interruption.
+- Bridge-only transport diagnostics retain allowlisted request parameters, capability revision, attempt ordinal, normalized finish reason and numeric usage; credentials, prompts, HTML and reasoning are excluded and no new diagnostic UI is created.
+- Deterministic evidence after independent-review repairs: focused HTTP tests pass the exact parameter, Custom omission, finish-ordering, non-2xx SSE classification, success-only completion, allowlisted diagnostics, usage-only tail, cleanup and recovery cases. Independent review of `d8f95e9a` reports no remaining P0/P1/P2.
+- Edit gate `2026-09-17T09-27-55-757Z-edit` passed 4/4 steps on rebased `origin/main@2fc5cba6`: typecheck/architecture, targeted Node, contract and core. Core reported 2462 tests, 2461 passed, one existing selected skip and zero failures; the runner performed no retry or reuse.
+- Live-provider follow-up: a signed arm64 Developer Preview built from
+  `b5a024d38a1f5b21ba4ecfd5b5f93f866d23bf0d` used the already remembered,
+  encrypted Stemmio credential through the normal Settings and AI sidebar
+  flow. The formal default resolved to `stemmio:deepseek-v4-pro`, provider
+  reasoning remained `auto` / provider default, and the adapter sent
+  `max_tokens=393216`. DeepSeek returned a protocol-success response and a
+  527-byte complete document; Candidate creation then verified the exact
+  output hash, changed only `Before smoke` to `Stemmio smoke`, and preserved
+  all seven Stable IDs. The Candidate remained pending review, so this run did
+  not mutate the authoritative Working Copy. The current durable product
+  record does not retain the provider's raw finish-reason string or token
+  usage fields; success is proven by the protocol's success-only Candidate
+  boundary, while raw usage remains explicitly unrecorded rather than inferred.
+- Boundary: this smoke used a synthetic one-page project and the rebuilt,
+  packaged Developer Preview. It is not private-corpus or installed-app
+  acceptance, and it does not claim raw provider usage evidence that the
+  current durable record does not preserve. A screenshot comparison would not
+  add evidence because this change deliberately reuses the current failure
+  surface without visual or copy changes.
+
+Final result: passed for the scoped request, completion and recovery contract,
+including one real DeepSeek formal-request smoke; broader vendor and
+private-corpus coverage remains outside this package.
+
 ## 2026-09-17 — AI 对话单一执行状态与细分隔线
 
 - Mode: DESIGN CHANGE. 执行中的 Agent 只保留一条当前消息：头像旁是服务名与 `mm:ss · n KB`，正文只是 Agent 公开说明。“正在生成”、“正在接收结果”和“完整结果校验后可查看”不再重复占用正文。

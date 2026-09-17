@@ -29,15 +29,16 @@ Pending recovery still runs independently of that budget. Identity migrations,
 history and Promotion receipts keep their existing lifetimes. No old target is
 reapplied merely to make a stock journal eligible for collection.
 
-Native HTTP input estimates and execution checks share the pure
-`shared/agent-input-policy.mjs`; it owns no state or I/O. RunWorkflow measures
-current candidate input with an explicit reserve. Runtime measures the actual
-serialized frozen messages and checks each file's reread Hash/size. Both use
-the model capability from the same preflight ticket; the Provider copies that
-snapshot into the immutable launch instead of resolving a fresh catalog model.
-The existing configuration digest and capability revision fence remain the
-authority for launch. Retry messages recalculate input and requested output
-headroom through the same policy; unknown capability is not a verified fit.
+Native HTTP attachment and local serialization-safety checks share the pure
+`shared/agent-input-policy.mjs`; it owns no state or I/O. RunWorkflow verifies
+attachment type and UTF-8 bytes but does not estimate model capacity. Runtime
+measures actual serialized frozen messages only against its local parsing /
+memory safety bound and checks each file's reread Hash/size. The Provider copies
+the selected model capability from the same preflight ticket into the immutable
+launch instead of resolving a fresh catalog model. The adapter then sends the
+known model's exact maximum-output parameter on preflight, execution and identity
+repair; Custom unknown capability omits it. The configuration digest and bumped
+capability revision fence remain the authority for launch.
 
 | Mutable fact | Sole owner | Durable authority | Consumers |
 | --- | --- | --- | --- |
@@ -121,6 +122,7 @@ headroom through the same policy; unknown capability is not a verified fit.
 | Crash-only renderer recovery records | Recovery store adapter | browser storage, subordinate to Bridge authority | document and draft sessions |
 | V2 text-session lease, editable-island host DOM, logical Selection and IME snapshot | `IslandEditingController` | in-memory until the exact island SourcePatch is acknowledged | Canvas coordinator and document session |
 | Accepted Native Edit resume after a required frame replacement | Pure `NativeEditRecoveryController`; `IslandEditingController` remains the sole live edit-session owner and `RuntimeFrameCoordinator` remains the sole iframe Candidate/slot owner | one bounded renderer-memory intent containing the exact accepted source receipt/Hash/Canvas generation, retired frame/session identity, Stable-ID target, logical Selection and focus/toolbar preference. A newer intent supersedes it; the first completion attempt, any identity mismatch, explicit target/pointer/selection/Escape, authority or mode change, and unmount retire it permanently. A pure shared-scrollbar drag is navigation, not a new target. | `HtmlCanvasEditor` may offer continuation only for an operation whose explicit semantic is to keep editing. A finish/leave checkpoint may preserve accepted source and selection but cannot authorize re-entry. Consumption occurs only after a verified static frame is connected or Runtime promotion has finalized as Active; it then reuses the ordinary target resolver and `startEditing`, and failure never retries or later reclaims focus. |
+| Explicit successor Native Edit target across a required frame replacement | `HtmlCanvasEditor` owns one monotonic post-edit intent epoch; `IslandEditingController` still owns only the live session and `RuntimeFrameCoordinator` still owns only Candidate/slot lifecycle | one bounded renderer-memory target Selection plus the exact accepted source receipt/Hash/Canvas generation and focus preference. The target is rebound through the source resolver after A commits; no retired DOM object or screen coordinate is retained. A later structural selection, insertion target, clear action or external focus advances/replaces the epoch and permanently retires the older Native Edit target. | A real request to enter B is captured before finishing A. If A fails, B cannot enter; if A succeeds in place, the ordinary entry path continues; if A succeeds but requires a replacement Frame, only a verified Active frame with the same current receipt may resolve and enter B once. Candidate preparation, supersession, rollback and connection may copy or consume only the newest epoch. |
 | Last proven comment-target geometry during Canvas replacement | `commentCanvasPort` | in-memory and cleared on project transition | `CommentRailContainer` only |
 | Current source/Draft persistence recovery banner | Workbench status-banner projection, with source failure priority | owner snapshots only; no independent durable state | workspace view and recovery actions |
 
@@ -843,6 +845,8 @@ or command can grant additional write authority.
 ### Controller-owned source node copies
 
 `HtmlCanvasEditor` retains private Runtime source identity. `IslandEditingController` reports only its own snapshot clone pairs and canonical source imports; the editor transfers proof only from an already registered object in the same frame/execution, or from a canonical import under a proved host. IME snapshots, rollback, canonical remount and history adoption must preserve this provenance. Public DOM attributes, author-created clones and source-identical runtime nodes do not confer authority. Semantic source commits keep their existing revision/identity checks. Editor-created nodes from one accepted structural transaction may be granted only through that same private owner after ADR 0074 proofs; the grant verifies the pre-connect node ticket, not a later live-tree scan. Deletion revokes the removed objects and reconnection does not restore authority.
+
+Controller-owned frozen-subtree restoration metadata follows exact clone pairs through a `WeakMap`; only the currently mounted frozen roots are held in the iterable live set. Replacing children retires and restores the previous live objects before that set is replaced, while disposal restores only the current live roots. Snapshot history therefore cannot become an unbounded strong object-retention path, and restoration never falls back to traversal position, tag similarity or public attributes.
 
 Inline format state counts only characters actually covered by the selection, excluding zero-length boundary text. After semantic identity and materialization checks succeed, an unchanged HTML result may resume the existing native edit session without publishing a write; rejected commands retain their failure path.
 

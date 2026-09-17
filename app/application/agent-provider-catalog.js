@@ -604,7 +604,6 @@ function publicModels(value) {
       providerModelId: String(item?.providerModelId || "").trim().slice(0, 80) || null,
       releaseChannel: String(item?.releaseChannel || "").trim().slice(0, 40) || null,
       contextWindow: Number(item?.contextWindow || 0) || null,
-      recommendedMaxInputTokens: Number(item?.recommendedMaxInputTokens || 0) || null,
       maxOutputTokens: Number(item?.maxOutputTokens || 0) || null,
       supportsCompleteHtml: item?.supportsCompleteHtml === true,
       reasoningChoices: Object.freeze((Array.isArray(item?.reasoningChoices)

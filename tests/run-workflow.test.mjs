@@ -291,8 +291,7 @@ function createHarness({
           models: [{
             id: resolved,
             contextWindow: 1_000_000,
-            recommendedMaxInputTokens: 500_000,
-            maxOutputTokens: 384_000,
+            maxOutputTokens: 393_216,
             supportsCompleteHtml: true,
           }],
         };
@@ -626,7 +625,7 @@ test("源页 Agent revalidates the exact comment snapshot after drain before cre
   assert.equal(harness.calls.createRequest.length, 0);
 });
 
-test("源页 Agent blocks an over-budget complete HTML rewrite before Request creation", async () => {
+test("源页 Agent does not use catalog recommendations to reject a frozen Request", async () => {
   const configurationDigest = `sha256:${"b".repeat(64)}`;
   const modelId = "stemmio:deepseek-v4-pro";
   const harness = createHarness({
@@ -656,7 +655,6 @@ test("源页 Agent blocks an over-budget complete HTML rewrite before Request cr
           models: [{
             id: modelId,
             contextWindow: 1_000,
-            recommendedMaxInputTokens: 500,
             maxOutputTokens: 200,
             supportsCompleteHtml: true,
           }],
@@ -674,14 +672,12 @@ test("源页 Agent blocks an over-budget complete HTML rewrite before Request cr
 
   const outcome = await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
-  assert.equal(outcome.status, "rejected", JSON.stringify(outcome));
-  assert.equal(outcome.code, "RUN_AGENT_PROMPT_TOO_LARGE");
-  assert.match(outcome.reason, /输出能力/u);
-  assert.equal(harness.calls.createRequest.length, 0);
-  assert.equal(harness.calls.unlock, 1);
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(harness.calls.createRequest.length, 1);
+  assert.equal(harness.calls.unlock, 0);
 });
 
-test("Custom compatible mode still enforces the HTTP runtime hard context limit before Request", async () => {
+test("Custom compatible mode does not invent a model-capacity limit before Request", async () => {
   const modelId = "stemmio:manual-model";
   const largeHtml = `<!doctype html><html><body><main>${"x".repeat(1_900_000)}</main></body></html>`;
   const harness = createHarness({
@@ -720,9 +716,8 @@ test("Custom compatible mode still enforces the HTTP runtime hard context limit 
 
   const outcome = await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
-  assert.equal(outcome.status, "blocked", JSON.stringify(outcome));
-  assert.equal(outcome.code, "RUN_AGENT_PROMPT_TOO_LARGE");
-  assert.equal(harness.calls.createRequest.length, 0);
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(harness.calls.createRequest.length, 1);
 });
 
 test("submit accepts a complete working source while the visible projection is still last-known-good", async () => {

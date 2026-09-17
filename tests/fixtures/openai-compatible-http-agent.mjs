@@ -42,6 +42,7 @@ async function sendSse(response, content, delayMs, beforeComplete, publicProgres
     `data: ${JSON.stringify({ choices: [{ delta: { content: first } }] })}\n\n`,
     `data: ${JSON.stringify({ usage: { completion_tokens: 1 } })}\n\n`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: last } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
     "data: [DONE]\n\n",
   ];
   for (const frame of frames) {
@@ -133,9 +134,7 @@ export function startOpenAiCompatibleHttpAgent({
           } catch {
             payload = {};
           }
-          const isPreflight = raw.includes("Stemmio preflight")
-            || payload.max_tokens === 256
-            || payload.max_completion_tokens === 256;
+          const isPreflight = raw.includes("Stemmio preflight");
           if (mode === "runtime-balance" && !isPreflight) {
             sendSseError(response, {
               code: "insufficient_balance",

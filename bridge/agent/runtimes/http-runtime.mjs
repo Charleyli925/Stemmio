@@ -19,8 +19,7 @@ import { safePublicAgentText } from "../agent-session-projector.mjs";
 import {
   decodeHttpAgentText,
   httpAgentSupportsTextAttachment,
-  httpAgentInputBudget,
-  HTTP_AGENT_MAX_INPUT_BYTES,
+  HTTP_AGENT_MAX_SERIALIZED_INPUT_BYTES,
 } from "../../../shared/agent-input-policy.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -179,6 +178,94 @@ export function classifyOpenAiCompatibleHttpStatus(status, bodyText) {
   return openAiCompatibleVendorAdapter("custom").normalizeError({ status, payload });
 }
 
+const SUCCESSFUL_FINISH_REASONS = new Set(["stop", "end_turn"]);
+const TRUNCATED_FINISH_REASONS = new Set(["length", "max_tokens"]);
+const FILTERED_FINISH_REASONS = new Set(["content_filter", "content_filtered", "safety"]);
+const RESOURCE_FINISH_REASONS = new Set([
+  "insufficient_system_resource",
+  "resource_exhausted",
+  "server_error",
+]);
+const CONTEXT_FINISH_REASONS = new Set([
+  "context_length_exceeded",
+  "input_too_long",
+  "prompt_too_long",
+]);
+
+export function normalizeOpenAiCompatibleFinishReason(value) {
+  const rawFinishReason = String(value || "").trim().toLowerCase();
+  const finishReason = [
+    ...SUCCESSFUL_FINISH_REASONS,
+    ...TRUNCATED_FINISH_REASONS,
+    ...FILTERED_FINISH_REASONS,
+    ...RESOURCE_FINISH_REASONS,
+    ...CONTEXT_FINISH_REASONS,
+  ].includes(rawFinishReason) ? rawFinishReason : rawFinishReason ? "other" : "";
+  if (SUCCESSFUL_FINISH_REASONS.has(finishReason)) {
+    return Object.freeze({ category: "success", finishReason, errorCode: null });
+  }
+  if (TRUNCATED_FINISH_REASONS.has(finishReason)) {
+    return Object.freeze({ category: "truncated", finishReason, errorCode: "AGENT_OUTPUT_TRUNCATED" });
+  }
+  if (FILTERED_FINISH_REASONS.has(finishReason)) {
+    return Object.freeze({ category: "content-filter", finishReason, errorCode: "AGENT_OUTPUT_FILTERED" });
+  }
+  if (RESOURCE_FINISH_REASONS.has(finishReason)) {
+    return Object.freeze({ category: "resource-insufficient", finishReason, errorCode: "AGENT_PROVIDER_OVERLOADED" });
+  }
+  if (CONTEXT_FINISH_REASONS.has(finishReason)) {
+    return Object.freeze({ category: "context-insufficient", finishReason, errorCode: "AGENT_PROMPT_TOO_LARGE" });
+  }
+  if (!finishReason) {
+    return Object.freeze({ category: "protocol-error", finishReason: null, errorCode: "AGENT_PROTOCOL_INVALID" });
+  }
+  return Object.freeze({ category: "abnormal-stop", finishReason, errorCode: "AGENT_OUTPUT_INCOMPLETE" });
+}
+
+function assertSuccessfulFinishReason(value) {
+  const termination = normalizeOpenAiCompatibleFinishReason(value);
+  if (termination.category === "success") return termination;
+  const copy = {
+    truncated: "模型输出被截断。",
+    "content-filter": "模型输出被内容策略终止。",
+    "resource-insufficient": "模型暂时没有足够资源完成输出。",
+    "context-insufficient": "完整请求超过了模型上下文限制。",
+    "abnormal-stop": "模型未正常完成输出。",
+    "protocol-error": "模型接口未返回可验证的完成原因。",
+  }[termination.category];
+  fail(termination.errorCode, copy, { status: termination.category === "protocol-error" ? 502 : 422 });
+}
+
+function boundedUsage(payload) {
+  const usage = payload?.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const result = {};
+  for (const [source, target] of [
+    ["prompt_tokens", "promptTokens"],
+    ["completion_tokens", "completionTokens"],
+    ["total_tokens", "totalTokens"],
+  ]) {
+    const value = usage[source];
+    if (Number.isSafeInteger(value) && value >= 0) result[target] = value;
+  }
+  return Object.keys(result).length ? Object.freeze(result) : null;
+}
+
+function transportDiagnostic(onEvent, details) {
+  onEvent(Object.freeze({ kind: "transport-diagnostic", ...details }));
+}
+
+function observeFinishReason(value, onEvent) {
+  const termination = normalizeOpenAiCompatibleFinishReason(value);
+  transportDiagnostic(onEvent, {
+    phase: "finish",
+    finishReason: termination.finishReason,
+    finishCategory: termination.category,
+  });
+  assertSuccessfulFinishReason(value);
+  return termination;
+}
+
 export async function readHttpAgentContext(policy) {
   const parts = [];
   let used = 0;
@@ -212,8 +299,8 @@ export async function readHttpAgentContext(policy) {
       "</untrusted-file>",
     ].join("\n");
     const chunkBytes = Buffer.byteLength(chunk, "utf8");
-    if (used + chunkBytes > HTTP_AGENT_MAX_INPUT_BYTES) {
-      fail("AGENT_PROMPT_TOO_LARGE", "冻结页面超出当前模型可发送的长度。", { status: 413 });
+    if (used + chunkBytes > HTTP_AGENT_MAX_SERIALIZED_INPUT_BYTES) {
+      fail("AGENT_INPUT_RESOURCE_LIMIT", "冻结输入超出源页 Agent 的本地处理上限。", { status: 413 });
     }
     parts.push(chunk);
     used += chunkBytes;
@@ -388,6 +475,47 @@ function streamProtocolError(adapter, response, payload, eventType = "") {
   }
 }
 
+async function failOpenAiCompatibleSseResponse(response, {
+  adapter,
+  watchdog,
+  cancellation,
+} = {}) {
+  const chunks = [];
+  let receivedBytes = 0;
+  const maxErrorBytes = 64 * 1024;
+  for await (const chunk of responseChunks(response, watchdog, cancellation)) {
+    watchdog?.activity();
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : Buffer.from(chunk);
+    const remaining = maxErrorBytes - receivedBytes;
+    if (remaining <= 0) break;
+    chunks.push(bytes.subarray(0, remaining));
+    receivedBytes += Math.min(bytes.byteLength, remaining);
+    if (bytes.byteLength > remaining || receivedBytes >= maxErrorBytes) break;
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  let payload = null;
+  for (const block of text.split(/\r?\n\r?\n/u)) {
+    const data = block.split(/\r?\n/u)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") continue;
+    try {
+      const candidate = JSON.parse(data);
+      if (candidate?.error) {
+        payload = candidate;
+        break;
+      }
+    } catch {
+      // HTTP status remains authoritative when an error stream is not JSON.
+    }
+  }
+  const code = adapter.normalizeError({ status: response?.status, payload });
+  fail(code, jsonErrorText(payload, "模型接口没有接通。"), {
+    status: response?.status === 401 || response?.status === 403 ? 401 : 502,
+  });
+}
+
 function appendHtmlDelta(chunks, receivedBytes, delta) {
   const byteDelta = Buffer.byteLength(delta, "utf8");
   const nextBytes = receivedBytes + byteDelta;
@@ -474,6 +602,7 @@ export async function consumeOpenAiCompatibleSse(
   let receivedHtmlBytes = 0;
   let done = false;
   let hasFrame = false;
+  let successfulFinish = null;
 
   const activity = (channel = "protocol", byteDelta = 0) => {
     watchdog?.activity();
@@ -489,13 +618,18 @@ export async function consumeOpenAiCompatibleSse(
     streamProtocolError(adapter, response, payload, currentEventType);
     let emitted = false;
     const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+    const hasTopLevelReasoning = payload?.reasoning_content !== undefined
+      || payload?.reasoning !== undefined;
+    if (successfulFinish && (choices.length > 0 || hasTopLevelReasoning)) {
+      fail("AGENT_PROTOCOL_INVALID", "模型在完成原因之后继续返回生成内容。", { status: 502 });
+    }
     for (const choice of choices) {
+      if (successfulFinish) {
+        fail("AGENT_PROTOCOL_INVALID", "模型在完成原因之后继续返回生成内容。", { status: 502 });
+      }
       const delta = choice?.delta && typeof choice.delta === "object"
         ? choice.delta
         : {};
-      if (choice?.finish_reason === "length") {
-        fail("AGENT_OUTPUT_TRUNCATED", "模型输出被截断。", { status: 422 });
-      }
       if (typeof delta.content === "string") {
         emitted = true;
         if (delta.content) {
@@ -517,6 +651,10 @@ export async function consumeOpenAiCompatibleSse(
           activity("reasoning", 0);
         }
       }
+      if (choice?.finish_reason !== undefined && choice?.finish_reason !== null) {
+        const termination = observeFinishReason(choice.finish_reason, onEvent);
+        successfulFinish = termination.finishReason;
+      }
     }
     for (const reasoning of [payload?.reasoning_content, payload?.reasoning]) {
       if (typeof reasoning === "string" || reasoning !== undefined) {
@@ -527,6 +665,8 @@ export async function consumeOpenAiCompatibleSse(
     if (payload && Object.prototype.hasOwnProperty.call(payload, "usage")) {
       emitted = true;
       activity("usage", 0);
+      const usage = boundedUsage(payload);
+      if (usage) transportDiagnostic(onEvent, { phase: "usage", usage });
     }
     if (!emitted) activity("protocol", 0);
   };
@@ -604,6 +744,9 @@ export async function consumeOpenAiCompatibleSse(
       { status: 502 },
     );
   }
+  if (!successfulFinish) {
+    assertSuccessfulFinishReason(null);
+  }
   return output ? output.finish() : htmlChunks.join("");
 }
 
@@ -615,7 +758,9 @@ export async function completeOpenAiCompatibleChat({
   vendorId,
   reasoning,
   messages,
-  maxOutputTokens,
+  modelCapability,
+  capabilityRevision,
+  transportAttempt,
   signal,
   onEvent = () => {},
   publicProgress = false,
@@ -624,7 +769,19 @@ export async function completeOpenAiCompatibleChat({
   scheduler,
 } = {}) {
   const adapter = openAiCompatibleVendorAdapter(vendorId);
-  const request = adapter.buildChatRequest({ modelId, messages, reasoning, maxOutputTokens });
+  const request = adapter.buildChatRequest({ modelId, messages, reasoning, modelCapability });
+  const outputParameter = adapter.outputParameter(modelId, modelCapability);
+  transportDiagnostic(onEvent, {
+    phase: "request",
+    vendorId: String(vendorId || "custom"),
+    modelId: String(modelId || ""),
+    capabilityRevision: String(capabilityRevision || "1").slice(0, 80),
+    transportAttempt: Number.isSafeInteger(transportAttempt) && transportAttempt > 0
+      ? transportAttempt
+      : 1,
+    outputParameter: outputParameter?.name || null,
+    maxOutputTokens: outputParameter?.value || null,
+  });
   const watchdog = createActivityWatchdog({
     inactivityTimeoutMs,
     clock,
@@ -632,96 +789,85 @@ export async function completeOpenAiCompatibleChat({
   });
   const cancellation = cancellationGate(signal);
   const runtimeSignal = combinedSignal(signal, watchdog.signal);
-  let response;
   try {
-    const pendingResponse = fetchImpl(`${String(baseUrl).replace(/\/+$/u, "")}${request.endpoint}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify({ ...request.body, stream: true }),
-      signal: runtimeSignal,
-    });
-    void pendingResponse.catch(() => {});
-    response = await Promise.race([
-      pendingResponse,
-      watchdog.expired,
-      ...(cancellation ? [cancellation.promise] : []),
-    ]);
-  } catch (cause) {
-    if (watchdog.signal.aborted) throw watchdog.signal.reason;
-    const code = externalAbortCode(signal);
-    if (code) {
-      fail(code, code === "AGENT_PREFLIGHT_TIMEOUT" ? "模型请求超时。" : "已停止。", { status: 502 });
+    let response;
+    try {
+      const pendingResponse = Promise.resolve().then(() => fetchImpl(`${String(baseUrl).replace(/\/+$/u, "")}${request.endpoint}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({ ...request.body, stream: true }),
+        signal: runtimeSignal,
+      }));
+      void pendingResponse.catch(() => {});
+      response = await Promise.race([
+        pendingResponse,
+        watchdog.expired,
+        ...(cancellation ? [cancellation.promise] : []),
+      ]);
+    } catch (cause) {
+      if (watchdog.signal.aborted) throw watchdog.signal.reason;
+      const code = externalAbortCode(signal);
+      if (code) {
+        fail(code, code === "AGENT_PREFLIGHT_TIMEOUT" ? "模型请求超时。" : "已停止。", { status: 502 });
+      }
+      if (cause instanceof Error && /^AGENT_/u.test(String(cause.code || ""))) throw cause;
+      fail("AGENT_NETWORK_INTERRUPTED", "模型接口没有接通。", { status: 502 });
     }
-    if (cause instanceof Error && /^AGENT_/u.test(String(cause.code || ""))) throw cause;
-    fail("AGENT_NETWORK_INTERRUPTED", "模型接口没有接通。", { status: 502 });
-  }
-  let content;
-  try {
-    const isSse = await responseIsSse(response, watchdog, cancellation);
-    if (isSse) {
-      content = await consumeOpenAiCompatibleSse(response, {
-        adapter,
-        watchdog,
-        cancellation,
-        onEvent,
-        publicProgress,
-      });
-      if (response.ok === false) {
-        const code = adapter.normalizeError({ status: response.status, payload: null });
-        fail(code, "模型接口没有接通。", {
-          status: response.status === 401 || response.status === 403 ? 401 : 502,
+
+    let content;
+    try {
+      const isSse = await responseIsSse(response, watchdog, cancellation);
+      if (isSse) {
+        if (response.ok === false) {
+          await failOpenAiCompatibleSseResponse(response, {
+            adapter, watchdog, cancellation,
+          });
+        }
+        content = await consumeOpenAiCompatibleSse(response, {
+          adapter,
+          watchdog,
+          cancellation,
+          onEvent,
+          publicProgress,
         });
+      } else {
+        const payload = await parseJsonResponse(response, adapter, watchdog, cancellation, publicProgress ? () => {} : onEvent);
+        const normalized = adapter.normalizeResponse(payload);
+        observeFinishReason(normalized.finishReason, onEvent);
+        const usage = boundedUsage(payload);
+        if (usage) transportDiagnostic(onEvent, { phase: "usage", usage });
+        content = normalized.content;
+        if (publicProgress && typeof content === "string") {
+          const output = createHttpOutputStream(onEvent);
+          output.push(content);
+          content = output.finish();
+        }
       }
-    } else {
-      const payload = await parseJsonResponse(response, adapter, watchdog, cancellation, publicProgress ? () => {} : onEvent);
-      const normalized = adapter.normalizeResponse(payload);
-      if (normalized.finishReason === "length") {
-        fail("AGENT_OUTPUT_TRUNCATED", "模型输出被截断。", { status: 422 });
+    } catch (cause) {
+      if (watchdog.signal.aborted) throw watchdog.signal.reason;
+      const code = externalAbortCode(signal);
+      if (code) {
+        fail(code, code === "AGENT_PREFLIGHT_TIMEOUT" ? "模型请求超时。" : "已停止。", { status: 502 });
       }
-      content = normalized.content;
-      if (publicProgress && typeof content === "string") {
-        const output = createHttpOutputStream(onEvent);
-        output.push(content);
-        content = output.finish();
-      }
+      if (cause instanceof Error && /^AGENT_/u.test(String(cause.code || ""))) throw cause;
+      fail("AGENT_NETWORK_INTERRUPTED", "模型接口没有接通。", { status: 502 });
     }
-  } catch (cause) {
-    if (watchdog.signal.aborted) throw watchdog.signal.reason;
-    const code = externalAbortCode(signal);
-    if (code) {
+    if (signal?.aborted) {
+      const code = externalAbortCode(signal) || "AGENT_CANCELLED";
       fail(code, code === "AGENT_PREFLIGHT_TIMEOUT" ? "模型请求超时。" : "已停止。", { status: 502 });
     }
-    if (cause instanceof Error && /^AGENT_/u.test(String(cause.code || ""))) throw cause;
-    fail("AGENT_NETWORK_INTERRUPTED", "模型接口没有接通。", { status: 502 });
+    if (typeof content !== "string" || !content.trim()) {
+      fail("AGENT_OUTPUT_INVALID", "模型没有返回完整 HTML。", { status: 422 });
+    }
+    return extractHtmlDocument(content);
   } finally {
     watchdog.clear();
     cancellation?.clear();
   }
-  if (signal?.aborted) {
-    const code = externalAbortCode(signal) || "AGENT_CANCELLED";
-    fail(code, code === "AGENT_PREFLIGHT_TIMEOUT" ? "模型请求超时。" : "已停止。", { status: 502 });
-  }
-  if (typeof content !== "string" || !content.trim()) {
-    fail("AGENT_OUTPUT_INVALID", "模型没有返回完整 HTML。", { status: 422 });
-  }
-  return extractHtmlDocument(content);
-}
-
-export function assertCompleteHtmlBudget(context, modelBudget, baseHtmlBytes) {
-  const budget = httpAgentInputBudget({ inputBytes: Buffer.byteLength(String(context || ""), "utf8"),
-    baseHtmlBytes, model: modelBudget });
-  if (budget.status === "exceeded") {
-    fail(
-      "AGENT_PROMPT_TOO_LARGE",
-      "当前页面可能超过所选模型的完整输出能力，请更换模型或使用 Qoder/Codex。",
-      { status: 413 },
-    );
-  }
-  return budget;
 }
 
 async function runOfficialFinalizer(policy, signal) {
@@ -809,6 +955,8 @@ export function createHttpRuntime({
         modelId,
         vendorId: String(launch.environment?.STEMMIO_API_VENDOR || ""),
         reasoning: String(launch.reasoning || ""),
+        modelCapability: launch.modelCapability || null,
+        capabilityRevision: String(launch.capabilityRevision || "1"),
         signal,
         onEvent: (event) => {
           if (!receivedFirstContent && (event.kind === "visible-text" || (event.kind === "activity" && event.channel === "html" && event.byteDelta > 0))) {
@@ -848,6 +996,7 @@ export function createHttpRuntime({
           }),
         ]),
       };
+      let transportAttempt = 0;
       const html = await completeIdentityCheckedHtml({
         baseHtml: baseRead.bytes.toString("utf8"),
         messages: chatOptions.messages,
@@ -855,11 +1004,11 @@ export function createHttpRuntime({
           signal?.throwIfAborted();
           await assertRuntimeProcessingAuthority(policy);
         },
-        generate: (messages) => {
-          const budget = assertCompleteHtmlBudget(messages.map((message) => message.content).join("\n"),
-            launch.modelBudget, baseRead.bytes.byteLength);
-          return completeChat({ ...chatOptions, messages, maxOutputTokens: budget.maxOutputTokens ?? undefined });
-        },
+        generate: (messages) => completeChat({
+          ...chatOptions,
+          messages,
+          transportAttempt: ++transportAttempt,
+        }),
       });
       signal?.throwIfAborted();
       await assertRuntimeProcessingAuthority(policy);

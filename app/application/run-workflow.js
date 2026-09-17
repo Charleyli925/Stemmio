@@ -9,8 +9,6 @@ import { credentialErrorField } from "../../shared/agent-access-operation.mjs";
 import {
   decodeHttpAgentText,
   httpAgentSupportsTextAttachment,
-  httpAgentInputBudget,
-  HTTP_AGENT_PREFLIGHT_RESERVE_BYTES,
 } from "../../shared/agent-input-policy.mjs";
 import {
   agentRecoveryKindForError,
@@ -50,8 +48,7 @@ function unsupportedSourceAgentAttachment(comments) {
   return null;
 }
 
-async function verifiedSourceAgentAttachmentBytes(bridgeClient, sourcePath, comments) {
-  let total = 0;
+async function verifySourceAgentAttachments(bridgeClient, sourcePath, comments) {
   for (const comment of Array.isArray(comments) ? comments : []) {
     for (const attachment of comment?.attachments || []) {
       if (!httpAgentSupportsTextAttachment(attachment) || !attachment?.relativePath) {
@@ -80,22 +77,8 @@ async function verifiedSourceAgentAttachmentBytes(bridgeClient, sourcePath, comm
           "源页 Agent 只能发送可验证的 UTF-8 文本附件。",
         );
       }
-      total += bytes.byteLength;
     }
   }
-  return total;
-}
-
-function sourceAgentBudgetExceeded(delivery, preflight, html, comments, attachmentBytes = 0) {
-  if (delivery?.selection?.providerId !== "stemmio") return false;
-  const modelId = delivery.selection.resolvedModelId || delivery.selection.requestedModelId;
-  const model = (preflight?.models || []).find((entry) => entry?.id === modelId);
-  const htmlBytes = new TextEncoder().encode(String(html || "")).byteLength;
-  let taskBytes = HTTP_AGENT_PREFLIGHT_RESERVE_BYTES + htmlBytes + attachmentBytes;
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    taskBytes += new TextEncoder().encode(String(comment?.text || "")).byteLength;
-  }
-  return httpAgentInputBudget({ inputBytes: taskBytes, baseHtmlBytes: htmlBytes, model }).status === "exceeded";
 }
 
 function succeeded(value) {
@@ -1034,9 +1017,9 @@ export class RunWorkflow {
       comments = this.#commentsForSubmission();
       const registeredCommentOutcome = this.#validateComments(comments);
       if (registeredCommentOutcome) return registeredCommentOutcome;
-      const sourceAgentAttachmentBytes = frozenAgentDelivery.selection?.providerId === "stemmio"
-        ? await verifiedSourceAgentAttachmentBytes(this.#bridgeClient, context.sourcePath, comments)
-        : 0;
+      if (frozenAgentDelivery.selection?.providerId === "stemmio") {
+        await verifySourceAgentAttachments(this.#bridgeClient, context.sourcePath, comments);
+      }
       if (!this.#isCurrentContext(context)) return stale(context);
 
       // No await precedes this source-authority fence. It captures the exact
@@ -1065,19 +1048,6 @@ export class RunWorkflow {
         return rejected(
           "RUN_SUBMISSION_FREEZE_HASH_MISMATCH",
           "冻结 HTML 的内容或项目身份已经变化，本轮不会发送。",
-        );
-      }
-      if (sourceAgentBudgetExceeded(
-        frozenAgentDelivery,
-        agentPreflight,
-        frozen.html,
-        comments,
-        sourceAgentAttachmentBytes,
-      )) {
-        this.#canvasPort.unlock();
-        return blocked(
-          "RUN_AGENT_PROMPT_TOO_LARGE",
-          "当前页面可能超过所选模型的完整输出能力，请更换模型或使用 Qoder/Codex。",
         );
       }
       if (frozen.html !== this.#documentSession.html) {
@@ -1200,13 +1170,13 @@ export class RunWorkflow {
         );
       }
       persistedComments = textLocatorValidation.comments;
-      const finalAttachmentBytes = frozenAgentDelivery.selection?.providerId === "stemmio"
-        ? await verifiedSourceAgentAttachmentBytes(
-            this.#bridgeClient,
-            context.sourcePath,
-            persistedComments,
-          )
-        : 0;
+      if (frozenAgentDelivery.selection?.providerId === "stemmio") {
+        await verifySourceAgentAttachments(
+          this.#bridgeClient,
+          context.sourcePath,
+          persistedComments,
+        );
+      }
       const currentCommentSnapshot = JSON.stringify(
         this.#commentsForSubmission().map(this.#codecs.persistedComment),
       );
@@ -1214,18 +1184,6 @@ export class RunWorkflow {
         throw responseError(
           "RUN_SUBMISSION_COMMENTS_CHANGED",
           "最新评论在冻结边界内发生变化，请重新确认后再发送。",
-        );
-      }
-      if (sourceAgentBudgetExceeded(
-        frozenAgentDelivery,
-        agentPreflight,
-        frozen.html,
-        persistedComments,
-        finalAttachmentBytes,
-      )) {
-        throw responseError(
-          "RUN_AGENT_PROMPT_TOO_LARGE",
-          "当前页面可能超过所选模型的完整输出能力，请更换模型或使用 Qoder/Codex。",
         );
       }
       const persistedEvents = this.#commentSession.changeEvents.map(
@@ -1285,9 +1243,6 @@ export class RunWorkflow {
         });
       }
       request.agentDelivery = frozenAgentDelivery;
-      if (sourceAgentBudgetExceeded(frozenAgentDelivery, agentPreflight, frozen.html, persistedComments, finalAttachmentBytes)) {
-        throw responseError("RUN_AGENT_PROMPT_TOO_LARGE", "当前页面超过所选模型输出能力，请更换模型。");
-      }
       const operationId = this.#codecs.operationKey(pendingRun);
       let dispatched = false;
       try {

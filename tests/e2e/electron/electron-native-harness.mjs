@@ -112,6 +112,44 @@ export async function waitForProjectReady(page, timeout = 60_000) {
   return waitForSharedProjectReady(page, { timeout, includeFailureDetail: true });
 }
 
+export async function renderedTextPosition(target) {
+  return target.evaluate((element) => {
+    const walker = element.ownerDocument.createTreeWalker(
+      element,
+      element.ownerDocument.defaultView.NodeFilter.SHOW_TEXT,
+    );
+    const elementRect = element.getBoundingClientRect();
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const match = /\S/u.exec(node.textContent || "");
+      if (!match) continue;
+      const range = element.ownerDocument.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      const glyph = range.getClientRects()[0];
+      if (!glyph || (!glyph.width && !glyph.height)) continue;
+      const vertical = element.ownerDocument.defaultView
+        .getComputedStyle(element).writingMode.startsWith("vertical");
+      const offsetX = glyph.width
+        ? (vertical ? glyph.width / 2 : Math.min(glyph.width / 2, 3))
+        : 1;
+      return {
+        x: glyph.left - elementRect.left + offsetX,
+        y: glyph.top - elementRect.top + (glyph.height ? glyph.height / 2 : 1),
+      };
+    }
+    throw new Error(
+      `No rendered text glyph found for ${element.getAttribute("data-native-case") || element.tagName}.`,
+    );
+  });
+}
+
+export async function doubleClickRenderedText(target, options = {}) {
+  await target.dblclick({
+    ...options,
+    position: await renderedTextPosition(target),
+  });
+}
+
 // The destination is chosen in the AI conversation now, not in a dialog over the page.
 export async function chooseClipboardDelivery(page) {
   const sidebar = page.getByTestId("ai-conversation-sidebar");
