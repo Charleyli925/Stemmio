@@ -18,6 +18,7 @@ import type { ProjectContext, ProjectSessionSnapshot } from "./project-session.j
 import type { ProjectWorkflowSnapshot } from "./project-workflow.js";
 import type { RunSessionSnapshot } from "./run-session.js";
 import type { RunWorkflowOutcome, RunWorkflowSnapshot } from "./run-workflow.js";
+import type { DocumentSourceOperationResult, DocumentWorkflowOutcome } from "./document-workflow.js";
 import type { RunSubmitPlan } from "./run/submit-plan.js";
 import type { VersionSessionSnapshot } from "./version-session.js";
 import type {
@@ -262,7 +263,12 @@ export interface RunControllerCommands {
   resolveConflict(input: {
     run?: ActiveRun | null;
     action: "adopt-ai" | "keep-external";
-  }): Promise<RunWorkflowOutcome>;
+  }): Promise<RunWorkflowOutcome<Readonly<{
+    run: ActiveRun;
+    action: "adopt-ai" | "keep-external";
+    current: boolean;
+    documentSourceResult: DocumentWorkflowOutcome<DocumentSourceOperationResult> | null;
+  }>>>;
   prepareReview(input: {
     run?: ActiveRun | null;
   }): Promise<VersionWorkflowOutcome<VersionReviewCandidate>>;

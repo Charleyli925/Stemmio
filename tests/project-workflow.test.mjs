@@ -284,7 +284,7 @@ function createHarness({
     async waitForHistoryAction() {
       return succeeded({ idle: true });
     },
-    async ensureCurrentCanvas() {
+    async repairCurrentCanvas() {
       return succeeded({ ready: true });
     },
     enqueueEdit() {
@@ -676,7 +676,7 @@ test("project switch accepts protected Working HTML without refreshing a last-kn
       },
     },
     documentWorkflow: {
-      async ensureCurrentCanvas() {
+      async repairCurrentCanvas() {
         ensureCanvasCount += 1;
         return succeeded({ ready: true });
       },
@@ -5084,7 +5084,7 @@ test("canvas failure after import keeps the published project and never trashes"
   });
   t.after(() => harness.workflow.dispose());
   let canvasCalls = 0;
-  harness.documentWorkflow.ensureCurrentCanvas = async () => {
+  harness.documentWorkflow.repairCurrentCanvas = async () => {
     canvasCalls += 1;
     return {
       status: "rejected",
@@ -5152,7 +5152,7 @@ test("canvas confirmation recovers after one failed acknowledgement", async (t) 
   });
   t.after(() => harness.workflow.dispose());
   let canvasCalls = 0;
-  harness.documentWorkflow.ensureCurrentCanvas = async () => {
+  harness.documentWorkflow.repairCurrentCanvas = async () => {
     canvasCalls += 1;
     if (canvasCalls === 1) {
       return {
@@ -5731,7 +5731,7 @@ test("a post-apply Canvas failure retries only Canvas and finalization on the sa
     },
     finalizePrepared: async () => { finalizes += 1; return { disposition: "kept" }; },
   }, documentWorkflow: {
-    async ensureCurrentCanvas() {
+    async repairCurrentCanvas() {
       canvasCalls += 1;
       return canvasCalls <= 2
         ? { status: "rejected", code: "DOCUMENT_CANVAS_AUTHORITY_REJECTED", reason: "canvas pending" }

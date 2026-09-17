@@ -28,6 +28,15 @@ import {
   prepareAiTaskRequest,
 } from "./project-file-repository-harness.mjs";
 
+async function optionalFileBytes(filePath) {
+  try {
+    return await readFile(filePath);
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return null;
+    throw cause;
+  }
+}
+
 test("save conflicts when both Stemmio and disk changed", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "save-boundary.html");
@@ -448,6 +457,7 @@ test("forceUnlockWorkingCopy adopts disk hash without rewriting HTML", async (t)
   await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
   const conflictingDiskHtml = html("external while Stemmio pending");
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
+  const runtimePath = path.join(imported.target.projectRootPath, ".stemmio", "runtime.json");
 
   await assert.rejects(
     value.repository.workspace({ sourcePath: imported.target.exactSourcePath }),
@@ -455,8 +465,57 @@ test("forceUnlockWorkingCopy adopts disk hash without rewriting HTML", async (t)
       && error.code === "WORKING_COPY_CONFLICT",
   );
 
+  const identityMismatchSnapshot = {
+    source: await readFile(imported.target.exactSourcePath, "utf8"),
+    state: await readFile(statePath, "utf8"),
+    runtime: await optionalFileBytes(runtimePath),
+  };
+  for (const identity of [
+    {
+      projectId: imported.target.projectId === `project_${"f".repeat(32)}`
+        ? `project_${"e".repeat(32)}`
+        : `project_${"f".repeat(32)}`,
+      documentId: imported.target.documentId,
+    },
+    {
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId === `doc_${"f".repeat(32)}`
+        ? `doc_${"e".repeat(32)}`
+        : `doc_${"f".repeat(32)}`,
+    },
+  ]) {
+    await assert.rejects(
+      value.repository.forceUnlockWorkingCopy({
+        ...identity,
+        sourcePath: imported.target.exactSourcePath,
+        expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
+      }),
+      (error) => error instanceof ProjectFileRepositoryError
+        && error.code === "SOURCE_IDENTITY_MISMATCH",
+    );
+    assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), identityMismatchSnapshot.source);
+    assert.equal(await readFile(statePath, "utf8"), identityMismatchSnapshot.state);
+    assert.deepEqual(await optionalFileBytes(runtimePath), identityMismatchSnapshot.runtime);
+  }
+
+  await assert.rejects(
+    value.repository.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      expectedSourceSha256: sha256(Buffer.from("stale preview", "utf8")),
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "SOURCE_HASH_CONFLICT",
+  );
+  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), conflictingDiskHtml);
+  assert.equal((await json(statePath)).saveState, "failed");
+
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.equal(unlocked.content, conflictingDiskHtml);
@@ -487,7 +546,10 @@ test("forceUnlockWorkingCopy rematerializes identities after explicitly adopting
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.match(unlocked.content, /<h1 data-stemmio-id="sm1_[0-9a-f]{32}">external<\/h1>/u);
@@ -534,7 +596,10 @@ test("external ID swaps require explicit adoption before their bindings change",
   assert.equal((await json(statePath)).currentSha256, beforeState.currentSha256);
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: sha256(Buffer.from(swapped, "utf8")),
   });
   assert.equal(unlocked.content, swapped);
   const adoptedState = await json(statePath);
@@ -568,7 +633,10 @@ test("force-unlock repairs identity loss even after its disk Hash was recorded",
       && error.code === "WORKING_COPY_CONFLICT",
   );
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: sha256(Buffer.from(unmarked, "utf8")),
   });
   assert.equal(inspectSourceElementIdentity(unlocked.content).complete, true);
   assert.notEqual(unlocked.content, unmarked);
@@ -603,7 +671,10 @@ test("forceUnlockWorkingCopy clears a stuck activeRequest without rewriting HTML
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), conflictingDiskHtml);

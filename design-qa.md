@@ -3613,3 +3613,10 @@ final result: passed for the scoped explicit-exit contract; completion-gate evid
 - 复制动作仍只读公开说明；计时、KB、处理指示和墙钟时间不进入剪贴板。停止仍固定在 Composer，Request/Attempt 身份与 run key 未改。
 - 侧栏与画布的视觉分隔收口为侧栏自身的 1px `--chrome-divider`；18px resizer 只作为透明命中区，继续保留键盘与 ARIA 行为，不额外绘制 grip 或内层边线。
 - Verification boundary: 确定性 Node/CSS 与 Electron 执行流证据由本分支门禁记录；未以静态源码断言真实运行时视觉效果。
+
+## 2026-09-17 — 源码重载与画布恢复操作归属
+
+- Mode: BEHAVIOR CHANGE, lightweight design exception. 没有新增控件、弹窗、Notice、文案、布局、颜色、动效或锁定状态；保留现有重载与外部冲突确认文案。
+- 可见结果：应用命令分开报告授权、源码接纳与页面恢复。源码已接纳但 Canvas 恢复失败时，仍使用既有恢复入口，不回滚字节、不再次读盘或要求用户重新授权。
+- 安全边界：外部预览接受绑定预览身份与 Hash；磁盘变化后拒绝原回执。迟到的旧操作 completion/finally 不会改动或解锁新页。
+- Evidence boundary: 本项只新增纯 Node 操作序列与 Repository CAS 证据，并复用已有 Electron 重载、IME、显式退出和冲突采用规格；不把 Node 结果写成真实 Electron、私有 HTML 语料、打包应用或已安装应用验收。

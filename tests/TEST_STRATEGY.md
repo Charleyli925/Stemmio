@@ -105,6 +105,14 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `restorePendingWrite` 只用于已验证恢复证据的重建路径。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
+- 源码重载与恢复继续由 `DocumentWorkflow` 的真实命令验证：干净重载、脏编辑取消、
+  confirmation 跨 revision/Hash 过期、同目标重复单飞、切页后迟到 completion/finally 围栏、源码已接纳但
+  Canvas 待修复的分阶段结果，以及加入现有 save single-flight 且零 source read 的投影修复，由
+  `tests/document-workflow.test.mjs` 的可控 fake/Deferred 拥有。外部预览后磁盘变化的 SHA CAS 由
+  `tests/project-working-copy-save.test.mjs` 拥有；Run 的 conflict Hash 绑定、Document 接纳失败保留与迟到
+  `page: not-current` 结果由 `tests/run-workflow.test.mjs` 拥有。这些 Node 用例不声称 IME、Focus 或真实 iframe 连续性；继续复用
+  `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
+  `conflict-force-unlock.spec.mjs` 的真实接纳接线。
 - `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
   `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
   `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，

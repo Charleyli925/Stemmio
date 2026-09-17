@@ -3075,20 +3075,24 @@ export class ProjectWorkflow {
       return retireStaleStage();
     }
     if (current.phase === "canvas") {
-      let canvasOutcome = await this.#documentWorkflow.ensureCurrentCanvas({
+      let canvasOutcome = await this.#documentWorkflow.repairCurrentCanvas({
         context: current.context || undefined,
       });
       if (!this.#preparedOpenStageIsCurrent(current)) {
         return retireStaleStage();
       }
-      if (canvasOutcome.status !== "succeeded") {
-        const retryOutcome = await this.#documentWorkflow.ensureCurrentCanvas({
+      if (canvasOutcome.status !== "succeeded"
+        || (canvasOutcome.value?.page
+          && canvasOutcome.value.page.status !== "restored")) {
+        const retryOutcome = await this.#documentWorkflow.repairCurrentCanvas({
           context: current.context || undefined,
         });
         if (!this.#preparedOpenStageIsCurrent(current)) {
           return retireStaleStage();
         }
-        if (retryOutcome.status === "succeeded") {
+        if (retryOutcome.status === "succeeded"
+          && (!retryOutcome.value?.page
+            || retryOutcome.value.page.status === "restored")) {
           reportInternalFailure({
             area: "canvas",
             operation: "import-canvas-ack",
@@ -3099,8 +3103,12 @@ export class ProjectWorkflow {
         }
         canvasOutcome = retryOutcome;
       }
-      if (canvasOutcome.status !== "succeeded") {
-        const reason = canvasOutcome.reason || "当前画布尚未完成自动恢复。";
+      if (canvasOutcome.status !== "succeeded"
+        || (canvasOutcome.value?.page
+          && canvasOutcome.value.page.status !== "restored")) {
+        const reason = canvasOutcome.status === "succeeded"
+          ? canvasOutcome.value.page.reason
+          : canvasOutcome.reason || "当前画布尚未完成自动恢复。";
         reportInternalFailure({
           area: "canvas",
           operation: "import-canvas-ack",

@@ -227,7 +227,7 @@ for(const stage of ['current-version-before-publication','current-version-state-
  await assert.rejects(writer.createVersionFromHistory(input),{code:'WORKING_COPY_CONFLICT'});
  assert.equal(await readFile(target.exactSourcePath,'utf8'),html('external'));
  const restarted=new ProjectFileRepository({projectsRoot:v.projects});await restarted.initialize();assert.equal((await restarted.queryHistoryCreation(input)).status,'not-created');assert.equal((await json(manifestPath(target))).versions.length,1);
- await restarted.forceUnlockWorkingCopy({sourcePath:target.exactSourcePath});const recovered=(await restarted.resolveRegisteredProjectOpenTarget({projectId:target.projectId})).target;
+ await restarted.forceUnlockWorkingCopy({projectId:target.projectId,documentId:target.documentId,sourcePath:target.exactSourcePath,expectedSourceSha256:sha256(Buffer.from(html('external')))});const recovered=(await restarted.resolveRegisteredProjectOpenTarget({projectId:target.projectId})).target;
  const saved=await restarted.createVersionFromCurrent({target:recovered,operationId:'after_external_conflict_01',expectedSourceSha256:recovered.sourceSha256});assert.equal(saved.versionId,'ver_0002');
 });
 

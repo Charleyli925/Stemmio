@@ -32,6 +32,15 @@ async function postJson(bridge, pathname, body) {
   return bridge.postJson(pathname, body);
 }
 
+async function optionalFileBytes(filePath) {
+  try {
+    return await readFile(filePath);
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return null;
+    throw cause;
+  }
+}
+
 test("project-file PR1 import switches to V1 before the queued save and leaves external bytes untouched", async (t) => {
   const environment = await createBridgeTestEnvironment(t, {
     prefix: "stemmio-project-file-bridge-",
@@ -1068,11 +1077,51 @@ test("v4 attachments and absent conflicts stay bound to the project root", async
   assert.equal(resolve.response.status, 404);
   assert.equal(resolve.body.error.code, "CONFLICT_NOT_FOUND");
 
+  const forceUnlockStatePath = join(
+    ensured.body.projectRoot,
+    ".stemmio",
+    "working-copies",
+    `${ensured.body.openTarget.workingCopyId}.json`,
+  );
+  const forceUnlockRuntimePath = join(ensured.body.projectRoot, ".stemmio", "runtime.json");
+  const forceUnlockSnapshot = {
+    source: await readFile(workingPath),
+    state: await readFile(forceUnlockStatePath),
+    runtime: await optionalFileBytes(forceUnlockRuntimePath),
+  };
+  for (const identity of [
+    {
+      projectId: ensured.body.projectId === `project_${"f".repeat(32)}`
+        ? `project_${"e".repeat(32)}`
+        : `project_${"f".repeat(32)}`,
+      documentId: ensured.body.documentId,
+    },
+    {
+      projectId: ensured.body.projectId,
+      documentId: ensured.body.documentId === `doc_${"f".repeat(32)}`
+        ? `doc_${"e".repeat(32)}`
+        : `doc_${"f".repeat(32)}`,
+    },
+  ]) {
+    const mismatched = await postJson(bridge, "/conflict/resolve", {
+      ...identity,
+      sourcePath: workingPath,
+      action: "force-unlock",
+      expectedSourceSha256: sha256(Buffer.from(html("attach"), "utf8")),
+    });
+    assert.equal(mismatched.response.status, 409, JSON.stringify(mismatched.body));
+    assert.equal(mismatched.body.error.code, "SOURCE_IDENTITY_MISMATCH");
+    assert.deepEqual(await readFile(workingPath), forceUnlockSnapshot.source);
+    assert.deepEqual(await readFile(forceUnlockStatePath), forceUnlockSnapshot.state);
+    assert.deepEqual(await optionalFileBytes(forceUnlockRuntimePath), forceUnlockSnapshot.runtime);
+  }
+
   const unlocked = await postJson(bridge, "/conflict/resolve", {
     sourcePath: workingPath,
     projectId: ensured.body.projectId,
     documentId: ensured.body.documentId,
     action: "force-unlock",
+    expectedSourceSha256: sha256(Buffer.from(html("attach"), "utf8")),
   });
   assert.equal(unlocked.response.status, 200, JSON.stringify(unlocked.body));
   assert.equal(unlocked.body.status, "force-unlocked");

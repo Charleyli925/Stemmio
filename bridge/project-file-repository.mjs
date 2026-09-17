@@ -531,8 +531,18 @@ export class ProjectFileRepository {
     });
   }
 
-  async forceUnlockWorkingCopy({ sourcePath } = {}) {
-    return this.#writeSerial(() => this.#forceUnlockWorkingCopy({ sourcePath }));
+  async forceUnlockWorkingCopy({
+    projectId,
+    documentId,
+    sourcePath,
+    expectedSourceSha256,
+  } = {}) {
+    return this.#writeSerial(() => this.#forceUnlockWorkingCopy({
+      projectId,
+      documentId,
+      sourcePath,
+      expectedSourceSha256,
+    }));
   }
 
   async createVersionFromHistory(input = {}) {
@@ -1124,8 +1134,47 @@ export class ProjectFileRepository {
   async #workspace({
     sourcePath,
     adoptExternalConflict = false,
+    expectedExternalSha256 = null,
+    expectedProjectId = null,
+    expectedDocumentId = null,
     performanceTiming = new WorkspacePerformanceTiming(),
   }) {
+    const expectedIdentity = adoptExternalConflict
+      ? Object.freeze({
+        projectId: assertId(expectedProjectId, PROJECT_ID, "projectId"),
+        documentId: assertId(expectedDocumentId, DOCUMENT_ID, "documentId"),
+        sourcePath: normalizedPath(sourcePath),
+      })
+      : null;
+    const assertExpectedIdentity = (target) => {
+      if (!expectedIdentity || !target) return;
+      if (
+        target.projectId !== expectedIdentity.projectId
+        || target.documentId !== expectedIdentity.documentId
+        || !samePath(target.exactSourcePath, expectedIdentity.sourcePath)
+      ) {
+        throw new ProjectFileRepositoryError(
+          "SOURCE_IDENTITY_MISMATCH",
+          "The force-unlock target no longer matches the confirmed document identity.",
+          {
+            expectedProjectId: expectedIdentity.projectId,
+            expectedDocumentId: expectedIdentity.documentId,
+            expectedSourcePath: expectedIdentity.sourcePath,
+            actualProjectId: target.projectId,
+            actualDocumentId: target.documentId,
+            actualSourcePath: target.exactSourcePath,
+          },
+        );
+      }
+    };
+    if (expectedIdentity) {
+      const preflightTarget = await this.#resolveOpenTarget({
+        sourcePath: expectedIdentity.sourcePath,
+        readOnly: true,
+      });
+      if (!preflightTarget) return null;
+      assertExpectedIdentity(preflightTarget);
+    }
     // A save can park the visible source in its private recovery directory
     // between two no-replace publishes. Recover the registered project before
     // resolving the requested HTML so a crash in that narrow interval does
@@ -1141,6 +1190,7 @@ export class ProjectFileRepository {
     let target = await this.#resolveOpenTarget({ sourcePath });
     performanceTiming.checkpoint("registryResolveMs");
     if (!target) return null;
+    assertExpectedIdentity(target);
     // A Promotion transaction means the user already chose adoption.  Resume
     // it before exposing any workspace facts, so a crash cannot leave a
     // half-Version between Candidate review and a formal Version.
@@ -1157,6 +1207,7 @@ export class ProjectFileRepository {
       target = await this.#resolveOpenTarget({ sourcePath });
       performanceTiming.checkpoint("registryResolveMs");
       if (!target) return null;
+      assertExpectedIdentity(target);
     }
     const loaded = await this.#loadRegisteredProject({
       projectId: target.projectId,
@@ -1250,6 +1301,22 @@ export class ProjectFileRepository {
     let source = await readHtmlFile(target.exactSourcePath, "managed HTML", {
       projectRootPath: loaded.paths.projectRootPath,
     });
+    if (
+      adoptExternalConflict
+      && source.sha256 !== assertSha256(
+        expectedExternalSha256,
+        "expectedSourceSha256",
+      )
+    ) {
+      throw new ProjectFileRepositoryError(
+        "SOURCE_HASH_CONFLICT",
+        "The Working Copy changed after the external version was confirmed.",
+        {
+          expectedSourceSha256: expectedExternalSha256,
+          actualSourceSha256: source.sha256,
+        },
+      );
+    }
     performanceTiming.checkpoint("sourceReadMs");
     let workingCopyRecovered = false;
     if (workingCopy && state && target.targetKind === "working-copy") {
@@ -1854,10 +1921,21 @@ export class ProjectFileRepository {
     };
   }
 
-  async #forceUnlockWorkingCopy({ sourcePath }) {
+  async #forceUnlockWorkingCopy({
+    projectId,
+    documentId,
+    sourcePath,
+    expectedSourceSha256,
+  }) {
     const workspace = await this.#workspace({
       sourcePath,
       adoptExternalConflict: true,
+      expectedProjectId: projectId,
+      expectedDocumentId: documentId,
+      expectedExternalSha256: assertSha256(
+        expectedSourceSha256,
+        "expectedSourceSha256",
+      ),
     });
     if (!workspace) {
       throw new ProjectFileRepositoryError(

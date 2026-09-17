@@ -82,6 +82,17 @@ The renderer's main workspace facts are partitioned as follows:
   Session action that accepts the exact active write, advances only its proven
   durable revision/Hash and decides whether the current document is complete;
   it preserves a newer queued edit and publishes any verified route/Hash
+  authority. The same Workflow is the sole application owner for reload from
+  disk, projection-only Canvas repair, acceptance of an exact shown external
+  preview and conflict-bound adoption of an exact external preview. These
+  commands fence confirmation/preview evidence to context + receipt + revision
+  + Working Hash, coalesce only an identical operation key and report permission,
+  permission (`not-required` or `accepted`), accepted source and restored page
+  as separate phases. A durable acceptance that returns after navigation keeps
+  `source: accepted` and reports `page: not-current` without publishing into the
+  new page. Once source acceptance
+  publishes, a Canvas failure never rolls it back; repair joins the existing
+  Document flush and never reads or adopts disk bytes.
   authority change in the same snapshot. Idle publication requires no
   active/pending write and
   confirmed current revision/Hash, but does not wait for recovery-journal
@@ -1091,6 +1102,16 @@ Every durable command defines:
 4. explicit rejected and unknown outcomes;
 5. an authoritative query used for reconciliation;
 6. deterministic retry or a genuine user-owned semantic conflict.
+
+External-source adoption additionally carries the observed disk SHA through the
+Repository mutation as a CAS precondition. Before any Working Copy state or
+runtime write, Repository also resolves and matches the exact requested
+`projectId + documentId + sourcePath`; a stale binding cannot mutate whichever
+project now owns that path. The mutation returns the exact bytes
+and Hash it accepted; the application projects that receipt directly and must
+not perform a second source read. A stale preview therefore cannot authorize
+newer disk bytes. An older operation completion/finally may settle only its own
+identity and cannot unlock or clear a newer page operation.
 
 Network failure after a mutation is an **unknown outcome**, not a rejection.
 The client queries authority before retrying. A retry action must change its

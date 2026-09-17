@@ -732,6 +732,8 @@ export class WorkspaceController {
             invalidateRenderAcks: this.#canvasPort.invalidateRenderAcks,
             verifyRendered: documentWorkflow.canvas?.verifyRendered,
             freeze: documentWorkflow.canvas?.freeze,
+            unlock: documentWorkflow.canvas?.unlock,
+            rebuildActiveFrame: documentWorkflow.canvas?.rebuildActiveFrame,
             adoptHistorySource: documentWorkflow.canvas?.adoptHistorySource,
           },
         },
@@ -1263,13 +1265,6 @@ export class WorkspaceController {
     return this.#projectSession.matches(context);
   }
 
-  reloadDocumentCanvas() {
-    return this.#documentSession.reloadCanvas({
-      context: this.#projectSession.context,
-      operationId: "workspace-reload-canvas",
-    });
-  }
-
   dismissActiveRun() {
     if (!this.#runSession) return null;
     const activeRun = this.#runSession.activeRun;
@@ -1563,11 +1558,7 @@ export class WorkspaceController {
   }
 
   retryCanvasVerification(input) {
-    this.#documentSession.reloadCanvas({
-      context: input?.context || this.#projectSession.context,
-      operationId: "workspace-retry-canvas",
-    });
-    return this.#requireDocumentWorkflow().ensureCurrentCanvas(input);
+    return this.#requireDocumentWorkflow().repairCurrentCanvas(input);
   }
 
   resumeDeferredExternalProject() {
@@ -2057,20 +2048,24 @@ export class WorkspaceController {
     return operation;
   }
 
-  reloadDocumentAuthority(input) {
-    return this.#requireDocumentWorkflow().reloadAuthority(input);
+  reloadDocumentFromDisk(input) {
+    return this.#requireDocumentWorkflow().reloadFromDisk(input);
   }
 
   previewExternalDocumentSource(input) {
     return this.#requireDocumentWorkflow().previewExternalSource(input);
   }
 
-  forceUnlockDocumentConflict(input) {
-    return this.#requireDocumentWorkflow().forceUnlockConflict(input);
+  adoptShownExternalDocumentPreview(input) {
+    return this.#requireDocumentWorkflow().adoptShownExternalPreview(input);
   }
 
-  ensureDocumentCanvas(input) {
-    return this.#requireDocumentWorkflow().ensureCurrentCanvas(input);
+  acceptExternalDocumentConflict(input) {
+    return this.#requireDocumentWorkflow().acceptExternalConflict(input);
+  }
+
+  repairDocumentCanvas(input) {
+    return this.#requireDocumentWorkflow().repairCurrentCanvas(input);
   }
 
   reconcileDocumentBoundary(input) {
