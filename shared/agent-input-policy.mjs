@@ -1,8 +1,8 @@
-// Native HTTP Agent policy shared by submission estimates and frozen execution.
+// Native HTTP Agent resource-safety policy for frozen execution. This bound
+// protects Bridge parsing and memory use; it is not a model-capacity estimate.
 // Callers own bytes, identity, configuration snapshots and error presentation.
-export const HTTP_AGENT_MAX_INPUT_BYTES = 2 * 1024 * 1024;
-export const HTTP_AGENT_PREFLIGHT_RESERVE_BYTES = 256 * 1024;
-export const HTTP_AGENT_INPUT_POLICY_REVISION = "2026-09-12.1";
+export const HTTP_AGENT_MAX_SERIALIZED_INPUT_BYTES = 2 * 1024 * 1024;
+export const HTTP_AGENT_INPUT_POLICY_REVISION = "2026-09-17.1";
 
 export function httpAgentSupportsTextAttachment({ mediaType, fileName } = {}) {
   const type = String(mediaType || "").toLowerCase();
@@ -22,28 +22,4 @@ export function decodeHttpAgentText(bytes, { allowEmpty = true } = {}) {
   } catch {
     return null;
   }
-}
-
-export function httpAgentInputBudget({ inputBytes, baseHtmlBytes, model }) {
-  if (![inputBytes, baseHtmlBytes].every((value) => Number.isSafeInteger(value) && value >= 0)) {
-    throw new TypeError("HTTP Agent budgets require verified nonnegative byte counts.");
-  }
-  const inputTokens = Math.ceil(inputBytes / 3) + 1_200;
-  const outputTokens = Math.ceil(Math.ceil(baseHtmlBytes / 3) * 1.15);
-  const known = model?.supportsCompleteHtml === true
-    && [model.contextWindow, model.recommendedMaxInputTokens, model.maxOutputTokens]
-      .every((value) => Number.isSafeInteger(value) && value > 0);
-  const exceeded = inputBytes > HTTP_AGENT_MAX_INPUT_BYTES
-    || model?.supportsCompleteHtml === false
-    || (known && (inputTokens > model.recommendedMaxInputTokens
-      || outputTokens > model.maxOutputTokens
-      || inputTokens + outputTokens > model.contextWindow));
-  return Object.freeze({
-    status: exceeded ? "exceeded" : known ? "estimated-fit" : "unknown",
-    inputTokens,
-    outputTokens,
-    // Optional headroom cannot exceed the context remaining after this input.
-    maxOutputTokens: known && !exceeded ? Math.min(model.maxOutputTokens,
-      model.contextWindow - inputTokens, Math.max(4_096, Math.ceil(outputTokens * 1.5))) : null,
-  });
 }

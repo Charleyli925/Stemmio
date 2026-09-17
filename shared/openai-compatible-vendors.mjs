@@ -133,7 +133,6 @@ export function publicModelsForVendor(vendorId, environment = {}) {
     isDefault: entry.recommended === true,
     releaseChannel: entry.releaseChannel,
     contextWindow: entry.contextWindow,
-    recommendedMaxInputTokens: entry.recommendedMaxInputTokens,
     maxOutputTokens: entry.maxOutputTokens,
     supportsCompleteHtml: entry.supportsCompleteHtml,
     reasoningChoices: entry.reasoningOptions.map((id) => CHOICE_BY_ID.get(id)).filter(Boolean),

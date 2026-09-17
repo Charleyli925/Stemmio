@@ -877,6 +877,8 @@ API Key 摘要读取实际保存结果（已在此 Mac 保存 / 仅本次使用 
   用户恢复方式 `recoveryKind`。只有 `retry` 才显示“重新发送”；限流显示稍后重试，认证、
   模型、厂商和安装问题分别引导对应恢复动作，不能仅因没有 output/completion 残留就伪装成
   原样重试。运行区始终最多两个操作，动作只由结构化错误码派生，不解析 provider 文案。
+  输出截断属于 `change-model`，保留同一冻结 Request/Attempt 并引导用户更换模型或
+  Agent；不用原配置自动重发、降低思考档位或拼接部分 HTML。
   只有当前 Bridge 已确认所拥有的进程组退出且没有
   output/completion 残留，同一 Request 才具备技术重试安全性。
   Bridge 崩溃留下启动租约、进程清理无法确认或已有残留时，本轮不可重试、不可改为复制；

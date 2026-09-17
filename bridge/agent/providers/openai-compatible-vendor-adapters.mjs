@@ -43,12 +43,29 @@ function normalizeResponse(payload) {
   });
 }
 
-function buildChatRequest(vendorId, { modelId, messages, reasoning, maxOutputTokens } = {}) {
-  const outputField = Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0
-    ? vendorId === "openai"
-      ? { max_completion_tokens: maxOutputTokens }
-      : { max_tokens: maxOutputTokens }
-    : {};
+function localCapabilityModelId(modelCapability) {
+  const value = String(modelCapability?.providerModelId || modelCapability?.modelId
+    || modelCapability?.id || "");
+  return value.replace(/^stemmio:/u, "");
+}
+
+function outputParameter(vendorId, modelId, modelCapability) {
+  if (vendorId === "custom") return null;
+  const capabilityModelId = localCapabilityModelId(modelCapability);
+  if (capabilityModelId !== String(modelId || "")
+    || !Number.isSafeInteger(modelCapability.maxOutputTokens)
+    || modelCapability.maxOutputTokens <= 0) {
+    throw new TypeError("Known HTTP Agent models require a matching maximum-output capability.");
+  }
+  return Object.freeze({
+    name: vendorId === "openai" ? "max_completion_tokens" : "max_tokens",
+    value: modelCapability.maxOutputTokens,
+  });
+}
+
+function buildChatRequest(vendorId, { modelId, messages, reasoning, modelCapability } = {}) {
+  const output = outputParameter(vendorId, modelId, modelCapability);
+  const outputField = output ? { [output.name]: output.value } : {};
   return Object.freeze({
     endpoint: "/chat/completions",
     body: Object.freeze({
@@ -68,12 +85,8 @@ function adapter(vendorId) {
     reasoningFields(modelId, reasoning) {
       return openaiCompatibleChatThinkingFields(id, modelId, reasoning);
     },
-    tokenBudget(model) {
-      return model ? Object.freeze({
-        contextWindow: model.contextWindow,
-        recommendedMaxInputTokens: model.recommendedMaxInputTokens,
-        maxOutputTokens: model.maxOutputTokens,
-      }) : null;
+    outputParameter(modelId, modelCapability) {
+      return outputParameter(id, modelId, modelCapability);
     },
     buildChatRequest(input) { return buildChatRequest(id, input); },
     normalizeResponse,
