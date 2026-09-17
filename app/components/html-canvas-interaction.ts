@@ -140,14 +140,95 @@ export function identifyingTextRangeAtPoint(
 ): Range | null {
   const hit = textHitAtPoint(documentNode, target, point);
   if (!hit) return null;
-  const start = hit.offset >= hit.textNode.data.length
-    ? hit.textNode.data.length - 1
-    : hit.offset;
-  const range = documentNode.createRange();
-  range.setStart(hit.textNode, start);
-  range.setEnd(hit.textNode, start + 1);
-  if (!nativeTextRangeContainsPoint(range, point)) return null;
-  return range;
+  // Caret hit-testing reports an insertion boundary. A point on the right
+  // half of a glyph may therefore resolve immediately after that glyph, so
+  // validate both adjacent characters before treating the point as empty
+  // layout space.
+  const starts = [
+    Math.min(hit.offset, hit.textNode.data.length - 1),
+    Math.max(0, hit.offset - 1),
+  ];
+  for (const start of new Set(starts)) {
+    const range = documentNode.createRange();
+    range.setStart(hit.textNode, start);
+    range.setEnd(hit.textNode, start + 1);
+    if (nativeTextRangeContainsPoint(range, point)) return range;
+  }
+  return null;
+}
+
+function nativeLineBreakRangeContainsPoint(
+  lineBreak: HTMLBRElement,
+  point: TextCaretPoint,
+): boolean {
+  const range = lineBreak.ownerDocument.createRange();
+  range.setStartBefore(lineBreak);
+  range.setEndAfter(lineBreak);
+  const rects = Array.from(range.getClientRects());
+  if (rects.length === 0) rects.push(range.getBoundingClientRect());
+  const blockTolerance = 2;
+  const emptyLineInlineTarget = 10;
+  return rects.some((rect) => (
+    rect.height > 0
+    && point.clientY >= rect.top - blockTolerance
+    && point.clientY <= rect.bottom + blockTolerance
+    && point.clientX >= rect.left - blockTolerance
+    // A BR caret has a zero-width box. Keep the accepted area to the small
+    // line-start target used by a native caret; never widen it to host padding.
+    && point.clientX <= Math.max(
+      rect.right + blockTolerance,
+      rect.left + emptyLineInlineTarget,
+    )
+  ));
+}
+
+function nativeLineBreakHostAtPoint(
+  documentNode: Document,
+  point: TextCaretPoint,
+  sourceIndex: SourceIndexValue,
+): HTMLElement | null {
+  const hits = typeof documentNode.elementsFromPoint === "function"
+    ? documentNode.elementsFromPoint(point.clientX, point.clientY)
+    : [];
+  const seen = new Set<HTMLBRElement>();
+  for (const hit of hits) {
+    if (!hit || hit.nodeType !== 1) continue;
+    const hitElement = hit as HTMLElement;
+    const sourceSurface = hitElement.closest<HTMLElement>(`[${SOURCE_ELEMENT_ATTRIBUTE}]`);
+    if (!sourceSurface) continue;
+    const candidates = sourceSurface.tagName === "BR"
+      ? [sourceSurface as HTMLBRElement]
+      : Array.from(sourceSurface.querySelectorAll<HTMLBRElement>(
+        `br[${SOURCE_ELEMENT_ATTRIBUTE}]`,
+      ));
+    for (const lineBreak of candidates) {
+      if (seen.has(lineBreak) || !nativeLineBreakRangeContainsPoint(lineBreak, point)) continue;
+      seen.add(lineBreak);
+      const host = nativeEditHostForElement(lineBreak, sourceIndex);
+      if (host) return host;
+    }
+  }
+  return null;
+}
+
+export function nativeEditHostAtPoint(
+  documentNode: Document,
+  point: TextCaretPoint,
+  sourceIndex: SourceIndexValue | null,
+): HTMLElement | null {
+  if (!sourceIndex) return null;
+  const caretPosition = documentNode.caretPositionFromPoint?.(point.clientX, point.clientY);
+  const caretRange = !caretPosition
+    ? documentNode.caretRangeFromPoint?.(point.clientX, point.clientY)
+    : null;
+  const pointNode = caretPosition?.offsetNode || caretRange?.startContainer;
+  const textNode = pointNode?.nodeType === Node.TEXT_NODE ? pointNode as Text : null;
+  const sourceElement = textNode?.parentElement?.closest<HTMLElement>(
+    `[${SOURCE_ELEMENT_ATTRIBUTE}]`,
+  ) ?? null;
+  const host = sourceElement ? nativeEditHostForElement(sourceElement, sourceIndex) : null;
+  if (host && identifyingTextRangeAtPoint(documentNode, host, point)) return host;
+  return nativeLineBreakHostAtPoint(documentNode, point, sourceIndex);
 }
 
 export function directTextNodeAtPoint(

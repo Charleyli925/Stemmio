@@ -81,6 +81,39 @@ test("clicking a filled module's padding selects that module", async ({
   await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
 });
 
+test("double-clicking text inside a structurally selected module enters the exact text host", async ({
+  page,
+}) => {
+  const { editor, frame } = await loadFixture(page, "module-padding-hit.html");
+  const moduleTarget = frame.locator(caseSelector("filled-module"));
+  const copy = frame.locator(caseSelector("module-padding-copy"));
+  const selectedOutline = editor.locator(
+    '[data-testid="canvas-target-outline"][data-tone="selected"]',
+  );
+
+  await moduleTarget.click({ position: { x: 20, y: 20 } });
+  await expect(moduleTarget).toHaveAttribute("data-html-canvas-selected", "module");
+  await expect(copy).not.toHaveAttribute("contenteditable", /.+/u);
+
+  await copy.dblclick();
+  await expect(copy).toHaveAttribute("contenteditable", "true");
+  await expect(copy).toHaveAttribute("data-html-canvas-selected", "part");
+  await expect(moduleTarget).not.toHaveAttribute("data-html-canvas-selected", /.+/u);
+  await expect(editor.getByRole("button", { name: "编辑中", exact: true }))
+    .toHaveAttribute("aria-pressed", "true");
+
+  const [copyRect, outlineRect] = await Promise.all([
+    copy.boundingBox(),
+    selectedOutline.boundingBox(),
+  ]);
+  expect(copyRect).not.toBeNull();
+  expect(outlineRect).not.toBeNull();
+  expect(outlineRect.x).toBeLessThanOrEqual(copyRect.x - 2);
+  expect(outlineRect.y).toBeLessThanOrEqual(copyRect.y - 2);
+  expect(outlineRect.width).toBeGreaterThanOrEqual(copyRect.width + 4);
+  expect(outlineRect.height).toBeGreaterThanOrEqual(copyRect.height + 4);
+});
+
 test("selected chrome reuses hover geometry outside authored clipping", async ({ page }) => {
   const { editor, frame } = await loadFixture(page, "selected-overlay-clipping.html");
   const target = frame.locator(caseSelector("selected-overlay-target"));

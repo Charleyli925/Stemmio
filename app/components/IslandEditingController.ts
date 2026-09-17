@@ -130,7 +130,7 @@ function leaseStampsMatch(
     && left.hostId === right.hostId;
 }
 
-function captureAttribute(element: HTMLElement, name: string): SavedAttribute {
+function captureAttribute(element: Element, name: string): SavedAttribute {
   return {
     present: element.hasAttribute(name),
     value: element.getAttribute(name),
@@ -138,7 +138,7 @@ function captureAttribute(element: HTMLElement, name: string): SavedAttribute {
 }
 
 function restoreAttribute(
-  element: HTMLElement,
+  element: Element,
   name: string,
   saved: SavedAttribute,
 ): void {
@@ -527,12 +527,12 @@ const IMMUTABLE_FORMATTING_TAGS = new Set([
   "wbr",
 ]);
 
-function isImmutableEditContainer(element: HTMLElement, hostElement: HTMLElement): boolean {
+function isImmutableEditContainer(element: Element, hostElement: HTMLElement): boolean {
   return element !== hostElement
     && isFrozenEditableIslandSubtree(element.localName, element.namespaceURI || undefined);
 }
 
-function isFrozenSubtreeRoot(element: HTMLElement, hostElement: HTMLElement): boolean {
+function isFrozenSubtreeRoot(element: Element, hostElement: HTMLElement): boolean {
   if (!isImmutableEditContainer(element, hostElement)) return false;
   let ancestor = element.parentElement;
   while (ancestor && ancestor !== hostElement) {
@@ -619,10 +619,11 @@ export class IslandEditingController {
 
   private readonly savedAttributes = new Map<string, SavedAttribute>();
 
-  private readonly immutableContainerAttributes: Array<{
-    index: number;
-    saved: SavedAttribute;
-  }> = [];
+  private readonly immutableContainerAttributes = new WeakMap<Element, SavedAttribute>();
+
+  private readonly liveImmutableContainers = new Set<Element>();
+
+  private pendingLiveImmutableContainers: Set<Element> | null = null;
 
   private readonly cleanup: Array<() => void> = [];
 
@@ -652,6 +653,15 @@ export class IslandEditingController {
 
   private inputDeliveryTimer: number | null = null;
 
+  private readonly cloneElement = (original: Element, clone: Element): void => {
+    this.callbacks.onCloneElement?.(original, clone);
+    const saved = this.immutableContainerAttributes.get(original);
+    if (saved) {
+      this.immutableContainerAttributes.set(clone, saved);
+      this.pendingLiveImmutableContainers?.add(clone);
+    }
+  };
+
   constructor(options: IslandEditingControllerOptions) {
     this.hostElement = options.hostElement;
     this.baseline = { ...options.baseline };
@@ -669,104 +679,115 @@ export class IslandEditingController {
       onCloneElement: options.onCloneElement,
       onSourceChildrenRestored: options.onSourceChildrenRestored,
     };
-    this.baselineCanonicalInnerHtml = this.normalizeInnerHtml(
-      this.baselineInnerHtml,
-      { baselineInnerHtml: this.baselineInnerHtml },
-    );
-    let liveDomMatchesSource = false;
     try {
-      liveDomMatchesSource = this.serializeLiveCanonical()
-        === this.baselineCanonicalInnerHtml;
-    } catch {
-      liveDomMatchesSource = false;
-    }
-    if (!liveDomMatchesSource) {
-      restoreSourceChildren(this.hostElement, this.baselineInnerHtml);
-      this.callbacks.onSourceChildrenRestored?.(Array.from(this.hostElement.querySelectorAll("*")));
-      if (
-        this.serializeLiveCanonical()
-        !== this.baselineCanonicalInnerHtml
-      ) {
-        throw new Error(
-          "源码可编辑岛无法建立一致的受控 DOM 基线。",
-        );
+      this.baselineCanonicalInnerHtml = this.normalizeInnerHtml(
+        this.baselineInnerHtml,
+        { baselineInnerHtml: this.baselineInnerHtml },
+      );
+      let liveDomMatchesSource = false;
+      try {
+        liveDomMatchesSource = this.serializeLiveCanonical()
+          === this.baselineCanonicalInnerHtml;
+      } catch {
+        liveDomMatchesSource = false;
       }
-    }
-    Array.from(this.hostElement.querySelectorAll<HTMLElement>("*"))
-      .filter((element) => isFrozenSubtreeRoot(element, this.hostElement))
-      .forEach((element, index) => {
-        this.immutableContainerAttributes.push({
-          index,
-          saved: captureAttribute(element, "contenteditable"),
+      if (!liveDomMatchesSource) {
+        restoreSourceChildren(this.hostElement, this.baselineInnerHtml);
+        this.callbacks.onSourceChildrenRestored?.(Array.from(this.hostElement.querySelectorAll("*")));
+        if (
+          this.serializeLiveCanonical()
+          !== this.baselineCanonicalInnerHtml
+        ) {
+          throw new Error(
+            "源码可编辑岛无法建立一致的受控 DOM 基线。",
+          );
+        }
+      }
+      Array.from(this.hostElement.querySelectorAll("*"))
+        .filter((element) => isFrozenSubtreeRoot(element, this.hostElement))
+        .forEach((element) => {
+          this.immutableContainerAttributes.set(
+            element,
+            captureAttribute(element, "contenteditable"),
+          );
+          this.liveImmutableContainers.add(element);
+          element.setAttribute("contenteditable", "false");
         });
-        element.setAttribute("contenteditable", "false");
+      this.ownedCanonicalInnerHtml = this.baselineCanonicalInnerHtml;
+      this.baselineChildren = Array.from(this.hostElement.childNodes).map(
+        (node) => cloneOwnedNode(node, this.cloneElement),
+      );
+      this.baselineSelection = options.baseline.selection ?? {
+        anchor: options.baseline.text.length,
+        focus: options.baseline.text.length,
+        affinity: "right",
+      };
+      this.lastValidatedChildren = this.baselineChildren.map(
+        (node) => cloneOwnedNode(node, this.cloneElement),
+      );
+      this.lastValidatedSelection = { ...this.baselineSelection };
+
+      for (const name of SESSION_ATTRIBUTES) {
+        this.savedAttributes.set(name, captureAttribute(this.hostElement, name));
+      }
+      this.hostElement.setAttribute("contenteditable", "true");
+      this.hostElement.setAttribute("spellcheck", "false");
+      this.hostElement.setAttribute("role", "textbox");
+      this.hostElement.setAttribute("data-stemmio-editing", "true");
+      if (options.ariaLabel) {
+        this.hostElement.setAttribute("aria-label", options.ariaLabel);
+      }
+
+      const listen = <K extends keyof HTMLElementEventMap>(
+        target: HTMLElement | Document,
+        type: K,
+        listener: EventListener,
+        capture = false,
+      ) => {
+        target.addEventListener(type, listener, capture);
+        this.cleanup.push(() => target.removeEventListener(type, listener, capture));
+      };
+      listen(this.hostElement, "beforeinput", this.handleBeforeInput as EventListener);
+      listen(this.hostElement, "input", this.handleInput as EventListener);
+      listen(this.hostElement, "paste", this.handlePaste as EventListener);
+      listen(this.hostElement, "compositionstart", this.handleCompositionStart as EventListener);
+      listen(this.hostElement, "compositionend", this.handleCompositionEnd as EventListener);
+      listen(this.hostElement, "blur", this.handleBlur as EventListener);
+      listen(this.hostElement, "keydown", this.handleKeyDown as EventListener);
+      listen(
+        this.hostElement.ownerDocument,
+        "selectionchange",
+        this.handleSelectionChange as EventListener,
+      );
+
+      this.observer = new MutationObserver((records) => {
+        if (
+          records.length === 0
+          || this.expectedMutationDepth > 0
+          || this.disposed
+          || this.composing
+        ) return;
+        this.restoreLastValidatedDraft();
+        this.reportError(new Error(
+          "页面在编辑之外发生了变化，已恢复到上一次安全内容。",
+        ));
       });
-    this.ownedCanonicalInnerHtml = this.baselineCanonicalInnerHtml;
-    this.baselineChildren = Array.from(this.hostElement.childNodes).map(
-      (node) => cloneOwnedNode(node, this.callbacks.onCloneElement),
-    );
-    this.baselineSelection = options.baseline.selection ?? {
-      anchor: options.baseline.text.length,
-      focus: options.baseline.text.length,
-      affinity: "right",
-    };
-    this.lastValidatedChildren = this.baselineChildren.map(
-      (node) => cloneOwnedNode(node, this.callbacks.onCloneElement),
-    );
-    this.lastValidatedSelection = { ...this.baselineSelection };
-
-    for (const name of SESSION_ATTRIBUTES) {
-      this.savedAttributes.set(name, captureAttribute(this.hostElement, name));
+      this.observer.observe(this.hostElement, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      this.ready = true;
+      this.emitState();
+    } catch (cause) {
+      this.detach();
+      this.restoreTransientAttributes();
+      this.pendingCommand = null;
+      this.compositionSnapshot = null;
+      this.clearExpectedInputDelivery();
+      this.disposed = true;
+      throw cause;
     }
-    this.hostElement.setAttribute("contenteditable", "true");
-    this.hostElement.setAttribute("spellcheck", "false");
-    this.hostElement.setAttribute("role", "textbox");
-    this.hostElement.setAttribute("data-stemmio-editing", "true");
-    if (options.ariaLabel) {
-      this.hostElement.setAttribute("aria-label", options.ariaLabel);
-    }
-
-    const listen = <K extends keyof HTMLElementEventMap>(
-      target: HTMLElement | Document,
-      type: K,
-      listener: EventListener,
-      capture = false,
-    ) => {
-      target.addEventListener(type, listener, capture);
-      this.cleanup.push(() => target.removeEventListener(type, listener, capture));
-    };
-    listen(this.hostElement, "beforeinput", this.handleBeforeInput as EventListener);
-    listen(this.hostElement, "input", this.handleInput as EventListener);
-    listen(this.hostElement, "paste", this.handlePaste as EventListener);
-    listen(this.hostElement, "compositionstart", this.handleCompositionStart as EventListener);
-    listen(this.hostElement, "compositionend", this.handleCompositionEnd as EventListener);
-    listen(this.hostElement, "blur", this.handleBlur as EventListener);
-    listen(this.hostElement, "keydown", this.handleKeyDown as EventListener);
-    listen(
-      this.hostElement.ownerDocument,
-      "selectionchange",
-      this.handleSelectionChange as EventListener,
-    );
-
-    this.observer = new MutationObserver((records) => {
-      if (
-        records.length === 0
-        || this.expectedMutationDepth > 0
-        || this.disposed
-        || this.composing
-      ) return;
-      this.restoreLastValidatedDraft();
-      this.reportError(new Error(
-        "页面在编辑之外发生了变化，已恢复到上一次安全内容。",
-      ));
-    });
-    this.observer.observe(this.hostElement, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-    });
-    this.ready = true;
-    this.emitState();
   }
 
   private hasCurrentLease(): boolean {
@@ -981,7 +1002,7 @@ export class IslandEditingController {
     this.normalizeCollapsedInsertionAffinity();
     this.compositionSnapshot = {
       children: Array.from(this.hostElement.childNodes).map(
-        (node) => cloneOwnedNode(node, this.callbacks.onCloneElement),
+        (node) => cloneOwnedNode(node, this.cloneElement),
       ),
       selection: this.getSelection(),
     };
@@ -1000,7 +1021,7 @@ export class IslandEditingController {
     this.compositionSnapshot = null;
     if (snapshot) {
       this.runExpectedMutation(() => {
-        restoreChildren(this.hostElement, snapshot.children, this.callbacks.onCloneElement);
+        this.restoreOwnedChildren(snapshot.children);
         setSelectionValue(this.hostElement, snapshot.selection);
         if (
           !this.compositionEscapeRequested
@@ -1033,7 +1054,7 @@ export class IslandEditingController {
       this.observer?.takeRecords();
       if (snapshot) {
         this.runExpectedMutation(() => {
-          restoreChildren(this.hostElement, snapshot.children, this.callbacks.onCloneElement);
+          this.restoreOwnedChildren(snapshot.children);
           setSelectionValue(this.hostElement, snapshot.selection);
         });
       }
@@ -1156,17 +1177,35 @@ export class IslandEditingController {
 
   private refreshLastValidatedDraft(): void {
     this.lastValidatedChildren = Array.from(this.hostElement.childNodes).map(
-      (node) => cloneOwnedNode(node, this.callbacks.onCloneElement),
+      (node) => cloneOwnedNode(node, this.cloneElement),
     );
     this.lastValidatedSelection = this.getSelection();
   }
 
+  private restoreOwnedChildren(children: Node[]): void {
+    const nextLiveImmutableContainers = new Set<Element>();
+    this.pendingLiveImmutableContainers = nextLiveImmutableContainers;
+    try {
+      restoreChildren(this.hostElement, children, this.cloneElement);
+    } catch (cause) {
+      this.pendingLiveImmutableContainers = null;
+      throw cause;
+    }
+    this.pendingLiveImmutableContainers = null;
+    for (const element of this.liveImmutableContainers) {
+      const saved = this.immutableContainerAttributes.get(element);
+      if (saved) restoreAttribute(element, "contenteditable", saved);
+    }
+    this.liveImmutableContainers.clear();
+    for (const element of nextLiveImmutableContainers) {
+      this.liveImmutableContainers.add(element);
+    }
+  }
+
   private restoreLastValidatedDraft(): void {
     const selection = { ...this.lastValidatedSelection };
-    this.runExpectedMutation(() => restoreChildren(
-      this.hostElement,
+    this.runExpectedMutation(() => this.restoreOwnedChildren(
       this.lastValidatedChildren,
-      this.callbacks.onCloneElement,
     ));
     const length = nativeLogicalText(this.hostElement).length;
     setSelectionValue(this.hostElement, {
@@ -1231,6 +1270,28 @@ export class IslandEditingController {
 
   private collapsedRangeAtPoint(point: { clientX: number; clientY: number }): Range | null {
     const documentNode = this.hostElement.ownerDocument;
+    // Chromium may snap caretPositionFromPoint on an empty BR line back to
+    // the nearest text node. Resolve the actual line-start caret first so a
+    // validated blank-line activation cannot jump to unrelated text.
+    for (const lineBreak of this.hostElement.querySelectorAll("br")) {
+      const hitRange = documentNode.createRange();
+      hitRange.setStartBefore(lineBreak);
+      hitRange.setEndAfter(lineBreak);
+      const rects = Array.from(hitRange.getClientRects());
+      if (rects.length === 0) rects.push(hitRange.getBoundingClientRect());
+      const hitsLineStart = rects.some((rect) => (
+        rect.height > 0
+        && point.clientY >= rect.top - 2
+        && point.clientY <= rect.bottom + 2
+        && point.clientX >= rect.left - 2
+        && point.clientX <= Math.max(rect.right + 2, rect.left + 10)
+      ));
+      if (!hitsLineStart) continue;
+      const caret = documentNode.createRange();
+      caret.setStartBefore(lineBreak);
+      caret.collapse(true);
+      return caret;
+    }
     const caretPosition = documentNode.caretPositionFromPoint?.(
       point.clientX,
       point.clientY,
@@ -1542,7 +1603,7 @@ export class IslandEditingController {
     this.baselineCanonicalInnerHtml = canonical;
     this.ownedCanonicalInnerHtml = canonical;
     this.baselineChildren = Array.from(this.hostElement.childNodes).map(
-      (node) => cloneOwnedNode(node, this.callbacks.onCloneElement),
+      (node) => cloneOwnedNode(node, this.cloneElement),
     );
     this.baselineSelection = options.preserveLiveSelection
       ? this.getSelection()
@@ -1582,10 +1643,8 @@ export class IslandEditingController {
   rollback(): void {
     if (!this.hasCurrentLease()) return;
     const selection = this.getSelection();
-    this.runExpectedMutation(() => restoreChildren(
-      this.hostElement,
+    this.runExpectedMutation(() => this.restoreOwnedChildren(
       this.baselineChildren,
-      this.callbacks.onCloneElement,
     ));
     const length = nativeLogicalText(this.hostElement).length;
     setSelectionValue(this.hostElement, {
@@ -1635,6 +1694,17 @@ export class IslandEditingController {
     this.stateFrame = null;
   }
 
+  private restoreTransientAttributes(): void {
+    for (const [name, saved] of this.savedAttributes) {
+      restoreAttribute(this.hostElement, name, saved);
+    }
+    for (const element of this.liveImmutableContainers) {
+      const saved = this.immutableContainerAttributes.get(element);
+      if (saved) restoreAttribute(element, "contenteditable", saved);
+    }
+    this.liveImmutableContainers.clear();
+  }
+
   fenceDispose(): void {
     this.dispose();
   }
@@ -1642,16 +1712,7 @@ export class IslandEditingController {
   dispose(): void {
     if (this.disposed) return;
     this.detach();
-    for (const [name, saved] of this.savedAttributes) {
-      restoreAttribute(this.hostElement, name, saved);
-    }
-    const immutableContainers = Array.from(
-      this.hostElement.querySelectorAll<HTMLElement>("*"),
-    ).filter((element) => isImmutableEditContainer(element, this.hostElement));
-    for (const item of this.immutableContainerAttributes) {
-      const element = immutableContainers[item.index];
-      if (element) restoreAttribute(element, "contenteditable", item.saved);
-    }
+    this.restoreTransientAttributes();
     this.pendingCommand = null;
     this.compositionSnapshot = null;
     this.clearExpectedInputDelivery();
