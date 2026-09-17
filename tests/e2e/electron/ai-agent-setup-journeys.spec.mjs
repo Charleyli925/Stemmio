@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { randomBytes } from "node:crypto";
 import { closeStemmioGracefully } from "./helpers/electron-safe-cleanup.mjs";
 import {
   addComment, adoptReadyResult, candidateHtmlFiles, chooseModifyIntent, createCodexAcpE2ECommand,
@@ -21,6 +22,8 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
   const injectedEnv = {
     STEMMIO_CODEX_ACP_ALLOW_TEST_COMMAND: "1",
     STEMMIO_CODEX_ACP_COMMAND: codexCommand,
+    STEMMIO_E2E_RESTORE_CREDENTIAL: "1",
+    STEMMIO_E2E_CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
     ...stemmioHttpAgentEnv(httpAgent.baseUrl),
   };
   let launched = await launchStemmio({ activeSourcePath: fixture.sourcePath, injectedEnv });
@@ -40,6 +43,7 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     expect(bounds.height).toBe(16);
     await launched.page.screenshot({ path: path.join(screenshots, "settings-key-form.png"), animations: "disabled" });
     await card.getByRole("textbox", { name: "API Key" }).fill("sk-e2e-journey");
+    await card.getByRole("checkbox", { name: "在此 Mac 上记住 API Key" }).check();
     await card.getByRole("button", { name: "连接", exact: true }).click();
     await expect(settings.getByTestId("settings-agent-row-stemmio")).toContainText("DeepSeek · 已连接");
     const modelChoice = card.getByRole("combobox", { name: "当前模型" });
@@ -52,7 +56,9 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await expect(card.getByRole("combobox", { name: "思考深度" })).toHaveValue("high");
     await expect(settings.getByTestId("settings-agent-row-codex").locator(".settings-agent-default-badge")).toBeVisible();
     await expect(card.locator(".qoder-card-status")).toHaveCount(0);
-    await expect(card.getByTestId("agent-credential-summary")).toContainText("仅本次使用");
+    await expect(card.getByTestId("agent-credential-summary")).toContainText("已在此 Mac 保存");
+    const encryptedCredential = readFileSync(path.join(profile, "agent-session-credential.v1.json"), "utf8");
+    expect(encryptedCredential).not.toContain("sk-e2e-journey");
     await settings.getByTestId("settings-agent-row-stemmio").locator(".settings-agent-service-main").click();
     await expandSettingsAgent(settings, "stemmio");
     await expect(card.getByRole("combobox", { name: "思考深度" })).toHaveValue("high");
@@ -64,10 +70,8 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     settings = await openAgentSettingsPage(launched.page);
     await expandSettingsAgent(settings, "stemmio");
     card = settings.locator(".stemmio-availability-card");
-    // This isolated fixture intentionally does not restore a real credential.
-    // Reconnecting the same service must also preserve its saved configuration.
-    await card.getByRole("textbox", { name: "API Key" }).fill("sk-e2e-journey");
-    await card.getByRole("button", { name: "连接", exact: true }).click();
+    await expect(settings.getByTestId("settings-agent-row-stemmio")).toContainText("DeepSeek · 已连接");
+    await expect(card.getByTestId("agent-credential-summary")).toContainText("已在此 Mac 保存");
     await expect(card.getByRole("combobox", { name: "思考深度" })).toHaveValue("high");
     await expect(settings.getByTestId("settings-agent-row-codex").locator(".settings-agent-default-badge")).toBeVisible();
     await setDefaultSettingsAgent(settings, "stemmio");

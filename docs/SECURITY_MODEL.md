@@ -409,10 +409,25 @@ never written to `ui-preferences.json`, logs, GET responses or renderer
 snapshots. If the user explicitly checks “在此 Mac 上记住 API Key”, Main encrypts
 it with Electron `safeStorage` into `agent-session-credential.v1.json` and never
 returns the plaintext. Custom vendors may also persist the non-secret Model ID
-in that same file. Encryption unavailable refuses to persist and does not
-fall back to plaintext. Persist failure cannot be rewritten as a complete
-connection success. Shutdown discards the session copy; a remembered
-ciphertext may be restored into Coordinator memory after Bridge is ready.
+in that same file. The version-2 record at this compatibility path adds only a
+non-secret operation ID, random record ID and a bounded receipt/tombstone
+ledger; legacy version-1 ciphertext remains readable and is replaced only by
+an explicit save or clear. Main serializes every save and clear for this
+provider in accepted order. Operation replay returns the authoritative receipt,
+clear may use the record ID as a strict CAS, and a clear without one writes a
+tombstone after every mutation accepted before it so an older save cannot
+resurrect the Key. Encryption unavailable refuses to persist and does not fall
+back to plaintext. Missing, unavailable and corrupt records remain distinct;
+corrupt records are not automatically deleted. Persist failure cannot be
+rewritten as a complete connection success. Shutdown discards the session
+copy; a remembered ciphertext may be restored into Coordinator memory after
+Bridge is ready.
+Renderer `RunWorkflow` is the sole application coordinator for connection,
+remembered-credential persistence/reconciliation, clear/restore and default
+preference adoption. It may retain one short-lived Key only for an explicit
+save retry; `AgentCatalogState` receives only status, reason, operation ID and
+record ID. Workbench and Settings never receive a persistence callback or
+query Main directly for presentation state.
 Anthropic is not registered. Codex and Qoder do not accept a session Token.
 
 This is an explicit trusted-local-Agent policy, not hostile-process isolation.

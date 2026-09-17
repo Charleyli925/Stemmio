@@ -429,6 +429,11 @@ export class RunWorkflow {
   #accessRepair = null;
   #repairIntentSeq = 0;
   #defaultCommitSeq = 0;
+  #agentCredentialPort = null;
+  #agentPreferencesPort = null;
+  #heldAgentCredentials = new Map();
+  #latestCredentialOperationByProvider = new Map();
+  #credentialOperationSeq = 0;
   #disposed = false;
 
   constructor({
@@ -545,6 +550,8 @@ export class RunWorkflow {
     this.#hashPort = ports.hash;
     this.#scheduler = scheduler;
     this.#clock = clock;
+    this.#agentCredentialPort = ports.agentCredential || null;
+    this.#agentPreferencesPort = ports.agentPreferences || null;
     this.#visibility = visibility;
     if (typeof visibility?.addEventListener === "function") {
       this.#visibilityListener = () => this.#rescheduleForVisibility();
@@ -553,14 +560,46 @@ export class RunWorkflow {
     this.#agentCatalog = agentCatalog || new AgentCatalogState({
       bridgeClient,
       handoffPort: this.#handoffPort,
-      preferencesPort: ports.uiPreferences || null,
-      credentialStatusPort: ports.agentCredentialStatus || null,
+      configurationPreferencesPort: this.#agentPreferencesPort,
       clock,
     });
     this.#ownsAgentCatalog = !agentCatalog;
     this.#unsubscribeAgentCatalog = this.#agentCatalog.subscribe(() => {
       this.#publishSnapshot();
     });
+    if (this.#agentCredentialPort?.status) {
+      void this.#agentCredentialPort.status({}).then(async (status) => {
+        if (this.#disposed || !status) return;
+        const projectionStatus = status.status === "saved" || status.remembered === true
+          ? "saved"
+          : status.status === "unreadable" || status.reconnectRequired === true
+            ? "failed"
+            : "missing";
+        this.#agentCatalog.publishCredentialPersist("stemmio", {
+          status: projectionStatus,
+          reason: projectionStatus === "failed"
+            ? status.reason || "无法读取已保存的连接凭证。你仍可编辑项目。"
+            : null,
+          operationId: status.operationId,
+          recordId: status.recordId,
+          code: status.code,
+        });
+        if (projectionStatus === "saved") {
+          this.#agentCatalog.publishRestoredCredentialConnection("stemmio", {
+            vendorId: status.vendorId,
+          });
+          const selection = this.#agentCatalog.freezeProviderSelection("stemmio");
+          if (selection) await this.#agentCatalog.diagnose(selection).catch(() => null);
+        }
+      }).catch((cause) => {
+        if (this.#disposed) return;
+        this.#agentCatalog.publishCredentialPersist("stemmio", {
+          status: "failed",
+          reason: "无法确认已保存的 API Key。你仍可编辑项目。",
+          code: errorCode(cause, "AGENT_CREDENTIAL_STATUS_UNAVAILABLE"),
+        });
+      });
+    }
   }
 
   getSnapshot() {
@@ -602,6 +641,8 @@ export class RunWorkflow {
     this.#visibility = null;
     this.#uncertainSubmissions.clear();
     this.#agentStartsPending.clear();
+    this.#heldAgentCredentials.clear();
+    this.#latestCredentialOperationByProvider.clear();
     this.#unsubscribeAgentCatalog?.();
     this.#unsubscribeAgentCatalog = null;
     if (this.#ownsAgentCatalog) this.#agentCatalog.dispose();
@@ -788,7 +829,16 @@ export class RunWorkflow {
     try {
       await this.#agentCatalog.startLogin(frozen);
       if (this.#disposed) return stale({ kind: "agent-login" });
-      return succeeded({ availability: this.#agentCatalog.availability(frozen) });
+      const defaultCommit = await this.commitPendingDefaultAgent(frozen);
+      return Object.freeze({ ...succeeded({
+        availability: this.#agentCatalog.availability(frozen),
+        defaultCommit: defaultCommit.status === "succeeded"
+          ? defaultCommit.value || null
+          : { status: defaultCommit.status, code: defaultCommit.code || null },
+      }), ...(defaultCommit.status === "rejected" ? {
+        preferenceFailed: true,
+        reason: defaultCommit.reason || "已登录，但默认 Agent 没有保存。",
+      } : {}) });
     } catch (cause) {
       const cancelled = cause?.code === "AGENT_LOGIN_CANCELLED";
       if (cancelled) {
@@ -2533,7 +2583,7 @@ export class RunWorkflow {
     return this.#agentCatalog.clearPendingDefault(expectedIntentId);
   }
 
-  async commitPendingDefaultAgent(selection, { saveDefault } = {}) {
+  async commitPendingDefaultAgent(selection) {
     const pending = this.#agentCatalog.peekPendingDefaultIntent();
     if (!pending) return succeeded({ committed: false });
     const queued = pending.validatedSelection || pending.queuedSelection;
@@ -2544,19 +2594,21 @@ export class RunWorkflow {
     if (!ready) return succeeded({ committed: false });
     const intentId = pending.intentId;
     const generation = this.#defaultCommitSeq;
-    if (typeof saveDefault === "function") {
-      await saveDefault(ready.providerId);
+    if (!this.#agentPreferencesPort?.commitDefaultAgent) {
+      return rejected("AGENT_PREFERENCES_UNAVAILABLE", "默认 Agent 暂时无法保存。");
     }
-    if (generation !== this.#defaultCommitSeq
-      || this.#agentCatalog.peekPendingDefaultIntent()?.intentId !== intentId) {
-      const current = this.#agentCatalog.freezeSelected();
-      if (
-        current
-        && current.providerId !== ready.providerId
-        && typeof saveDefault === "function"
-      ) {
-        await saveDefault(current.providerId);
-      }
+    const isCurrent = () => generation === this.#defaultCommitSeq
+      && this.#agentCatalog.peekPendingDefaultIntent()?.intentId === intentId;
+    const saved = await this.#agentPreferencesPort.commitDefaultAgent({
+      intentId,
+      providerId: ready.providerId,
+      isCurrent,
+    });
+    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
+    if (saveStatus === "failed") {
+      return rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。");
+    }
+    if (saveStatus === "superseded" || !isCurrent()) {
       return succeeded({ committed: false, superseded: true });
     }
     const committed = this.#agentCatalog.commitPendingDefault(intentId);
@@ -2564,6 +2616,33 @@ export class RunWorkflow {
       committed: Boolean(committed),
       selection: committed,
     });
+  }
+
+  async selectDefaultAgent(selection) {
+    const selected = this.selectAgent(selection);
+    this.clearPendingDefaultAgent();
+    if (!this.#agentPreferencesPort?.commitDefaultAgent) {
+      return rejected("AGENT_PREFERENCES_UNAVAILABLE", "默认 Agent 暂时无法保存。");
+    }
+    this.#defaultCommitSeq += 1;
+    const intentId = `direct-default-${this.#defaultCommitSeq}`;
+    const generation = this.#defaultCommitSeq;
+    const isCurrent = () => generation === this.#defaultCommitSeq
+      && this.#agentCatalog.getSnapshot().selected?.providerId === selected.providerId;
+    const saved = await this.#agentPreferencesPort.commitDefaultAgent({
+      intentId,
+      providerId: selected.providerId,
+      isCurrent,
+    });
+    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
+    return saveStatus === "failed"
+      ? rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。")
+      : succeeded({
+        committed: saveStatus === "committed",
+        superseded: saveStatus === "superseded",
+        selection: selected,
+        intentId,
+      });
   }
 
   beginAccessRepair(run, field = "apiKey") {
@@ -2701,23 +2780,140 @@ export class RunWorkflow {
     this.#agentCatalog.applyDisabledProviderIds(ids);
   }
 
-  connectAgentApiKey(selection, apiKey, extras) {
-    return this.#agentCatalog.connectWithApiKey(selection, apiKey, extras)
-      .then((connection) => succeeded({
+  #nextCredentialOperationId(providerId, kind) {
+    this.#credentialOperationSeq += 1;
+    return `credential-${String(providerId || "agent")}-${kind}-${Math.max(0, Number(this.#clock.now()) || 0)}-${this.#credentialOperationSeq}`;
+  }
+
+  #publishCredentialProjection(providerId, projection) {
+    const operationId = projection?.operationId || null;
+    if (operationId && this.#latestCredentialOperationByProvider.get(providerId) !== operationId) {
+      return this.#agentCatalog.credentialPersist(providerId);
+    }
+    return this.#agentCatalog.publishCredentialPersist(providerId, projection);
+  }
+
+  async #persistHeldCredential(providerId, held) {
+    if (!this.#agentCredentialPort?.persist) {
+      const projection = {
+        status: "failed",
+        operationId: held.operationId,
+        reason: "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。",
+        code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      return projection;
+    }
+    this.#publishCredentialProjection(providerId, {
+      status: "pending",
+      operationId: held.operationId,
+      recordId: held.recordId,
+      reason: null,
+    });
+    try {
+      const result = await this.#agentCredentialPort.persist({
+        operationId: held.operationId,
+        apiKey: held.apiKey,
+        vendorId: held.vendorId,
+        baseUrl: held.baseUrl,
+        modelId: held.modelId,
+      });
+      const saved = result?.status === "saved" || (result?.ok === true && result?.remembered === true);
+      const superseded = result?.status === "superseded";
+      const status = saved ? "saved" : superseded ? "superseded" : "failed";
+      const projection = {
+        status,
+        operationId: held.operationId,
+        recordId: result?.recordId || null,
+        code: result?.code || null,
+        reason: status === "failed" ? "已连接，但新的 API Key 未保存。" : null,
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      if (saved || superseded) this.#heldAgentCredentials.delete(held.operationId);
+      return projection;
+    } catch (cause) {
+      const code = errorCode(cause, "AGENT_CREDENTIAL_PERSIST_UNKNOWN");
+      const deterministic = code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE"
+        || code === "AGENT_CREDENTIAL_PAYLOAD_INVALID";
+      const projection = {
+        status: deterministic ? "failed" : "unknown",
+        operationId: held.operationId,
+        recordId: held.recordId,
+        code,
+        reason: deterministic
+          ? "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。"
+          : "已连接，但 API Key 的保存结果尚未确认。",
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      return projection;
+    }
+  }
+
+  async connectAgentApiKey(selection, apiKey, extras = {}) {
+    let connection;
+    try {
+      connection = await this.#agentCatalog.connectWithApiKey(selection, apiKey, extras);
+    } catch (cause) {
+      const code = errorCode(cause, "AGENT_SESSION_CREDENTIAL_INVALID");
+      return rejected(
+        code,
+        this.#codecs.errorMessage(cause, "API Key 无效或已失效。"),
+        { field: credentialErrorField(code) || "form" },
+      );
+    }
+    let credentialPersist;
+    if (extras.remember === true && apiKey) {
+      const operationId = this.#nextCredentialOperationId(selection.providerId, "save");
+      const held = Object.freeze({
+        operationId,
+        apiKey: String(apiKey),
+        vendorId: extras.vendorId || null,
+        baseUrl: extras.baseUrl || null,
+        modelId: extras.modelId || null,
+        recordId: null,
+      });
+      this.#latestCredentialOperationByProvider.set(selection.providerId, operationId);
+      this.#heldAgentCredentials.set(operationId, held);
+      credentialPersist = await this.#persistHeldCredential(selection.providerId, held);
+    } else if (apiKey) {
+      const previousOperationId = this.#latestCredentialOperationByProvider.get(selection.providerId);
+      if (previousOperationId) this.#heldAgentCredentials.delete(previousOperationId);
+      this.#latestCredentialOperationByProvider.delete(selection.providerId);
+      credentialPersist = this.#agentCatalog.publishCredentialPersist(selection.providerId, {
+        status: "skipped",
+        reason: null,
+      });
+    } else {
+      // Model/reasoning updates reuse the Bridge-owned live credential. They
+      // must not rewrite or downgrade the independent remembered-Key result.
+      credentialPersist = this.#agentCatalog.credentialPersist(selection.providerId);
+    }
+    const defaultCommit = await this.commitPendingDefaultAgent(connection?.selection || selection);
+    const persistFailed = ["failed", "unknown"].includes(credentialPersist?.status);
+    const configurationFailed = connection?.configurationPersist?.status === "failed";
+    const preferenceFailed = configurationFailed || defaultCommit.status === "rejected";
+    return Object.freeze({
+      ...succeeded({
         availability: this.#agentCatalog.availability(selection),
         models: this.#agentCatalog.provider(selection)?.models || [],
         connection: this.#agentCatalog.provider(selection)?.connection || null,
         selection: connection?.selection || null,
-        credentialPersist: this.#agentCatalog.credentialPersist(selection.providerId),
-      }))
-      .catch((cause) => {
-        const code = errorCode(cause, "AGENT_SESSION_CREDENTIAL_INVALID");
-        return rejected(
-          code,
-          this.#codecs.errorMessage(cause, "API Key 无效或已失效。"),
-          { field: credentialErrorField(code) || "form" },
-        );
-      });
+        configurationPersist: connection?.configurationPersist || null,
+        credentialPersist,
+        defaultCommit: defaultCommit.status === "succeeded"
+          ? defaultCommit.value || null
+          : { status: defaultCommit.status, code: defaultCommit.code || null },
+      }),
+      ...(preferenceFailed ? { preferenceFailed: true } : {}),
+      ...(persistFailed ? {
+        persistFailed: true,
+        reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
+      } : preferenceFailed ? {
+        reason: configurationFailed
+          ? "已连接，但模型与思考深度没有保存。"
+          : defaultCommit.reason || "已连接，但默认 Agent 没有保存。",
+      } : {}),
+    });
   }
 
   disconnectAgentApiKey(selection) {
@@ -2732,30 +2928,46 @@ export class RunWorkflow {
       ));
   }
 
-  holdAgentCredential(selection, payload) {
-    return this.#agentCatalog.holdRememberedCredential(selection?.providerId, payload);
-  }
-
-  noteAgentCredentialPersist(selection, result) {
-    return this.#agentCatalog.noteCredentialPersist(selection?.providerId, result);
-  }
-
-  retryAgentCredentialPersist(selection, persist) {
-    return this.#agentCatalog.retryRememberedCredential(selection?.providerId, persist)
-      .then((credentialPersist) => (
-        credentialPersist?.status === "failed"
-          ? Object.freeze({
-            status: "succeeded",
-            persistFailed: true,
-            reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
-            value: { credentialPersist },
-          })
-          : succeeded({ credentialPersist })
-      ))
-      .catch((cause) => rejected(
-        errorCode(cause, "AGENT_CREDENTIAL_RETRY_UNAVAILABLE"),
-        this.#codecs.errorMessage(cause, "没有可重试保存的 API Key。"),
-      ));
+  async retryAgentCredentialPersist(selection) {
+    const providerId = selection?.providerId;
+    const current = this.#agentCatalog.credentialPersist(providerId);
+    const currentOperationId = current?.operationId;
+    let held = currentOperationId ? this.#heldAgentCredentials.get(currentOperationId) : null;
+    if (current?.status === "unknown" && currentOperationId && this.#agentCredentialPort?.status) {
+      try {
+        const reconciled = await this.#agentCredentialPort.status({ operationId: currentOperationId });
+        if (reconciled?.status === "saved" || reconciled?.remembered === true) {
+          this.#heldAgentCredentials.delete(currentOperationId);
+          const credentialPersist = this.#publishCredentialProjection(providerId, {
+            status: "saved",
+            operationId: currentOperationId,
+            recordId: reconciled.recordId,
+          });
+          return succeeded({ credentialPersist, reconciled: true });
+        }
+      } catch {
+        return succeeded({ credentialPersist: current, persistFailed: true, reconciled: false });
+      }
+    }
+    if (!held) {
+      return rejected("AGENT_CREDENTIAL_RETRY_UNAVAILABLE", "没有可重试保存的 API Key。");
+    }
+    if (current?.status !== "unknown") {
+      const operationId = this.#nextCredentialOperationId(providerId, "retry");
+      held = Object.freeze({ ...held, operationId });
+      this.#heldAgentCredentials.delete(currentOperationId);
+      this.#heldAgentCredentials.set(operationId, held);
+      this.#latestCredentialOperationByProvider.set(providerId, operationId);
+    }
+    const credentialPersist = await this.#persistHeldCredential(providerId, held);
+    return credentialPersist.status === "saved"
+      ? succeeded({ credentialPersist })
+      : Object.freeze({
+        status: "succeeded",
+        persistFailed: true,
+        reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
+        value: { credentialPersist },
+      });
   }
 
   async stopRunsForProvider(providerId) {
@@ -2773,11 +2985,19 @@ export class RunWorkflow {
     return Object.freeze(outcomes);
   }
 
-  async manageAgentAccess(kind, selection, {
-    credentials = null,
-    stopRelatedRuns = true,
-  } = {}) {
+  async manageAgentAccess(kind, selection, { stopRelatedRuns = true } = {}) {
     const frozen = selection;
+    const setProviderDisabled = async (disabled) => {
+      if (!this.#agentPreferencesPort?.setProviderDisabled) return true;
+      try {
+        return await this.#agentPreferencesPort.setProviderDisabled({
+          providerId: frozen.providerId,
+          disabled,
+        }) === true;
+      } catch {
+        return false;
+      }
+    };
     if (kind !== "reconnect" && stopRelatedRuns) {
       const stopped = await this.stopRunsForProvider(frozen.providerId);
       const stopFailed = stopped.find((outcome) => (
@@ -2792,10 +3012,42 @@ export class RunWorkflow {
       }
     }
     if (kind === "reconnect") {
-      if (typeof credentials?.restore === "function" && frozen.providerId === "stemmio") {
-        await credentials.restore().catch(() => null);
+      if (!await setProviderDisabled(false)) {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_FAILED",
+          "连接状态没有保存，请重试。",
+          { stage: "enable-provider" },
+        );
       }
-      return this.checkAgentUsability(frozen);
+      if (frozen.providerId === "stemmio") {
+        if (!this.#agentCredentialPort?.restore) {
+          return rejected("AGENT_CREDENTIAL_STORE_UNAVAILABLE", "已保存的 API Key 暂时无法恢复。");
+        }
+        try {
+          const restored = await this.#agentCredentialPort.restore();
+          if (restored?.ok !== true || restored?.restored !== true || restored?.reconnectRequired === true) {
+            return rejected(restored?.code || "AGENT_CREDENTIAL_RESTORE_FAILED", restored?.reason || "已保存的 API Key 无法恢复。");
+          }
+        } catch (cause) {
+          return rejected(errorCode(cause, "AGENT_CREDENTIAL_RESTORE_FAILED"), "已保存的 API Key 无法恢复。");
+        }
+      }
+      const checked = await this.checkAgentUsability(frozen);
+      if (checked.status === "succeeded") {
+        const defaultCommit = await this.commitPendingDefaultAgent(frozen);
+        if (defaultCommit.status === "rejected") {
+          return Object.freeze({
+            ...checked,
+            preferenceFailed: true,
+            reason: defaultCommit.reason || "已重新连接，但默认 Agent 没有保存。",
+            value: Object.freeze({
+              ...(checked.value || {}),
+              defaultCommit: { status: defaultCommit.status, code: defaultCommit.code || null },
+            }),
+          });
+        }
+      }
+      return checked;
     }
     if (kind === "logout") {
       return this.startAgentLogout(frozen);
@@ -2806,7 +3058,7 @@ export class RunWorkflow {
       if (!["succeeded", "stale"].includes(disconnect.status)) return disconnect;
     }
     if (kind === "remove-key") {
-      if (typeof credentials?.clear !== "function") {
+      if (!this.#agentCredentialPort?.clear) {
         return rejected(
           "AGENT_CREDENTIAL_CLEAR_FAILED",
           "当前连接已处理，但未能移除已记住的 API Key。",
@@ -2814,19 +3066,42 @@ export class RunWorkflow {
         );
       }
       try {
-        const cleared = await credentials.clear();
-        if (cleared?.ok === false) {
+        const current = this.#agentCatalog.credentialPersist(frozen.providerId);
+        const operationId = this.#nextCredentialOperationId(frozen.providerId, "clear");
+        const previousOperationId = this.#latestCredentialOperationByProvider.get(frozen.providerId);
+        if (previousOperationId) this.#heldAgentCredentials.delete(previousOperationId);
+        this.#latestCredentialOperationByProvider.set(frozen.providerId, operationId);
+        const cleared = await this.#agentCredentialPort.clear({
+          operationId,
+          expectedRecordId: current?.recordId || null,
+        });
+        if (cleared?.ok === false && cleared?.status !== "missing") {
           return rejected(
             "AGENT_CREDENTIAL_CLEAR_FAILED",
             "当前连接已处理，但未能移除已记住的 API Key。",
             { stage: "clear-credential" },
           );
         }
+        this.#publishCredentialProjection(frozen.providerId, {
+          status: "missing",
+          operationId,
+          recordId: null,
+          reason: null,
+        });
       } catch {
         return rejected(
           "AGENT_CREDENTIAL_CLEAR_FAILED",
           "当前连接已处理，但未能移除已记住的 API Key。",
           { stage: "clear-credential" },
+        );
+      }
+    }
+    if (kind === "disconnect") {
+      if (!await setProviderDisabled(true)) {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_FAILED",
+          "连接已断开，但停用状态没有保存，请重试。",
+          { stage: "disable-provider" },
         );
       }
     }

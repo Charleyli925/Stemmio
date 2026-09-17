@@ -377,7 +377,8 @@ export class WorkspaceController {
   #workbenchNavigationUnsubscribe = null;
   #workbenchNavigationSnapshot = null;
   #uiPreferencesPort = null;
-  #agentCredentialStatusPort = null;
+  #agentPreferencesPort = null;
+  #agentCredentialPort = null;
   #workbenchTabsUnsubscribe = null;
   #workbenchTabsSnapshot = null;
   #workbenchTabsReady = false;
@@ -542,7 +543,8 @@ export class WorkspaceController {
     this.#workbenchTabsPersistenceSnapshot = workbenchTabsPersistenceCoordinator?.snapshot || null;
     this.#navigationHostPort = ports.navigation || null;
     this.#uiPreferencesPort = ports.uiPreferences || null;
-    this.#agentCredentialStatusPort = ports.agentCredentialStatus || null;
+    this.#agentPreferencesPort = ports.agentPreferences || null;
+    this.#agentCredentialPort = ports.agentCredential || null;
     this.#workbenchNavigationSession = workbenchNavigationSession;
     this.#workbenchNavigationSnapshot = workbenchNavigationSession?.snapshot || null;
     // The conversation projection is optional so an existing embedder that has
@@ -997,8 +999,8 @@ export class WorkspaceController {
         ports: {
           canvas: runWorkflow.canvas,
           handoff: runWorkflow.handoff,
-          uiPreferences: this.#uiPreferencesPort,
-          agentCredentialStatus: this.#agentCredentialStatusPort,
+          agentPreferences: this.#agentPreferencesPort,
+          agentCredential: this.#agentCredentialPort,
           hash: this.#hashPort,
         },
         scheduler: runWorkflow.scheduler,
@@ -1772,6 +1774,10 @@ export class WorkspaceController {
     return this.#requireRunWorkflow().commitPendingDefaultAgent(selection, options);
   }
 
+  selectDefaultAgent(selection) {
+    return this.#requireRunWorkflow().selectDefaultAgent(selection);
+  }
+
   beginAccessRepair(run, field) {
     return this.#requireRunWorkflow().beginAccessRepair(run, field);
   }
@@ -1804,16 +1810,8 @@ export class WorkspaceController {
     return this.#requireRunWorkflow().disconnectAgentApiKey(selection);
   }
 
-  holdAgentCredential(selection, payload) {
-    return this.#requireRunWorkflow().holdAgentCredential(selection, payload);
-  }
-
-  noteAgentCredentialPersist(selection, result) {
-    return this.#requireRunWorkflow().noteAgentCredentialPersist(selection, result);
-  }
-
-  retryAgentCredentialPersist(selection, persist) {
-    return this.#requireRunWorkflow().retryAgentCredentialPersist(selection, persist);
+  retryAgentCredentialPersist(selection) {
+    return this.#requireRunWorkflow().retryAgentCredentialPersist(selection);
   }
 
   stopRunsForProvider(providerId) {

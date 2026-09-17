@@ -32,5 +32,8 @@ export type AgentProviderCardData = Readonly<{
   credentialPersist?: Readonly<{
     status?: string;
     reason?: string | null;
+    operationId?: string | null;
+    recordId?: string | null;
+    code?: string | null;
   }> | null;
 }>;

@@ -182,3 +182,65 @@ test("a transient preference failure retries once without losing the current cho
   assert.equal(session.snapshot.workspace.defaultAgentProviderId, "stemmio");
   session.dispose();
 });
+
+test("a superseded default commit restores the prior durable default", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => { releaseFirstWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await firstWrite;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  let currentIntent = "intent-a";
+  const committing = session.commitDefaultAgent({
+    providerId: "stemmio",
+    isCurrent: () => currentIntent === "intent-a",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  currentIntent = "intent-b";
+  releaseFirstWrite();
+  assert.deepEqual(await committing, { status: "superseded" });
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "codex" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "codex");
+  assert.equal(session.snapshot.workspace.defaultAgentProviderId, "codex");
+  session.dispose();
+});
+
+test("concurrent provider access changes preserve both disabled providers", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => { releaseFirstWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await firstWrite;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  const disableStemmio = session.setProviderDisabled({ providerId: "stemmio", disabled: true });
+  const disableCodex = session.setProviderDisabled({ providerId: "codex", disabled: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstWrite();
+  assert.equal(await disableStemmio, true);
+  assert.equal(await disableCodex, true);
+  assert.deepEqual(calls.map((call) => call.workspace.disabledAgentProviderIds), [
+    ["stemmio"],
+    ["stemmio", "codex"],
+  ]);
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, ["stemmio", "codex"]);
+  session.dispose();
+});

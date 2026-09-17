@@ -173,6 +173,7 @@ export class WorkspacePreferencesSession {
   #snapshot = freezeSnapshot();
   #loadPromise = null;
   #writePromise = null;
+  #agentMutationTail = Promise.resolve();
   #pendingPatch = null;
   #disposed = false;
 
@@ -268,6 +269,33 @@ export class WorkspacePreferencesSession {
     return this.#writePromise;
   }
 
+  commitDefaultAgent({ providerId, isCurrent }) {
+    if (typeof isCurrent !== "function") {
+      throw new TypeError("Default Agent commit requires a current-intent guard.");
+    }
+    return this.#enqueueAgentMutation(async () => {
+      await this.load();
+      if (!isCurrent()) return Object.freeze({ status: "superseded" });
+      const previousProviderId = this.#snapshot.workspace.defaultAgentProviderId;
+      const saved = await this.update({ defaultAgentProviderId: providerId });
+      if (!saved) return Object.freeze({ status: "failed" });
+      if (isCurrent()) return Object.freeze({ status: "committed" });
+      const restored = await this.update({ defaultAgentProviderId: previousProviderId });
+      return Object.freeze({ status: restored ? "superseded" : "failed" });
+    });
+  }
+
+  setProviderDisabled({ providerId, disabled }) {
+    return this.#enqueueAgentMutation(async () => {
+      await this.load();
+      const current = this.#snapshot.workspace.disabledAgentProviderIds;
+      const next = disabled
+        ? Array.from(new Set([...current, providerId]))
+        : current.filter((id) => id !== providerId);
+      return this.update({ disabledAgentProviderIds: next });
+    });
+  }
+
   retry() {
     if (this.#disposed || !this.#pendingPatch || !this.#port) return false;
     this.#publish({ ...this.#snapshot, saving: true, error: null });
@@ -338,6 +366,12 @@ export class WorkspacePreferencesSession {
       }
     }
     return successful && !this.#pendingPatch;
+  }
+
+  #enqueueAgentMutation(task) {
+    const mutation = this.#agentMutationTail.then(task, task);
+    this.#agentMutationTail = mutation.catch(() => {});
+    return mutation;
   }
 
   #publish(next) {

@@ -46,6 +46,19 @@ export function useWorkspacePreferences(
 ): Readonly<{
   snapshot: WorkspacePreferencesSnapshot;
   panelWidths: Readonly<{ sidebarWidth: number; inspectorWidth: number }>;
+  sessionPort: Readonly<{
+    load(): Promise<WorkspacePreferencesSnapshot>;
+    update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
+    commitDefaultAgent(input: Readonly<{
+      providerId: WorkspacePreferenceAgentId;
+      isCurrent(): boolean;
+    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    setProviderDisabled(input: Readonly<{
+      providerId: WorkspacePreferenceAgentId;
+      disabled: boolean;
+    }>): Promise<boolean>;
+    snapshot(): WorkspacePreferencesSnapshot;
+  }>;
   update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
   commitPanelWidth(kind: "sidebar" | "inspector", width: number): void;
   retry(): boolean;
@@ -62,6 +75,19 @@ export function useWorkspacePreferences(
     }),
     [api],
   );
+  const sessionPort = useMemo(() => Object.freeze({
+    load: () => session.load(),
+    update: (patch: Partial<WorkspacePreferences>) => session.update(patch),
+    commitDefaultAgent: (input: Readonly<{
+      providerId: WorkspacePreferenceAgentId;
+      isCurrent(): boolean;
+    }>) => session.commitDefaultAgent(input),
+    setProviderDisabled: (input: Readonly<{
+      providerId: WorkspacePreferenceAgentId;
+      disabled: boolean;
+    }>) => session.setProviderDisabled(input),
+    snapshot: () => session.snapshot,
+  }), [session]);
   const [snapshot, setSnapshot] = useState<WorkspacePreferencesSnapshot>(session.snapshot);
   const [panelWidths, setPanelWidths] = useState({
     sidebarWidth: session.snapshot.workspace.sidebarWidth,
@@ -155,5 +181,5 @@ export function useWorkspacePreferences(
     (deadlineAt: number) => session.flush({ deadlineAt }),
     [session],
   );
-  return { snapshot, panelWidths, update, commitPanelWidth, retry, flush };
+  return { snapshot, panelWidths, sessionPort, update, commitPanelWidth, retry, flush };
 }

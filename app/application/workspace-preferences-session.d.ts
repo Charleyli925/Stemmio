@@ -48,6 +48,14 @@ export class WorkspacePreferencesSession {
   subscribe(listener: (snapshot: WorkspacePreferencesSnapshot) => void): () => void;
   load(): Promise<WorkspacePreferencesSnapshot>;
   update(patch: Readonly<Partial<WorkspacePreferences>>): Promise<boolean>;
+  commitDefaultAgent(input: Readonly<{
+    providerId: WorkspacePreferenceAgentId;
+    isCurrent(): boolean;
+  }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+  setProviderDisabled(input: Readonly<{
+    providerId: WorkspacePreferenceAgentId;
+    disabled: boolean;
+  }>): Promise<boolean>;
   retry(): boolean;
   flush(input?: { deadlineAt?: number }): Promise<boolean>;
   dispose(): void;

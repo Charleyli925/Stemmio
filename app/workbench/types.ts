@@ -350,16 +350,23 @@ export type DesktopIntegrationsApi = {
   }) => Promise<{ opened?: boolean }>;
   openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
   persistSessionCredential?: (payload: {
+    operationId: string;
     apiKey: string;
     vendorId?: string;
     baseUrl?: string;
     modelId?: string;
-  }) => Promise<{ ok?: boolean; code?: string; remembered?: boolean }>;
-  clearSessionCredential?: () => Promise<{ ok?: boolean; remembered?: boolean }>;
-  sessionCredentialStatus?: () => Promise<{
+  }) => Promise<{ ok?: boolean; status?: "saved" | "superseded" | "unavailable" | "unreadable" | "rejected"; operationId?: string; recordId?: string | null; code?: string; remembered?: boolean }>;
+  clearSessionCredential?: (payload?: {
+    operationId?: string;
+    expectedRecordId?: string | null;
+  }) => Promise<{ ok?: boolean; status?: "missing" | "superseded" | "unavailable" | "unreadable" | "rejected"; operationId?: string; recordId?: null; code?: string; remembered?: boolean }>;
+  sessionCredentialStatus?: (payload?: { operationId?: string }) => Promise<{
     available?: boolean;
     remembered?: boolean;
     vendorId?: string | null;
+    operationId?: string;
+    recordId?: string | null;
+    status?: "saved" | "superseded" | "missing" | "unreadable" | "unavailable";
     unreadable?: boolean;
     reconnectRequired?: boolean;
     reason?: string;

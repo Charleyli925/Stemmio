@@ -916,9 +916,11 @@ export default function SettingsPage({
   releaseNotesOpenFailed,
   workspacePreferences,
   workspacePreferencesSaving,
+  workspacePreferencesError,
   selectedAgentChoiceId,
   agentCards,
   onUpdateWorkspacePreference,
+  onRetryWorkspacePreferences,
   onSelectAgent,
   onSelectAgentModel,
   onSelectAgentReasoning,
@@ -952,19 +954,11 @@ export default function SettingsPage({
   const lastCheckStartedAtRef = useRef(0);
   const lastCheckGuidanceRef = useRef("");
   const [agentCheckPending, setAgentCheckPending] = useState(false);
-  const [rememberedKeyState, setRememberedKeyState] = useState(Boolean(rememberedKey));
+  const rememberedKeyState = Boolean(rememberedKey);
 
   useEffect(() => {
     agentCardsRef.current = agentCards;
   }, [agentCards]);
-
-  useEffect(() => {
-    const readStatus = window.stemmioIntegrations?.sessionCredentialStatus;
-    if (typeof readStatus !== "function") return;
-    void readStatus().then((status) => {
-      setRememberedKeyState(status?.remembered === true);
-    }).catch(() => {});
-  }, [agentCards, category]);
 
   const requestAgentCheck = useCallback((force = false): Promise<AgentActionOutcome> => {
     const cards = agentCardsRef.current;
@@ -1071,6 +1065,19 @@ export default function SettingsPage({
           <h1 ref={headingRef} tabIndex={-1}>{pageTitle}</h1>
           {pageDescription ? <p>{pageDescription}</p> : null}
         </header>
+
+        {workspacePreferencesError ? (
+          <div className="settings-preference-error" role="alert">
+            <span>设置暂未保存：{workspacePreferencesError}</span>
+            <button
+              type="button"
+              disabled={workspacePreferencesSaving}
+              onClick={onRetryWorkspacePreferences}
+            >
+              重试保存
+            </button>
+          </div>
+        ) : null}
 
 
         {category === "general" ? (

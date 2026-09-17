@@ -96,6 +96,9 @@ export type AgentProviderCardProps = {
   credentialPersist?: Readonly<{
     status?: string;
     reason?: string | null;
+    operationId?: string | null;
+    recordId?: string | null;
+    code?: string | null;
   }> | null;
 };
 
@@ -197,7 +200,7 @@ export default function AgentProviderCard({
       ? String(selectedModelId || models[0]?.id || "").replace(/^stemmio:/u, "")
       : "",
   );
-  const persistFailed = credentialPersist?.status === "failed";
+  const persistFailed = credentialPersist?.status === "failed" || credentialPersist?.status === "unknown";
   const persistReason = persistFailed
     ? (credentialPersist?.reason || "已连接，但新的 API Key 未保存。")
     : "";

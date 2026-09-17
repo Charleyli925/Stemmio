@@ -99,6 +99,9 @@ test("About is product information while Settings owns Agent checks and update c
   assert.match(settings, /停止并退出/u);
   assert.match(settings, /providerAccessImpact/u);
   assert.match(settings, /credentialRestoreFailed/u);
+  assert.match(settings, /settings-preference-error/u);
+  assert.match(settings, /设置暂未保存/u);
+  assert.match(settings, /onRetryWorkspacePreferences/u);
   assert.match(settings, /initialApiKeyOpen=\{selectedCard\.credentialPersist\?\.status === "failed"/u);
   assert.match(settings, /无法读取已保存的连接凭证/u);
   assert.doesNotMatch(settings, /setConfirmAction\(null\);\s+if \(action\.kind === "remove-key"\)/u);

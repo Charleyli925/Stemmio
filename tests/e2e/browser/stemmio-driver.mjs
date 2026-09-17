@@ -158,6 +158,7 @@ export async function ensureDesktopRendererTestHarness(page, initialProject = nu
       activeProject: startupProject,
       openQueue: [],
       previewUrls: new Map(),
+      credentialRecord: null,
     };
     Object.defineProperty(window, "__STEMMIO_RENDERER_TEST_HARNESS__", {
       configurable: true,
@@ -216,6 +217,44 @@ export async function ensureDesktopRendererTestHarness(page, initialProject = nu
           state.previewUrls.delete(sessionId);
           return { revoked: Boolean(url) };
         },
+      },
+    });
+    Object.defineProperty(window, "stemmioIntegrations", {
+      configurable: true,
+      value: {
+        persistSessionCredential: async (payload) => {
+          state.credentialRecord = {
+            operationId: payload.operationId,
+            recordId: `record-${payload.operationId}`,
+            vendorId: payload.vendorId || null,
+            modelId: payload.modelId || null,
+          };
+          return { ok: true, remembered: true, status: "saved", ...state.credentialRecord };
+        },
+        clearSessionCredential: async ({ operationId }) => {
+          state.credentialRecord = null;
+          return { ok: true, remembered: false, status: "cleared", operationId };
+        },
+        sessionCredentialStatus: async ({ operationId } = {}) => ({
+          available: true,
+          remembered: Boolean(state.credentialRecord),
+          providerId: "stemmio",
+          vendorId: state.credentialRecord?.vendorId || null,
+          recordId: state.credentialRecord?.recordId || null,
+          status: state.credentialRecord ? "saved" : "missing",
+          operationId: operationId || null,
+          code: null,
+        }),
+        restoreSessionCredential: async () => ({
+          ok: true,
+          restored: false,
+          remembered: Boolean(state.credentialRecord),
+          providerId: "stemmio",
+          recordId: state.credentialRecord?.recordId || null,
+          vendorId: state.credentialRecord?.vendorId || null,
+          modelId: state.credentialRecord?.modelId || null,
+          reconnectRequired: Boolean(state.credentialRecord),
+        }),
       },
     });
     Object.defineProperty(window, "stemmioAppLifecycle", {

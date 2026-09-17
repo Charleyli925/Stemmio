@@ -49,15 +49,22 @@ test("Codex recovery distinguishes local authentication from protocol and networ
   assert.equal(agentSetupOperationLabel({ kind: "login", state: "cancelling" }), "正在取消…");
 });
 
-test("remembering a credential requires a positive saved receipt, not an empty or partial response", async () => {
+test("credential persistence stays a public projection and never stores the raw Key", () => {
   const catalog = new AgentCatalogState({ bridgeClient: { async preflightAgent() {} } });
-  catalog.holdRememberedCredential("stemmio", { apiKey: "synthetic-key" });
-  for (const receipt of [undefined, {}, { ok: true, remembered: false }]) {
-    await catalog.retryRememberedCredential("stemmio", async () => receipt);
-    assert.equal(catalog.credentialPersist("stemmio").status, "failed");
-  }
-  await catalog.retryRememberedCredential("stemmio", async () => ({ ok: true, remembered: true }));
-  assert.equal(catalog.credentialPersist("stemmio").status, "saved");
+  catalog.publishCredentialPersist("stemmio", {
+    status: "saved",
+    operationId: "credential_projection_1",
+    recordId: "record_projection_1",
+    apiKey: "synthetic-key-must-not-project",
+  });
+  assert.deepEqual(catalog.credentialPersist("stemmio"), {
+    status: "saved",
+    reason: null,
+    operationId: "credential_projection_1",
+    recordId: "record_projection_1",
+    code: null,
+  });
+  assert.doesNotMatch(JSON.stringify(catalog.getSnapshot()), /synthetic-key/u);
   catalog.dispose();
 });
 
@@ -71,7 +78,15 @@ test("non-default DeepSeek configuration survives restart and is frozen into the
   await preferencesPort.record({ workspace: { defaultAgentProviderId: "codex" } });
   const sent = [];
   const options = {
-    preferencesPort,
+    configurationPreferencesPort: {
+      async getAgentConfigurations() {
+        return (await preferencesPort.get()).workspace.agentConfigurations || {};
+      },
+      async saveAgentConfigurations(agentConfigurations) {
+        await preferencesPort.record({ workspace: { agentConfigurations } });
+        return true;
+      },
+    },
     selected: CODEX_AGENT_PROVIDER.selection,
     bridgeClient: {
       async preflightAgent(body) {
@@ -98,6 +113,45 @@ test("non-default DeepSeek configuration survives restart and is frozen into the
   assert.equal(ticket.selection.reasoning.requested, "high");
   assert.equal(sent.at(-1).reasoning.requested, "high");
   reopened.dispose();
+});
+
+test("configuration persistence false is not reported as a successful save", async () => {
+  const catalog = new AgentCatalogState({
+    bridgeClient: { async preflightAgent() {} },
+    configurationPreferencesPort: {
+      async getAgentConfigurations() { return {}; },
+      async saveAgentConfigurations() { return false; },
+    },
+  });
+  await assert.rejects(
+    catalog.saveConfiguration(),
+    (error) => error?.code === "AGENT_PREFERENCES_SAVE_FAILED",
+  );
+  catalog.dispose();
+});
+
+test("a connected API Key remains ready when configuration persistence fails", async () => {
+  let connects = 0;
+  const catalog = new AgentCatalogState({
+    bridgeClient: {
+      async preflightAgent() { throw new Error("not used"); },
+      async updateAgentConfiguration(request) {
+        connects += 1;
+        return { status: "ready", selection: request.selection, models: [] };
+      },
+    },
+    configurationPreferencesPort: {
+      async getAgentConfigurations() { return {}; },
+      async saveAgentConfigurations() { return false; },
+    },
+  });
+  const stemmio = catalog.freezeProviderSelection("stemmio");
+  const result = await catalog.connectWithApiKey(stemmio, "synthetic-key", { vendorId: "deepseek" });
+  assert.equal(result.configurationPersist.status, "failed");
+  assert.equal(result.configurationPersist.code, "AGENT_PREFERENCES_SAVE_FAILED");
+  assert.equal(catalog.availability(stemmio).status, "ready");
+  assert.equal(connects, 1);
+  catalog.dispose();
 });
 
 test("the shared Agent chooser exposes 源页 Agent plus both ACP providers without unverified built-ins", () => {
@@ -1446,10 +1500,10 @@ test("credential persist failure survives a catalog refresh", async () => {
     providers: [STEMMIO_AGENT_PROVIDER],
     selected: stemmio,
   });
-  catalog.holdRememberedCredential("stemmio", { apiKey: "sk-secret" });
-  catalog.noteCredentialPersist("stemmio", {
+  catalog.publishCredentialPersist("stemmio", {
     status: "failed",
     reason: "已连接，但新的 API Key 未保存。",
+    operationId: "credential_failed_1",
   });
   await catalog.diagnose(stemmio);
   assert.equal(catalog.credentialPersist("stemmio")?.status, "failed");
