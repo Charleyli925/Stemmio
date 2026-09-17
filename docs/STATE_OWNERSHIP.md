@@ -562,6 +562,10 @@ Rules:
   frozen-Request shape without bulk rewriting Drafts or immutable history.
   Source rebind, deletion/recovery and final text-locator validation update only
   `sourceAnchor`; composer selections remain transient Canvas targets.
+  After a direct source edit has a SourceReceipt, `CommentWorkflow` applies the
+  removed-subtree tombstones/attachment cleanup and one settled target rebind
+  across comments, direct-edit events and the composer. This projection may
+  degrade independently; it cannot revoke the accepted source edit.
   Runtime state is likewise not a second copy of draft contents: it carries
   lifecycle state and a revisioned pointer to the draft repository.
 - Local recovery records are an outbox/fallback, never an equal authority to an

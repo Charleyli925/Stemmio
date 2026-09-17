@@ -14,6 +14,8 @@ export type CommentWorkflowCodecs = Readonly<{
     commentId: string,
   ): Record<string, unknown>;
   commentEditSessionHasChanges(value: unknown): boolean;
+  canLocateTarget(value: unknown): boolean;
+  rebindTargetsPreservingGlobal(html: string, targets: unknown[]): unknown[];
   errorMessage(cause: unknown, fallback: string): string;
 }>;
 

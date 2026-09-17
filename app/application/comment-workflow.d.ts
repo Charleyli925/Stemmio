@@ -34,6 +34,17 @@ export type CommentWorkflowSnapshot = Readonly<{
   }>;
 }>;
 
+export type DocumentEditCommentEffects = Readonly<{
+  commentDeletion: Readonly<{
+    status: "applied" | "degraded";
+    reason?: string;
+  }>;
+  targetRebinding: Readonly<{
+    status: "applied" | "degraded";
+    reason?: string;
+  }>;
+}>;
+
 export type AttachmentBinaryPort = Readonly<{
   prepare(
     file: unknown,
@@ -96,7 +107,6 @@ export class CommentWorkflow {
     target: unknown;
   }): CommentWorkflowOutcome;
   applyCommentItems(comments: unknown[]): CommentWorkflowOutcome;
-  applyWorkingCopy(input: Record<string, unknown>): CommentWorkflowOutcome;
   confirmEdit(input: { commentId: string }): CommentWorkflowOutcome;
   flushDraft(input?: Record<string, unknown>): Promise<CommentWorkflowOutcome>;
   commitComment(input?: { commentId?: string }): Promise<CommentWorkflowOutcome>;
@@ -105,6 +115,17 @@ export class CommentWorkflow {
   deleteCommentsForElementIds(input: {
     elementIds: string[];
   }): CommentWorkflowOutcome;
+  applyDocumentEditEffects(input: {
+    html: string;
+    mutation?: Readonly<{
+      targetUpdates?: readonly Record<string, unknown>[];
+      trackedTargetIds?: readonly string[];
+    }>;
+    sourceTransaction?: Readonly<{
+      semanticOperation?: Readonly<{ type?: string }>;
+      identityDelta?: Readonly<{ removedElementIds?: readonly string[] }>;
+    }>;
+  }): CommentWorkflowOutcome<DocumentEditCommentEffects>;
   discardComposer(): CommentWorkflowOutcome;
   cancelCommentEdit(input?: { commentId?: string }): CommentWorkflowOutcome;
   removeComposerAttachment(input: { attachmentId: string }): CommentWorkflowOutcome;
