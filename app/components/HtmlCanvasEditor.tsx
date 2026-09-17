@@ -4946,7 +4946,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     active: ActiveNativeEdit,
     source: string,
     selection: NativeEditSelection,
+    options: { resumeEditingAfterReload?: boolean } = {},
   ) => {
+    const resumeEditingAfterReload = options.resumeEditingAfterReload ?? true;
     clearNativeEditCheckpointTimer();
     const target = active.target;
     const rootElement = active.rootElement;
@@ -4967,7 +4969,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     const acceptedReceipt = lastSourceReceiptRef.current;
     const acceptedIndex = sourceIndexRef.current;
     if (
-      isSourceReceipt(acceptedReceipt)
+      resumeEditingAfterReload
+      && isSourceReceipt(acceptedReceipt)
       && acceptedReceipt.sourceSha256 === acceptedIndex?.sourceSha256
       && acceptedIndex.source === source
     ) {
@@ -4979,7 +4982,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         retiredSessionId: active.lease.sessionId,
         target,
         selection,
-        restoreFocus: true,
+        restoreFocus: resumeEditingAfterReload,
         toolbarVisible: true,
       });
     } else {
@@ -4991,7 +4994,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         fenceId: nativeEditFenceSequenceRef.current,
         target,
         selection,
-        focus: true,
+        focus: resumeEditingAfterReload,
         toolbarVisible: true,
       },
       target,
@@ -5027,7 +5030,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
 
   const checkpointNativeEdit = useCallback((
     trigger: NativeEditCheckpointTrigger = "automatic",
-    options: { deferPreviewReconcile?: boolean } = {},
+    options: {
+      deferPreviewReconcile?: boolean;
+      resumeEditingAfterReload?: boolean;
+    } = {},
   ): NativeEditCommitResult => {
     const active = activeNativeEditRef.current;
     if (!active) return { ok: true, mutation: null };
@@ -5056,6 +5062,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         active,
         frameSourceHtmlRef.current,
         captured.selection,
+        { resumeEditingAfterReload: options.resumeEditingAfterReload },
       );
       reportBlockedEdit(new Error(reason));
       return { ok: false, mutation: null, reason };
@@ -5147,7 +5154,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           "v2-island-checkpoint-reload",
         );
         if (activeNativeEditRef.current === active) {
-          reloadCommittedNativeEditFromSource(active, result.html, nextSelection);
+          reloadCommittedNativeEditFromSource(active, result.html, nextSelection, {
+            resumeEditingAfterReload: options.resumeEditingAfterReload,
+          });
         }
         return { ok: true, mutation, frameReloading: true };
       }
@@ -5163,7 +5172,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           "v2-island-checkpoint-reload",
         );
         if (activeNativeEditRef.current === active) {
-          reloadCommittedNativeEditFromSource(active, result.html, nextSelection);
+          reloadCommittedNativeEditFromSource(active, result.html, nextSelection, {
+            resumeEditingAfterReload: options.resumeEditingAfterReload,
+          });
         }
         return { ok: true, mutation, frameReloading: true };
       }
@@ -5207,6 +5218,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       deferRuntimeRefresh = false,
     }: FinishNativeEditingOptions = {},
   ): NativeEditCommitResult => {
+    // Ending Native Edit is an explicit user intent. It retires any older
+    // continuation, and the checkpoint performed by this same operation may
+    // not authorize a replacement frame to re-enter editing.
+    nativeEditRecoveryRef.current.cancel();
     const active = activeNativeEditRef.current;
     if (!active) return { ok: true, mutation: null };
     if (nativeEditFinishingRef.current) {
@@ -5216,7 +5231,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     clearNativeEditCheckpointTimer();
     try {
       const committed = shouldApply
-        ? checkpointNativeEdit(trigger)
+        ? checkpointNativeEdit(trigger, { resumeEditingAfterReload: false })
         : { ok: true, mutation: null };
       if (!committed.ok) return committed;
       const completedUserCommand = replayQueuedUserCommand
@@ -5411,8 +5426,6 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     const documentNode = container?.ownerDocument;
     if (!container || !documentNode) return undefined;
     const clearOnOutsidePointer = (event: PointerEvent) => {
-      nativeEditRecoveryRef.current.cancel();
-      if (!selectedElementRef.current) return;
       const sharedScrollElement = container.closest<HTMLElement>(
         ".review-scroll-stage",
       );
@@ -5423,6 +5436,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         sharedScrollElement
         && sharedScrollbarPointerDown(sharedScrollElement, event)
       ) return;
+      nativeEditRecoveryRef.current.cancel();
+      if (!selectedElementRef.current) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (toolbarRef.current?.contains(target)) return;
@@ -5936,6 +5951,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
           nativeEditCheckpointTimerRef.current = window.setTimeout(() => {
             nativeEditCheckpointTimerRef.current = null;
             if (!nativeEditLeasesMatch(currentNativeEditLeaseRef.current, scheduledLease)) return;
+            if (
+              window.stemmioRuntime?.diagnostics?.e2eRuntimeCommitHooks === true
+              && window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ === true
+            ) return;
             nativeEditCheckpointRef.current();
           }, state.requiresCanonicalReconcile
             ? 0
@@ -8367,7 +8386,6 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") nativeEditRecoveryRef.current.cancel();
       if (
         (event.metaKey || event.ctrlKey)
         && event.shiftKey

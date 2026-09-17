@@ -460,7 +460,9 @@ Candidate 在已验证源码登记后、作者脚本执行前恢复 PageViewCont
   Active Frame 只能消费一次绑定该 source receipt、Hash、Canvas generation、Stable-ID
   目标与逻辑 Selection 的恢复意图；匹配后自动回到 `contenteditable`、Focus 和 Caret，
   用户无需再次双击。任一身份不符、用户已指向评论输入等外部焦点，或显式指针/
-  Selection/Escape/模式切换，都立即退役该意图，不得在之后偷回焦点。
+  Selection/Escape/模式切换，都立即退役该意图，不得在之后偷回焦点。显式结束
+  Native Edit 的 checkpoint 即使接受源码后需要替换 Frame，也不得在同一次退出操作中
+  重新创建恢复意图；纯共享滚动条拖动不表达新目标或退出意图，不因此取消仍有效的续写。
 - 必要刷新可以出现短暂加载，但不打断尚未完成的活跃输入。位置与选择恢复尽力而为，
   合法结构变化前后不承诺像素完全一致。局部不可编辑、动态图表未恢复与整页不可用必须分开表达。
 - 替换权威 HTML（首次打开、采纳版本、磁盘重载）只把新字节写入静态

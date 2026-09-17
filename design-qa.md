@@ -3595,3 +3595,13 @@ final result: passed for the scoped non-visual recovery contract; private-corpus
 - Evidence boundary: no new visible state requires a screenshot. Real rebuilt-source Electron coverage and any configured private-corpus run remain owned by the completion gate; Node evidence is not presented as proof of IME, selection, iframe or installed-app continuity.
 
 final result: passed for the scoped non-visual state contract; completion-gate evidence is recorded separately.
+
+## 2026-09-17 — Native Edit 显式退出保持退出
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、布局、颜色、动效或视觉状态；修复的是 Escape 等显式结束操作经过必要 iframe 重建后不得重新进入编辑的既有交互语义，因此不需要截图对比。
+- 可见结果：用户在有未检查点输入时按 Escape，完整 HTML 仍通过退出检查点持久化；即使注入 live-session rebase 失败并替换 Active Frame，目标也保持非 `contenteditable`、不恢复焦点或 Caret。随后真实标签页重挂载生成另一代 iframe，仍保持退出且保留 Working Copy 内容。
+- 语义边界：是否在重载后继续编辑现在是检查点操作的显式意图。自动检查点默认继续并保留已有单次恢复；显式 finish/leave 统一传入“不继续”，不能由新的源码回执重新生成恢复意图。共享外层滚动条的纯拖动属于导航，不再提前取消仍有效的自动继续意图。
+- 实际证据：edit gate 的完整类型/架构检查与 211 条定向 Node 测试通过；合并执行的三条重建源码 Electron 用例 3/3 通过，分别覆盖自动 rebase-failure 后继续编辑、Escape 退出检查点跨两代 iframe 保持退出、以及 Runtime positioning 期间评论输入焦点不被抢回。没有重试或放宽断言。
+- Evidence boundary: 这是隔离 Working Copy 上的合成 Electron 行为证据，不是用户指定私有 HTML 语料、打包应用或已安装应用验收。iframe 内部 Tab 退出编辑仍是独立的非阻塞后续项。
+
+final result: passed for the scoped explicit-exit contract; completion-gate evidence remains to be recorded.

@@ -3812,6 +3812,93 @@ test("an accepted Native Edit survives a live-session rebase failure", {
   });
 });
 
+test("Escape checkpoint reload keeps Native Edit exited", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime Escape checkpoint reload</title></head><body>
+  <main><p data-native-case="runtime-escape-checkpoint-reload">Escape 明确结束编辑</p></main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-escape-checkpoint-reload-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(
+      page,
+      sourcePath,
+      "runtime-escape-checkpoint-reload",
+    );
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+
+    const target = await activateNativeEdit(frame, "runtime-escape-checkpoint-reload");
+    await target.press("End");
+    await page.keyboard.insertText("，源码由退出操作提交");
+    expect(await page.evaluate(() => (
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__
+    ))).toBe(true);
+    await page.keyboard.press("Escape");
+    expect(await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+      return window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__;
+    })).toBe(false);
+
+    const acceptedRevision = await expectCheckpointPersisted(page, revisionBefore);
+    expect(acceptedRevision).toBe(revisionBefore + 1);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("源码由退出操作提交");
+    await expect(editor).toHaveAttribute(
+      "data-native-commit-path",
+      "v2-island-checkpoint-reload",
+    );
+
+    frame = await currentEditorFrame(page);
+    let exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
+    await expect(exitedTarget).toContainText("源码由退出操作提交");
+    await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
+    await expect(editor).not.toHaveAttribute("data-native-recovery", "resumed");
+    await expect.poll(() => exitedTarget.evaluate((element) => {
+      const selection = document.getSelection();
+      return {
+        focused: document.activeElement === element,
+        selectionInside: Boolean(
+          selection?.focusNode
+          && (selection.focusNode === element || element.contains(selection.focusNode)),
+        ),
+      };
+    })).toEqual({ focused: false, selectionInside: false });
+
+    const exitedDocument = await documentToken(page);
+    const tablist = page.getByRole("tablist", { name: "已打开的页面" });
+    const documentTab = tablist.getByRole("tab").first();
+    await page.getByRole("button", { name: "新标签页" }).click();
+    await documentTab.click();
+    frame = (await loadedDiskFrame(
+      page,
+      sourcePath,
+      "runtime-escape-checkpoint-reload",
+    )).frame;
+    await expect.poll(() => documentToken(page)).not.toBe(exitedDocument);
+    exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
+    await expect(exitedTarget).toContainText("源码由退出操作提交");
+    await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("源码由退出操作提交");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
 test("Native Edit recovery does not reclaim comment focus during Runtime positioning", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
