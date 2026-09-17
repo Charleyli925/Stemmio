@@ -3615,6 +3615,34 @@ final result: passed for the scoped explicit-exit contract; completion-gate evid
 - Bridge-only transport diagnostics retain allowlisted request parameters, capability revision, attempt ordinal, normalized finish reason and numeric usage; credentials, prompts, HTML and reasoning are excluded and no new diagnostic UI is created.
 - Deterministic evidence after independent-review repairs: focused HTTP tests pass the exact parameter, Custom omission, finish-ordering, non-2xx SSE classification, success-only completion, allowlisted diagnostics, usage-only tail, cleanup and recovery cases. Independent review of `d8f95e9a` reports no remaining P0/P1/P2.
 - Edit gate `2026-09-17T09-27-55-757Z-edit` passed 4/4 steps on rebased `origin/main@2fc5cba6`: typecheck/architecture, targeted Node, contract and core. Core reported 2462 tests, 2461 passed, one existing selected skip and zero failures; the runner performed no retry or reuse.
-- Boundary: no live provider, credential, real tokenizer, Electron interaction, private corpus, packaged app or installed app was used. A screenshot comparison would not add evidence because this change deliberately reuses the current failure surface without visual or copy changes.
+- Live-provider follow-up: a signed arm64 Developer Preview built from
+  `b5a024d38a1f5b21ba4ecfd5b5f93f866d23bf0d` used the already remembered,
+  encrypted Stemmio credential through the normal Settings and AI sidebar
+  flow. The formal default resolved to `stemmio:deepseek-v4-pro`, provider
+  reasoning remained `auto` / provider default, and the adapter sent
+  `max_tokens=393216`. DeepSeek returned a protocol-success response and a
+  527-byte complete document; Candidate creation then verified the exact
+  output hash, changed only `Before smoke` to `Stemmio smoke`, and preserved
+  all seven Stable IDs. The Candidate remained pending review, so this run did
+  not mutate the authoritative Working Copy. The current durable product
+  record does not retain the provider's raw finish-reason string or token
+  usage fields; success is proven by the protocol's success-only Candidate
+  boundary, while raw usage remains explicitly unrecorded rather than inferred.
+- Boundary: this smoke used a synthetic one-page project and the rebuilt,
+  packaged Developer Preview. It is not private-corpus or installed-app
+  acceptance, and it does not claim raw provider usage evidence that the
+  current durable record does not preserve. A screenshot comparison would not
+  add evidence because this change deliberately reuses the current failure
+  surface without visual or copy changes.
 
-Final result: partial — the deterministic request, completion and recovery contracts pass; live vendor acceptance remains unexecuted and is not inferred from synthetic transport fixtures.
+Final result: passed for the scoped request, completion and recovery contract,
+including one real DeepSeek formal-request smoke; broader vendor and
+private-corpus coverage remains outside this package.
+
+## 2026-09-17 — AI 对话单一执行状态与细分隔线
+
+- Mode: DESIGN CHANGE. 执行中的 Agent 只保留一条当前消息：头像旁是服务名与 `mm:ss · n KB`，正文只是 Agent 公开说明。“正在生成”、“正在接收结果”和“完整结果校验后可查看”不再重复占用正文。
+- 尚无公开说明时显示一个无文案的三点指示，并保留稳定、不随计时或字节数变化的 `role=status` 语义；出现公开文本后安静退出，避免文字与动画重复表达“正在处理”。
+- 复制动作仍只读公开说明；计时、KB、处理指示和墙钟时间不进入剪贴板。停止仍固定在 Composer，Request/Attempt 身份与 run key 未改。
+- 侧栏与画布的视觉分隔收口为侧栏自身的 1px `--chrome-divider`；18px resizer 只作为透明命中区，继续保留键盘与 ARIA 行为，不额外绘制 grip 或内层边线。
+- Verification boundary: 确定性 Node/CSS 与 Electron 执行流证据由本分支门禁记录；未以静态源码断言真实运行时视觉效果。
