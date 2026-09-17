@@ -86,6 +86,14 @@ async function releaseHeldRuntimeCommits(page) {
   });
 }
 
+async function advanceHeldRuntimeCommitToNextHold(page) {
+  await page.evaluate(() => {
+    const releases = window.__STEMMIO_E2E_RUNTIME_COMMIT_RELEASES__ || [];
+    window.__STEMMIO_E2E_RUNTIME_COMMIT_RELEASES__ = [];
+    releases.forEach((release) => release());
+  });
+}
+
 async function runtimeContractSnapshot(page) {
   return page.evaluate(() => {
     const editor = document.querySelector('[data-testid="html-canvas-editor"]');
@@ -3737,6 +3745,23 @@ test("an accepted Native Edit survives a live-session rebase failure", {
     const target = await activateNativeEdit(frame, "runtime-accepted-rebase");
     await target.press("End");
     await page.keyboard.insertText("，恢复后仍在");
+    const expectedRecoverySelection = await target.evaluate((element) => {
+      const selection = document.getSelection();
+      if (
+        document.activeElement !== element
+        || !selection?.isCollapsed
+        || !selection.focusNode
+        || !element.contains(selection.focusNode)
+      ) return null;
+      const beforeFocus = document.createRange();
+      beforeFocus.selectNodeContents(element);
+      beforeFocus.setEnd(selection.focusNode, selection.focusOffset);
+      return {
+        caret: beforeFocus.toString().length,
+        textLength: element.textContent?.length ?? 0,
+      };
+    });
+    expect(expectedRecoverySelection).not.toBeNull();
 
     const acceptedRevision = await expectCheckpointPersisted(page, revisionBefore);
     expect(acceptedRevision).toBe(revisionBefore + 1);
@@ -3758,13 +3783,177 @@ test("an accepted Native Edit survives a live-session rebase failure", {
     frame = await currentEditorFrame(page);
     const recovered = frame.locator('[data-native-case="runtime-accepted-rebase"]');
     await expect(recovered).toContainText("恢复后仍在");
-    await recovered.dblclick();
     await expect(recovered).toHaveAttribute("contenteditable", "true");
-    await recovered.press("End");
+    await expect(editor).toHaveAttribute("data-native-recovery", "resumed");
+    await expect.poll(() => recovered.evaluate((element) => {
+      const selection = document.getSelection();
+      if (
+        document.activeElement !== element
+        || !selection?.isCollapsed
+        || !selection.focusNode
+        || !element.contains(selection.focusNode)
+      ) return null;
+      const beforeFocus = document.createRange();
+      beforeFocus.selectNodeContents(element);
+      beforeFocus.setEnd(selection.focusNode, selection.focusOffset);
+      return {
+        caret: beforeFocus.toString().length,
+        textLength: element.textContent?.length ?? 0,
+      };
+    })).toEqual(expectedRecoverySelection);
     await page.keyboard.insertText("，可以继续编辑");
     await page.keyboard.press("Escape");
     await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
       .toContain("可以继续编辑");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
+test("Escape checkpoint reload keeps Native Edit exited", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  test.setTimeout(120_000);
+  const html = `<!doctype html>
+<html><head><title>Runtime Escape checkpoint reload</title></head><body>
+  <main><p data-native-case="runtime-escape-checkpoint-reload">Escape 明确结束编辑</p></main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-escape-checkpoint-reload-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(
+      page,
+      sourcePath,
+      "runtime-escape-checkpoint-reload",
+    );
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+
+    const target = await activateNativeEdit(frame, "runtime-escape-checkpoint-reload");
+    await target.press("End");
+    await page.keyboard.insertText("，源码由退出操作提交");
+    expect(await page.evaluate(() => (
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__
+    ))).toBe(true);
+    await page.keyboard.press("Escape");
+    expect(await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
+      return window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__;
+    })).toBe(false);
+
+    const acceptedRevision = await expectCheckpointPersisted(page, revisionBefore);
+    expect(acceptedRevision).toBe(revisionBefore + 1);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("源码由退出操作提交");
+    await expect(editor).toHaveAttribute(
+      "data-native-commit-path",
+      "v2-island-checkpoint-reload",
+    );
+
+    frame = await currentEditorFrame(page);
+    let exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
+    await expect(exitedTarget).toContainText("源码由退出操作提交");
+    await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
+    await expect(editor).not.toHaveAttribute("data-native-recovery", "resumed");
+    await expect.poll(() => exitedTarget.evaluate((element) => {
+      const selection = document.getSelection();
+      return {
+        focused: document.activeElement === element,
+        selectionInside: Boolean(
+          selection?.focusNode
+          && (selection.focusNode === element || element.contains(selection.focusNode)),
+        ),
+      };
+    })).toEqual({ focused: false, selectionInside: false });
+
+    const exitedDocument = await documentToken(page);
+    const tablist = page.getByRole("tablist", { name: "已打开的页面" });
+    const documentTab = tablist.getByRole("tab").first();
+    await page.getByRole("button", { name: "新标签页" }).click();
+    await documentTab.click();
+    frame = (await loadedDiskFrame(
+      page,
+      sourcePath,
+      "runtime-escape-checkpoint-reload",
+    )).frame;
+    await expect.poll(() => documentToken(page)).not.toBe(exitedDocument);
+    exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
+    await expect(exitedTarget).toContainText("源码由退出操作提交");
+    await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("源码由退出操作提交");
+  }, {
+    injectedEnv: {
+      STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
+    },
+  });
+});
+
+test("Native Edit recovery does not reclaim comment focus during Runtime positioning", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const html = `<!doctype html>
+<html><head><title>Runtime native recovery focus fence</title></head><body>
+  <main><p data-native-case="runtime-recovery-focus-fence">恢复期间保留外部焦点</p></main>
+  <script>document.body.dataset.runtimeReady = "true";</script>
+</body></html>`;
+
+  await withRuntimeProject("stemmio-runtime-recovery-focus-fence-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let { frame } = await loadedDiskFrame(page, sourcePath, "runtime-recovery-focus-fence");
+    const editor = page.getByTestId("html-canvas-editor");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+
+    const target = frame.locator('[data-native-case="runtime-recovery-focus-fence"]');
+    await target.click();
+    await editor.getByRole("button", { name: /留评论/u }).click();
+    const commentInput = page.getByRole("textbox", { name: "评论内容" });
+    await expect(commentInput).toBeVisible();
+
+    await armRuntimeCommitHold(page);
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_FAIL_NEXT_NATIVE_REBASE__ = true;
+    });
+    const activeTarget = await activateNativeEdit(frame, "runtime-recovery-focus-fence");
+    await activeTarget.press("End");
+    await page.keyboard.insertText("，源码已接受");
+    await expectCheckpointPersisted(page, revisionBefore);
+    await waitForHeldRuntimeCommit(page);
+
+    // Commit the Candidate, but hold the later positioning completion so the
+    // stale Canvas-focus snapshot and the user's newer destination coexist.
+    await advanceHeldRuntimeCommitToNextHold(page);
+    await expect(editor).toHaveAttribute("data-runtime-handoff", "positioning");
+    await waitForHeldRuntimeCommit(page);
+    await commentInput.evaluate((element) => element.focus());
+    await expect.poll(() => commentInput.evaluate((element) => (
+      document.activeElement === element
+    ))).toBe(true);
+
+    await releaseHeldRuntimeCommits(page);
+    await waitForRuntimeHandoffSettled(page);
+    await expect.poll(() => commentInput.evaluate((element) => (
+      document.activeElement === element
+    ))).toBe(true);
+    await expect(editor).not.toHaveAttribute("data-native-recovery", "resumed");
+    frame = await currentEditorFrame(page);
+    await expect(frame.locator('[data-native-case="runtime-recovery-focus-fence"]'))
+      .not.toHaveAttribute("contenteditable", "true");
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("源码已接受");
   }, {
     injectedEnv: {
       STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",

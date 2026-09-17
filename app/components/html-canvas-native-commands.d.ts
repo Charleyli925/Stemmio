@@ -8,6 +8,9 @@ import type {
   NativeEditQueueCommandResult,
   NativeEditQueuedCommand,
 } from "./native-edit-types";
+import type { DocumentSourceReceipt } from "../application/document-session.js";
+import type { NativeEditSelection } from "./IslandEditingController";
+import type { HtmlCanvasSelection } from "./HtmlCanvasEditor.types";
 
 export type NativeCommandSessionPort = {
   queuePendingCommand(request: {
@@ -37,6 +40,33 @@ export function nativeEditLeasesMatch(
   left: NativeEditLeaseStamp | null,
   right: NativeEditLeaseStamp,
 ): boolean;
+
+export type NativeEditRecoveryIntent = Readonly<{
+  receipt: DocumentSourceReceipt;
+  sourceSha256: string;
+  canvasGeneration: number;
+  retiredFrameGeneration: number;
+  retiredSessionId: string;
+  target: HtmlCanvasSelection;
+  selection: NativeEditSelection;
+  restoreFocus: boolean;
+  toolbarVisible: boolean;
+}>;
+
+export type NativeEditRecoveryCurrent = Readonly<{
+  receipt: DocumentSourceReceipt | null;
+  sourceSha256: string;
+  canvasGeneration: number;
+  frameGeneration: number;
+  targetId: string;
+  focusAllowed: boolean;
+}>;
+
+export declare class NativeEditRecoveryController {
+  offer(intent: NativeEditRecoveryIntent): void;
+  cancel(): boolean;
+  takeIfCurrent(current: NativeEditRecoveryCurrent): NativeEditRecoveryIntent | null;
+}
 
 export declare class NativeDeferredCommandQueue {
   discardPendingNativeCommands(reason: NativeDeferredCommandDiscardReason): void;
