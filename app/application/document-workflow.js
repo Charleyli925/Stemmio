@@ -3307,13 +3307,19 @@ export class DocumentWorkflow {
         // A missing acknowledgement is a disposable projection failure. Retire
         // that generation, rebuild exactly once from Document authority, and
         // verify the new receipt without repeating source acceptance or I/O.
-        this.#documentSession.reloadCanvas({
+        const rebuiltDocument = this.#documentSession.reloadCanvas({
           context,
           operationId: this.#nextOperationId("canvas-ack-rebuild"),
         });
         this.#canvasPort.invalidateRenderAcks();
-        this.#canvasPort.rebuildActiveFrame();
-        observation = await this.#verifyRendered(html, sourceSha256, context);
+        const rebuildFence = this.#canvasPort.rebuildActiveFrame();
+        observation = await this.#verifyRendered(
+          html,
+          sourceSha256,
+          context,
+          rebuiltDocument.sourceReceipt,
+          rebuildFence,
+        );
       } catch (retryCause) {
         if (context && !this.#isCurrent(context)) return false;
         this.#failCurrentCanvas(
@@ -3329,7 +3335,13 @@ export class DocumentWorkflow {
     return false;
   }
 
-  async #verifyRendered(html, sourceSha256, context, expectedReceipt = null) {
+  async #verifyRendered(
+    html,
+    sourceSha256,
+    context,
+    expectedReceipt = null,
+    rebuildFence = undefined,
+  ) {
     const receipt = expectedReceipt || this.#documentSession.sourceReceipt;
     if (typeof this.#canvasPort.verifyRendered !== "function") {
       return canvasRenderObservation({
@@ -3344,6 +3356,7 @@ export class DocumentWorkflow {
       sourceSha256,
       context,
       receipt,
+      rebuildFence,
     ));
     const currentReceipt = this.#documentSession.sourceReceipt;
     if (!observation || !sameSourceReceipt(observation.receipt, currentReceipt)) {

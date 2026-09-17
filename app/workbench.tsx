@@ -522,6 +522,7 @@ export default function Workbench() {
     context?: ProjectContext,
     receipt?: DocumentSourceReceipt | null,
     previousFrameGeneration?: number | null,
+    previousFrameDocument?: Document | null,
   ) => Promise<DocumentCanvasRenderObservation>>(async () => {
     throw new Error("画布核对尚未完成初始化。");
   });
@@ -1013,17 +1014,36 @@ export default function Workbench() {
           errorMessage: productErrorMessage,
         }),
         canvas: {
-          verifyRendered: (expectedHtml, expectedSha256, context, receipt) => (
-            verifyCanvasRenderedRef.current(
+          verifyRendered: (
+            expectedHtml,
+            expectedSha256,
+            context,
+            receipt,
+            rebuildFence,
+          ) => {
+            const fence = rebuildFence as Readonly<{
+              previousFrameGeneration?: number | null;
+              previousFrameDocument?: Document | null;
+            }> | undefined;
+            return verifyCanvasRenderedRef.current(
               expectedHtml,
               expectedSha256,
               context as ProjectContext | undefined,
               receipt,
-            )
-          ),
+              fence?.previousFrameGeneration,
+              fence?.previousFrameDocument,
+            );
+          },
           freeze: (reason) => fenceAndFreezeCurrentCanvasRef.current(reason),
           unlock: () => editorRef.current?.unlockNow?.(),
-          rebuildActiveFrame: () => editorRef.current?.rebuildActiveFrame(),
+          rebuildActiveFrame: () => {
+            const rebuildFence = Object.freeze({
+              previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,
+              previousFrameDocument: editorRef.current?.getRenderedFrameDocument() || null,
+            });
+            editorRef.current?.rebuildActiveFrame();
+            return rebuildFence;
+          },
           adoptHistorySource: (nextHtml, target, textSelection, operation) => {
             editorRef.current?.adoptHistorySource(
               nextHtml,

@@ -90,12 +90,13 @@ export type DocumentWorkflowTransitionAuthority = Readonly<{
 export type DocumentWorkflowCanvasPort = Readonly<{
   invalidateRenderAcks(): void;
   unlock?(): void;
-  rebuildActiveFrame?(): void;
+  rebuildActiveFrame?(): unknown;
   verifyRendered?(
     html: string,
     sourceSha256: string,
     context?: ProjectContext,
     receipt?: DocumentSourceReceipt | null,
+    rebuildFence?: unknown,
   ): Promise<DocumentCanvasRenderObservation>;
   freeze?(reason: string): Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
   adoptHistorySource?(
