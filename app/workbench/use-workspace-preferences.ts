@@ -53,10 +53,17 @@ export function useWorkspacePreferences(
       providerId: WorkspacePreferenceAgentId;
       isCurrent(): boolean;
     }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    commitAgentConfigurations(input: Readonly<{
+      intentId: string;
+      agentConfigurations: WorkspacePreferences["agentConfigurations"];
+      isCurrent(): boolean;
+    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
     setProviderDisabled(input: Readonly<{
+      intentId: string;
       providerId: WorkspacePreferenceAgentId;
       disabled: boolean;
-    }>): Promise<boolean>;
+      isCurrent(): boolean;
+    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
     snapshot(): WorkspacePreferencesSnapshot;
   }>;
   update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
@@ -82,9 +89,16 @@ export function useWorkspacePreferences(
       providerId: WorkspacePreferenceAgentId;
       isCurrent(): boolean;
     }>) => session.commitDefaultAgent(input),
+    commitAgentConfigurations: (input: Readonly<{
+      intentId: string;
+      agentConfigurations: WorkspacePreferences["agentConfigurations"];
+      isCurrent(): boolean;
+    }>) => session.commitAgentConfigurations(input),
     setProviderDisabled: (input: Readonly<{
+      intentId: string;
       providerId: WorkspacePreferenceAgentId;
       disabled: boolean;
+      isCurrent(): boolean;
     }>) => session.setProviderDisabled(input),
     snapshot: () => session.snapshot,
   }), [session]);

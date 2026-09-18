@@ -891,16 +891,31 @@ export class AgentCatalogState {
 
   publishCredentialPersist(providerId, {
     status,
+    operationKind = null,
     reason = null,
     operationId = null,
     recordId = null,
     code = null,
   } = {}) {
     const id = String(providerId || "");
-    const allowed = new Set(["pending", "saved", "failed", "unknown", "skipped", "missing", "superseded"]);
+    const allowed = new Set([
+      "pending",
+      "saved",
+      "failed",
+      "unreadable",
+      "unavailable",
+      "rejected",
+      "unknown",
+      "skipped",
+      "missing",
+      "superseded",
+    ]);
     this.#patchProvider(id, {
       credentialPersist: Object.freeze({
         status: allowed.has(status) ? status : "unknown",
+        operationKind: ["startup", "persist", "clear"].includes(operationKind)
+          ? operationKind
+          : null,
         reason: reason ? String(reason) : null,
         operationId: operationId ? String(operationId) : null,
         recordId: recordId ? String(recordId) : null,
@@ -1870,17 +1885,31 @@ export class AgentCatalogState {
     return frozen;
   }
 
-  async saveConfiguration() {
+  async saveConfiguration(intent = null) {
     await this.#preferencesLoaded;
     if (!this.#configurationPreferencesPort) return;
     const agentConfigurations = Object.fromEntries([...this.#providers].map(([id, provider]) => [id, {
       modelId: provider.selection.requestedModelId,
       reasoning: provider.selection.reasoning.requested,
     }]));
-    const write = this.#configurationWrite.catch(() => {}).then(() =>
-      this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations));
+    const write = this.#configurationWrite.catch(() => {}).then(async () => {
+      if (intent && !intent.isCurrent()) return Object.freeze({ status: "superseded" });
+      return this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations, intent);
+    });
     this.#configurationWrite = write;
-    if (await write === false) {
+    const result = await write;
+    if (intent && !intent.isCurrent()) {
+      throw Object.assign(new Error("Agent configuration operation was superseded."), {
+        code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
+      });
+    }
+    const status = result?.status || (result === false ? "failed" : "committed");
+    if (status === "superseded") {
+      throw Object.assign(new Error("Agent configuration operation was superseded."), {
+        code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
+      });
+    }
+    if (status === "failed") {
       throw Object.assign(new Error("Agent configuration was not persisted."), {
         code: "AGENT_PREFERENCES_SAVE_FAILED",
       });
@@ -2057,7 +2086,11 @@ export class AgentCatalogState {
     this.#publish();
     let configurationPersist = Object.freeze({ status: "saved", code: null });
     try {
-      await this.saveConfiguration();
+      await this.saveConfiguration(
+        extras.intentId && typeof extras.isCurrent === "function"
+          ? Object.freeze({ intentId: extras.intentId, isCurrent: extras.isCurrent })
+          : null,
+      );
     } catch (cause) {
       configurationPersist = Object.freeze({
         status: "failed",
@@ -2067,7 +2100,7 @@ export class AgentCatalogState {
     return Object.freeze({ ...result, configurationPersist });
   }
 
-  async disconnectApiKey(selection = this.freezeSelected()) {
+  async disconnectApiKey(selection = this.freezeSelected(), { isCurrent = () => true } = {}) {
     const frozen = freezeAgentSelection(selection);
     const provider = this.provider(frozen);
     const updateConfiguration = typeof this.#bridgeClient.updateAgentConfiguration === "function"
@@ -2082,6 +2115,11 @@ export class AgentCatalogState {
       providerId: frozen.providerId,
       disconnect: true,
     });
+    if (!isCurrent()) {
+      throw Object.assign(new Error("更新的连接操作已取代本次结果。"), {
+        code: "AGENT_SESSION_CREDENTIAL_STALE",
+      });
+    }
     this.#invalidateProvider(frozen.providerId);
     const resetSelection = freezeAgentSelection({ ...provider.selection, resolvedModelId: null });
     if (this.#selected?.providerId === frozen.providerId) this.#selected = resetSelection;

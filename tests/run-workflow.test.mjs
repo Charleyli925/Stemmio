@@ -7,7 +7,9 @@ import { DocumentSession } from "../app/application/document-session.js";
 import { ProjectSession } from "../app/application/project-session.js";
 import { RUN_SESSION_COORDINATION, RunSession } from "../app/application/run-session.js";
 import { RunWorkflow } from "../app/application/run-workflow.js";
+import { interpretAgentCredentialOperation } from "../app/application/agent-credential-operation.js";
 import { VersionSession } from "../app/application/version-session.js";
+import { WorkspacePreferencesSession } from "../app/application/workspace-preferences-session.js";
 import {
   activeRunFromRecord,
   canonicalLifecycleState,
@@ -3288,9 +3290,9 @@ test("configuration save failure keeps connection, credential save and default c
     ports: {
       agentCredential: {
         async status() { return { status: "missing", remembered: false }; },
-        async persist() {
+        async persist(input) {
           calls.persist += 1;
-          return { ok: true, remembered: true, status: "saved", recordId: "record_saved" };
+          return { ok: true, remembered: true, status: "saved", operationId: input.operationId, recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
         },
       },
       agentPreferences: {
@@ -3340,7 +3342,7 @@ test("API Key connect reports usable connection while a lost save receipt conver
         async status(input) {
           credentialCalls.status.push(input);
           if (!input.operationId) return { status: "missing", remembered: false };
-          return { status: "saved", remembered: true, recordId: "record_saved_after_lost_reply" };
+          return { status: "saved", remembered: true, operationId: input.operationId, recordId: "cred_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
         },
         async clear() { return { ok: true, status: "missing" }; },
         async restore() { return { ok: true, restored: true }; },
@@ -3390,7 +3392,7 @@ test("a model-only reconnect preserves the independent remembered credential rec
       agentCredential: {
         async persist(input) {
           credentialCalls.push(input);
-          return { ok: true, remembered: true, status: "saved", recordId: "record_saved" };
+          return { ok: true, remembered: true, status: "saved", operationId: input.operationId, recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
         },
         async status() { return { status: "missing", remembered: false }; },
       },
@@ -3413,7 +3415,7 @@ test("a model-only reconnect preserves the independent remembered credential rec
     modelId: "deepseek-v4-pro",
   });
   assert.equal(updated.value.credentialPersist.status, "saved");
-  assert.equal(updated.value.credentialPersist.recordId, "record_saved");
+  assert.equal(updated.value.credentialPersist.recordId, "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   assert.equal(credentialCalls.length, 1);
   assert.equal(
     harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist.status,
@@ -3429,7 +3431,7 @@ test("a remembered startup credential refreshes Bridge-backed availability after
           return {
             status: "saved",
             remembered: true,
-            recordId: "record_restored",
+            recordId: "cred_cccccccccccccccccccccccccccccccc",
             vendorId: "deepseek",
           };
         },
@@ -3497,7 +3499,7 @@ test("a later remembered credential and default intent fence an older delayed sa
         async persist(input) {
           persisted.push(input);
           if (persisted.length === 1) return firstPersist.promise;
-          return { ok: true, remembered: true, status: "saved", recordId: "record_newer" };
+          return { ok: true, remembered: true, status: "saved", operationId: input.operationId, recordId: "cred_dddddddddddddddddddddddddddddddd" };
         },
         async status() { return { status: "missing", remembered: false }; },
         async clear() { return { ok: true, status: "missing" }; },
@@ -3524,14 +3526,429 @@ test("a later remembered credential and default intent fence an older delayed sa
     vendorId: "deepseek",
   });
   assert.equal(newer.status, "succeeded");
-  assert.equal(newer.value.credentialPersist.recordId, "record_newer");
-  firstPersist.resolve({ ok: true, remembered: true, status: "saved", recordId: "record_older" });
+  assert.equal(newer.value.credentialPersist.recordId, "cred_dddddddddddddddddddddddddddddddd");
+  firstPersist.resolve({ ok: true, remembered: true, status: "saved", operationId: persisted[0].operationId, recordId: "cred_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" });
   const olderOutcome = await older;
-  assert.equal(olderOutcome.status, "succeeded");
+  assert.equal(olderOutcome.status, "stale");
   const projected = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist;
-  assert.equal(projected.recordId, "record_newer");
+  assert.equal(projected.recordId, "cred_dddddddddddddddddddddddddddddddd");
   assert.equal(defaultCommits.length, 1);
   assert.notEqual(persisted[0].operationId, persisted[1].operationId);
+});
+
+test("credential status interpretation uses failure precedence and exact saved identity", () => {
+  const operationId = "credential-status-operation";
+  assert.equal(interpretAgentCredentialOperation({
+    status: "saved",
+    remembered: true,
+    reconnectRequired: true,
+    operationId,
+    recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  }, { kind: "persist", expectedOperationId: operationId }).status, "unreadable");
+  assert.equal(interpretAgentCredentialOperation({
+    status: "saved",
+    remembered: true,
+    available: false,
+    operationId,
+    recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  }, { kind: "persist", expectedOperationId: operationId }).status, "unavailable");
+  assert.equal(interpretAgentCredentialOperation({
+    status: "saved",
+    remembered: true,
+    operationId: "credential-other-operation",
+    recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  }, { kind: "persist", expectedOperationId: operationId }).status, "unknown");
+  assert.equal(interpretAgentCredentialOperation({
+    status: "unknown",
+    remembered: true,
+    operationId,
+  }, { kind: "persist", expectedOperationId: operationId }).status, "unknown");
+  assert.equal(interpretAgentCredentialOperation({
+    status: "rejected",
+    remembered: true,
+    operationId,
+  }, { kind: "persist", expectedOperationId: operationId }).status, "rejected");
+  assert.equal(interpretAgentCredentialOperation({
+    status: "saved",
+    remembered: true,
+    operationId,
+    recordId: "not-a-credential-record",
+  }, { kind: "persist", expectedOperationId: operationId }).status, "rejected");
+});
+
+test("late startup credential success and failure stay silent after a newer disconnect intent", async () => {
+  for (const mode of ["success", "failure"]) {
+    const startup = deferred();
+    const harness = createHarness({
+      ports: {
+        agentCredential: {
+          status: () => startup.promise,
+        },
+      },
+    });
+    const stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+    assert.equal((await harness.workflow.disconnectAgentApiKey(stemmio)).status, "succeeded");
+    if (mode === "success") {
+      startup.resolve({
+        status: "saved",
+        remembered: true,
+        recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        vendorId: "deepseek",
+      });
+    } else {
+      startup.reject(new Error("late startup failure"));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(harness.calls.diagnose.length, 0);
+    assert.notEqual(
+      harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist?.status,
+      "saved",
+    );
+    assert.notEqual(
+      harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist?.status,
+      "failed",
+    );
+    harness.workflow.dispose();
+  }
+});
+
+test("remove during deferred configuration save fences old credential persist and default commit", async () => {
+  const configurationSave = deferred();
+  const credentialCalls = [];
+  const defaultCommits = [];
+  const clearCalls = [];
+  const harness = createHarness({
+    bridge: {
+      async updateAgentConfiguration(request) {
+        if (request.disconnect === true) return { ok: true, configured: false };
+        return { status: "ready", selection: request.selection, models: [], vendorId: "deepseek" };
+      },
+    },
+    ports: {
+      agentCredential: {
+        async status(input) { return { status: "missing", operationId: input.operationId }; },
+        async persist(input) { credentialCalls.push(input); return { status: "saved", operationId: input.operationId, recordId: "cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+        async clear(input) { clearCalls.push(input); return { status: "missing", operationId: input.operationId }; },
+      },
+      agentPreferences: {
+        async getAgentConfigurations() { return {}; },
+        async saveAgentConfigurations() { await configurationSave.promise; return true; },
+        async commitDefaultAgent(input) { defaultCommits.push(input); return true; },
+        async setProviderDisabled() { return true; },
+      },
+    },
+  });
+  const stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  harness.workflow.queuePendingDefaultAgent(stemmio);
+  const connecting = harness.workflow.connectAgentApiKey(stemmio, "synthetic-key", {
+    remember: true,
+    vendorId: "deepseek",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const removed = await harness.workflow.manageAgentAccess("remove-key", stemmio, {
+    stopRelatedRuns: false,
+  });
+  assert.equal(removed.status, "succeeded", JSON.stringify(removed));
+  configurationSave.resolve(true);
+  assert.equal((await connecting).status, "stale");
+  assert.equal(credentialCalls.length, 0);
+  assert.equal(defaultCommits.length, 0);
+  assert.equal(clearCalls.length, 1);
+});
+
+test("lost clear response reconciles the same operation and a second remove emits no new clear", async () => {
+  const clearCalls = [];
+  const statusCalls = [];
+  const harness = createHarness({
+    ports: {
+      agentCredential: {
+        async clear(input) {
+          clearCalls.push(input);
+          throw new Error("reply lost after durable clear");
+        },
+        async status(input) {
+          statusCalls.push(input);
+          return { status: "missing", operationId: input.operationId };
+        },
+      },
+    },
+  });
+  const stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const first = await harness.workflow.manageAgentAccess("remove-key", stemmio, {
+    stopRelatedRuns: false,
+  });
+  assert.equal(first.status, "unknown");
+  assert.equal(
+    harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist.operationKind,
+    "clear",
+  );
+  const second = await harness.workflow.manageAgentAccess("remove-key", stemmio, {
+    stopRelatedRuns: false,
+  });
+  assert.equal(second.status, "succeeded", JSON.stringify(second));
+  assert.equal(clearCalls.length, 1);
+  assert.equal(statusCalls.length, 2, "startup plus one same-operation reconciliation query");
+  assert.equal(statusCalls[1].operationId, clearCalls[0].operationId);
+});
+
+test("replacement save stays authoritative while one remove reconciles the old clear then clears the new record", async () => {
+  const oldClearStatus = deferred();
+  const clearCalls = [];
+  const statusCalls = [];
+  const harness = createHarness({
+    bridge: {
+      async updateAgentConfiguration(request) {
+        if (request.disconnect === true) return { ok: true, configured: false };
+        return {
+          status: "ready",
+          selection: request.selection,
+          models: [],
+          vendorId: request.vendorId,
+        };
+      },
+    },
+    ports: {
+      agentCredential: {
+        async clear(input) {
+          clearCalls.push(input);
+          if (clearCalls.length === 1) throw new Error("old clear reply lost");
+          return { status: "missing", operationId: input.operationId };
+        },
+        async persist(input) {
+          return {
+            status: "saved",
+            operationId: input.operationId,
+            recordId: "cred_ffffffffffffffffffffffffffffffff",
+          };
+        },
+        async status(input) {
+          statusCalls.push(input);
+          if (!input.operationId) return { status: "missing" };
+          return oldClearStatus.promise;
+        },
+      },
+      agentPreferences: {
+        async getAgentConfigurations() { return {}; },
+        async saveAgentConfigurations() { return true; },
+        async commitDefaultAgent() { return true; },
+        async setProviderDisabled() { return true; },
+      },
+    },
+  });
+  let stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  assert.equal((await harness.workflow.manageAgentAccess("remove-key", stemmio, {
+    stopRelatedRuns: false,
+  })).status, "unknown");
+  const oldOperationId = clearCalls[0].operationId;
+  stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const replacement = await harness.workflow.connectAgentApiKey(stemmio, "replacement-key", {
+    remember: true,
+    vendorId: "deepseek",
+  });
+  assert.equal(replacement.status, "succeeded");
+  const savedProjection = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist;
+  assert.equal(savedProjection.status, "saved");
+  assert.equal(savedProjection.operationKind, "persist");
+  assert.equal(savedProjection.recordId, "cred_ffffffffffffffffffffffffffffffff");
+
+  stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const removingReplacement = harness.workflow.manageAgentAccess("remove-key", stemmio, {
+    stopRelatedRuns: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist.recordId,
+    "cred_ffffffffffffffffffffffffffffffff",
+    "reconciling the old clear must not overwrite the newer saved projection",
+  );
+  oldClearStatus.resolve({
+    status: "superseded",
+    operationId: oldOperationId,
+  });
+  const removed = await removingReplacement;
+  assert.equal(removed.status, "succeeded", JSON.stringify(removed));
+  assert.equal(statusCalls.filter((input) => input.operationId).length, 1);
+  assert.equal(statusCalls.find((input) => input.operationId)?.operationId, oldOperationId);
+  assert.equal(clearCalls.length, 2, "only the explicit remove may clear the replacement record");
+  assert.equal(clearCalls[1].expectedRecordId, "cred_ffffffffffffffffffffffffffffffff");
+  assert.notEqual(clearCalls[1].operationId, oldOperationId);
+  const finalProjection = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.credentialPersist;
+  assert.equal(finalProjection.status, "missing");
+  assert.equal(finalProjection.operationKind, "clear");
+  assert.equal(finalProjection.operationId, clearCalls[1].operationId);
+});
+
+test("a newer connect fences and rolls back a slow provider-disable preference write", async () => {
+  const firstRecordStarted = deferred();
+  const releaseFirstRecord = deferred();
+  let durable = { workspace: { disabledAgentProviderIds: [], agentConfigurations: {} } };
+  let recordCalls = 0;
+  const preferences = new WorkspacePreferencesSession({
+    port: {
+      async get() { return durable; },
+      async record(input) {
+        recordCalls += 1;
+        if (recordCalls === 1) {
+          firstRecordStarted.resolve();
+          await releaseFirstRecord.promise;
+        }
+        durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+        return durable;
+      },
+    },
+  });
+  const harness = createHarness({
+    bridge: {
+      async updateAgentConfiguration(request) {
+        if (request.disconnect === true) return { ok: true, configured: false };
+        return {
+          status: "ready",
+          selection: request.selection,
+          models: [],
+          vendorId: request.vendorId,
+        };
+      },
+    },
+    ports: {
+      agentCredential: {
+        async status() { return { status: "missing" }; },
+      },
+      agentPreferences: {
+        async getAgentConfigurations() {
+          return (await preferences.load()).workspace.agentConfigurations;
+        },
+        async saveAgentConfigurations(agentConfigurations, intent) {
+          return preferences.commitAgentConfigurations({
+            intentId: intent.intentId,
+            agentConfigurations,
+            isCurrent: intent.isCurrent,
+          });
+        },
+        async commitDefaultAgent({ providerId, isCurrent }) {
+          return preferences.commitDefaultAgent({ providerId, isCurrent });
+        },
+        async setProviderDisabled(input) {
+          return preferences.setProviderDisabled(input);
+        },
+      },
+    },
+  });
+  let stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const oldDisconnect = harness.workflow.manageAgentAccess("disconnect", stemmio, {
+    stopRelatedRuns: false,
+  });
+  await firstRecordStarted.promise;
+  stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const newerConnect = harness.workflow.connectAgentApiKey(stemmio, "replacement-key", {
+    remember: false,
+    vendorId: "deepseek",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstRecord.resolve();
+  assert.equal((await oldDisconnect).status, "stale");
+  assert.equal((await newerConnect).status, "succeeded");
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, []);
+  const provider = harness.workflow.getSnapshot().agentCatalog.providers.stemmio;
+  assert.equal(provider.availability.status, "ready");
+  assert.equal(provider.connection.vendorId, "deepseek");
+  preferences.dispose();
+});
+
+test("RunWorkflow then Session disposal rolls back a started provider-disable write without publication", async () => {
+  const preferenceWriteStarted = deferred();
+  const releasePreferenceWrite = deferred();
+  let durable = { workspace: { disabledAgentProviderIds: [], agentConfigurations: {} } };
+  const preferenceWrites = [];
+  const preferences = new WorkspacePreferencesSession({
+    port: {
+      async get() { return durable; },
+      async record(input) {
+        preferenceWrites.push(input);
+        durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+        if (preferenceWrites.length === 1) {
+          preferenceWriteStarted.resolve();
+          await releasePreferenceWrite.promise;
+        }
+        return durable;
+      },
+    },
+  });
+  await preferences.load();
+  const harness = createHarness({
+    ports: {
+      agentPreferences: {
+        async getAgentConfigurations() {
+          return (await preferences.load()).workspace.agentConfigurations;
+        },
+        async saveAgentConfigurations(agentConfigurations, intent) {
+          return preferences.commitAgentConfigurations({
+            intentId: intent.intentId,
+            agentConfigurations,
+            isCurrent: intent.isCurrent,
+          });
+        },
+        async commitDefaultAgent({ providerId, isCurrent }) {
+          return preferences.commitDefaultAgent({ providerId, isCurrent });
+        },
+        async setProviderDisabled(input) {
+          return preferences.setProviderDisabled(input);
+        },
+      },
+    },
+  });
+  let publications = 0;
+  harness.workflow.subscribe(() => { publications += 1; });
+  const stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const disconnecting = harness.workflow.manageAgentAccess("disconnect", stemmio, {
+    stopRelatedRuns: false,
+  });
+  await preferenceWriteStarted.promise;
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, ["stemmio"]);
+  harness.workflow.dispose();
+  preferences.dispose();
+  const publicationsAtDispose = publications;
+  releasePreferenceWrite.resolve();
+  assert.equal((await disconnecting).status, "stale");
+  assert.deepEqual(preferenceWrites.map((call) => call.workspace.disabledAgentProviderIds), [
+    ["stemmio"],
+    [],
+  ]);
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, []);
+  assert.equal(publications, publicationsAtDispose);
+});
+
+test("remove retires an unknown held credential so retry cannot replay the obsolete secret", async () => {
+  const harness = createHarness({
+    bridge: {
+      async updateAgentConfiguration(request) {
+        if (request.disconnect === true) return { ok: true, configured: false };
+        return { status: "ready", selection: request.selection, models: [], vendorId: "deepseek" };
+      },
+    },
+    ports: {
+      agentCredential: {
+        async status(input) { return { status: "missing", operationId: input.operationId }; },
+        async persist() { throw new Error("unknown save"); },
+        async clear(input) { return { status: "missing", operationId: input.operationId }; },
+      },
+      agentPreferences: {
+        async getAgentConfigurations() { return {}; },
+        async saveAgentConfigurations() { return true; },
+        async commitDefaultAgent() { return true; },
+        async setProviderDisabled() { return true; },
+      },
+    },
+  });
+  const stemmio = harness.workflow.getSnapshot().agentCatalog.providers.stemmio.selection;
+  const connected = await harness.workflow.connectAgentApiKey(stemmio, "synthetic-key", {
+    remember: true,
+    vendorId: "deepseek",
+  });
+  assert.equal(connected.value.credentialPersist.status, "unknown");
+  assert.equal((await harness.workflow.manageAgentAccess("remove-key", stemmio, { stopRelatedRuns: false })).status, "succeeded");
+  const retried = await harness.workflow.retryAgentCredentialPersist(stemmio);
+  assert.equal(retried.status, "rejected");
+  assert.equal(retried.code, "AGENT_CREDENTIAL_RETRY_UNAVAILABLE");
 });
 
 test("provider access impact counts running tasks on other documents", async () => {

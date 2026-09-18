@@ -53,12 +53,14 @@ test("credential persistence stays a public projection and never stores the raw 
   const catalog = new AgentCatalogState({ bridgeClient: { async preflightAgent() {} } });
   catalog.publishCredentialPersist("stemmio", {
     status: "saved",
+    operationKind: "persist",
     operationId: "credential_projection_1",
     recordId: "record_projection_1",
     apiKey: "synthetic-key-must-not-project",
   });
   assert.deepEqual(catalog.credentialPersist("stemmio"), {
     status: "saved",
+    operationKind: "persist",
     reason: null,
     operationId: "credential_projection_1",
     recordId: "record_projection_1",

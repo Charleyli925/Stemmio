@@ -3667,3 +3667,12 @@ private-corpus coverage remains outside this package.
 - 可见结果：应用命令分开报告授权、源码接纳与页面恢复。源码已接纳但 Canvas 恢复失败时，仍使用既有恢复入口，不回滚字节、不再次读盘或要求用户重新授权。
 - 安全边界：外部预览接受绑定预览身份与 Hash；磁盘变化后拒绝原回执。迟到的旧操作 completion/finally 不会改动或解锁新页。
 - Evidence boundary: 本项只新增纯 Node 操作序列与 Repository CAS 证据，并复用已有 Electron 重载、IME、显式退出和冲突采用规格；不把 Node 结果写成真实 Electron、私有 HTML 语料、打包应用或已安装应用验收。
+
+## 2026-09-18 — Agent 凭据单一操作意图与结果解释
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. 没有新增控件、弹窗、布局、颜色或动效；继续复用设置页既有连接、保存失败、状态未确认与重试入口。
+- 可见结果：`remembered` 不再覆盖 unreadable、unavailable、rejected 或 unknown；只有明确 saved、相同 operation ID 与合法 record ID 才显示已保存。启动查询、连接、更换、断开和移除由 provider 级代次围栏，迟到结果不会把已经移除的 Key 或旧默认服务重新显示为成功。
+- 恢复边界：clear 回执丢失后保留原 operation ID，设置页继续显示“确认移除结果”；再次移除先查询并收敛同一操作。如果期间已保存新 Key，只有旧操作终态后，该次明确移除才会为新 record 创建 clear；unknown/unreadable/unavailable 不会发出新变更。
+- 偏好边界：断开/重连的 disabled 偏好与同一 provider 凭据 intent 共用围栏；迟到写入在新连接或销毁后恢复原值，销毁后只允许已启动操作完成预定 rollback，不再发布 UI 或覆盖新 Catalog 归属。
+- 安全边界：实现只及时释放已经不再需要的 JS 引用，不宣称可以擦除 JavaScript 内存。Main 的 v2 receipt、recordId、CAS clear、tombstone、serialization 与 v1 读取兼容未改变。
+- Evidence boundary: 当前证据是纯解释器类型检查、合成 Node 顺序测试与 Settings 生产 action gate 可执行测试；没有改视觉样式，因此不需要截图。真实 provider、打包应用、已安装应用与私有语料验收均未执行。

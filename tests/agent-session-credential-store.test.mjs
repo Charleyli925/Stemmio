@@ -386,6 +386,50 @@ test("a lost persist reply converges through operation status and replay does no
   assert.equal((await restarted.load()).apiKey, "sk-secret");
 });
 
+test("a lost clear reply leaves a durable tombstone and reconciles the same operation without another write", async () => {
+  const userDataPath = await mkdtemp(path.join(os.tmpdir(), "stemmio-credential-"));
+  const credentialPath = path.join(userDataPath, "agent-session-credential.v1.json");
+  const crypto = memorySafeStorage();
+  const first = createAgentSessionCredentialStore({
+    userDataPath,
+    encryptString: (value) => crypto.encryptString(value),
+    decryptString: (buffer) => crypto.decryptString(buffer),
+    isEncryptionAvailable: () => true,
+  });
+  const saved = await first.persist({
+    operationId: "credential_clear_lost_save_1",
+    apiKey: "sk-secret",
+    vendorId: "deepseek",
+  });
+  const operationId = "credential_clear_lost_reply_1";
+  await first.clear({ operationId, expectedRecordId: saved.recordId });
+  const durable = JSON.parse(await readFile(credentialPath, "utf8"));
+  assert.equal(durable.state, "cleared");
+  assert.equal(durable.operationId, operationId);
+
+  let renameCalls = 0;
+  const restarted = createAgentSessionCredentialStore({
+    userDataPath,
+    encryptString: (value) => crypto.encryptString(value),
+    decryptString: (buffer) => crypto.decryptString(buffer),
+    isEncryptionAvailable: () => true,
+    fileSystem: {
+      rename: async (...args) => {
+        renameCalls += 1;
+        return rename(...args);
+      },
+    },
+  });
+  const reconciled = await restarted.publicStatus({ operationId });
+  assert.equal(reconciled.status, "missing");
+  assert.equal(reconciled.operationId, operationId);
+  const replay = await restarted.clear({ operationId, expectedRecordId: saved.recordId });
+  assert.equal(replay.status, "missing");
+  assert.equal(replay.operationId, operationId);
+  assert.equal(renameCalls, 0);
+  assert.equal((await restarted.loadResult()).status, "missing");
+});
+
 test("clear enforces a concrete record CAS while null clears everything accepted before it", async () => {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), "stemmio-credential-"));
   const crypto = memorySafeStorage();

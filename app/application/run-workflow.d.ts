@@ -1,4 +1,5 @@
 import type { BridgeClient } from "./bridge-client.js";
+import type { AgentCredentialOperationPort } from "./agent-credential-operation-contract.js";
 import type { CommentSession } from "./comment-session.js";
 import type { DocumentSession } from "./document-session.js";
 import type {
@@ -123,18 +124,23 @@ export type RunWorkflowConstruction = Readonly<{
   ports: Readonly<{
     agentPreferences?: Readonly<{
       getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
-      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      saveAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
+      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
       commitDefaultAgent(input: {
         intentId: string;
         providerId: string;
         isCurrent(): boolean;
       }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
-      setProviderDisabled(input: { providerId: string; disabled: boolean }): Promise<boolean>;
+      setProviderDisabled(input: {
+        intentId: string;
+        providerId: string;
+        disabled: boolean;
+        isCurrent(): boolean;
+      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
     }> | null;
-    agentCredential?: Readonly<{
-      persist(input: { operationId: string; apiKey: string; vendorId?: string | null; baseUrl?: string | null; modelId?: string | null }): Promise<Record<string, unknown>>;
-      clear(input: { operationId: string; expectedRecordId: string | null }): Promise<Record<string, unknown>>;
-      status(input: { operationId?: string }): Promise<Record<string, unknown>>;
+    agentCredential?: AgentCredentialOperationPort & Readonly<{
       restore(): Promise<Record<string, unknown>>;
     }> | null;
     canvas: Readonly<{

@@ -377,6 +377,7 @@
       "id": "run-and-review",
       "patterns": [
         "^app/application/run-workflow",
+        "^app/application/agent-credential-operation",
         "^app/application/run-session",
         "^app/application/version-workflow",
         "^app/application/version-session",
@@ -392,6 +393,7 @@
         "^bridge/project-file-(?:finalizer|repository)\\.mjs$"
       ],
       "entryInterfaces": [
+        "app/application/agent-credential-operation-contract.d.ts",
         "app/application/run-workflow.d.ts",
         "app/application/run-session.d.ts",
         "app/application/version-workflow.d.ts",
@@ -411,6 +413,7 @@
         "ProjectFileRepository"
       ],
       "implementationFiles": [
+        "app/application/agent-credential-operation.js",
         "app/application/run-workflow.js",
         "app/application/version-workflow.js",
         "app/application/run/submit-plan.js",

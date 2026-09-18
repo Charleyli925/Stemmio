@@ -4,6 +4,12 @@ import type {
 } from "../components/HtmlCanvasEditor";
 import type { DraftSnapshot } from "../application/draft-session.js";
 import type { BrowserOpenRequest } from "../application/browser-open-workflow.js";
+import type {
+  AgentCredentialClearRequest,
+  AgentCredentialOperationReceipt,
+  AgentCredentialPersistRequest,
+  AgentCredentialStatusRequest,
+} from "../application/agent-credential-operation-contract.js";
 import type { SourceHistoryDirection, SourceHistoryEntry } from "../domain/source-history.js";
 import type {
   CandidateAssessment,
@@ -349,29 +355,9 @@ export type DesktopIntegrationsApi = {
     providerId: string;
   }) => Promise<{ opened?: boolean }>;
   openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
-  persistSessionCredential?: (payload: {
-    operationId: string;
-    apiKey: string;
-    vendorId?: string;
-    baseUrl?: string;
-    modelId?: string;
-  }) => Promise<{ ok?: boolean; status?: "saved" | "superseded" | "unavailable" | "unreadable" | "rejected"; operationId?: string; recordId?: string | null; code?: string; remembered?: boolean }>;
-  clearSessionCredential?: (payload?: {
-    operationId?: string;
-    expectedRecordId?: string | null;
-  }) => Promise<{ ok?: boolean; status?: "missing" | "superseded" | "unavailable" | "unreadable" | "rejected"; operationId?: string; recordId?: null; code?: string; remembered?: boolean }>;
-  sessionCredentialStatus?: (payload?: { operationId?: string }) => Promise<{
-    available?: boolean;
-    remembered?: boolean;
-    vendorId?: string | null;
-    operationId?: string;
-    recordId?: string | null;
-    status?: "saved" | "superseded" | "missing" | "unreadable" | "unavailable";
-    unreadable?: boolean;
-    reconnectRequired?: boolean;
-    reason?: string;
-    code?: string;
-  }>;
+  persistSessionCredential?: (payload: AgentCredentialPersistRequest) => Promise<AgentCredentialOperationReceipt>;
+  clearSessionCredential?: (payload: AgentCredentialClearRequest) => Promise<AgentCredentialOperationReceipt>;
+  sessionCredentialStatus?: (payload?: AgentCredentialStatusRequest) => Promise<AgentCredentialOperationReceipt>;
   restoreSessionCredential?: () => Promise<{
     ok?: boolean;
     restored?: boolean;

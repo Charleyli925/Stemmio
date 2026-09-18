@@ -435,10 +435,25 @@ copy; a remembered ciphertext may be restored into Coordinator memory after
 Bridge is ready.
 Renderer `RunWorkflow` is the sole application coordinator for connection,
 remembered-credential persistence/reconciliation, clear/restore and default
-preference adoption. It may retain one short-lived Key only for an explicit
-save retry; `AgentCatalogState` receives only status, reason, operation ID and
-record ID. Workbench and Settings never receive a persistence callback or
-query Main directly for presentation state.
+preference adoption. One provider-scoped intent fences startup status and the
+live connect, configuration, credential-persist and default-preference effects.
+The shared pure interpreter gives `unreadable`, `unavailable`, `rejected` and
+`unknown` precedence over compatibility `remembered`; `saved` additionally
+requires the exact queried operation ID and a legal credential record ID. The
+public projection distinguishes persist from clear reconciliation so an
+unconfirmed clear stays actionable without claiming that an unknown persist was
+saved. A lost clear response is reconciled with its original operation ID; only
+after that operation is terminal may the same explicit remove command clear a
+newer saved record. Provider disabled-preference writes carry the same intent
+through the single preferences Session and restore their prior durable value
+when a newer connect or disposal supersedes them. Disposal closes ordinary
+updates and presentation immediately, while an already-started fenced Agent
+write may perform only its predetermined durable rollback. It may retain one short-lived Key only while the same
+save/reconciliation intent can still use it; replacement, disconnect, remove,
+disposal and terminal receipts retire that reference (without claiming that JS
+memory can be wiped). `AgentCatalogState` receives only status, reason,
+operation ID and record ID. Workbench and Settings never receive a persistence
+callback or query Main directly for presentation state.
 Anthropic is not registered. Codex and Qoder do not accept a session Token.
 
 This is an explicit trusted-local-Agent policy, not hostile-process isolation.

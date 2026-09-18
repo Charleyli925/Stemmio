@@ -34,6 +34,7 @@ import type { ApplicationUpdateResult } from "../workbench/types";
 import type { WorkspacePreferences } from "./desktop-ui-preferences-api";
 import type { SettingsCategory } from "../workbench/settings-types";
 import { architectureLabel, updatePresentation } from "./update-presentation";
+import { settingsCredentialRemoveAction } from "./settings-agent-action-gate";
 
 type AgentActionOutcome = Readonly<{ status: string; reason?: string; code?: string }> | null | undefined;
 
@@ -467,6 +468,11 @@ function AgentSettings({
             const credentialRestoreFailed = card.selection.providerId === "stemmio"
               && card.credentialPersist?.status === "failed"
               && String(card.credentialPersist.reason || "").startsWith("无法读取已保存的连接凭证");
+            const removeKeyAction = settingsCredentialRemoveAction({
+              card,
+              rememberedKey: Boolean(rememberedKey),
+              onRemoveRememberedKey,
+            });
             const needsConnect = disconnected
               || card.availability.status === "not-installed"
               || card.availability.status === "auth-required";
@@ -481,9 +487,7 @@ function AgentSettings({
                 ? card.availability.status === "not-installed" ? "安装" : card.presentation.credentialKind === "api-token" ? "连接" : "登录"
                 : card.availability.reason === "initial" ? "检查"
                 : "管理";
-            const canRemoveKey = card.selection.providerId === "stemmio"
-              && Boolean(onRemoveRememberedKey)
-              && rememberedKey;
+            const canRemoveKey = Boolean(removeKeyAction);
             const canDisconnect = Boolean(onDisconnectProvider)
               && !disconnected
               && (card.availability.status === "ready" || Boolean(card.connection) || card.availability.status === "auth-required");
@@ -660,9 +664,9 @@ function AgentSettings({
                                 });
                               }}
                             >
-                              移除 API Key
+                              {removeKeyAction?.label}
                             </button>
-                            <small>移除后需要重新填写</small>
+                            <small>{removeKeyAction?.description}</small>
                           </>
                         ) : null}
                       </div>
@@ -729,7 +733,7 @@ function AgentSettings({
                           setConfirmPending(true);
                           setConfirmError("");
                           const request = action.kind === "remove-key"
-                            ? onRemoveRememberedKey?.(action.card.selection, { stopRun: action.stopRun })
+                            ? removeKeyAction?.trigger({ stopRun: action.stopRun })
                             : action.kind === "logout"
                               ? onLogoutAgent?.(action.card.selection)
                               : onDisconnectProvider?.(action.card.selection, { stopRun: action.stopRun });

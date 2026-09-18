@@ -62,7 +62,8 @@ export type AgentProviderEntry = AgentProviderDescriptor & Readonly<{
   }> | null;
   lastOperation?: AgentProviderEntry["activeOperation"];
   credentialPersist?: Readonly<{
-    status: "pending" | "saved" | "failed" | "unknown" | "skipped" | "missing" | "superseded";
+    status: "pending" | "saved" | "failed" | "unreadable" | "unavailable" | "rejected" | "unknown" | "skipped" | "missing" | "superseded";
+    operationKind: "startup" | "persist" | "clear" | null;
     reason: string | null;
     operationId: string | null;
     recordId: string | null;
@@ -153,7 +154,10 @@ export class AgentCatalogState {
     selected?: AgentSelection | null;
     configurationPreferencesPort?: Readonly<{
       getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
-      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      saveAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
+      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
     }> | null;
   });
   getSnapshot(): AgentCatalogSnapshot;
@@ -161,7 +165,7 @@ export class AgentCatalogState {
   dispose(): void;
   select(selection: AgentSelection): AgentSelection;
   configureProvider(selection: AgentSelection): AgentSelection;
-  saveConfiguration(): Promise<void>;
+  saveConfiguration(intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null): Promise<void>;
   queuePendingDefault(selection: AgentSelection): AgentSelection;
   pendingDefault(): AgentSelection | null;
   peekPendingDefaultIntent(): Readonly<{
@@ -175,6 +179,7 @@ export class AgentCatalogState {
   commitPendingDefault(expectedIntentId: string): AgentSelection | null;
   publishCredentialPersist(providerId: string, result: Readonly<{
     status: string;
+    operationKind?: "startup" | "persist" | "clear" | null;
     reason?: string | null;
     operationId?: string | null;
     recordId?: string | null;
@@ -182,6 +187,7 @@ export class AgentCatalogState {
   }>): Readonly<{ status: string; reason: string | null }> | null;
   credentialPersist(providerId: string): Readonly<{
     status: string;
+    operationKind: "startup" | "persist" | "clear" | null;
     reason: string | null;
     operationId: string | null;
     recordId: string | null;
@@ -197,9 +203,19 @@ export class AgentCatalogState {
   connectWithApiKey(
     selection: AgentSelection,
     apiKey: string,
-    extras?: Readonly<{ vendorId?: string; baseUrl?: string; modelId?: string; remember?: boolean }>,
+    extras?: Readonly<{
+      vendorId?: string;
+      baseUrl?: string;
+      modelId?: string;
+      remember?: boolean;
+      intentId?: string;
+      isCurrent?(): boolean;
+    }>,
   ): Promise<unknown>;
-  disconnectApiKey(selection?: AgentSelection | null): Promise<unknown>;
+  disconnectApiKey(
+    selection?: AgentSelection | null,
+    options?: Readonly<{ isCurrent?(): boolean }>,
+  ): Promise<unknown>;
   freezeSelected(): AgentSelection | null;
   displaySelection(): AgentSelection | null;
   freezeProviderSelection(providerId: string): AgentSelection | null;
