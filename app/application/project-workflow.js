@@ -4212,9 +4212,39 @@ export class ProjectWorkflow {
       if (mustAdoptSource) {
         const expectedHtml = this.#documentSession.html;
         const expectedHash = await this.#hashPort.sha256(expectedHtml);
+        const expectedSourceReceipt = this.#documentSession.sourceReceipt;
         this.#markHydrationStage("verify-rendered", operationId);
-        await this.#canvasPort.verifyRendered?.(expectedHtml, expectedHash, context);
+        let canvasOutcome = null;
+        try {
+          await this.#canvasPort.verifyRendered?.(
+            expectedHtml,
+            expectedHash,
+            context,
+            expectedSourceReceipt,
+          );
+        } catch (cause) {
+          if (projectErrorCode(cause, "") !== "DOCUMENT_CANVAS_ACK_TIMEOUT") {
+            throw cause;
+          }
+          canvasOutcome = await this.#documentWorkflow.repairCurrentCanvas({
+            context,
+            expectedSourceReceipt,
+          });
+        }
         if (!this.#projectSession.matches(context)) return stale(context);
+        if (canvasOutcome && (canvasOutcome.status !== "succeeded"
+          || (canvasOutcome.value?.page
+            && canvasOutcome.value.page.status !== "restored"))) {
+          throw Object.assign(new Error(
+            canvasOutcome.status === "succeeded"
+              ? canvasOutcome.value.page.reason || "当前画布尚未完成自动恢复。"
+              : canvasOutcome.reason || "当前画布尚未完成自动恢复。",
+          ), {
+            code: canvasOutcome.status === "succeeded"
+              ? "DOCUMENT_CANVAS_REPAIR_REQUIRED"
+              : canvasOutcome.code || "DOCUMENT_CANVAS_REPAIR_REJECTED",
+          });
+        }
       }
       if (recoveredAutosaveConflict) {
         const frozen = this.#canvasPort.freeze(
