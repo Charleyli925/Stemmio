@@ -28,6 +28,15 @@ import {
   prepareAiTaskRequest,
 } from "./project-file-repository-harness.mjs";
 
+async function optionalFileBytes(filePath) {
+  try {
+    return await readFile(filePath);
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return null;
+    throw cause;
+  }
+}
+
 test("save conflicts when both Stemmio and disk changed", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "save-boundary.html");
@@ -448,6 +457,7 @@ test("forceUnlockWorkingCopy adopts disk hash without rewriting HTML", async (t)
   await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
   const conflictingDiskHtml = html("external while Stemmio pending");
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
+  const runtimePath = path.join(imported.target.projectRootPath, ".stemmio", "runtime.json");
 
   await assert.rejects(
     value.repository.workspace({ sourcePath: imported.target.exactSourcePath }),
@@ -455,8 +465,60 @@ test("forceUnlockWorkingCopy adopts disk hash without rewriting HTML", async (t)
       && error.code === "WORKING_COPY_CONFLICT",
   );
 
+  const identityMismatchSnapshot = {
+    source: await readFile(imported.target.exactSourcePath, "utf8"),
+    state: await readFile(statePath, "utf8"),
+    runtime: await optionalFileBytes(runtimePath),
+  };
+  for (const identity of [
+    {
+      projectId: imported.target.projectId === `project_${"f".repeat(32)}`
+        ? `project_${"e".repeat(32)}`
+        : `project_${"f".repeat(32)}`,
+      documentId: imported.target.documentId,
+    },
+    {
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId === `doc_${"f".repeat(32)}`
+        ? `doc_${"e".repeat(32)}`
+        : `doc_${"f".repeat(32)}`,
+    },
+  ]) {
+    await assert.rejects(
+      value.repository.forceUnlockWorkingCopy({
+        ...identity,
+        sourcePath: imported.target.exactSourcePath,
+        operationId: "force_unlock_identity_mismatch_01",
+        expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
+      }),
+      (error) => error instanceof ProjectFileRepositoryError
+        && error.code === "SOURCE_IDENTITY_MISMATCH",
+    );
+    assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), identityMismatchSnapshot.source);
+    assert.equal(await readFile(statePath, "utf8"), identityMismatchSnapshot.state);
+    assert.deepEqual(await optionalFileBytes(runtimePath), identityMismatchSnapshot.runtime);
+  }
+
+  await assert.rejects(
+    value.repository.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId: "force_unlock_stale_preview_01",
+      expectedSourceSha256: sha256(Buffer.from("stale preview", "utf8")),
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "SOURCE_HASH_CONFLICT",
+  );
+  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), conflictingDiskHtml);
+  assert.equal((await json(statePath)).saveState, "failed");
+
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_adopt_disk_01",
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.equal(unlocked.content, conflictingDiskHtml);
@@ -473,6 +535,260 @@ test("forceUnlockWorkingCopy adopts disk hash without rewriting HTML", async (t)
   assert.equal(workspace.content, conflictingDiskHtml);
 });
 
+test("forceUnlockWorkingCopy reconciles the original receipt after the final reply window is lost", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "force-unlock-lost-reply.html");
+  const statePath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "working-copies",
+    `${imported.target.workingCopyId}.json`,
+  );
+  const state = await json(statePath);
+  await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
+  const externalHtml = html("force unlock durable before reply");
+  await writeFile(imported.target.exactSourcePath, externalHtml, "utf8");
+  const operationId = "force_unlock_lost_reply_01";
+  const writer = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint: async (name) => {
+      if (name === "force-unlock-before-completed-receipt") {
+        throw new Error("force-unlock reply window lost");
+      }
+      return false;
+    },
+  });
+
+  await assert.rejects(writer.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId,
+    expectedSourceSha256: sha256(Buffer.from(externalHtml, "utf8")),
+  }), /reply window lost/u);
+
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  await restarted.initialize();
+  const reconciled = await restarted.queryForceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId,
+  });
+  assert.equal(reconciled.status, "force-unlocked");
+  assert.equal(reconciled.operationId, operationId);
+  assert.equal(reconciled.acceptedSourceSha256, sha256(Buffer.from(externalHtml, "utf8")));
+  assert.equal(reconciled.content, await readFile(imported.target.exactSourcePath, "utf8"));
+
+  const nextExternalHtml = reconciled.content.replace(
+    "force unlock durable before reply",
+    "second bounded force unlock",
+  );
+  await writeFile(imported.target.exactSourcePath, nextExternalHtml, "utf8");
+  await restarted.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_lost_reply_02",
+    expectedSourceSha256: sha256(Buffer.from(nextExternalHtml, "utf8")),
+  });
+  const identityTransactions = (await readdir(path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "transactions",
+  ))).filter((name) => name.startsWith(`identity_${imported.target.workingCopyId}_`));
+  assert.equal(identityTransactions.length, 1);
+});
+
+for (const failpoint of [
+  "force-unlock-pending-receipt-written",
+  "force-unlock-adopted-state-written",
+  "identity-migration-source-written",
+  "identity-migration-metadata-written",
+]) {
+  test(`force-unlock recovery completes the original operation after ${failpoint}`, async (t) => {
+    const value = await fixture(t);
+    const imported = await importSource(value, `force-unlock-recovery-${failpoint}.html`);
+    await prepareAiTaskRequest(
+      value.repository,
+      imported.target,
+      `req_force_unlock_${failpoint.replaceAll("-", "_")}`,
+    );
+    const statePath = path.join(
+      imported.target.projectRootPath,
+      ".stemmio",
+      "working-copies",
+      `${imported.target.workingCopyId}.json`,
+    );
+    const state = await json(statePath);
+    await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
+    const externalHtml = `<!doctype html><html><head><title>${failpoint}</title></head><body><h1>external</h1></body></html>\n`;
+    const acceptedSourceSha256 = sha256(Buffer.from(externalHtml, "utf8"));
+    await writeFile(imported.target.exactSourcePath, externalHtml, "utf8");
+    const operationId = `force_unlock_recovery_${failpoint.replaceAll("-", "_")}`;
+    const interrupted = new ProjectFileRepository({
+      projectsRoot: value.projects,
+      failpoint: async (name) => name === failpoint,
+    });
+
+    await assert.rejects(interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId,
+      expectedSourceSha256: acceptedSourceSha256,
+    }), (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "INJECTED_FAILPOINT");
+
+    const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+    await restarted.initialize();
+    const reconciled = await restarted.queryForceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId,
+    });
+    assert.equal(reconciled.status, "force-unlocked");
+    assert.equal(reconciled.operationId, operationId);
+    assert.equal(reconciled.acceptedSourceSha256, acceptedSourceSha256);
+    assert.notEqual(reconciled.sourceSha256, acceptedSourceSha256);
+    const recoveredState = await json(statePath);
+    assert.equal(recoveredState.forceUnlockReceipt.status, "completed");
+    const runtime = await json(path.join(
+      imported.target.projectRootPath,
+      ".stemmio",
+      "runtime-state.json",
+    ));
+    assert.equal(runtime.activeRequest, null);
+  });
+}
+
+test("a newer force-unlock cannot overwrite an unresolved original operation", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "force-unlock-pending-slot.html");
+  const statePath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "working-copies",
+    `${imported.target.workingCopyId}.json`,
+  );
+  const state = await json(statePath);
+  await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
+  const externalHtml = "<!doctype html><html><head><title>pending slot</title></head><body><h1>external</h1></body></html>\n";
+  const acceptedSourceSha256 = sha256(Buffer.from(externalHtml, "utf8"));
+  await writeFile(imported.target.exactSourcePath, externalHtml, "utf8");
+  const originalOperationId = "force_unlock_pending_slot_original";
+  const interrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint: async (name) => name === "force-unlock-pending-receipt-written",
+  });
+  await assert.rejects(interrupted.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId: originalOperationId,
+    expectedSourceSha256: acceptedSourceSha256,
+  }), (error) => error instanceof ProjectFileRepositoryError
+    && error.code === "INJECTED_FAILPOINT");
+
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  await restarted.initialize();
+  await assert.rejects(restarted.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_pending_slot_newer",
+    expectedSourceSha256: acceptedSourceSha256,
+  }), (error) => error instanceof ProjectFileRepositoryError
+    && error.code === "SOURCE_HASH_CONFLICT");
+
+  const original = await restarted.queryForceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId: originalOperationId,
+  });
+  assert.equal(original.status, "force-unlocked");
+  const settledState = await json(statePath);
+  assert.equal(settledState.forceUnlockReceipt.status, "completed");
+  assert.equal(settledState.forceUnlockReceipt.operationId, originalOperationId);
+});
+
+for (const failpoint of [
+  "identity-migration-prepared",
+  "identity-migration-source-written",
+]) {
+  test(`a third external Hash supersedes interrupted force-unlock after ${failpoint}`, async (t) => {
+    const value = await fixture(t);
+    const imported = await importSource(value, `force-unlock-superseded-${failpoint}.html`);
+    await prepareAiTaskRequest(
+      value.repository,
+      imported.target,
+      `req_force_unlock_superseded_${failpoint.replaceAll("-", "_")}`,
+    );
+    const statePath = path.join(
+      imported.target.projectRootPath,
+      ".stemmio",
+      "working-copies",
+      `${imported.target.workingCopyId}.json`,
+    );
+    const state = await json(statePath);
+    await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
+    const previewedHtml = `<!doctype html><html><head><title>${failpoint}</title></head><body><h1>previewed</h1></body></html>\n`;
+    const thirdPartyHtml = "<!doctype html><html><head><title>third party</title></head><body><h1>newer external</h1></body></html>\n";
+    const acceptedSourceSha256 = sha256(Buffer.from(previewedHtml, "utf8"));
+    await writeFile(imported.target.exactSourcePath, previewedHtml, "utf8");
+    const operationId = `force_unlock_superseded_${failpoint.replaceAll("-", "_")}`;
+    const interrupted = new ProjectFileRepository({
+      projectsRoot: value.projects,
+      failpoint: async (name) => name === failpoint,
+    });
+    await assert.rejects(interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId,
+      expectedSourceSha256: acceptedSourceSha256,
+    }), (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "INJECTED_FAILPOINT");
+    await writeFile(imported.target.exactSourcePath, thirdPartyHtml, "utf8");
+
+    const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+    await restarted.initialize();
+    const reconciled = await restarted.queryForceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId,
+    });
+    assert.equal(reconciled.status, "superseded");
+    assert.equal(reconciled.operationId, operationId);
+    assert.equal(reconciled.sourceSha256, sha256(Buffer.from(thirdPartyHtml, "utf8")));
+    assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), thirdPartyHtml);
+    const supersededState = await json(statePath);
+    assert.equal(supersededState.forceUnlockReceipt.status, "superseded");
+    assert.equal(supersededState.forceUnlockReceipt.operationId, operationId);
+    const repeatedSuperseded = await restarted.queryForceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId,
+    });
+    assert.equal(repeatedSuperseded.status, "superseded");
+    assert.equal(repeatedSuperseded.operationId, operationId);
+
+    const replacement = await restarted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      operationId: `${operationId}_replacement`,
+      expectedSourceSha256: sha256(Buffer.from(thirdPartyHtml, "utf8")),
+    });
+    assert.equal(replacement.status, "force-unlocked");
+    assert.match(replacement.content, /data-stemmio-id=/u);
+  });
+}
+
 test("forceUnlockWorkingCopy rematerializes identities after explicitly adopting unmarked disk HTML", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "force-unlock-unmarked.html");
@@ -487,7 +803,11 @@ test("forceUnlockWorkingCopy rematerializes identities after explicitly adopting
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_unmarked_01",
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.match(unlocked.content, /<h1 data-stemmio-id="sm1_[0-9a-f]{32}">external<\/h1>/u);
@@ -497,6 +817,54 @@ test("forceUnlockWorkingCopy rematerializes identities after explicitly adopting
   assert.equal(nextState.currentSha256, sha256(Buffer.from(unlocked.content, "utf8")));
   assert.equal(nextState.differsFromBase, true);
   assert.equal(nextState.lastPersistedRevision, state.lastPersistedRevision);
+});
+
+test("force-unlock keeps identity-CAS races unresolved and ordinary workspace cannot adopt them", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "force-unlock-identity-race.html");
+  const statePath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "working-copies",
+    `${imported.target.workingCopyId}.json`,
+  );
+  const state = await json(statePath);
+  await writeFile(statePath, JSON.stringify({ ...state, saveState: "failed" }), "utf8");
+  const previewedHtml = "<!doctype html><html><head><title>previewed</title></head><body><h1>previewed external</h1></body></html>\n";
+  const racedHtml = "<!doctype html><html><head><title>raced</title></head><body><h1>unpreviewed race</h1></body></html>\n";
+  await writeFile(imported.target.exactSourcePath, previewedHtml, "utf8");
+  const writer = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint: async (name) => {
+      if (name === "identity-migration-prepared") {
+        await writeFile(imported.target.exactSourcePath, racedHtml, "utf8");
+      }
+      return false;
+    },
+  });
+
+  await assert.rejects(writer.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
+    sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_identity_race_01",
+    expectedSourceSha256: sha256(Buffer.from(previewedHtml, "utf8")),
+  }), (error) => error instanceof ProjectFileRepositoryError
+    && error.code === "WORKING_COPY_CONFLICT");
+
+  const unresolved = await json(statePath);
+  assert.equal(unresolved.saveState, "saving");
+  assert.equal(unresolved.forceUnlockReceipt.status, "pending");
+  assert.equal(unresolved.currentSha256, sha256(Buffer.from(previewedHtml, "utf8")));
+  await assert.rejects(
+    new ProjectFileRepository({ projectsRoot: value.projects }).workspace({
+      sourcePath: imported.target.exactSourcePath,
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "WORKING_COPY_CONFLICT",
+  );
+  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), racedHtml);
+  assert.equal((await json(statePath)).currentSha256, unresolved.currentSha256);
 });
 
 test("external ID swaps require explicit adoption before their bindings change", async (t) => {
@@ -534,7 +902,11 @@ test("external ID swaps require explicit adoption before their bindings change",
   assert.equal((await json(statePath)).currentSha256, beforeState.currentSha256);
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_id_swap_01",
+    expectedSourceSha256: sha256(Buffer.from(swapped, "utf8")),
   });
   assert.equal(unlocked.content, swapped);
   const adoptedState = await json(statePath);
@@ -568,7 +940,11 @@ test("force-unlock repairs identity loss even after its disk Hash was recorded",
       && error.code === "WORKING_COPY_CONFLICT",
   );
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_identity_loss_01",
+    expectedSourceSha256: sha256(Buffer.from(unmarked, "utf8")),
   });
   assert.equal(inspectSourceElementIdentity(unlocked.content).complete, true);
   assert.notEqual(unlocked.content, unmarked);
@@ -603,7 +979,11 @@ test("forceUnlockWorkingCopy clears a stuck activeRequest without rewriting HTML
   await writeFile(imported.target.exactSourcePath, conflictingDiskHtml, "utf8");
 
   const unlocked = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    operationId: "force_unlock_active_run_01",
+    expectedSourceSha256: sha256(Buffer.from(conflictingDiskHtml, "utf8")),
   });
   assert.equal(unlocked.status, "force-unlocked");
   assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), conflictingDiskHtml);

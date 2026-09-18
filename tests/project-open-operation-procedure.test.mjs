@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   acquireProjectOpenWorkspace,
+  inspectProjectOpenProjection,
   normalizeProjectOpenWorkspaceEnvelope,
   verifyProjectOpenCoreSource,
 } from "../app/application/project/open-operation-procedure.js";
@@ -91,4 +92,41 @@ test("core source verification proves content bytes against the workspace hash",
     sourceSha256,
     lastModifiedAt: "2026-08-27T00:00:00.000Z",
   });
+});
+
+test("exact opening authority compares the workspace hash with Document authority hashes", async () => {
+  const content = "<!doctype html><html><body>Exact</body></html>";
+  const contentSha256 = sha256(content);
+  let hashCalls = 0;
+  const matching = await inspectProjectOpenProjection({
+    document: {
+      html: content,
+      persistedSourceSha256: contentSha256,
+      workingHtmlSha256: contentSha256,
+      persistState: "idle",
+      editRevision: 0,
+      lastPersistedRevision: 0,
+    },
+    hashPort: { sha256: async () => { hashCalls += 1; return contentSha256; } },
+    workspaceSha256: contentSha256,
+    hasExactOpeningAuthority: true,
+  });
+  assert.deepEqual(matching, { clean: true, cleanMismatch: false });
+  assert.equal(hashCalls, 0);
+
+  const changed = await inspectProjectOpenProjection({
+    document: {
+      html: content,
+      persistedSourceSha256: contentSha256,
+      workingHtmlSha256: sha256(`${content} changed`),
+      persistState: "idle",
+      editRevision: 0,
+      lastPersistedRevision: 0,
+    },
+    hashPort: { sha256: async () => { hashCalls += 1; return contentSha256; } },
+    workspaceSha256: contentSha256,
+    hasExactOpeningAuthority: true,
+  });
+  assert.deepEqual(changed, { clean: true, cleanMismatch: true });
+  assert.equal(hashCalls, 0);
 });

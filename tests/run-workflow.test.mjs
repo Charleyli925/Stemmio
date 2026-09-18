@@ -32,6 +32,10 @@ function succeeded(value) {
   return { status: "succeeded", value };
 }
 
+function blocked(code, reason) {
+  return { status: "blocked", code, reason };
+}
+
 function runRecord({
   sourcePath = SOURCE_A,
   projectId = sourcePath === SOURCE_A ? "project_a" : "project_b",
@@ -164,6 +168,7 @@ function createHarness({
   freeze = null,
   drain = async () => ({ ok: true }),
   ensureRegistered = null,
+  documentWorkflowOverrides = {},
   visibility = null,
   clock = { now: () => Date.parse("2026-08-11T00:00:00.000Z") },
 } = {}) {
@@ -338,6 +343,16 @@ function createHarness({
       });
       return succeeded({ revision, queued: true });
     },
+    async previewExternalSource() {
+      return blocked("SOURCE_PREVIEW_UNAVAILABLE", "preview test double was not configured");
+    },
+    hasPendingExternalAcceptance() {
+      return false;
+    },
+    async adoptShownExternalPreview() {
+      return blocked("SOURCE_ADOPTION_UNAVAILABLE", "adoption test double was not configured");
+    },
+    ...documentWorkflowOverrides,
   };
   const workflow = new RunWorkflow({
     bridgeClient: client,
@@ -444,7 +459,7 @@ test("源页 Agent blocks binary attachments before preflight or Request creatio
 
   const outcome = await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
-  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.status, "blocked", JSON.stringify(outcome));
   assert.equal(outcome.code, "RUN_AGENT_ATTACHMENT_UNSUPPORTED");
   assert.match(outcome.reason, /暂不支持此附件/u);
   assert.equal(harness.calls.preflight.length, 0);
@@ -3058,7 +3073,7 @@ test("a blocked cancel keeps the access-repair intent", async () => {
   harness.workflow.beginAccessRepair(run, "apiKey");
   assert.equal(harness.runSession.beginOperation("cancel", operationKey(run)), true);
   const outcome = await harness.workflow.resendAfterAccessRepair();
-  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.status, "blocked", JSON.stringify(outcome));
   assert.equal(outcome.code, "RUN_CANCEL_BUSY");
   assert.equal(harness.calls.createRequest.length, 0);
   assert.equal(harness.workflow.getSnapshot().accessRepair.requestId, run.requestId);
@@ -3177,27 +3192,188 @@ test("provider access impact counts running tasks on other documents", async () 
   assert.equal(impact.documentCount, 2);
 });
 
-test("a late keep-external result cannot reload a reopened project generation", async () => {
-  const resolution = deferred();
+test("keep-external previews and adopts the conflict-bound external source before retiring the run", async () => {
+  const external = "<main>external</main>";
+  const preview = Object.freeze({
+    kind: "external-source-observation",
+    operationId: "preview_run_current",
+    html: external,
+    sourceSha256: sha256(external),
+  });
+  let adopted = null;
   const harness = createHarness({
-    bridge: {
-      async resolveConflict() {
-        return resolution.promise;
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded(preview);
+      },
+      async adoptShownExternalPreview(input) {
+        adopted = input;
+        return succeeded({
+          operationId: "accept_run_current",
+          operation: "accept-shown-external-preview",
+          permission: { status: "accepted" },
+          source: { status: "accepted", receipt: null, html: external, sourceSha256: sha256(external) },
+          page: { status: "restored" },
+        });
       },
     },
   });
   const conflict = runRecord({
     status: "awaiting-conflict-resolution",
     conflictId: "conflict_a",
+    externalSourceSha256: sha256(external),
+  });
+  harness.runSession.trackRun(conflict, { activate: "always" });
+
+  const outcome = await harness.workflow.resolveConflict({
+    run: conflict,
+    action: "keep-external",
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.current, true);
+  assert.equal(outcome.value.documentSourceResult.value.page.status, "restored");
+  assert.equal(adopted.context.epoch, harness.context.epoch);
+  assert.equal(adopted.previewReceipt, preview);
+  assert.equal(harness.calls.resolve.length, 0, "Run must not call the unsupported Bridge keep-external action");
+  assert.equal(harness.runSession.hasRun(conflict), false);
+});
+
+test("keep-external retains the run when Document refuses the exact preview", async () => {
+  const external = "<main>external</main>";
+  const harness = createHarness({
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded({ html: external, sourceSha256: sha256(external) });
+      },
+      async adoptShownExternalPreview() {
+        return blocked("EXTERNAL_SOURCE_PREVIEW_STALE", "preview changed");
+      },
+    },
+  });
+  const conflict = runRecord({
+    status: "awaiting-conflict-resolution",
+    conflictId: "conflict_a",
+    externalSourceSha256: sha256(external),
+  });
+  harness.runSession.trackRun(conflict, { activate: "always" });
+
+  const outcome = await harness.workflow.resolveConflict({ run: conflict, action: "keep-external" });
+
+  assert.equal(outcome.status, "blocked", JSON.stringify(outcome));
+  assert.equal(outcome.code, "EXTERNAL_SOURCE_PREVIEW_STALE");
+  assert.equal(harness.runSession.hasRun(conflict), true);
+  assert.equal(harness.calls.resolve.length, 0);
+});
+
+test("keep-external retains the run when the preview Hash differs from the conflict", async () => {
+  const expected = "<main>external</main>";
+  const changed = "<main>changed-again</main>";
+  let adoptCalls = 0;
+  const harness = createHarness({
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded({ html: changed, sourceSha256: sha256(changed) });
+      },
+      async adoptShownExternalPreview() {
+        adoptCalls += 1;
+        return succeeded({});
+      },
+    },
+  });
+  const conflict = runRecord({
+    status: "awaiting-conflict-resolution",
+    conflictId: "conflict_a",
+    externalSourceSha256: sha256(expected),
+  });
+  harness.runSession.trackRun(conflict, { activate: "always" });
+
+  const outcome = await harness.workflow.resolveConflict({ run: conflict, action: "keep-external" });
+
+  assert.equal(outcome.status, "blocked", JSON.stringify(outcome));
+  assert.equal(outcome.code, "RUN_EXTERNAL_SOURCE_STALE");
+  assert.equal(adoptCalls, 0);
+  assert.equal(harness.runSession.hasRun(conflict), true);
+});
+
+test("keep-external lets Document reconcile a lost acceptance whose final identity Hash changed", async () => {
+  const accepted = "<main>external</main>";
+  const materialized = "<main data-stemmio-id=\"sm1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">external</main>";
+  let pendingCheck = null;
+  let adopted = null;
+  const preview = Object.freeze({
+    kind: "external-source-observation",
+    operationId: "preview_materialized_retry",
+    html: materialized,
+    sourceSha256: sha256(materialized),
+  });
+  const harness = createHarness({
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded(preview);
+      },
+      hasPendingExternalAcceptance(input) {
+        pendingCheck = input;
+        return input.acceptedSourceSha256 === sha256(accepted);
+      },
+      async adoptShownExternalPreview(input) {
+        adopted = input;
+        return succeeded({
+          operationId: "accept_original_lost_reply",
+          operation: "accept-shown-external-preview",
+          permission: { status: "accepted" },
+          source: {
+            status: "accepted",
+            receipt: null,
+            html: materialized,
+            sourceSha256: sha256(materialized),
+          },
+          page: { status: "restored" },
+        });
+      },
+    },
+  });
+  const conflict = runRecord({
+    status: "awaiting-conflict-resolution",
+    conflictId: "conflict_materialized_retry",
+    externalSourceSha256: sha256(accepted),
+  });
+  harness.runSession.trackRun(conflict, { activate: "always" });
+
+  const outcome = await harness.workflow.resolveConflict({
+    run: conflict,
+    action: "keep-external",
+  });
+
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(pendingCheck.acceptedSourceSha256, sha256(accepted));
+  assert.equal(adopted.previewReceipt, preview);
+  assert.equal(harness.runSession.hasRun(conflict), false);
+});
+
+test("a late keep-external acceptance reports not-current without touching a reopened generation", async () => {
+  const adoption = deferred();
+  const external = "<main>external</main>";
+  const harness = createHarness({
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded({ html: external, sourceSha256: sha256(external) });
+      },
+      async adoptShownExternalPreview() {
+        return adoption.promise;
+      },
+    },
+  });
+  const conflict = runRecord({
+    status: "awaiting-conflict-resolution",
+    conflictId: "conflict_a",
+    externalSourceSha256: sha256(external),
   });
   const events = [];
   harness.workflow.subscribeEvents((event) => events.push(event));
   harness.runSession.trackRun(conflict, { activate: "always" });
 
-  const resolving = harness.workflow.resolveConflict({
-    run: conflict,
-    action: "keep-external",
-  });
+  const resolving = harness.workflow.resolveConflict({ run: conflict, action: "keep-external" });
   await new Promise((resolve) => setImmediate(resolve));
 
   harness.projectSession.openLocator(SOURCE_B);
@@ -3216,16 +3392,23 @@ test("a late keep-external result cannot reload a reopened project generation", 
   });
   assert.notEqual(reopened.epoch, harness.context.epoch);
 
-  resolution.resolve({});
+  adoption.resolve(succeeded({
+    operationId: "accept_run_late",
+    operation: "accept-shown-external-preview",
+    permission: { status: "accepted" },
+    source: { status: "accepted", receipt: null, html: external, sourceSha256: sha256(external) },
+    page: { status: "not-current" },
+  }));
   const outcome = await resolving;
 
   assert.equal(outcome.status, "succeeded");
   assert.equal(outcome.value.current, false);
-  assert.equal(outcome.value.reloadCurrentSource, false);
+  assert.equal(outcome.value.documentSourceResult.value.page.status, "not-current");
   assert.equal(harness.calls.unlock, 0);
+  assert.equal(harness.calls.resolve.length, 0);
   const event = events.find((entry) => entry.type === "run-conflict-resolved");
   assert.equal(event?.current, false);
-  assert.equal(event?.reloadCurrentSource, false);
+  assert.equal(event?.documentSourceResult.value.page.status, "not-current");
 });
 
 

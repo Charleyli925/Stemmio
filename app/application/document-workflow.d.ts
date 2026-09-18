@@ -13,14 +13,51 @@ import type {
 } from "./source-history-session.js";
 import type { VersionSession } from "./version-session.js";
 import type { DocumentWorkflowCodecs } from "./document-workflow-codecs.js";
+import type {
+  DocumentSourceOperationResult,
+} from "./document-source-operation-contract.js";
 import type { SourceHistoryEntry } from "../domain/source-history.js";
+
+export type {
+  DocumentSourceOperationKind,
+  DocumentSourceOperationResult,
+} from "./document-source-operation-contract.js";
 
 export type DocumentWorkflowOutcome<T> =
   | Readonly<{ status: "succeeded"; value: T }>
-  | Readonly<{ status: "blocked"; code: string; reason: string }>
+  | Readonly<{
+      status: "blocked";
+      code: string;
+      reason: string;
+      confirmation?: DocumentSourceConfirmationReceipt;
+    }>
   | Readonly<{ status: "rejected"; code: string; reason: string }>
   | Readonly<{ status: "unknown"; operationId: string; reason: string }>
   | Readonly<{ status: "stale"; context: ProjectContext }>;
+
+export type DocumentSourceConfirmationReceipt = Readonly<{
+  kind: "document-source-confirmation";
+  operationId: string;
+  action: "reload-from-disk" | "accept-external-conflict";
+  context: ProjectContext;
+  expectedSourceReceipt: DocumentSourceReceipt | null;
+  expectedEditRevision: number;
+  expectedWorkingSha256: string;
+  expectedExternalSha256?: string;
+}>;
+
+export type ExternalSourceObservationReceipt = Readonly<{
+  kind: "external-source-observation";
+  operationId: string;
+  context: ProjectContext;
+  html: string;
+  sourceSha256: string;
+  lastModifiedAt: string;
+  size: number;
+  expectedSourceReceipt: DocumentSourceReceipt | null;
+  expectedEditRevision: number;
+  expectedWorkingSha256: string;
+}>;
 
 export type DocumentWorkflowRecoveryJournal = Readonly<{
   commit(input: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
@@ -37,11 +74,15 @@ export type DocumentWorkflowTransitionAuthority = Readonly<{
 
 export type DocumentWorkflowCanvasPort = Readonly<{
   invalidateRenderAcks(): void;
+  unlock?(): void;
+  captureActiveFrameFence?(): unknown;
+  rebuildActiveFrame?(): unknown;
   verifyRendered?(
     html: string,
     sourceSha256: string,
     context?: ProjectContext,
     receipt?: DocumentSourceReceipt | null,
+    rebuildFence?: unknown,
   ): Promise<DocumentCanvasRenderObservation>;
   freeze?(reason: string): Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
   adoptHistorySource?(
@@ -176,23 +217,40 @@ export class DocumentWorkflow {
     direction: "undo" | "redo";
     context?: ProjectContext;
   }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  reloadAuthority(input?: {
+  reloadFromDisk(input?: {
     context?: ProjectContext;
-    acceptExternalConflict?: boolean;
-    externalAuthorityAccepted?: boolean;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
+    intent?: Readonly<{
+      kind: "request";
+    }> | Readonly<{
+      kind: "confirm";
+      confirmation: DocumentSourceConfirmationReceipt;
+    }>;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   previewExternalSource(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
+  }): Promise<DocumentWorkflowOutcome<ExternalSourceObservationReceipt>>;
+  hasPendingExternalAcceptance(input?: {
+    context?: ProjectContext;
+    acceptedSourceSha256?: string;
+  }): boolean;
   observeExternalSourceChange(input?: {
     sourcePath?: string | null;
   }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  forceUnlockConflict(input?: {
+  adoptShownExternalPreview(input: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  ensureCurrentCanvas(input?: {
+    previewReceipt: ExternalSourceObservationReceipt;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
+  acceptExternalConflict(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
+    intent?: Readonly<{ kind: "request" }> | Readonly<{
+      kind: "confirm";
+      confirmation: DocumentSourceConfirmationReceipt;
+    }>;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
+  repairCurrentCanvas(input?: {
+    context?: ProjectContext;
+    expectedSourceReceipt?: DocumentSourceReceipt | null;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   confirmCanvas(observation: DocumentCanvasRenderObservation): boolean;
   reconcileBoundary(input: {
     frozenHtml: string;

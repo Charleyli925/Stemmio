@@ -10,9 +10,12 @@ import type {
 } from "./comment-workflow.js";
 import type { CommentWorkflowCodecs } from "./comment-workflow-codecs.js";
 import type {
+  DocumentSourceConfirmationReceipt,
+  DocumentSourceOperationResult,
   DocumentWorkflowCanvasPort,
   DocumentWorkflowOutcome,
   DocumentWorkflowRecoveryJournal,
+  ExternalSourceObservationReceipt,
 } from "./document-workflow.js";
 import type { DocumentWorkflowCodecs } from "./document-workflow-codecs.js";
 import type { CommentSession } from "./comment-session.js";
@@ -137,7 +140,11 @@ export type WorkspaceEvent =
         | "document-boundary-reconciled"
         | "document-recovery-queued"
         | "document-history-failed"
-        | "document-history-applied";
+        | "document-history-applied"
+        | "document-source-operation"
+        | "document-external-source-preview-failed"
+        | "document-conflict-force-unlocked"
+        | "document-conflict-force-unlock-failed";
       context?: ProjectContext;
       [key: string]: unknown;
     }>
@@ -498,7 +505,6 @@ export class WorkspaceController {
   retryEditAuthorRuntime(): Promise<boolean>;
   getCurrentProjectContext(): ProjectContext | null;
   matchesCurrentProjectContext(context: ProjectContext): boolean;
-  reloadDocumentCanvas(): DocumentSessionSnapshot;
   dismissActiveRun(): import("../domain/run-lifecycle.js").ActiveRun | null;
   reopenRecentRunOutcome(sourcePath: string | null | undefined): boolean;
   refreshProject(input?: Record<string, unknown>): Promise<ProjectWorkflowOutcome>;
@@ -534,7 +540,8 @@ export class WorkspaceController {
   acknowledgeEditCanvas(input?: DocumentCanvasRenderObservation): boolean;
   retryCanvasVerification(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome>;
+    expectedSourceReceipt?: DocumentSourceReceipt | null;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   resumeDeferredExternalProject(): ProjectWorkflowOutcome;
   resumeDeferredProjectApplication(): ProjectWorkflowOutcome;
   reconcileProjectTransitions(): void;
@@ -767,20 +774,31 @@ export class WorkspaceController {
     direction: "undo" | "redo";
     context?: ProjectContext;
   }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  reloadDocumentAuthority(input?: {
+  reloadDocumentFromDisk(input?: {
     context?: ProjectContext;
-    acceptExternalConflict?: boolean;
-    externalAuthorityAccepted?: boolean;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
+    intent?: Readonly<{ kind: "request" }> | Readonly<{
+      kind: "confirm";
+      confirmation: DocumentSourceConfirmationReceipt;
+    }>;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   previewExternalDocumentSource(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  forceUnlockDocumentConflict(input?: {
+  }): Promise<DocumentWorkflowOutcome<ExternalSourceObservationReceipt>>;
+  adoptShownExternalDocumentPreview(input: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
-  ensureDocumentCanvas(input?: {
+    previewReceipt: ExternalSourceObservationReceipt;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
+  acceptExternalDocumentConflict(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
+    intent?: Readonly<{ kind: "request" }> | Readonly<{
+      kind: "confirm";
+      confirmation: DocumentSourceConfirmationReceipt;
+    }>;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
+  repairDocumentCanvas(input?: {
+    context?: ProjectContext;
+    expectedSourceReceipt?: DocumentSourceReceipt | null;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   reconcileDocumentBoundary(input: Record<string, unknown>): Promise<DocumentWorkflowOutcome<PersistedBoundaryResult>>;
   recoverDocumentAutosave(input: Record<string, unknown>): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;
   recordDocumentExportEvidence(input: {

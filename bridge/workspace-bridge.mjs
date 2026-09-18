@@ -369,6 +369,7 @@ function projectFileHttpError(cause) {
     ? 404
     : new Set([
       "SOURCE_HASH_CONFLICT",
+      "SOURCE_IDENTITY_MISMATCH",
       "PROJECT_IDENTITY_CHANGED",
       "REGISTERED_PROJECT_PATH_MISMATCH",
       "REGISTERED_PROJECT_IDENTITY_CHANGED",
@@ -2381,11 +2382,20 @@ async function autosaveConflictCandidate(sourcePath) {
 
 async function resolveConflict(body) {
   const action = String(body.action || body.resolution || "");
-  if (action === "force-unlock") {
+  if (action === "force-unlock" || action === "force-unlock-result") {
     try {
-      const unlocked = await projectFileRepository.forceUnlockWorkingCopy({
+      const input = {
+        projectId: String(body.projectId || ""),
+        documentId: String(body.documentId || ""),
         sourcePath: requiredSourcePath(body.sourcePath),
-      });
+        operationId: String(body.operationId || ""),
+      };
+      const unlocked = action === "force-unlock"
+        ? await projectFileRepository.forceUnlockWorkingCopy({
+          ...input,
+          expectedSourceSha256: String(body.expectedSourceSha256 || ""),
+        })
+        : await projectFileRepository.queryForceUnlockWorkingCopy(input);
       return { ok: true, ...unlocked };
     } catch (cause) {
       throw projectFileHttpError(cause);

@@ -469,7 +469,13 @@ export class RunWorkflow {
     ) {
       throw new TypeError("RunWorkflow requires RunSession injection.");
     }
-    if (!documentWorkflow || typeof documentWorkflow.enqueueEdit !== "function") {
+    if (
+      !documentWorkflow
+      || typeof documentWorkflow.enqueueEdit !== "function"
+      || typeof documentWorkflow.previewExternalSource !== "function"
+      || typeof documentWorkflow.hasPendingExternalAcceptance !== "function"
+      || typeof documentWorkflow.adoptShownExternalPreview !== "function"
+    ) {
       throw new TypeError("RunWorkflow requires DocumentWorkflow composition.");
     }
     if (typeof drain !== "function") {
@@ -1811,6 +1817,64 @@ export class RunWorkflow {
       ? copyContext(this.#projectSession.context)
       : null;
     try {
+      if (action === "keep-external") {
+        if (!context) return stale(run);
+        const expectedSourceSha256 = String(run.externalSourceSha256 || "");
+        if (!SHA256.test(expectedSourceSha256)) {
+          return blocked(
+            "RUN_EXTERNAL_SOURCE_STALE",
+            "AI 冲突缺少可验证的外部源 Hash，请重新检查冲突。",
+          );
+        }
+        const preview = await this.#documentWorkflow.previewExternalSource({ context });
+        if (preview.status !== "succeeded") {
+          return preview.status === "stale" ? stale(run) : preview;
+        }
+        const previewSha256 = await this.#hashPort.sha256(String(preview.value.html || ""));
+        const reconcilesPendingAcceptance =
+          this.#documentWorkflow.hasPendingExternalAcceptance({
+            context,
+            acceptedSourceSha256: expectedSourceSha256,
+          });
+        if (
+          previewSha256 !== preview.value.sourceSha256
+          || (previewSha256 !== expectedSourceSha256 && !reconcilesPendingAcceptance)
+        ) {
+          return blocked(
+            "RUN_EXTERNAL_SOURCE_STALE",
+            "磁盘 HTML 已经变化，请重新预览后再选择保留外部 HTML。",
+          );
+        }
+        const documentSourceResult = await this.#documentWorkflow.adoptShownExternalPreview({
+          context,
+          previewReceipt: preview.value,
+        });
+        if (documentSourceResult.status !== "succeeded") {
+          return documentSourceResult.status === "stale" ? stale(run) : documentSourceResult;
+        }
+        if (!this.#runSession.hasRun(run)) return stale(run);
+        const current = Boolean(
+          this.#isCurrentContext(context)
+          && documentSourceResult.value.page.status !== "not-current"
+        );
+        this.#runSession.removeRun(run);
+        this.#runSession.clearHandoff(run.sourcePath);
+        if (current) this.#runSession.clearActiveRun();
+        this.#emitEvent({
+          type: "run-conflict-resolved",
+          run,
+          action,
+          current,
+          documentSourceResult,
+        });
+        this.syncPolling();
+        return succeeded({
+          run,
+          action,
+          current,
+          documentSourceResult,
+        });
+      }
       const payload = await this.#bridgeClient.resolveConflict({
         projectId: run.projectId,
         documentId: run.documentId,
@@ -1822,23 +1886,6 @@ export class RunWorkflow {
       });
       const current = Boolean(context && this.#isCurrentContext(context));
       if (!this.#runSession.hasRun(run)) return stale(run);
-      if (action === "keep-external") {
-        this.#runSession.removeRun(run);
-        this.#runSession.clearHandoff(run.sourcePath);
-        if (current) {
-          this.#runSession.clearActiveRun();
-          this.#canvasPort.unlock();
-        }
-        this.#emitEvent({
-          type: "run-conflict-resolved",
-          run,
-          action,
-          current,
-          reloadCurrentSource: current,
-        });
-        this.syncPolling();
-        return succeeded({ run, action, current, reloadCurrentSource: current });
-      }
       const conflict = this.#codecs.isRecord(payload.conflict) ? payload.conflict : null;
       const nextRun = this.#codecs.activeRunFromRecord(
         this.#codecs.isRecord(payload.activeRun)
@@ -1853,10 +1900,10 @@ export class RunWorkflow {
         run: nextRun,
         action,
         current,
-        reloadCurrentSource: false,
+        documentSourceResult: null,
       });
       this.syncPolling();
-      return succeeded({ run: nextRun, action, current, reloadCurrentSource: false });
+      return succeeded({ run: nextRun, action, current, documentSourceResult: null });
     } catch (cause) {
       const current = Boolean(context && this.#isCurrentContext(context));
       if (this.#runSession.hasRun(run)) {

@@ -81,7 +81,10 @@ import type {
   RunControllerCapability,
 } from "./application/workspace-controller-capabilities.js";
 import { createCommentWorkflowCodecs } from "./application/comment-workflow-codecs.js";
-import type { DocumentWorkflowOutcome } from "./application/document-workflow.js";
+import type {
+  DocumentWorkflowOutcome,
+  ExternalSourceObservationReceipt,
+} from "./application/document-workflow.js";
 import { createDocumentWorkflowCodecs } from "./application/document-workflow-codecs.js";
 import { createRunWorkflowCodecs } from "./application/run-workflow-codecs.js";
 import {
@@ -122,6 +125,7 @@ import {
 import type { SourceHistoryDirection } from "./domain/source-history.js";
 import type { AgentSelection } from "./domain/agent-provider-state.js";
 import {
+  EDIT_AUTHOR_RUNTIME_BUDGET,
   EDIT_AUTHOR_RUNTIME_VERIFICATION_DEADLINE_MS,
 } from "./domain/edit-runtime-contract.js";
 import { assertDesktopHost } from "./application/desktop-host.js";
@@ -519,12 +523,13 @@ export default function Workbench() {
     context?: ProjectContext,
     receipt?: DocumentSourceReceipt | null,
     previousFrameGeneration?: number | null,
+    previousFrameDocument?: Document | null,
+    explicitRebuild?: boolean,
   ) => Promise<DocumentCanvasRenderObservation>>(async () => {
     throw new Error("画布核对尚未完成初始化。");
   });
   const sourceTransitioningRef = useRef(false);
   const renameTransitioningRef = useRef(false);
-  const sourceTransitionOperationRef = useRef(0);
   const versionTransitioningRef = useRef(false);
   const attachmentObjectUrlsRef = useRef<Map<string, string>>(new Map());
   const interruptionRef = useRef<GlobalInterruption | null>(null);
@@ -1011,15 +1016,41 @@ export default function Workbench() {
           errorMessage: productErrorMessage,
         }),
         canvas: {
-          verifyRendered: (expectedHtml, expectedSha256, context, receipt) => (
-            verifyCanvasRenderedRef.current(
+          verifyRendered: (
+            expectedHtml,
+            expectedSha256,
+            context,
+            receipt,
+            rebuildFence,
+          ) => {
+            const fence = rebuildFence as Readonly<{
+              previousFrameGeneration?: number | null;
+              previousFrameDocument?: Document | null;
+            }> | undefined;
+            return verifyCanvasRenderedRef.current(
               expectedHtml,
               expectedSha256,
               context as ProjectContext | undefined,
               receipt,
-            )
-          ),
+              fence?.previousFrameGeneration,
+              fence?.previousFrameDocument,
+              Boolean(rebuildFence),
+            );
+          },
           freeze: (reason) => fenceAndFreezeCurrentCanvasRef.current(reason),
+          unlock: () => editorRef.current?.unlockNow?.(),
+          captureActiveFrameFence: () => Object.freeze({
+              previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,
+              previousFrameDocument: editorRef.current?.getRenderedFrameDocument() || null,
+            }),
+          rebuildActiveFrame: () => {
+            const rebuildFence = Object.freeze({
+              previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,
+              previousFrameDocument: editorRef.current?.getRenderedFrameDocument() || null,
+            });
+            editorRef.current?.rebuildActiveFrame();
+            return rebuildFence;
+          },
           adoptHistorySource: (nextHtml, target, textSelection, operation) => {
             editorRef.current?.adoptHistorySource(
               nextHtml,
@@ -1500,6 +1531,7 @@ export default function Workbench() {
   const [externalSourcePreview, setExternalSourcePreview] = useState<{
     html: string;
     sourceSha256: string;
+    receipt: ExternalSourceObservationReceipt;
   } | null>(null);
   const presentedInterruption = globalInterruptionPresentation(interruption);
   const noticeIdentity = presentedInterruption
@@ -1511,6 +1543,19 @@ export default function Workbench() {
   useEffect(() => {
     if (!workspaceController) return undefined;
     const unsubscribe = workspaceController.subscribeEvents((event) => {
+      if (event.type === "document-source-operation") {
+        const sourceEvent = event as Readonly<{
+          context?: ProjectContext;
+          phase?: "running" | "idle";
+        }>;
+        if (
+          sourceEvent.context
+          && workspaceController.matchesCurrentProjectContext(sourceEvent.context)
+        ) {
+          setSourceViewTransitioning(sourceEvent.phase === "running");
+        }
+        return;
+      }
       if (event.type === "registration-published") {
         const registrationEvent = event as Readonly<{
           context: ProjectContext;
@@ -2619,10 +2664,11 @@ export default function Workbench() {
     receipt?: DocumentSourceReceipt | null,
     previousFrameGeneration?: number | null,
     previousFrameDocument?: Document | null,
+    explicitRebuild = false,
   ): Promise<DocumentCanvasRenderObservation> => {
     performance.mark("stemmio:canvas:verify-start");
-    let expectedGeneration = currentDocumentSessionSnapshot().canvasGeneration;
-    let expectedReceipt = receipt || currentDocumentSessionSnapshot().sourceReceipt;
+    const expectedGeneration = currentDocumentSessionSnapshot().canvasGeneration;
+    const expectedReceipt = receipt || currentDocumentSessionSnapshot().sourceReceipt;
     const initialFrameDocument = previousFrameDocument
       || editorRef.current?.getRenderedFrameDocument()
       || null;
@@ -2631,7 +2677,17 @@ export default function Workbench() {
       && initialFrameDocument,
     );
     const waitForCurrentGeneration = async (): Promise<DocumentCanvasRenderObservation | null> => {
-      let attemptLimit = 40;
+      const explicitRebuildAttemptLimit = Math.ceil(
+        EDIT_AUTHOR_RUNTIME_BUDGET.runtimeSurfaceDeadlineMs / 25,
+      );
+      // The imperative rebuild invalidates the old frame synchronously, but
+      // React may not commit and verify its static replacement within the
+      // ordinary one-second observation window on a loaded desktop. Give that
+      // explicitly requested projection rebuild the existing surface budget;
+      // it still cannot repeat source acceptance or trigger another rebuild.
+      let attemptLimit = explicitRebuild
+        ? explicitRebuildAttemptLimit
+        : 40;
       const runtimeAttemptLimit = Math.ceil(
         EDIT_AUTHOR_RUNTIME_VERIFICATION_DEADLINE_MS / 25,
       );
@@ -2673,9 +2729,10 @@ export default function Workbench() {
           || (requirePhysicalReload && frameDocument === initialFrameDocument)
         ) {
           // Same bytes in the old frame are not a reload receipt. Let the new
-          // author candidate finish; only a settled failure/static state needs
-          // the bounded rebuild below, which must not cancel a healthy load.
-          if (!runtimePending) return null;
+          // author candidate finish. A static Runtime phase is a valid interval
+          // before React commits the authority receipt's replacement frame, so
+          // keep observing within the existing bound instead of misclassifying
+          // that interval as an immediate acknowledgement timeout.
           continue;
         }
         const renderedSha256 = await browserSha256(renderedSource);
@@ -2695,23 +2752,13 @@ export default function Workbench() {
     };
     const firstObservation = await waitForCurrentGeneration();
     if (firstObservation) return firstObservation;
-
-    // A missing acknowledgement is a disposable-Canvas failure, not a user
-    // conflict. Rebuild exactly once from the authoritative Document snapshot.
-    performance.mark("stemmio:canvas:verify-rebuild");
-    expectedGeneration = requiredWorkspaceController(
-      workspaceControllerRef.current,
-    ).reloadDocumentCanvas().canvasGeneration;
-    expectedReceipt = currentDocumentSessionSnapshot().sourceReceipt;
-    invalidateCanvasRenderAcks();
-    editorRef.current?.rebuildActiveFrame();
-    const rebuiltObservation = await waitForCurrentGeneration();
-    if (rebuiltObservation) return rebuiltObservation;
-    throw new Error("画布没有在时限内确认载入目标 HTML。");
+    throw Object.assign(
+      new Error("画布没有在时限内确认载入目标 HTML。"),
+      { code: "DOCUMENT_CANVAS_ACK_TIMEOUT" },
+    );
   }, [
     currentControllerSnapshot,
     currentDocumentSessionSnapshot,
-    invalidateCanvasRenderAcks,
     isCurrentProjectContext,
   ]);
   useEffect(() => {
@@ -3469,41 +3516,11 @@ export default function Workbench() {
     };
   }, [exportCurrentHtml]);
 
-  // External document reload remains a narrow presentation host action. Version
-  // activation/history navigation has its own operation owner in VersionWorkflow.
-  const beginSourceTransition = useCallback((): number | null => {
-    if (isViewTransitioning()) return null;
-    const frozen = editorRef.current?.freezeNow();
-    if (!frozen || !frozen.ok) {
-      editorRef.current?.showCommitBlocked(
-        frozen?.reason || "请点回文字完成输入，再切换 HTML 视图。",
-      );
-      return null;
-    }
-    const operationId = sourceTransitionOperationRef.current + 1;
-    sourceTransitionOperationRef.current = operationId;
-    setSourceViewTransitioning(true);
-    clearAutosaveTimer();
-    return operationId;
-  }, [clearAutosaveTimer, isViewTransitioning, setSourceViewTransitioning]);
-
-  const finishSourceTransition = useCallback((operationId: number) => {
-    if (sourceTransitionOperationRef.current !== operationId) return;
-    setSourceViewTransitioning(false);
-    window.requestAnimationFrame(() => {
-      if (!projectLoadError) editorRef.current?.unlockNow?.();
-    });
-  }, [projectLoadError, setSourceViewTransitioning]);
-
+  // DocumentWorkflow owns the complete disk-source operation. Workbench sends
+  // intent, presents its confirmation request, and renders the phased result.
   const reloadCurrentSource = useCallback(async ({
-    skipConfirmation = false,
     fromDeferred = false,
-    externalAuthorityAccepted = false,
-  }: {
-    skipConfirmation?: boolean;
-    fromDeferred?: boolean;
-    externalAuthorityAccepted?: boolean;
-  } = {}) => {
+  }: { fromDeferred?: boolean } = {}) => {
     const context = captureProjectContext();
     if (!context || projectLoadError || !workspaceController) return false;
     if (requiredWorkspaceController(workspaceController).hasDocumentHistoryAction) return false;
@@ -3514,72 +3531,37 @@ export default function Workbench() {
         () => deferredEditorReplayRef.current.reloadCurrentSource?.(),
       )
     ) return false;
-    const hasUnwrittenLocalChanges = Boolean(
-      editorRef.current?.hasPendingNativeEdit()
-      || currentDocumentSessionSnapshot().hasPendingWrite
-      || currentDocumentSessionSnapshot().isFlushing
-      || currentDocumentSessionSnapshot().editRevision
-        > currentDocumentSessionSnapshot().lastPersistedRevision
-      || persistState === "failed"
-      || persistState === "preview-dirty"
-    );
-    if (
-      !skipConfirmation
-      && persistState === "conflict"
-      && !window.confirm("确定要用外部版本覆盖当前编辑吗？此操作不可撤销。")
-    ) return false;
-    if (
-      !skipConfirmation
-      && persistState !== "conflict"
-      && hasUnwrittenLocalChanges
-      && !window.confirm("重新载入会舍弃尚未写回的当前编辑内容。建议先导出 HTML 副本，仍要继续吗？")
-    ) return false;
-    const operationId = beginSourceTransition();
-    if (operationId === null) return false;
-    const previousFrameGeneration = editorRef.current?.getRenderedFrameGeneration() ?? null;
-    const previousFrameDocument = editorRef.current?.getRenderedFrameDocument() || null;
-    let restored = false;
     try {
-      const outcome = await requiredWorkspaceController(workspaceController)
-        .reloadDocumentAuthority({
-          context,
-          acceptExternalConflict: persistState === "conflict" && !externalAuthorityAccepted,
-          externalAuthorityAccepted,
-        });
-      if (
-        outcome.status === "stale"
-        || sourceTransitionOperationRef.current !== operationId
-        || !isCurrentProjectContext(context)
-      ) return false;
-      if (outcome.status !== "succeeded") {
-        throw new Error(outcome.reason);
-      }
-      const authorityReceiptContinuation = currentDocumentSessionSnapshot().sourceReceipt;
-      await refreshWorkspace(
-        context.sourcePath,
-        context.epoch,
-        false,
-        undefined,
-        authorityReceiptContinuation,
-      );
-      if (
-        sourceTransitionOperationRef.current !== operationId
-        || !isCurrentProjectContext(context)
-      ) return false;
-      setFileStatusNotice("已重新读取文件，正在恢复页面…");
-      const reloadedDocument = currentDocumentSessionSnapshot();
-      await verifyCanvasRendered(
-        reloadedDocument.html,
-        reloadedDocument.workingHtmlSha256 || await browserSha256(reloadedDocument.html),
+      const controller = requiredWorkspaceController(workspaceController);
+      let outcome = await controller.reloadDocumentFromDisk({
         context,
-        reloadedDocument.sourceReceipt,
-        previousFrameGeneration,
-        previousFrameDocument,
-      );
-      if (sourceTransitionOperationRef.current !== operationId || !isCurrentProjectContext(context)) return false;
-      restored = true;
+        intent: { kind: "request" },
+      });
+      if (outcome.status === "blocked" && outcome.confirmation) {
+        const confirmed = outcome.code === "DOCUMENT_RELOAD_CONFIRMATION_REQUIRED"
+          && (outcome.reason === "确定要用外部版本覆盖当前编辑吗？此操作不可撤销。"
+            ? window.confirm("确定要用外部版本覆盖当前编辑吗？此操作不可撤销。")
+            : window.confirm("重新载入会舍弃尚未写回的当前编辑内容。建议先导出 HTML 副本，仍要继续吗？"));
+        if (!confirmed) return false;
+        outcome = await controller.reloadDocumentFromDisk({
+          context,
+          intent: {
+            kind: "confirm",
+            confirmation: outcome.confirmation,
+          },
+        });
+      }
+      if (outcome.status === "stale" || !isCurrentProjectContext(context)) return false;
+      if (outcome.status !== "succeeded") throw new Error(outcome.reason);
+      setExternalSourcePreview(null);
+      setCanvasMode("edit");
+      const restored = outcome.value.page.status === "restored";
+      setFileStatusNotice(restored
+        ? "页面已重新加载，可以继续编辑"
+        : "文件已重新读取，但页面暂时无法编辑，请重试");
+      return restored;
     } catch (cause) {
-      if (sourceTransitionOperationRef.current !== operationId || !isCurrentProjectContext(context)) return false;
+      if (!isCurrentProjectContext(context)) return false;
       setFileStatusNotice("页面未能重新加载，请重试");
       reportInternalFailure({
         area: "document",
@@ -3588,33 +3570,14 @@ export default function Workbench() {
         recovered: false,
         cause,
       });
-    } finally {
-      finishSourceTransition(operationId);
-    }
-    if (restored) {
-      // Let the completed transition release its imperative and controlled
-      // locks before reporting editor readiness, rather than disk-read success.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (sourceTransitionOperationRef.current !== operationId || !isCurrentProjectContext(context)) return false;
-      const editable = Boolean(editorRef.current?.isCurrentProjectionEditable());
-      setFileStatusNotice(editable
-        ? "页面已重新加载，可以继续编辑"
-        : "文件已重新读取，但页面暂时无法编辑，请重试");
-      return editable;
     }
     return false;
   }, [
-    beginSourceTransition,
     captureProjectContext,
-    currentDocumentSessionSnapshot,
     deferEditorCommand,
-    finishSourceTransition,
     isCurrentProjectContext,
-    persistState,
     projectLoadError,
-    refreshWorkspace,
     workspaceController,
-    verifyCanvasRendered,
   ]);
   const reloadFailedCanvas = useCallback(async (): Promise<boolean> => {
     const context = captureProjectContext();
@@ -3622,20 +3585,23 @@ export default function Workbench() {
     if (!context || !controller || projectLoadError || persistState === "conflict") {
       return false;
     }
-    // The recovery notice must never discard a save that is merely still in
-    // flight. Join the existing Document queue, re-check its project identity,
-    // then perform the same verified source reload exposed by the More menu.
-    const saved = await controller.flushDocument();
-    if (saved.status !== "succeeded" || !isCurrentProjectContext(context)) {
-      return false;
+    const outcome = await controller.repairDocumentCanvas({
+      context,
+      expectedSourceReceipt: currentDocumentSessionSnapshot().sourceReceipt,
+    });
+    const restored = outcome.status === "succeeded"
+      && outcome.value.page.status === "restored"
+      && isCurrentProjectContext(context);
+    if (restored) {
+      setFileStatusNotice("页面已重新加载，可以继续编辑");
     }
-    return reloadCurrentSource({ skipConfirmation: true });
+    return restored;
   }, [
     captureProjectContext,
+    currentDocumentSessionSnapshot,
     isCurrentProjectContext,
     persistState,
     projectLoadError,
-    reloadCurrentSource,
   ]);
   useEffect(() => {
     deferredEditorReplayRef.current.reloadCurrentSource = () => {
@@ -3661,6 +3627,7 @@ export default function Workbench() {
     setExternalSourcePreview({
       html: String(outcome.value.html || ""),
       sourceSha256: String(outcome.value.sourceSha256 || ""),
+      receipt: outcome.value,
     });
     setHandoffPreviewOpen(false);
     setCanvasMode("preview");
@@ -3687,35 +3654,32 @@ export default function Workbench() {
     }
   }, [documentId, projectId, sourcePath]);
 
-  const forceUnlockCurrentSource = useCallback(async ({
-    skipConfirmation = false,
-  }: {
-    skipConfirmation?: boolean;
-  } = {}) => {
+  const forceUnlockCurrentSource = useCallback(async () => {
     const context = captureProjectContext();
     if (!context || !workspaceController) return;
-    if (
-      !skipConfirmation
-      && !window.confirm("确定要用磁盘上的版本继续吗？未写入的编辑和未完成的 AI 结果都会丢弃，此操作不可撤销。")
-    ) {
-      return;
-    }
-    const operationId = beginSourceTransition();
-    if (operationId === null) return;
     try {
-      const outcome = await requiredWorkspaceController(workspaceController)
-        .forceUnlockDocumentConflict({ context });
-      if (
-        outcome.status === "stale"
-        || sourceTransitionOperationRef.current !== operationId
-        || !isCurrentProjectContext(context)
-      ) return;
-      if (outcome.status !== "succeeded") {
-        throw new Error(outcome.reason);
+      const controller = requiredWorkspaceController(workspaceController);
+      let outcome = await controller.acceptExternalDocumentConflict({
+        context,
+        intent: { kind: "request" },
+      });
+      if (outcome.status === "blocked" && outcome.confirmation) {
+        if (
+          outcome.code !== "DOCUMENT_EXTERNAL_CONFLICT_CONFIRMATION_REQUIRED"
+          || !window.confirm("确定要用磁盘上的版本继续吗？未写入的编辑和未完成的 AI 结果都会丢弃，此操作不可撤销。")
+        ) return;
+        outcome = await controller.acceptExternalDocumentConflict({
+          context,
+          intent: { kind: "confirm", confirmation: outcome.confirmation },
+        });
       }
+      if (outcome.status === "stale" || !isCurrentProjectContext(context)) return;
+      if (outcome.status !== "succeeded") throw new Error(outcome.reason);
       setExternalSourcePreview(null);
-      await refreshWorkspace(context.sourcePath, context.epoch);
       setCanvasMode("edit");
+      setFileStatusNotice(outcome.value.page.status === "restored"
+        ? "页面已重新加载，可以继续编辑"
+        : "文件已重新读取，但页面暂时无法编辑，请重试");
     } catch (cause) {
       if (!isCurrentProjectContext(context)) return;
       reportInternalFailure({
@@ -3725,26 +3689,50 @@ export default function Workbench() {
         recovered: false,
         cause,
       });
-    } finally {
-      finishSourceTransition(operationId);
     }
   }, [
-    beginSourceTransition,
     captureProjectContext,
-    finishSourceTransition,
     isCurrentProjectContext,
-    refreshWorkspace,
     workspaceController,
   ]);
 
   const acceptExternalSourceFromPreview = useCallback(async () => {
-    setExternalSourcePreview(null);
-    if (persistState === "conflict") {
-      await forceUnlockCurrentSource({ skipConfirmation: true });
+    const context = captureProjectContext();
+    const preview = externalSourcePreview;
+    if (!context || !preview || !workspaceController) return;
+    const outcome = await requiredWorkspaceController(workspaceController)
+      .adoptShownExternalDocumentPreview({
+        context,
+        previewReceipt: preview.receipt,
+      });
+    if (outcome.status !== "succeeded") {
+      if (
+        (outcome.status === "blocked" || outcome.status === "rejected")
+        && (
+          outcome.code === "SOURCE_HASH_CONFLICT"
+          || outcome.code === "EXTERNAL_SOURCE_PREVIEW_STALE"
+          || outcome.code === "DOCUMENT_SOURCE_PREVIEW_STALE"
+        )
+        && isCurrentProjectContext(context)
+      ) {
+        setExternalSourcePreview(null);
+        setCanvasMode("edit");
+        setFileStatusNotice("磁盘内容在预览后又发生变化，请重新预览。");
+      }
       return;
     }
-    await reloadCurrentSource({ skipConfirmation: true });
-  }, [forceUnlockCurrentSource, persistState, reloadCurrentSource]);
+    if (!isCurrentProjectContext(context)) return;
+    setExternalSourcePreview(null);
+    setCanvasMode("edit");
+    setFileStatusNotice(outcome.value.page.status === "restored"
+      ? "页面已重新加载，可以继续编辑"
+      : "文件已重新读取，但页面暂时无法编辑，请重试");
+  }, [
+    captureProjectContext,
+    externalSourcePreview,
+    isCurrentProjectContext,
+    workspaceController,
+  ]);
 
   const requestUserFlush = useCallback((fromDeferred = false) => {
     if (interactionLocked) {
@@ -5319,21 +5307,19 @@ export default function Workbench() {
       }
       return;
     }
-    const result = outcome.value as {
-      current?: boolean;
-      reloadCurrentSource?: boolean;
-    };
-    if (action === "keep-external") {
-      if (result.reloadCurrentSource) {
-        await reloadCurrentSource({
-          skipConfirmation: true,
-          externalAuthorityAccepted: true,
-        });
-      }
+    const result = outcome.value;
+    if (
+      action === "keep-external"
+      && result.current
+      && result.documentSourceResult?.status === "succeeded"
+    ) {
+      setCanvasMode("edit");
+      setFileStatusNotice(result.documentSourceResult.value.page.status === "restored"
+        ? "页面已重新加载，可以继续编辑"
+        : "文件已重新读取，但页面暂时无法编辑，请重试");
     }
   }, [
     activeRun,
-    reloadCurrentSource,
     revealAiConversation,
     runCapability,
   ]);

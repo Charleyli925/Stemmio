@@ -218,7 +218,7 @@ export async function inspectProjectOpenProjection({
 } = {}) {
   const current = record(document) || {};
   const currentHtmlSha256 = hasExactOpeningAuthority
-    ? String(current.sourceSha256 || "")
+    ? String(current.workingHtmlSha256 || current.persistedSourceSha256 || "")
     : await hashPort.sha256(String(current.html || ""));
   const clean = Boolean(
     current.persistState === "idle"

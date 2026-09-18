@@ -105,6 +105,14 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `restorePendingWrite` 只用于已验证恢复证据的重建路径。
   Workbench 只把 Canvas 输入及结构化 Outcome/Event 映射为界面，不再持有 timer、
   audit in-flight、recovery identity 或 history Promise。
+- 源码重载与恢复继续由 `DocumentWorkflow` 的真实命令验证：干净重载、脏编辑取消、
+  confirmation 跨 revision/Hash 过期、同目标重复单飞、切页后迟到 completion/finally 围栏、源码已接纳但
+  Canvas 待修复的分阶段结果，以及加入现有 save single-flight 且零 source read 的投影修复，由
+  `tests/document-workflow.test.mjs` 的可控 fake/Deferred 拥有。外部预览后磁盘变化的 SHA CAS 由
+  `tests/project-working-copy-save.test.mjs` 拥有；Run 的 conflict Hash 绑定、Document 接纳失败保留与迟到
+  `page: not-current` 结果由 `tests/run-workflow.test.mjs` 拥有。这些 Node 用例不声称 IME、Focus 或真实 iframe 连续性；继续复用
+  `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
+  `conflict-force-unlock.spec.mjs` 的真实接纳接线。
 - `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
   `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
   `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
@@ -596,6 +604,15 @@ generation、提升身份、Runtime ready 和源码一致性后重新定位同�
 必须原地的普通源码操作不得因为产品改标 Candidate 而放宽；必须重建、必须拒绝和接受后恢复
 同样按冻结组核对。计划属性 `data-structural-projection-kind` 不能代替结果
 `data-structural-projection-outcome`，重建次数只计实际 Document 替换。
+源码恢复交叉测试还必须区分普通接纳与 `repairCurrentCanvas`：普通接纳超时后最多发布一次
+替换 receipt；repair 捕获旧 frame fence 后只由 authority-receipt effect 物理重建一次，
+首个确认超时保留 `repair-required`，同一 project-open 意图不得立即再发 repair。Force-unlock
+响应丢失只查询原 operation receipt，覆盖最终 receipt 落盘前窗口且不得发出第二次 mutation。
+还必须注入 identity-migration prepared 后的外部写入，证明未预览 Hash 不会被普通 workspace
+静默接纳；丢失回执且 Stable ID 使最终 Hash 变化时，Document 和 Run keep-external
+都必须以同一原 operation 分别核对 accepted Hash 与 final Hash 并收敛。每个首副作用与 identity
+落盘窗口都需要 restart/query 用例；新 operation 不得覆盖 pending 槽，第三 Hash 只能
+持久化为可重复查询的 `superseded`，不得被恢复流程改写。
 独立 `core-copy-denied` 只消费已核对的 Runtime 额外属性及源码缺失依据，验证同一冻结目标的
 UI/实时能力与精确原因、新鲜 probe 回执、复制按钮不存在、Document/generation/源码不变。
 不强行调用隐藏命令，不把拒绝验证记为复制成功；其他未冻结的拒绝样本仍不算覆盖完成。

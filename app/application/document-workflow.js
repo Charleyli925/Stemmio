@@ -1,5 +1,6 @@
 import { isBridgeRequestError } from "./bridge-client.js";
 import { createDocumentWorkflowCodecs } from "./document-workflow-codecs.js";
+import { createDocumentSourceOperationResult } from "./document-source-operation-result.js";
 import {
   planDocumentEnqueue,
   planDocumentSave,
@@ -18,6 +19,7 @@ import {
 
 const AUTOSAVE_DELAY_MS = 100;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
+const DOCUMENT_CANVAS_ACK_TIMEOUT = "DOCUMENT_CANVAS_ACK_TIMEOUT";
 
 function composerTargetForDisplay(sourceTarget, selection) {
   const visualHint = selection?.visualHint;
@@ -38,11 +40,12 @@ function succeeded(value) {
   return Object.freeze({ status: "succeeded", value });
 }
 
-function blocked(code, reason) {
+function blocked(code, reason, details = {}) {
   return Object.freeze({
     status: "blocked",
     code: String(code),
     reason: String(reason),
+    ...details,
   });
 }
 
@@ -158,6 +161,47 @@ function identityMatches(left, right, sameSourcePath) {
   );
 }
 
+function sourceOperationKey(kind, context, document, externalSha256 = "") {
+  const receipt = document?.sourceReceipt;
+  return [
+    kind,
+    Number(context?.epoch || 0),
+    String(context?.projectId || ""),
+    String(context?.documentId || ""),
+    String(context?.sourcePath || ""),
+    Number(document?.editRevision || 0),
+    String(document?.workingHtmlSha256 || ""),
+    String(receipt?.incarnation || ""),
+    Number(receipt?.sequence || 0),
+    String(receipt?.origin || ""),
+    String(receipt?.operationId || ""),
+    Number(receipt?.editRevision || 0),
+    Number(receipt?.canvasGeneration || document?.canvasGeneration || 0),
+    String(receipt?.sourceSha256 || ""),
+    String(externalSha256 || ""),
+  ].join("\0");
+}
+
+function sameExpectedSource(receipt, snapshot) {
+  return Boolean(
+    Number(snapshot?.editRevision) >= 0
+    && String(snapshot?.workingHtmlSha256 || "")
+    && ((!receipt && !snapshot?.sourceReceipt)
+      || sameSourceReceipt(receipt, snapshot?.sourceReceipt)),
+  );
+}
+
+function sourceNeedsReloadConfirmation(document) {
+  return Boolean(
+    document?.persistState === "conflict"
+    || document?.persistState === "failed"
+    || document?.persistState === "preview-dirty"
+    || document?.hasPendingWrite
+    || document?.isFlushing
+    || document?.editRevision > document?.lastPersistedRevision
+  );
+}
+
 // DocumentWorkflow is the PR-2 durable-source boundary.  It receives existing
 // Sessions by injection; it never creates a second fact owner and never imports
 // the renderer's Workbench or DOM implementation.
@@ -189,6 +233,10 @@ export class DocumentWorkflow {
   #recoveryJournalPending = null;
   #recoveryJournalGeneration = 0;
   #operationSequence = 0;
+  #sourceOperation = null;
+  #sourceConfirmations = new Map();
+  #externalObservations = new Map();
+  #unknownForceUnlock = null;
   #disposed = false;
 
   constructor({
@@ -293,6 +341,10 @@ export class DocumentWorkflow {
   dispose() {
     this.#disposed = true;
     this.#clearAutosaveTimer();
+    this.#sourceOperation = null;
+    this.#sourceConfirmations.clear();
+    this.#externalObservations.clear();
+    this.#unknownForceUnlock = null;
     this.#listeners.clear();
   }
 
@@ -628,6 +680,10 @@ export class DocumentWorkflow {
   }
 
   resetForProjectTransition({ clearRecovery = false, context } = {}) {
+    this.#sourceOperation = null;
+    this.#sourceConfirmations.clear();
+    this.#externalObservations.clear();
+    this.#unknownForceUnlock = null;
     this.#clearAutosaveTimer();
     this.#auditPending = [];
     this.#auditInFlight.clear();
@@ -951,110 +1007,54 @@ export class DocumentWorkflow {
     return operation;
   }
 
-  async reloadAuthority({
-    context,
-    acceptExternalConflict = false,
-    externalAuthorityAccepted = false,
-  } = {}) {
-    const activeContext = copyContext(context) || this.#projectSession.context;
+  async reloadFromDisk({ context, intent = { kind: "request" } } = {}) {
+    const activeContext = copyContext(context) || copyContext(this.#projectSession.context);
     if (!activeContext) {
       return blocked("DOCUMENT_CONTEXT_REQUIRED", "当前页面尚未完成项目身份初始化。");
     }
     if (!this.#isCurrent(activeContext)) return stale(activeContext);
-    const previousDocument = this.#documentSession.snapshot;
-    const previousPendingWrite = this.#documentSession.pendingWrite;
-    const previousVersionView = this.#versionSession.captureView();
-    let externalAccepted = Boolean(externalAuthorityAccepted);
-    try {
-      if (acceptExternalConflict && !externalAccepted) {
-        await this.#bridgeClient.resolveConflict({
-          ...activeContext,
-          action: "force-unlock",
-        });
-        externalAccepted = true;
-        if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      }
-      const payload = await this.#bridgeClient.source(activeContext.sourcePath);
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      this.#assertSourcePayload(payload, activeContext, "重新读取时文件身份发生变化，已拒绝覆盖当前项目。");
-      const html = String(payload.content || "");
-      const sourceSha256 = String(payload.sha256 || "");
-      if (!SHA256.test(sourceSha256) || await this.#hashPort.sha256(html) !== sourceSha256) {
-        throw invalidAcknowledgement(
-          "重新读取的源 HTML 与声明 Hash 不一致。",
-          "INVALID_SOURCE_ACK",
-        );
-      }
-      this.#documentSession.publishAuthority({
-        html,
-        persistedSourceSha256: sourceSha256,
-        pendingWrite: null,
-        persistState: "idle",
-        persistError: "",
-        context: activeContext,
-        operationId: this.#nextOperationId("authority-reload"),
-      });
-      this.#versionSession.returnCurrent({
-        currentExactVersionId: payload.currentExactVersionId || null,
-        currentBasedOnVersionId: payload.currentBasedOnVersionId || undefined,
-        restoredFromVersionId: payload.restoredFromVersionId || null,
-      });
-      this.#canvasPort.invalidateRenderAcks();
-      await this.#acknowledgeCanvas(html, sourceSha256, activeContext);
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      this.#auditPending = [];
-      this.#auditInFlight.clear();
-      this.#commentSession.setChangeEvents([]);
-      this.#persistRecovery(null, activeContext);
-      this.#emit({
-        type: "document-authority-reloaded",
-        context: activeContext,
-        lastModifiedAt: String(payload.lastModifiedAt || ""),
-      });
-      return succeeded({
-        html,
-        sourceSha256,
-        lastModifiedAt: String(payload.lastModifiedAt || ""),
-      });
-    } catch (cause) {
-      if (this.#isCurrent(activeContext) && !externalAccepted) {
-        this.#documentSession.publishAuthority({
-          html: previousDocument.html,
-          persistedSourceSha256: previousDocument.persistedSourceSha256,
-          workingHtmlSha256: previousDocument.workingHtmlSha256,
-          pendingWrite: previousPendingWrite,
-          persistState: previousDocument.persistState,
-          persistError: previousDocument.persistError,
-          context: activeContext,
-          operationId: this.#nextOperationId("authority-reload-rollback"),
-        });
-        this.#versionSession.restoreView(previousVersionView);
-        this.#canvasPort.invalidateRenderAcks();
-        await this.#acknowledgeCanvas(
-          previousDocument.html,
-          previousDocument.workingHtmlSha256
-            || previousDocument.persistedSourceSha256
-            || await this.#hashPort.sha256(previousDocument.html),
-          activeContext,
-        );
-      }
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      const message = this.#codecs.errorMessage(cause, "请稍后重试，源文件没有被覆盖。");
-      this.#emit({
-        type: "document-authority-reload-failed",
-        context: activeContext,
-        code: sourceErrorCode(cause, "SOURCE_RELOAD_REJECTED"),
-        message,
-        externalAccepted,
-        fatal: false,
-      });
-      return this.#outcomeFromCause(
-        this.#nextOperationId("reload"),
-        cause,
-        "SOURCE_RELOAD_REJECTED",
-        message,
-      );
+    if (intent?.kind !== "request" && intent?.kind !== "confirm") {
+      return rejected("DOCUMENT_SOURCE_INTENT_INVALID", "重载源码的操作意图无效。");
     }
+    const key = sourceOperationKey("reload-from-disk", activeContext, this.#documentSession.snapshot);
+    return this.#runSourceOperation({
+      key,
+      kind: "reload-from-disk",
+      context: activeContext,
+      perform: async (operationId) => {
+        const document = this.#documentSession.snapshot;
+        if (intent?.kind !== "confirm" && sourceNeedsReloadConfirmation(document)) {
+          const confirmation = this.#sourceConfirmation(
+            "reload-from-disk",
+            activeContext,
+          );
+          return blocked(
+            "DOCUMENT_RELOAD_CONFIRMATION_REQUIRED",
+            document.persistState === "conflict"
+              ? "确定要用外部版本覆盖当前编辑吗？此操作不可撤销。"
+              : "重新载入会舍弃尚未写回的当前编辑内容。建议先导出 HTML 副本，仍要继续吗？",
+            { confirmation },
+          );
+        }
+        if (intent?.kind === "confirm"
+          && !this.#consumeSourceConfirmation(
+            intent.confirmation,
+            "reload-from-disk",
+            activeContext,
+          )) {
+          return blocked("DOCUMENT_SOURCE_CONFIRMATION_STALE", "当前文档已变化，请重新确认。");
+        }
+        const payload = await this.#bridgeClient.source(activeContext.sourcePath);
+        return this.#acceptSourcePayload({
+          operationId,
+          operation: "reload-from-disk",
+          context: activeContext,
+          payload,
+          eventType: "document-authority-reloaded",
+          permissionStatus: intent?.kind === "confirm" ? "accepted" : "not-required",
+        });
+      },
+    });
   }
 
   async previewExternalSource({ context } = {}) {
@@ -1066,6 +1066,7 @@ export class DocumentWorkflow {
     if (typeof this.#bridgeClient.sourcePreview !== "function") {
       return blocked("SOURCE_PREVIEW_UNAVAILABLE", "当前运行时无法预览磁盘源文件。");
     }
+    const expected = this.#documentSession.snapshot;
     try {
       const payload = await this.#bridgeClient.sourcePreview(activeContext.sourcePath);
       if (!this.#isCurrent(activeContext)) return stale(activeContext);
@@ -1077,12 +1078,30 @@ export class DocumentWorkflow {
           "INVALID_SOURCE_ACK",
         );
       }
-      return succeeded({
+      if (!sameExpectedSource(expected.sourceReceipt, this.#documentSession.snapshot)
+        || expected.editRevision !== this.#documentSession.editRevision
+        || expected.workingHtmlSha256 !== this.#documentSession.workingHtmlSha256) {
+        return blocked("DOCUMENT_SOURCE_PREVIEW_STALE", "当前文档已变化，请重新预览。");
+      }
+      const receipt = Object.freeze({
+        kind: "external-source-observation",
+        operationId: this.#nextOperationId("external-preview"),
+        context: Object.freeze({ ...activeContext }),
         html,
         sourceSha256,
         lastModifiedAt: String(payload.lastModifiedAt || ""),
         size: Number(payload.size || 0),
+        expectedSourceReceipt: expected.sourceReceipt,
+        expectedEditRevision: expected.editRevision,
+        expectedWorkingSha256: String(expected.workingHtmlSha256 || ""),
       });
+      for (const [storedOperationId, stored] of this.#externalObservations) {
+        if (sameContext(stored.context, activeContext, this.#codecs.sameSourcePath)) {
+          this.#externalObservations.delete(storedOperationId);
+        }
+      }
+      this.#externalObservations.set(receipt.operationId, receipt);
+      return succeeded(receipt);
     } catch (cause) {
       if (!this.#isCurrent(activeContext)) return stale(activeContext);
       const message = this.#codecs.errorMessage(cause, "暂时无法预览磁盘上的源文件。");
@@ -1101,224 +1120,192 @@ export class DocumentWorkflow {
     }
   }
 
-  async forceUnlockConflict({ context } = {}) {
+  hasPendingExternalAcceptance({ context, acceptedSourceSha256 } = {}) {
+    const activeContext = copyContext(context) || this.#projectSession.context;
+    const pending = this.#unknownForceUnlock;
+    return Boolean(
+      activeContext
+      && pending
+      && this.#isCurrent(activeContext)
+      && sameContext(pending.context, activeContext, this.#codecs.sameSourcePath)
+      && pending.expectedSourceSha256 === String(acceptedSourceSha256 || "")
+    );
+  }
+
+  async adoptShownExternalPreview({ context, previewReceipt } = {}) {
     const activeContext = copyContext(context) || this.#projectSession.context;
     if (!activeContext) {
       return blocked("DOCUMENT_CONTEXT_REQUIRED", "当前页面尚未完成项目身份初始化。");
     }
     if (!this.#isCurrent(activeContext)) return stale(activeContext);
-    const previousDocument = this.#documentSession.snapshot;
-    const previousPendingWrite = this.#documentSession.pendingWrite;
-    const previousVersionView = this.#versionSession.captureView();
-    try {
-      await this.#bridgeClient.resolveConflict({
-        ...activeContext,
-        action: "force-unlock",
-      });
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      const payload = await this.#bridgeClient.source(activeContext.sourcePath);
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      this.#assertSourcePayload(payload, activeContext, "强制解锁后文件身份发生变化，已拒绝覆盖当前项目。");
-      const html = String(payload.content || "");
-      const sourceSha256 = String(payload.sha256 || "");
-      if (!SHA256.test(sourceSha256) || await this.#hashPort.sha256(html) !== sourceSha256) {
-        throw invalidAcknowledgement(
-          "强制解锁后读取的源 HTML 与声明 Hash 不一致。",
-          "INVALID_SOURCE_ACK",
-        );
-      }
-      const editRevision = this.#documentSession.editRevision;
-      this.#documentSession.publishAuthority({
-        html,
-        persistedSourceSha256: sourceSha256,
-        pendingWrite: null,
-        persistState: "idle",
-        persistError: "",
-        lastPersistedRevision: editRevision,
-        context: activeContext,
-        operationId: this.#nextOperationId("authority-unlock"),
-      });
-      this.#versionSession.returnCurrent({
-        currentExactVersionId: payload.currentExactVersionId || null,
-        currentBasedOnVersionId: payload.currentBasedOnVersionId || undefined,
-        restoredFromVersionId: payload.restoredFromVersionId || null,
-      });
-      this.#canvasPort.invalidateRenderAcks();
-      await this.#acknowledgeCanvas(html, sourceSha256, activeContext);
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      this.#auditPending = [];
-      this.#auditInFlight.clear();
-      this.#commentSession.setChangeEvents([]);
-      this.#persistRecovery(null, activeContext);
-      this.#emit({
-        type: "document-conflict-force-unlocked",
-        context: activeContext,
-        lastModifiedAt: String(payload.lastModifiedAt || ""),
-      });
-      return succeeded({
-        html,
-        sourceSha256,
-        lastModifiedAt: String(payload.lastModifiedAt || ""),
-      });
-    } catch (cause) {
-      if (this.#isCurrent(activeContext)) {
-        this.#documentSession.publishAuthority({
-          html: previousDocument.html,
-          persistedSourceSha256: previousDocument.persistedSourceSha256,
-          workingHtmlSha256: previousDocument.workingHtmlSha256,
-          pendingWrite: previousPendingWrite,
-          persistState: previousDocument.persistState,
-          persistError: previousDocument.persistError,
-          context: activeContext,
-          operationId: this.#nextOperationId("authority-unlock-rollback"),
-        });
-        this.#versionSession.restoreView(previousVersionView);
-        this.#canvasPort.invalidateRenderAcks();
-      }
-      if (!this.#isCurrent(activeContext)) return stale(activeContext);
-      const message = this.#codecs.errorMessage(cause, "强制解锁没有完成，项目仍保持冲突状态。");
-      this.#emit({
-        type: "document-conflict-force-unlock-failed",
-        context: activeContext,
-        code: sourceErrorCode(cause, "DOCUMENT_FORCE_UNLOCK_REJECTED"),
-        message,
-      });
-      return this.#outcomeFromCause(
-        this.#nextOperationId("unlock"),
-        cause,
-        "DOCUMENT_FORCE_UNLOCK_REJECTED",
-        message,
-      );
-    }
+    const key = sourceOperationKey(
+      "accept-shown-external-preview",
+      activeContext,
+      this.#documentSession.snapshot,
+      previewReceipt?.sourceSha256,
+    );
+    return this.#runSourceOperation({
+      key,
+      kind: "accept-shown-external-preview",
+      context: activeContext,
+      perform: async (operationId) => {
+        if (!this.#validExternalObservation(previewReceipt, activeContext)) {
+          this.#externalObservations.delete(previewReceipt?.operationId);
+          return blocked("EXTERNAL_SOURCE_PREVIEW_STALE", "磁盘版本预览已过期，请重新预览后再接受。");
+        }
+        try {
+          const outcome = await this.#acceptExternalSource({
+            operationId,
+            context: activeContext,
+            expectedSourceSha256: previewReceipt.sourceSha256,
+            operation: "accept-shown-external-preview",
+            permissionStatus: "accepted",
+          });
+          if (outcome.status === "succeeded") {
+            this.#externalObservations.delete(previewReceipt.operationId);
+          }
+          return outcome;
+        } catch (cause) {
+          if (sourceErrorCode(cause, "") === "SOURCE_HASH_CONFLICT") {
+            this.#externalObservations.delete(previewReceipt.operationId);
+          }
+          throw cause;
+        }
+      },
+    });
   }
 
-  async ensureCurrentCanvas({ context } = {}) {
-    const activeContext = copyContext(context) || this.#projectSession.context;
-    let expectedHtml = this.#documentSession.html;
-    let receipt = this.#documentSession.sourceReceipt;
-    const clean = Boolean(
-      activeContext
-      && this.#documentSession.persistState === "idle"
-      && this.#documentSession.editRevision === this.#documentSession.lastPersistedRevision
-      && !this.#documentSession.pendingWrite
-      && !this.#documentSession.flushPromise,
-    );
-    const canvasAuthority = this.#documentSession.canvasAuthority;
-    if (
-      clean
-      && this.#documentSession.persistedSourceSha256
-      && this.#documentSession.workingHtmlSha256
-      && canvasAuthority.status === "verified"
-      && canvasAuthority.generation === this.#documentSession.canvasGeneration
-      && canvasAuthority.renderedSha256 === this.#documentSession.workingHtmlSha256
-      && this.#documentSession.workingHtmlSha256
-        === this.#documentSession.persistedSourceSha256
-    ) {
-      return succeeded({
-        html: expectedHtml,
-        persistedSourceSha256: this.#documentSession.persistedSourceSha256,
-        workingHtmlSha256: this.#documentSession.workingHtmlSha256,
-        canvasRenderedSha256: canvasAuthority.renderedSha256,
-        reusedCanvasAuthority: true,
-      });
+  async acceptExternalConflict({ context, intent = { kind: "request" } } = {}) {
+    const activeContext = copyContext(context) || copyContext(this.#projectSession.context);
+    if (!activeContext) {
+      return blocked("DOCUMENT_CONTEXT_REQUIRED", "当前页面尚未完成项目身份初始化。");
     }
-    let expectedSha256 = await this.#hashPort.sha256(expectedHtml);
-    let observation = null;
-    try {
-      if (
-        activeContext
-        && clean
-        && this.#documentSession.persistedSourceSha256
-        && this.#documentSession.persistedSourceSha256 !== expectedSha256
-      ) {
-        const payload = await this.#bridgeClient.source(activeContext.sourcePath);
-        if (!this.#isCurrent(activeContext)) return stale(activeContext);
-        this.#assertSourcePayload(payload, activeContext, "自动恢复时源文件身份发生变化。");
-        const repairedHtml = String(payload.content || "");
-        const repairedSha256 = String(payload.sha256 || "");
-        if (
-          !SHA256.test(repairedSha256)
-          || await this.#hashPort.sha256(repairedHtml) !== repairedSha256
-        ) {
-          throw invalidAcknowledgement(
-            "自动恢复读取到的源 HTML 与 Hash 不一致。",
-            "INVALID_SOURCE_ACK",
+    if (!this.#isCurrent(activeContext)) return stale(activeContext);
+    if (intent?.kind !== "request" && intent?.kind !== "confirm") {
+      return rejected("DOCUMENT_SOURCE_INTENT_INVALID", "外部冲突的操作意图无效。");
+    }
+    const key = sourceOperationKey(
+      "accept-external-conflict",
+      activeContext,
+      this.#documentSession.snapshot,
+      intent?.confirmation?.expectedExternalSha256,
+    );
+    return this.#runSourceOperation({
+      key,
+      kind: "accept-external-conflict",
+      context: activeContext,
+      perform: async (operationId) => {
+        if (intent?.kind !== "confirm") {
+          const preview = await this.previewExternalSource({ context: activeContext });
+          if (preview.status !== "succeeded") return preview;
+          const confirmation = this.#sourceConfirmation(
+            "accept-external-conflict",
+            activeContext,
+            preview.value.sourceSha256,
+          );
+          this.#externalObservations.delete(preview.value.operationId);
+          return blocked(
+            "DOCUMENT_EXTERNAL_CONFLICT_CONFIRMATION_REQUIRED",
+            "确定要用磁盘上的版本继续吗？未写入的编辑和未完成的 AI 结果都会丢弃，此操作不可撤销。",
+            { confirmation },
           );
         }
-        if (!this.#isCurrent(activeContext)) return stale(activeContext);
-        this.#documentSession.publishAuthority({
-          html: repairedHtml,
-          persistedSourceSha256: repairedSha256,
-          pendingWrite: null,
-          persistState: "idle",
-          persistError: "",
+        if (!this.#consumeSourceConfirmation(
+          intent.confirmation,
+          "accept-external-conflict",
+          activeContext,
+        )) {
+          return blocked("DOCUMENT_SOURCE_CONFIRMATION_STALE", "当前文档已变化，请重新确认。");
+        }
+        return this.#acceptExternalSource({
+          operationId,
           context: activeContext,
-          operationId: this.#nextOperationId("authority-repair"),
+          expectedSourceSha256: intent.confirmation.expectedExternalSha256,
+          operation: "accept-external-conflict",
+          permissionStatus: "accepted",
         });
-        this.#versionSession.updateAuthority({
-          currentBasedOnVersionId: payload.currentBasedOnVersionId || undefined,
-          currentExactVersionId: payload.currentExactVersionId || null,
-          restoredFromVersionId: payload.restoredFromVersionId || null,
+      },
+    });
+  }
+
+  async repairCurrentCanvas({ context, expectedSourceReceipt = null } = {}) {
+    const activeContext = copyContext(context) || this.#projectSession.context;
+    if (!activeContext) {
+      return blocked("DOCUMENT_CONTEXT_REQUIRED", "当前页面尚未完成项目身份初始化。");
+    }
+    if (!this.#isCurrent(activeContext)) return stale(activeContext);
+    if (expectedSourceReceipt
+      && !sameSourceReceipt(expectedSourceReceipt, this.#documentSession.sourceReceipt)) {
+      return stale(activeContext);
+    }
+    const requested = this.#documentSession.snapshot;
+    const canvasAuthority = requested.canvasAuthority;
+    if (
+      requested.persistState === "idle"
+      && !requested.hasPendingWrite
+      && !requested.isFlushing
+      && requested.editRevision === requested.lastPersistedRevision
+      && SHA256.test(String(requested.workingHtmlSha256 || ""))
+      && requested.workingHtmlSha256 === requested.persistedSourceSha256
+      && canvasAuthority?.status === "verified"
+      && canvasAuthority.generation === requested.canvasGeneration
+      && canvasAuthority.renderedSha256 === requested.workingHtmlSha256
+    ) {
+      return succeeded(Object.freeze({
+        operationId: this.#nextOperationId("reuse-current-canvas"),
+        operation: "repair-current-canvas",
+        permission: Object.freeze({ status: "not-required" }),
+        source: Object.freeze({
+          status: "unchanged",
+          receipt: requested.sourceReceipt,
+          html: requested.html,
+          sourceSha256: requested.workingHtmlSha256,
+        }),
+        page: Object.freeze({ status: "restored", reusedCanvasAuthority: true }),
+      }));
+    }
+    const key = sourceOperationKey("repair-current-canvas", activeContext, requested);
+    return this.#runSourceOperation({
+      key,
+      kind: "repair-current-canvas",
+      context: activeContext,
+      perform: async (operationId) => {
+        // Freeze may synchronously checkpoint an active native edit. Bind the
+        // repair to the post-freeze source fact, then join Document's existing
+        // save single-flight before rebuilding only its projection.
+        const source = this.#documentSession.snapshot;
+        if (source.hasPendingWrite || source.isFlushing
+          || source.editRevision > source.lastPersistedRevision) {
+          const saved = await this.flush({ throughRevision: source.editRevision });
+          if (saved.status !== "succeeded") return saved;
+        }
+        if (!this.#isCurrent(activeContext)
+          || this.#documentSession.html !== source.html
+          || this.#documentSession.editRevision !== source.editRevision) {
+          return stale(activeContext);
+        }
+        const rebuildFence = this.#canvasPort.captureActiveFrameFence?.();
+        const reloaded = this.#documentSession.reloadCanvas({
+          context: activeContext,
+          operationId,
         });
         this.#canvasPort.invalidateRenderAcks();
-        expectedHtml = repairedHtml;
-        expectedSha256 = repairedSha256;
-        receipt = this.#documentSession.sourceReceipt;
-        this.#emit({
-          type: "document-authority-repaired",
+        return this.#restoreAcceptedPage({
+          operationId,
+          operation: "repair-current-canvas",
           context: activeContext,
-          lastModifiedAt: String(payload.lastModifiedAt || ""),
+          html: reloaded.html,
+          sourceSha256: reloaded.workingHtmlSha256,
+          sourceStatus: "unchanged",
+          permissionStatus: "not-required",
+          canvasExecution: Object.freeze({
+            expectedReceipt: reloaded.sourceReceipt,
+            rebuildFence,
+            remainingRebuilds: 0,
+          }),
         });
-      }
-      observation = await this.#verifyRendered(
-        expectedHtml,
-        expectedSha256,
-        activeContext || undefined,
-        receipt,
-      );
-      if (!this.#documentSession.confirmWorkingHtml({
-        revision: this.#documentSession.editRevision,
-        htmlSha256: expectedSha256,
-      })) {
-        throw Object.assign(new Error("当前工作 HTML 已变化，未接受过期画布回执。"), {
-          code: "DOCUMENT_WORKING_HTML_STALE",
-        });
-      }
-      const confirmed = this.confirmCanvas(observation);
-      const alreadyVerifiedExactObservation = Boolean(
-        !confirmed
-        && this.#documentSession.canvasAuthority.status === "verified"
-        && sameSourceReceipt(
-          observation.receipt,
-          this.#documentSession.sourceReceipt,
-        )
-        && observation.renderedHtml === this.#documentSession.html
-        && observation.renderedSha256 === this.#documentSession.canvasAuthority.renderedSha256
-        && observation.renderedSha256 === this.#documentSession.workingHtmlSha256,
-      );
-      if (!confirmed && !alreadyVerifiedExactObservation) {
-        throw Object.assign(new Error("当前画布尚未完成自动恢复。"), {
-          code: "DOCUMENT_CANVAS_AUTHORITY_REJECTED",
-        });
-      }
-      return succeeded({
-        html: expectedHtml,
-        persistedSourceSha256: this.#documentSession.persistedSourceSha256,
-        workingHtmlSha256: expectedSha256,
-        canvasRenderedSha256: observation.renderedSha256,
-      });
-    } catch (cause) {
-      if (activeContext && !this.#isCurrent(activeContext)) return stale(activeContext);
-      this.#failCurrentCanvas(
-        this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
-      );
-      return this.#outcomeFromCause(
-        this.#nextOperationId("canvas"),
-        cause,
-        "DOCUMENT_CANVAS_AUTHORITY_REJECTED",
-        this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
-      );
-    }
+      },
+    });
   }
 
   /**
@@ -2979,6 +2966,365 @@ export class DocumentWorkflow {
     return this.#documentSession.sourceReceipt;
   }
 
+  #sourceConfirmation(action, context, expectedExternalSha256 = "") {
+    const document = this.#documentSession.snapshot;
+    for (const [storedOperationId, stored] of this.#sourceConfirmations) {
+      if (stored.action === action
+        && sameContext(stored.context, context, this.#codecs.sameSourcePath)) {
+        this.#sourceConfirmations.delete(storedOperationId);
+      }
+    }
+    const confirmation = Object.freeze({
+      kind: "document-source-confirmation",
+      operationId: this.#nextOperationId("source-confirmation"),
+      action,
+      context: Object.freeze({ ...context }),
+      expectedSourceReceipt: document.sourceReceipt,
+      expectedEditRevision: document.editRevision,
+      expectedWorkingSha256: String(document.workingHtmlSha256 || ""),
+      ...(expectedExternalSha256
+        ? { expectedExternalSha256: String(expectedExternalSha256) }
+        : {}),
+    });
+    this.#sourceConfirmations.set(confirmation.operationId, confirmation);
+    return confirmation;
+  }
+
+  #consumeSourceConfirmation(confirmation, action, context) {
+    const stored = confirmation?.operationId
+      ? this.#sourceConfirmations.get(confirmation.operationId)
+      : null;
+    if (stored) this.#sourceConfirmations.delete(stored.operationId);
+    const document = this.#documentSession.snapshot;
+    return Boolean(
+      stored
+      && stored === confirmation
+      && stored.kind === "document-source-confirmation"
+      && stored.action === action
+      && sameContext(stored.context, context, this.#codecs.sameSourcePath)
+      && stored.expectedEditRevision === document.editRevision
+      && stored.expectedWorkingSha256 === document.workingHtmlSha256
+      && sameExpectedSource(stored.expectedSourceReceipt, document)
+      && this.#isCurrent(context)
+    );
+  }
+
+  #validExternalObservation(receipt, context) {
+    const stored = receipt?.operationId
+      ? this.#externalObservations.get(receipt.operationId)
+      : null;
+    return Boolean(
+      stored
+      && stored === receipt
+      && receipt.kind === "external-source-observation"
+      && SHA256.test(String(receipt.sourceSha256 || ""))
+      && sameContext(receipt.context, context, this.#codecs.sameSourcePath)
+      && receipt.expectedEditRevision === this.#documentSession.editRevision
+      && receipt.expectedWorkingSha256 === this.#documentSession.workingHtmlSha256
+      && sameExpectedSource(receipt.expectedSourceReceipt, this.#documentSession.snapshot)
+      && this.#isCurrent(context)
+    );
+  }
+
+  async #acceptExternalSource({
+    operationId,
+    context,
+    expectedSourceSha256,
+    operation,
+    permissionStatus,
+  }) {
+    const expected = String(expectedSourceSha256 || "");
+    if (!SHA256.test(expected)) {
+      return blocked("EXTERNAL_SOURCE_PREVIEW_STALE", "外部源回执缺少可验证的 Hash。");
+    }
+    const pending = this.#unknownForceUnlock;
+    let payload;
+    if (pending && sameContext(pending.context, context, this.#codecs.sameSourcePath)) {
+      payload = await this.#bridgeClient.resolveConflict({
+        ...context,
+        action: "force-unlock-result",
+        operationId: pending.operationId,
+      });
+      if (payload?.status === "unknown") {
+        return unknown(
+          pending.operationId,
+          "外部版本采用结果尚未确认，不会重复执行覆盖操作。",
+        );
+      }
+      this.#unknownForceUnlock = null;
+      if (payload?.status === "superseded"
+        || payload?.acceptedSourceSha256 !== pending.expectedSourceSha256
+        || payload?.sourceSha256 !== expected) {
+        return blocked(
+          "EXTERNAL_SOURCE_PREVIEW_STALE",
+          "磁盘版本已变化，请重新预览后再接受。",
+        );
+      }
+    } else {
+      try {
+        payload = await this.#bridgeClient.resolveConflict({
+          ...context,
+          action: "force-unlock",
+          operationId,
+          expectedSourceSha256: expected,
+        });
+      } catch (cause) {
+        const code = sourceErrorCode(cause, "");
+        if (isBridgeRequestError(cause)
+          && cause.outcome === "unknown"
+          && !["SOURCE_HASH_CONFLICT", "SOURCE_IDENTITY_MISMATCH", "PROJECT_NOT_FOUND", "INVALID_OPERATION_ID"].includes(code)) {
+          this.#unknownForceUnlock = Object.freeze({
+            operationId,
+            context: Object.freeze({ ...context }),
+            expectedSourceSha256: expected,
+          });
+        }
+        throw cause;
+      }
+    }
+    return this.#acceptSourcePayload({
+      operationId,
+      operation,
+      context,
+      payload,
+      eventType: "document-conflict-force-unlocked",
+      permissionStatus,
+      durableSourceAccepted: true,
+    });
+  }
+
+  #runSourceOperation({ key, kind, context, perform }) {
+    if (this.#sourceOperation?.key === key) return this.#sourceOperation.promise;
+    if (this.#sourceOperation) {
+      return Promise.resolve(blocked(
+        "DOCUMENT_SOURCE_OPERATION_BUSY",
+        "当前页面的源码操作尚未完成，请稍后重试。",
+      ));
+    }
+    const operation = {
+      key,
+      kind,
+      context: Object.freeze({ ...context }),
+      operationId: this.#nextOperationId(kind),
+      freezeLeaseAcquired: false,
+      promise: null,
+    };
+    const promise = (async () => {
+      this.#emit({
+        type: "document-source-operation",
+        phase: "running",
+        operationId: operation.operationId,
+        operation: kind,
+        context: operation.context,
+      });
+      const frozen = await this.#freezeAuthority(
+        kind === "repair-current-canvas"
+          ? "当前编辑画布尚未完成安全收口。"
+          : "请点回文字完成输入，再切换 HTML 视图。",
+      );
+      if (!frozen.ok) {
+        return blocked("DOCUMENT_SOURCE_FREEZE_BLOCKED", frozen.reason);
+      }
+      if (this.#sourceOperation !== operation || !this.#isCurrent(context)) {
+        return stale(context);
+      }
+      operation.freezeLeaseAcquired = true;
+      return await perform(operation.operationId);
+    })().catch((cause) => {
+      if (this.#sourceOperation !== operation || !this.#isCurrent(context)) {
+        return stale(context);
+      }
+      const message = this.#codecs.errorMessage(
+        cause,
+        kind === "repair-current-canvas"
+          ? "当前画布尚未完成自动恢复。"
+          : "请稍后重试，源文件没有被覆盖。",
+      );
+      this.#emit({
+        type: kind.includes("conflict") || kind.includes("external-preview")
+          ? "document-conflict-force-unlock-failed"
+          : "document-authority-reload-failed",
+        context,
+        code: sourceErrorCode(cause, "DOCUMENT_SOURCE_OPERATION_REJECTED"),
+        message,
+        fatal: false,
+      });
+      return this.#outcomeFromCause(
+        operation.operationId,
+        cause,
+        "DOCUMENT_SOURCE_OPERATION_REJECTED",
+        message,
+      );
+    }).finally(() => {
+      if (this.#sourceOperation !== operation) return;
+      this.#sourceOperation = null;
+      if (operation.freezeLeaseAcquired && this.#isCurrent(context)) {
+        this.#canvasPort.unlock?.();
+      }
+      this.#emit({
+        type: "document-source-operation",
+        phase: "idle",
+        operationId: operation.operationId,
+        operation: kind,
+        context: operation.context,
+      });
+    });
+    operation.promise = promise;
+    this.#sourceOperation = operation;
+    return promise;
+  }
+
+  async #acceptSourcePayload({
+    operationId,
+    operation,
+    context,
+    payload,
+    eventType,
+    permissionStatus = "not-required",
+    durableSourceAccepted = false,
+  }) {
+    this.#assertSourcePayload(
+      payload,
+      context,
+      "源文件身份发生变化，已拒绝覆盖当前项目。",
+    );
+    const html = String(payload.content ?? payload.html ?? "");
+    const sourceSha256 = String(payload.sha256 ?? payload.sourceSha256 ?? "");
+    if (!SHA256.test(sourceSha256)
+      || await this.#hashPort.sha256(html) !== sourceSha256) {
+      throw invalidAcknowledgement(
+        "已接纳的源 HTML 与声明 Hash 不一致。",
+        "INVALID_SOURCE_ACK",
+      );
+    }
+    if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
+      if (durableSourceAccepted) {
+        return succeeded(createDocumentSourceOperationResult({
+          operationId,
+          operation,
+          permissionStatus,
+          sourceStatus: "accepted",
+          receipt: null,
+          html,
+          sourceSha256,
+          lastModifiedAt: payload.lastModifiedAt
+            ? String(payload.lastModifiedAt)
+            : undefined,
+          pageStatus: "not-current",
+          reason: "外部源文件已接纳，当前页面已切换。",
+        }));
+      }
+      return stale(context);
+    }
+    const editRevision = this.#documentSession.editRevision;
+    this.#documentSession.publishAuthority({
+      html,
+      persistedSourceSha256: sourceSha256,
+      pendingWrite: null,
+      persistState: "idle",
+      persistError: "",
+      lastPersistedRevision: editRevision,
+      context,
+      operationId,
+    });
+    if (payload.currentExactVersionId !== undefined
+      || payload.currentBasedOnVersionId !== undefined
+      || payload.restoredFromVersionId !== undefined) {
+      this.#versionSession.returnCurrent({
+        currentExactVersionId: payload.currentExactVersionId || null,
+        currentBasedOnVersionId: payload.currentBasedOnVersionId || undefined,
+        restoredFromVersionId: payload.restoredFromVersionId || null,
+      });
+    }
+    this.#canvasPort.invalidateRenderAcks();
+    this.#auditPending = [];
+    this.#auditInFlight.clear();
+    this.#commentSession.setChangeEvents([]);
+    this.#persistRecovery(null, context);
+    this.#emit({
+      type: eventType,
+      context,
+      operationId,
+      sourceReceipt: this.#documentSession.sourceReceipt,
+      sourceSha256,
+      lastModifiedAt: String(payload.lastModifiedAt || ""),
+    });
+    return this.#restoreAcceptedPage({
+      operationId,
+      operation,
+      context,
+      html,
+      sourceSha256,
+      sourceStatus: "accepted",
+      lastModifiedAt: String(payload.lastModifiedAt || ""),
+      permissionStatus,
+      receipt: this.#documentSession.sourceReceipt,
+    });
+  }
+
+  async #restoreAcceptedPage({
+    operationId,
+    operation,
+    context,
+    html,
+    sourceSha256,
+    sourceStatus,
+    lastModifiedAt = "",
+    permissionStatus = "not-required",
+    receipt: acceptedReceipt = this.#documentSession.sourceReceipt,
+    canvasExecution = null,
+  }) {
+    if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
+      return succeeded(createDocumentSourceOperationResult({
+        operationId,
+        operation,
+        permissionStatus,
+        sourceStatus,
+        receipt: acceptedReceipt,
+        html,
+        sourceSha256,
+        lastModifiedAt: lastModifiedAt || undefined,
+        pageStatus: "not-current",
+        reason: "源文件已接纳，当前页面已切换。",
+      }));
+    }
+    const restored = await this.#acknowledgeCanvas(
+      html,
+      sourceSha256,
+      context,
+      canvasExecution,
+    );
+    if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
+      return succeeded(createDocumentSourceOperationResult({
+        operationId,
+        operation,
+        permissionStatus,
+        sourceStatus,
+        receipt: acceptedReceipt,
+        html,
+        sourceSha256,
+        lastModifiedAt: lastModifiedAt || undefined,
+        pageStatus: "not-current",
+        reason: "源文件已接纳，当前页面已切换。",
+      }));
+    }
+    return succeeded(createDocumentSourceOperationResult({
+      operationId,
+      operation,
+      permissionStatus,
+      sourceStatus,
+      receipt: acceptedReceipt,
+      html,
+      sourceSha256,
+      lastModifiedAt: lastModifiedAt || undefined,
+      pageStatus: restored ? "restored" : "repair-required",
+      reason: restored
+        ? undefined
+        : this.#documentSession.canvasAuthority.error
+          || "文件已经接纳，但页面尚未恢复。",
+    }));
+  }
+
   #assertSourcePayload(payload, context, message) {
     if (
       !this.#codecs.isRecord(payload)
@@ -3000,25 +3346,75 @@ export class DocumentWorkflow {
     });
   }
 
-  async #acknowledgeCanvas(html, sourceSha256, context) {
+  async #acknowledgeCanvas(html, sourceSha256, context, canvasExecution = null) {
     if (typeof this.#canvasPort.verifyRendered !== "function") return true;
+    const expectedReceipt = canvasExecution?.expectedReceipt || null;
+    const initialRebuildFence = canvasExecution?.rebuildFence;
+    const remainingRebuilds = Number.isInteger(canvasExecution?.remainingRebuilds)
+      ? canvasExecution.remainingRebuilds
+      : 1;
+    let observation;
     try {
-      const observation = await this.#verifyRendered(html, sourceSha256, context);
-      if (context && !this.#isCurrent(context)) return false;
-      const confirmed = this.confirmCanvas(observation);
-      if (confirmed) return true;
-      this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
-      return false;
+      observation = await this.#verifyRendered(
+        html,
+        sourceSha256,
+        context,
+        expectedReceipt,
+        initialRebuildFence,
+      );
     } catch (cause) {
       if (context && !this.#isCurrent(context)) return false;
-      this.#failCurrentCanvas(
-        this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
-      );
-      return false;
+      const current = this.#documentSession.snapshot;
+      const canRebuild = sourceErrorCode(cause, "") === DOCUMENT_CANVAS_ACK_TIMEOUT
+        && remainingRebuilds > 0
+        && typeof this.#canvasPort.rebuildActiveFrame === "function"
+        && current.html === html
+        && current.workingHtmlSha256 === sourceSha256;
+      if (!canRebuild) {
+        this.#failCurrentCanvas(
+          this.#codecs.errorMessage(cause, "当前画布尚未完成自动恢复。"),
+        );
+        return false;
+      }
+      try {
+        // A missing acknowledgement is a disposable projection failure. Retire
+        // that generation, rebuild exactly once from Document authority, and
+        // verify the new receipt without repeating source acceptance or I/O.
+        const rebuiltDocument = this.#documentSession.reloadCanvas({
+          context,
+          operationId: this.#nextOperationId("canvas-ack-rebuild"),
+        });
+        this.#canvasPort.invalidateRenderAcks();
+        const rebuildFence = this.#canvasPort.rebuildActiveFrame();
+        observation = await this.#verifyRendered(
+          html,
+          sourceSha256,
+          context,
+          rebuiltDocument.sourceReceipt,
+          rebuildFence,
+        );
+      } catch (retryCause) {
+        if (context && !this.#isCurrent(context)) return false;
+        this.#failCurrentCanvas(
+          this.#codecs.errorMessage(retryCause, "当前画布尚未完成自动恢复。"),
+        );
+        return false;
+      }
     }
+    if (context && !this.#isCurrent(context)) return false;
+    const confirmed = this.confirmCanvas(observation);
+    if (confirmed) return true;
+    this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
+    return false;
   }
 
-  async #verifyRendered(html, sourceSha256, context, expectedReceipt = null) {
+  async #verifyRendered(
+    html,
+    sourceSha256,
+    context,
+    expectedReceipt = null,
+    rebuildFence = undefined,
+  ) {
     const receipt = expectedReceipt || this.#documentSession.sourceReceipt;
     if (typeof this.#canvasPort.verifyRendered !== "function") {
       return canvasRenderObservation({
@@ -3033,6 +3429,7 @@ export class DocumentWorkflow {
       sourceSha256,
       context,
       receipt,
+      rebuildFence,
     ));
     const currentReceipt = this.#documentSession.sourceReceipt;
     if (!observation || !sameSourceReceipt(observation.receipt, currentReceipt)) {

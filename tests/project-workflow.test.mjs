@@ -284,7 +284,7 @@ function createHarness({
     async waitForHistoryAction() {
       return succeeded({ idle: true });
     },
-    async ensureCurrentCanvas() {
+    async repairCurrentCanvas() {
       return succeeded({ ready: true });
     },
     enqueueEdit() {
@@ -676,7 +676,7 @@ test("project switch accepts protected Working HTML without refreshing a last-kn
       },
     },
     documentWorkflow: {
-      async ensureCurrentCanvas() {
+      async repairCurrentCanvas() {
         ensureCanvasCount += 1;
         return succeeded({ ready: true });
       },
@@ -3384,6 +3384,94 @@ test("a Canvas acknowledgement failure rolls the hydration publication back", as
   );
 });
 
+test("hydration delegates one typed Canvas timeout to DocumentWorkflow repair", async (t) => {
+  const canonicalHtml = "<!doctype html><html><body><p>canonical</p></body></html>";
+  let verifyCount = 0;
+  let repairCount = 0;
+  let repairReceipt = null;
+  const harness = createHarness({
+    bridge: {
+      async workspace() {
+        return workspacePayload(OLD_PATH, canonicalHtml);
+      },
+      async source() {
+        return sourcePayload(OLD_PATH, canonicalHtml);
+      },
+    },
+    canvas: {
+      async verifyRendered() {
+        verifyCount += 1;
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    documentWorkflow: {
+      async repairCurrentCanvas({ expectedSourceReceipt }) {
+        repairCount += 1;
+        repairReceipt = expectedSourceReceipt;
+        return succeeded({ page: { status: "restored" } });
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  const outcome = await harness.workflow.refreshWorkspace({
+    sourcePath: OLD_PATH,
+    epoch: harness.projectSession.epoch,
+  });
+
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(verifyCount, 1);
+  assert.equal(repairCount, 1);
+  assert.equal(repairReceipt, harness.documentSession.sourceReceipt);
+  assert.equal(harness.documentSession.html, canonicalHtml);
+  assert.equal(harness.workflow.projectLoadError, null);
+});
+
+test("hydration fails after one rejected repair for a typed Canvas timeout", async (t) => {
+  const canonicalHtml = "<!doctype html><html><body><p>canonical</p></body></html>";
+  let repairCount = 0;
+  const harness = createHarness({
+    bridge: {
+      async workspace() {
+        return workspacePayload(OLD_PATH, canonicalHtml);
+      },
+      async source() {
+        return sourcePayload(OLD_PATH, canonicalHtml);
+      },
+    },
+    canvas: {
+      async verifyRendered() {
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    documentWorkflow: {
+      async repairCurrentCanvas() {
+        repairCount += 1;
+        return {
+          status: "rejected",
+          code: "DOCUMENT_CANVAS_REPAIR_REJECTED",
+          reason: "replacement frame did not settle",
+        };
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  const outcome = await harness.workflow.refreshWorkspace({
+    sourcePath: OLD_PATH,
+    epoch: harness.projectSession.epoch,
+  });
+
+  assert.equal(outcome.status, "rejected");
+  assert.equal(repairCount, 1);
+  assert.equal(harness.workflow.projectLoadError, "replacement frame did not settle");
+  assert.equal(harness.documentSession.html, OLD_HTML);
+});
+
 test("source rename is a typed ProjectWorkflow transition with one synchronous Session publication", async (t) => {
   let renamePayload = null;
   const harness = createHarness({
@@ -5084,7 +5172,7 @@ test("canvas failure after import keeps the published project and never trashes"
   });
   t.after(() => harness.workflow.dispose());
   let canvasCalls = 0;
-  harness.documentWorkflow.ensureCurrentCanvas = async () => {
+  harness.documentWorkflow.repairCurrentCanvas = async () => {
     canvasCalls += 1;
     return {
       status: "rejected",
@@ -5106,7 +5194,7 @@ test("canvas failure after import keeps the published project and never trashes"
   });
   assert.equal(confirmed.status, "rejected");
   assert.equal(confirmed.code, "EXTERNAL_OPEN_CANVAS_REJECTED");
-  assert.equal(canvasCalls, 2);
+  assert.equal(canvasCalls, 1);
   assert.equal(finalized, 0);
   assert.equal(rolledBack, 0);
   assert.equal(harness.projectSession.sourcePath, A_PATH);
@@ -5117,7 +5205,7 @@ test("canvas failure after import keeps the published project and never trashes"
   );
 });
 
-test("canvas confirmation recovers after one failed acknowledgement", async (t) => {
+test("canvas confirmation retries only after the explicit prepared-open retry", async (t) => {
   let finalized = 0;
   let rolledBack = 0;
   const harness = createHarness({
@@ -5152,7 +5240,7 @@ test("canvas confirmation recovers after one failed acknowledgement", async (t) 
   });
   t.after(() => harness.workflow.dispose());
   let canvasCalls = 0;
-  harness.documentWorkflow.ensureCurrentCanvas = async () => {
+  harness.documentWorkflow.repairCurrentCanvas = async () => {
     canvasCalls += 1;
     if (canvasCalls === 1) {
       return {
@@ -5164,14 +5252,16 @@ test("canvas confirmation recovers after one failed acknowledgement", async (t) 
     return succeeded({ ready: true });
   };
 
-  const confirmed = await harness.workflow.openProject({ kind: "local" });
+  const first = await harness.workflow.openProject({ kind: "local" });
+  assert.equal(first.status, "rejected");
+  const confirmed = await harness.workflow.retryExternalOpen({ requestId: "req_canvas_retry" });
   assert.equal(confirmed.status, "succeeded");
   assert.equal(canvasCalls, 2);
   assert.equal(finalized, 1);
   assert.equal(rolledBack, 0);
   assert.equal(
     harness.events.some((event) => event.type === "external-open-canvas-failed"),
-    false,
+    true,
   );
 });
 
@@ -5731,9 +5821,9 @@ test("a post-apply Canvas failure retries only Canvas and finalization on the sa
     },
     finalizePrepared: async () => { finalizes += 1; return { disposition: "kept" }; },
   }, documentWorkflow: {
-    async ensureCurrentCanvas() {
+    async repairCurrentCanvas() {
       canvasCalls += 1;
-      return canvasCalls <= 2
+      return canvasCalls <= 1
         ? { status: "rejected", code: "DOCUMENT_CANVAS_AUTHORITY_REJECTED", reason: "canvas pending" }
         : succeeded({ ready: true });
     },
@@ -5759,7 +5849,7 @@ test("a post-apply Canvas failure retries only Canvas and finalization on the sa
   assert.equal(retried.status, "succeeded", JSON.stringify(retried));
   assert.equal(retried.value.alreadyApplied, true);
   assert.equal(imports, 1);
-  assert.equal(canvasCalls, 3);
+  assert.equal(canvasCalls, 2);
   assert.equal(finalizes, 1);
   assert.equal(h.events.filter((event) => event.type === "project-applied").length, 1);
   assert.equal(h.projectSession.epoch, appliedEpoch);

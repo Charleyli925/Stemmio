@@ -47,6 +47,16 @@ function createScheduler() {
   };
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolveValue, rejectValue) => {
+    resolve = resolveValue;
+    reject = rejectValue;
+  });
+  return { promise, resolve, reject };
+}
+
 function operation(before, after) {
   let startOffset = 0;
   while (
@@ -126,12 +136,23 @@ function createHarness({
   const configuredVerifyRendered = canvasOverrides.verifyRendered;
   const canvas = {
     invalidations: 0,
+    rebuilds: 0,
+    unlocks: 0,
     history: [],
     invalidateRenderAcks() {
       this.invalidations += 1;
     },
     adoptHistorySource(htmlValue, target, selection, operation) {
       this.history.push({ html: htmlValue, target, selection, operation });
+    },
+    rebuildActiveFrame() {
+      this.rebuilds += 1;
+    },
+    captureActiveFrameFence() {
+      return undefined;
+    },
+    unlock() {
+      this.unlocks += 1;
     },
     ...canvasOverrides,
   };
@@ -544,12 +565,257 @@ test("DocumentWorkflow can protect failed HTML before explicitly reloading the d
     revision: 1,
   }), true);
 
-  const reloaded = await harness.workflow.reloadAuthority({ context: harness.context });
+  const requested = await harness.workflow.reloadFromDisk({ context: harness.context });
+  assert.equal(requested.status, "blocked");
+  const reloaded = await harness.workflow.reloadFromDisk({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
+  });
   assert.equal(reloaded.status, "succeeded");
+  assert.equal(reloaded.value.permission.status, "accepted");
+  assert.equal(reloaded.value.source.status, "accepted");
+  assert.equal(reloaded.value.page.status, "restored");
   assert.equal(harness.documentSession.html, before);
   assert.equal(harness.documentSession.persistState, "idle");
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(before));
   assert.equal(harness.documentSession.workingHtmlSha256, sha256(before));
+});
+
+test("clean reload freezes once and needs no destructive permission", async () => {
+  const before = "<!doctype html><html><body>disk</body></html>";
+  const external = before.replace("disk", "external");
+  let sourceCalls = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        return {
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+        };
+      },
+    },
+  });
+
+  const outcome = await harness.workflow.reloadFromDisk({ context: harness.context });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.permission.status, "not-required");
+  assert.equal(outcome.value.source.status, "accepted");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(sourceCalls, 1);
+  assert.equal(harness.canvas.unlocks, 1);
+});
+
+test("reload requests confirmation for a native edit checkpointed by freeze", async () => {
+  const before = "<!doctype html><html><body>disk</body></html>";
+  const checkpointed = before.replace("disk", "checkpointed");
+  let sourceCalls = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        return {};
+      },
+    },
+  });
+  harness.canvas.freeze = async () => {
+    harness.workflow.enqueueEdit({ html: checkpointed });
+    return { ok: true };
+  };
+
+  const outcome = await harness.workflow.reloadFromDisk({ context: harness.context });
+
+  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.code, "DOCUMENT_RELOAD_CONFIRMATION_REQUIRED");
+  assert.equal(harness.documentSession.html, checkpointed);
+  assert.equal(sourceCalls, 0);
+  assert.equal(harness.canvas.unlocks, 1);
+});
+
+test("reload confirmation is consumed only after a fresh freeze checkpoint", async () => {
+  const before = "<!doctype html><html><body>disk</body></html>";
+  const edited = before.replace("disk", "edited");
+  const checkpointed = before.replace("disk", "checkpointed-later");
+  let sourceCalls = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        return {};
+      },
+    },
+  });
+  harness.workflow.enqueueEdit({ html: edited });
+  const requested = await harness.workflow.reloadFromDisk({ context: harness.context });
+  harness.canvas.freeze = async () => {
+    harness.workflow.enqueueEdit({ html: checkpointed });
+    return { ok: true };
+  };
+
+  const outcome = await harness.workflow.reloadFromDisk({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
+  });
+
+  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.code, "DOCUMENT_SOURCE_CONFIRMATION_STALE");
+  assert.equal(harness.documentSession.html, checkpointed);
+  assert.equal(sourceCalls, 0);
+});
+
+test("a failed source freeze never unlocks Canvas", async () => {
+  const harness = createHarness({
+    canvasOverrides: {
+      async freeze() { return { ok: false, reason: "native edit still active" }; },
+    },
+  });
+
+  const outcome = await harness.workflow.reloadFromDisk({ context: harness.context });
+
+  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.code, "DOCUMENT_SOURCE_FREEZE_BLOCKED");
+  assert.equal(harness.canvas.unlocks, 0);
+});
+
+test("duplicate reloads join while a different source command is busy", async () => {
+  const read = deferred();
+  let sourceCalls = 0;
+  const harness = createHarness({
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        return read.promise;
+      },
+    },
+  });
+
+  const first = harness.workflow.reloadFromDisk({ context: harness.context });
+  const duplicate = harness.workflow.reloadFromDisk({ context: harness.context });
+  await Promise.resolve();
+  const busy = await harness.workflow.repairCurrentCanvas({ context: harness.context });
+  assert.equal(busy.status, "blocked");
+  assert.equal(busy.code, "DOCUMENT_SOURCE_OPERATION_BUSY");
+  read.resolve({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    sourcePath: SOURCE_PATH,
+    content: harness.documentSession.html,
+    sha256: harness.documentSession.workingHtmlSha256,
+  });
+
+  assert.equal((await first).status, "succeeded");
+  assert.equal((await duplicate).status, "succeeded");
+  assert.equal(sourceCalls, 1);
+  assert.equal(harness.canvas.unlocks, 1);
+});
+
+test("reload confirmation cannot cross a later edit boundary", async () => {
+  const before = "<!doctype html><html><body>disk</body></html>";
+  const edited = before.replace("disk", "first edit");
+  const newer = before.replace("disk", "newer edit");
+  let sourceCalls = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        return {
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          content: before,
+          sha256: sha256(before),
+        };
+      },
+    },
+  });
+  harness.workflow.enqueueEdit({ html: edited });
+  const requested = await harness.workflow.reloadFromDisk({ context: harness.context });
+  assert.equal(requested.status, "blocked");
+  harness.workflow.enqueueEdit({ html: newer });
+
+  const staleConfirmation = await harness.workflow.reloadFromDisk({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
+  });
+
+  assert.equal(staleConfirmation.status, "blocked");
+  assert.equal(staleConfirmation.code, "DOCUMENT_SOURCE_CONFIRMATION_STALE");
+  assert.equal(harness.documentSession.html, newer);
+  assert.equal(sourceCalls, 0);
+});
+
+test("an older reload completion and finally cannot mutate or unlock a newer document", async () => {
+  const aHtml = "<!doctype html><html><body>A</body></html>";
+  const bHtml = "<!doctype html><html><body>B</body></html>";
+  const aRead = deferred();
+  const bRead = deferred();
+  let aReads = 0;
+  const harness = createHarness({
+    html: aHtml,
+    bridge: {
+      async source(sourcePath) {
+        if (sourcePath === SOURCE_PATH) {
+          aReads += 1;
+          return aRead.promise;
+        }
+        return bRead.promise;
+      },
+    },
+  });
+
+  const oldReload = harness.workflow.reloadFromDisk({ context: harness.context });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(aReads, 1);
+
+  harness.workflow.resetForProjectTransition();
+  harness.projectSession.openLocator(NEXT_SOURCE_PATH);
+  const bContext = {
+    epoch: harness.projectSession.epoch,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: NEXT_SOURCE_PATH,
+  };
+  harness.projectSession.register(bContext);
+  harness.documentSession.reset({
+    html: bHtml,
+    persistedSourceSha256: sha256(bHtml),
+    context: bContext,
+    operationId: "open-b",
+  });
+  const newReload = harness.workflow.reloadFromDisk({ context: bContext });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  aRead.resolve({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    sourcePath: SOURCE_PATH,
+    content: aHtml,
+    sha256: sha256(aHtml),
+  });
+  assert.equal((await oldReload).status, "stale");
+  assert.equal(harness.documentSession.html, bHtml);
+  assert.equal(harness.canvas.unlocks, 0);
+
+  bRead.resolve({
+    projectId: bContext.projectId,
+    documentId: bContext.documentId,
+    sourcePath: bContext.sourcePath,
+    content: bHtml,
+    sha256: sha256(bHtml),
+  });
+  assert.equal((await newReload).status, "succeeded");
+  assert.equal(harness.documentSession.html, bHtml);
+  assert.equal(harness.canvas.unlocks, 1);
 });
 
 test("DocumentWorkflow restores source-history and recovery authority after a project transition reset", () => {
@@ -1489,13 +1755,16 @@ test("DocumentWorkflow keeps an externally accepted source when its canvas canno
     bridge: {
       async resolveConflict(request) {
         conflictResolutions.push(request);
-        return { ok: true };
-      },
-      async source() {
         return {
           projectId: PROJECT_ID,
           documentId: DOCUMENT_ID,
           sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+        };
+      },
+      async sourcePreview() {
+        return {
           content: external,
           sha256: sha256(external),
           lastModifiedAt: "2026-08-11T00:00:01.000Z",
@@ -1505,45 +1774,204 @@ test("DocumentWorkflow keeps an externally accepted source when its canvas canno
   });
   harness.workflow.subscribeEvents((event) => events.push(event));
 
-  const outcome = await harness.workflow.reloadAuthority({
+  const requested = await harness.workflow.acceptExternalConflict({
     context: harness.context,
-    acceptExternalConflict: true,
+  });
+  const outcome = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
   });
 
   assert.equal(outcome.status, "succeeded");
-  assert.deepEqual(conflictResolutions, [{
+  assert.equal(outcome.value.permission.status, "accepted");
+  assert.equal(outcome.value.source.status, "accepted");
+  assert.equal(outcome.value.page.status, "repair-required");
+  assert.equal(conflictResolutions.length, 1);
+  assert.match(conflictResolutions[0].operationId, /^accept-external-conflict_/u);
+  const resolution = { ...conflictResolutions[0] };
+  delete resolution.operationId;
+  assert.deepEqual(resolution, {
     ...harness.context,
     action: "force-unlock",
-  }]);
+    expectedSourceSha256: sha256(external),
+  });
   assert.equal(harness.documentSession.html, external);
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(external));
   assert.equal(harness.documentSession.pendingWrite, null);
   assert.equal(harness.documentSession.persistState, "idle");
   assert.equal(harness.documentSession.canvasAuthority.status, "failed");
   assert.equal(
-    events.some((event) => event.type === "document-authority-reloaded"),
+    events.some((event) => event.type === "document-conflict-force-unlocked"),
     true,
   );
 });
 
-test("DocumentWorkflow preserves a prior external acceptance when reloading its authority", async () => {
+test("a lost force-unlock reply reconciles the original operation without issuing a new mutation", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const external = before.replace("one", "external");
-  let conflictResolutions = 0;
-  const events = [];
+  const conflictResolutions = [];
   const harness = createHarness({
     html: before,
+    bridge: {
+      async sourcePreview() {
+        return {
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
+      },
+      async resolveConflict(request) {
+        conflictResolutions.push(request);
+        if (request.action === "force-unlock") {
+          throw new BridgeRequestError("force-unlock reply lost", { outcome: "unknown" });
+        }
+        return {
+          status: "unknown",
+          operationId: request.operationId,
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+        };
+      },
+    },
+  });
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
+    error: "源文件在磁盘上被其他程序修改了。",
+  });
+
+  const firstRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const first = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: firstRequest.confirmation },
+  });
+  assert.equal(first.status, "unknown");
+
+  const retryRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const retried = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: retryRequest.confirmation },
+  });
+
+  assert.equal(retried.status, "unknown");
+  assert.equal(retried.operationId, first.operationId);
+  assert.equal(conflictResolutions.length, 2);
+  assert.equal(conflictResolutions[0].action, "force-unlock");
+  assert.equal(conflictResolutions[1].action, "force-unlock-result");
+  assert.equal(conflictResolutions[1].operationId, conflictResolutions[0].operationId);
+});
+
+test("a lost force-unlock reply reconciles preview Hash separately from the materialized final Hash", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const acceptedExternal = "<!doctype html><html><body><p>external</p></body></html>";
+  const materializedExternal = "<!doctype html><html><body><p data-stemmio-id=\"sm1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">external</p></body></html>";
+  let previewHtml = acceptedExternal;
+  const conflictResolutions = [];
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return {
+          content: previewHtml,
+          sha256: sha256(previewHtml),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
+      },
+      async resolveConflict(request) {
+        conflictResolutions.push(request);
+        if (request.action === "force-unlock") {
+          throw new BridgeRequestError("force-unlock reply lost", { outcome: "unknown" });
+        }
+        return {
+          status: "force-unlocked",
+          operationId: request.operationId,
+          acceptedSourceSha256: sha256(acceptedExternal),
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          sourceSha256: sha256(materializedExternal),
+          sha256: sha256(materializedExternal),
+          content: materializedExternal,
+          lastModifiedAt: "2026-08-11T00:00:02.000Z",
+        };
+      },
+    },
+  });
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
+    error: "源文件在磁盘上被其他程序修改了。",
+  });
+
+  const firstRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const first = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: firstRequest.confirmation },
+  });
+  assert.equal(first.status, "unknown");
+
+  previewHtml = materializedExternal;
+  const retryRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const retried = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: retryRequest.confirmation },
+  });
+
+  assert.equal(retried.status, "succeeded", JSON.stringify(retried));
+  assert.equal(retried.value.source.html, materializedExternal);
+  assert.equal(retried.value.source.sourceSha256, sha256(materializedExternal));
+  assert.equal(conflictResolutions.length, 2);
+  assert.equal(conflictResolutions[0].action, "force-unlock");
+  assert.equal(conflictResolutions[1].action, "force-unlock-result");
+  assert.equal(conflictResolutions[1].operationId, conflictResolutions[0].operationId);
+});
+
+test("DocumentWorkflow rebuilds one timed-out accepted projection without repeating source acceptance", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  let verifyCalls = 0;
+  let conflictResolutionCalls = 0;
+  const rebuildFence = Object.freeze({ frameGeneration: 7, frameDocument: {} });
+  const observedRebuildFences = [];
+  let harness;
+  harness = createHarness({
+    html: before,
     canvasOverrides: {
-      async verifyRendered() {
-        throw new Error("canvas did not render external source");
+      rebuildActiveFrame() {
+        this.rebuilds += 1;
+        return rebuildFence;
+      },
+      async verifyRendered(
+        renderedHtml,
+        renderedSha256,
+        _context,
+        receipt,
+        receivedRebuildFence,
+      ) {
+        verifyCalls += 1;
+        observedRebuildFences.push(receivedRebuildFence);
+        if (verifyCalls === 1) {
+          throw Object.assign(new Error("canvas acknowledgement timed out"), {
+            code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+          });
+        }
+        return Object.freeze({
+          receipt,
+          renderedHtml,
+          renderedSha256,
+          frameGeneration: harness.documentSession.canvasGeneration,
+        });
       },
     },
     bridge: {
-      async resolveConflict() {
-        conflictResolutions += 1;
-        return { ok: true };
+      async sourcePreview() {
+        return {
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
       },
-      async source() {
+      async resolveConflict() {
+        conflictResolutionCalls += 1;
         return {
           projectId: PROJECT_ID,
           documentId: DOCUMENT_ID,
@@ -1554,22 +1982,87 @@ test("DocumentWorkflow preserves a prior external acceptance when reloading its 
       },
     },
   });
-  harness.workflow.subscribeEvents((event) => events.push(event));
 
-  const outcome = await harness.workflow.reloadAuthority({
+  const requested = await harness.workflow.acceptExternalConflict({
     context: harness.context,
-    externalAuthorityAccepted: true,
+  });
+  const outcome = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
   });
 
   assert.equal(outcome.status, "succeeded");
-  assert.equal(conflictResolutions, 0);
+  assert.equal(outcome.value.source.status, "accepted");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(conflictResolutionCalls, 1);
+  assert.equal(verifyCalls, 2);
+  assert.equal(harness.canvas.rebuilds, 1);
+  assert.equal(observedRebuildFences[0], undefined);
+  assert.equal(observedRebuildFences[1], rebuildFence);
   assert.equal(harness.documentSession.html, external);
-  assert.equal(harness.documentSession.persistState, "idle");
-  assert.equal(harness.documentSession.canvasAuthority.status, "failed");
-  assert.equal(
-    events.some((event) => event.type === "document-authority-reloaded"),
-    true,
+  assert.equal(harness.documentSession.persistedSourceSha256, sha256(external));
+  assert.notEqual(
+    harness.documentSession.sourceReceipt.sequence,
+    outcome.value.source.receipt.sequence,
   );
+  assert.equal(harness.documentSession.canvasAuthority.status, "verified");
+});
+
+test("DocumentWorkflow preserves a durable external acceptance after the page switches", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  const next = before.replace("one", "next");
+  const accepted = deferred();
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return { content: external, sha256: sha256(external) };
+      },
+      async resolveConflict() {
+        return accepted.promise;
+      },
+    },
+  });
+  const preview = await harness.workflow.previewExternalSource({ context: harness.context });
+  assert.equal(preview.status, "succeeded");
+
+  const accepting = harness.workflow.adoptShownExternalPreview({
+    context: harness.context,
+    previewReceipt: preview.value,
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  harness.workflow.resetForProjectTransition();
+  harness.projectSession.openLocator(NEXT_SOURCE_PATH);
+  const nextContext = {
+    epoch: harness.projectSession.epoch,
+    projectId: "project_next",
+    documentId: "document_next",
+    sourcePath: NEXT_SOURCE_PATH,
+  };
+  harness.projectSession.register(nextContext);
+  harness.documentSession.reset({
+    html: next,
+    persistedSourceSha256: sha256(next),
+    context: nextContext,
+    operationId: "open-next",
+  });
+  accepted.resolve({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    sourcePath: SOURCE_PATH,
+    content: external,
+    sha256: sha256(external),
+  });
+  const outcome = await accepting;
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.source.status, "accepted");
+  assert.equal(outcome.value.page.status, "not-current");
+  assert.equal(harness.documentSession.html, next);
+  assert.equal(harness.canvas.unlocks, 0);
 });
 
 test("DocumentWorkflow reconciles an unknown autosave only after reading matching authority", async () => {
@@ -2248,13 +2741,19 @@ test("DocumentWorkflow force-unlock adopts disk HTML and clears persistence conf
     bridge: {
       async resolveConflict(body) {
         assert.equal(body.action, "force-unlock");
-        return { ok: true, status: "force-unlocked" };
-      },
-      async source() {
+        assert.equal(body.expectedSourceSha256, sha256(external));
         return {
+          status: "force-unlocked",
           projectId: PROJECT_ID,
           documentId: DOCUMENT_ID,
           sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:02.000Z",
+        };
+      },
+      async sourcePreview() {
+        return {
           content: external,
           sha256: sha256(external),
           lastModifiedAt: "2026-08-11T00:00:02.000Z",
@@ -2273,8 +2772,12 @@ test("DocumentWorkflow force-unlock adopts disk HTML and clears persistence conf
     operationId: "test-force-unlock-conflict",
   });
 
-  const outcome = await harness.workflow.forceUnlockConflict({
+  const requested = await harness.workflow.acceptExternalConflict({
     context: harness.context,
+  });
+  const outcome = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
   });
 
   assert.equal(outcome.status, "succeeded");
@@ -2285,7 +2788,7 @@ test("DocumentWorkflow force-unlock adopts disk HTML and clears persistence conf
   assert.equal(harness.documentSession.lastPersistedRevision, 3);
 });
 
-test("DocumentWorkflow reloadAuthority adopts a Working Copy conflict through force-unlock", async () => {
+test("DocumentWorkflow accepts a Working Copy conflict through preview-bound force-unlock", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const external = before.replace("one", "external");
   const conflictResolutions = [];
@@ -2294,13 +2797,18 @@ test("DocumentWorkflow reloadAuthority adopts a Working Copy conflict through fo
     bridge: {
       async resolveConflict(request) {
         conflictResolutions.push(request);
-        return { ok: true, status: "force-unlocked" };
-      },
-      async source() {
         return {
+          status: "force-unlocked",
           projectId: PROJECT_ID,
           documentId: DOCUMENT_ID,
           sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:03.000Z",
+        };
+      },
+      async sourcePreview() {
+        return {
           content: external,
           sha256: sha256(external),
           lastModifiedAt: "2026-08-11T00:00:03.000Z",
@@ -2313,19 +2821,101 @@ test("DocumentWorkflow reloadAuthority adopts a Working Copy conflict through fo
     error: "源文件在磁盘上被其他程序修改了。",
   });
 
-  const outcome = await harness.workflow.reloadAuthority({
+  const requested = await harness.workflow.acceptExternalConflict({
     context: harness.context,
-    acceptExternalConflict: true,
+  });
+  const outcome = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: requested.confirmation },
   });
 
   assert.equal(outcome.status, "succeeded");
-  assert.deepEqual(conflictResolutions, [{
+  assert.equal(conflictResolutions.length, 1);
+  assert.match(conflictResolutions[0].operationId, /^accept-external-conflict_/u);
+  const resolution = { ...conflictResolutions[0] };
+  delete resolution.operationId;
+  assert.deepEqual(resolution, {
     ...harness.context,
     action: "force-unlock",
-  }]);
+    expectedSourceSha256: sha256(external),
+  });
   assert.equal(harness.documentSession.html, external);
   assert.equal(harness.documentSession.persistState, "idle");
   assert.equal(harness.documentSession.pendingWrite, null);
+});
+
+test("preview acceptance refuses an edit checkpointed during its freeze", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  const checkpointed = before.replace("one", "checkpointed");
+  let conflictResolutions = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return { content: external, sha256: sha256(external) };
+      },
+      async resolveConflict() {
+        conflictResolutions += 1;
+        return {};
+      },
+    },
+  });
+  const preview = await harness.workflow.previewExternalSource({ context: harness.context });
+  harness.canvas.freeze = async () => {
+    harness.workflow.enqueueEdit({ html: checkpointed });
+    return { ok: true };
+  };
+
+  const outcome = await harness.workflow.adoptShownExternalPreview({
+    context: harness.context,
+    previewReceipt: preview.value,
+  });
+
+  assert.equal(outcome.status, "blocked");
+  assert.equal(outcome.code, "EXTERNAL_SOURCE_PREVIEW_STALE");
+  assert.equal(harness.documentSession.html, checkpointed);
+  assert.equal(conflictResolutions, 0);
+});
+
+test("a temporary preview adoption failure keeps the exact receipt retryable", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  let conflictResolutions = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return { content: external, sha256: sha256(external) };
+      },
+      async resolveConflict() {
+        conflictResolutions += 1;
+        if (conflictResolutions === 1) throw new Error("temporary bridge failure");
+        return {
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          content: external,
+          sha256: sha256(external),
+        };
+      },
+    },
+  });
+  const preview = await harness.workflow.previewExternalSource({ context: harness.context });
+
+  const failed = await harness.workflow.adoptShownExternalPreview({
+    context: harness.context,
+    previewReceipt: preview.value,
+  });
+  const retried = await harness.workflow.adoptShownExternalPreview({
+    context: harness.context,
+    previewReceipt: preview.value,
+  });
+
+  assert.equal(failed.status, "rejected");
+  assert.equal(retried.status, "succeeded");
+  assert.equal(retried.value.source.sourceSha256, sha256(external));
+  assert.equal(conflictResolutions, 2);
 });
 
 test("DocumentWorkflow treats matching source-stat hashes as a save echo", async () => {
@@ -2461,22 +3051,99 @@ test("observeExternalSourceChange ignores stale paths and in-flight writes", asy
   assert.equal(sourceCalls, 0);
 });
 
-test("ensureCurrentCanvas records verified authority after a successful render", async () => {
+test("repairCurrentCanvas records verified authority after a successful render", async () => {
   const html = "<!doctype html><html><body><p>one</p></body></html>";
   const harness = createHarness({ html });
-  const outcome = await harness.workflow.ensureCurrentCanvas({
+  const outcome = await harness.workflow.repairCurrentCanvas({
     context: harness.context,
   });
   assert.equal(outcome.status, "succeeded");
   assert.deepEqual(harness.documentSession.canvasAuthority, {
     status: "verified",
-    generation: 0,
+    generation: 1,
     renderedSha256: sha256(html),
     error: null,
   });
 });
 
-test("ensureCurrentCanvas reuses an exact clean verified Canvas without another render fence", async () => {
+test("repairCurrentCanvas reuses an exact verified Canvas without freezing or rebuilding", async () => {
+  const html = "<!doctype html><html><body><p>already verified</p></body></html>";
+  let freezes = 0;
+  const harness = createHarness({
+    html,
+    canvasOverrides: {
+      async freeze() {
+        freezes += 1;
+        return { ok: true };
+      },
+    },
+  });
+  const receipt = harness.documentSession.sourceReceipt;
+  assert.equal(harness.workflow.confirmCanvas({
+    receipt,
+    renderedHtml: html,
+    renderedSha256: sha256(html),
+    frameGeneration: receipt.canvasGeneration,
+  }), true);
+
+  const outcome = await harness.workflow.repairCurrentCanvas({
+    context: harness.context,
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(outcome.value.page.reusedCanvasAuthority, true);
+  assert.equal(freezes, 0);
+  assert.equal(harness.canvas.invalidations, 0);
+  assert.equal(harness.canvas.rebuilds, 0);
+  assert.equal(harness.canvas.unlocks, 0);
+  assert.equal(harness.documentSession.canvasAuthority.status, "verified");
+});
+
+test("repairCurrentCanvas joins the existing document save before rebuilding the projection", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const after = before.replace("one", "pending save");
+  const save = deferred();
+  let autosaveCalls = 0;
+  let sourceCalls = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async autosave() {
+        autosaveCalls += 1;
+        return save.promise;
+      },
+      async source() {
+        sourceCalls += 1;
+        throw new Error("projection repair must not read source");
+      },
+    },
+  });
+  harness.workflow.enqueueEdit({ html: after });
+
+  const repair = harness.workflow.repairCurrentCanvas({ context: harness.context });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(autosaveCalls, 1);
+  save.resolve({
+    ok: true,
+    content: after,
+    sha256: sha256(after),
+    persistedRevision: 1,
+    lastModifiedAt: "2026-08-11T00:00:01.000Z",
+  });
+
+  const outcome = await repair;
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(harness.documentSession.html, after);
+  assert.equal(harness.documentSession.persistedSourceSha256, sha256(after));
+  assert.equal(autosaveCalls, 1);
+  assert.equal(sourceCalls, 0);
+  assert.equal(harness.canvas.rebuilds, 0);
+});
+
+test("repairCurrentCanvas coalesces duplicate intents for one exact source", async () => {
   const html = "<!doctype html><html><body><p>one</p></body></html>";
   let verifyCalls = 0;
   const harness = createHarness({
@@ -2487,15 +3154,10 @@ test("ensureCurrentCanvas reuses an exact clean verified Canvas without another 
       },
     },
   });
-  assert.equal((await harness.workflow.ensureCurrentCanvas({
-    context: harness.context,
-  })).status, "succeeded");
-
-  const reused = await harness.workflow.ensureCurrentCanvas({
-    context: harness.context,
-  });
-  assert.equal(reused.status, "succeeded");
-  assert.equal(reused.value.reusedCanvasAuthority, true);
+  const first = harness.workflow.repairCurrentCanvas({ context: harness.context });
+  const duplicate = harness.workflow.repairCurrentCanvas({ context: harness.context });
+  assert.equal((await first).status, "succeeded");
+  assert.equal((await duplicate).status, "succeeded");
   assert.equal(verifyCalls, 1);
 });
 
@@ -2518,7 +3180,7 @@ test("Canvas observation confirms exactly once and rejects an external duplicate
       },
     },
   });
-  const outcome = await harness.workflow.ensureCurrentCanvas({ context: harness.context });
+  const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
 
   assert.equal(outcome.status, "succeeded");
   assert.equal(verifyCalls, 1);
@@ -2646,7 +3308,7 @@ test("an exact conflict-candidate autosave publishes a corrected hash receipt", 
   harness.workflow.dispose();
 });
 
-test("ensureCurrentCanvas tolerates an exact observation confirmed by its composed verifier", async () => {
+test("repairCurrentCanvas tolerates an exact observation confirmed by its composed verifier", async () => {
   const html = "<!doctype html><html><body><p>composed</p></body></html>";
   let harness;
   let observation = null;
@@ -2666,7 +3328,7 @@ test("ensureCurrentCanvas tolerates an exact observation confirmed by its compos
     },
   });
 
-  const outcome = await harness.workflow.ensureCurrentCanvas({ context: harness.context });
+  const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
 
   assert.equal(outcome.status, "succeeded");
   assert.equal(harness.documentSession.canvasAuthority.status, "verified");
@@ -2674,13 +3336,15 @@ test("ensureCurrentCanvas tolerates an exact observation confirmed by its compos
   assert.equal(harness.workflow.confirmCanvas(observation), false);
 });
 
-test("ensureCurrentCanvas repairs a clean persisted hash mismatch with the authoritative receipt", async () => {
+test("repairCurrentCanvas restores only the accepted projection without reading disk", async () => {
   const oldHtml = "<!doctype html><html><body><p>old</p></body></html>";
   const repairedHtml = oldHtml.replace("old", "repaired");
+  let sourceCalls = 0;
   const harness = createHarness({
     html: oldHtml,
     bridge: {
       async source() {
+        sourceCalls += 1;
         return {
           projectId: PROJECT_ID,
           documentId: DOCUMENT_ID,
@@ -2699,18 +3363,67 @@ test("ensureCurrentCanvas repairs a clean persisted hash mismatch with the autho
   });
   const beforeReceipt = harness.documentSession.sourceReceipt;
 
-  const outcome = await harness.workflow.ensureCurrentCanvas({ context: harness.context });
+  const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
 
   assert.equal(outcome.status, "succeeded");
-  assert.equal(harness.documentSession.html, repairedHtml);
-  assert.equal(harness.documentSession.persistedSourceSha256, sha256(repairedHtml));
-  assert.equal(harness.documentSession.sourceReceipt.origin, "authority");
+  assert.equal(outcome.value.source.status, "unchanged");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(harness.documentSession.html, oldHtml);
   assert.notEqual(harness.documentSession.sourceReceipt.sequence, beforeReceipt.sequence);
-  assert.equal(
-    harness.documentSession.sourceReceipt.editRevision,
-    harness.documentSession.editRevision,
-  );
-  assert.equal(harness.documentSession.canvasAuthority.status, "verified");
+  assert.equal(sourceCalls, 0);
+});
+
+test("repairCurrentCanvas verifies its one rebuild fence and does not rebuild again after timeout", async () => {
+  const html = "<!doctype html><html><body><p>one rebuild</p></body></html>";
+  const rebuildFence = Object.freeze({ frameGeneration: 19, frameDocument: {} });
+  const observed = [];
+  let sourceCalls = 0;
+  let harness;
+  harness = createHarness({
+    html,
+    canvasOverrides: {
+      captureActiveFrameFence() {
+        return rebuildFence;
+      },
+      async verifyRendered(
+        renderedHtml,
+        renderedSha256,
+        _context,
+        receipt,
+        receivedRebuildFence,
+      ) {
+        observed.push({
+          renderedHtml,
+          renderedSha256,
+          receipt,
+          rebuildFence: receivedRebuildFence,
+        });
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        throw new Error("projection repair must not read source");
+      },
+    },
+  });
+
+  const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.source.status, "unchanged");
+  assert.equal(outcome.value.page.status, "repair-required");
+  assert.equal(harness.canvas.rebuilds, 0);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].renderedHtml, html);
+  assert.equal(observed[0].renderedSha256, sha256(html));
+  assert.equal(observed[0].receipt, harness.documentSession.sourceReceipt);
+  assert.equal(observed[0].rebuildFence, rebuildFence);
+  assert.equal(sourceCalls, 0);
+  assert.equal(harness.documentSession.canvasAuthority.status, "failed");
 });
 
 test("Canvas rebuild timeout fails the current R2 and a later R2 authority can verify", async () => {
@@ -2739,9 +3452,11 @@ test("Canvas rebuild timeout fails the current R2 and a later R2 authority can v
     },
   });
 
-  const failed = await harness.workflow.ensureCurrentCanvas({ context: harness.context });
+  const failed = await harness.workflow.repairCurrentCanvas({ context: harness.context });
   const failedReceipt = harness.documentSession.sourceReceipt;
-  assert.equal(failed.status, "rejected");
+  assert.equal(failed.status, "succeeded");
+  assert.equal(failed.value.source.status, "unchanged");
+  assert.equal(failed.value.page.status, "repair-required");
   assert.equal(harness.documentSession.canvasAuthority.status, "failed");
   assert.equal(harness.documentSession.canvasAuthority.generation, failedReceipt.canvasGeneration);
   assert.equal(failedReceipt.operationId, "canvas-rebuild-r2");
@@ -2752,13 +3467,14 @@ test("Canvas rebuild timeout fails the current R2 and a later R2 authority can v
     context: harness.context,
     operationId: "canvas-rebuild-r3",
   }).sourceReceipt;
-  const recovered = await harness.workflow.ensureCurrentCanvas({ context: harness.context });
+  const recovered = await harness.workflow.repairCurrentCanvas({ context: harness.context });
   assert.equal(recovered.status, "succeeded");
-  assert.equal(harness.documentSession.sourceReceipt.operationId, nextReceipt.operationId);
+  assert.notEqual(harness.documentSession.sourceReceipt.operationId, nextReceipt.operationId);
+  assert.equal(harness.documentSession.sourceReceipt.operationId.startsWith("repair-current-canvas_"), true);
   assert.equal(harness.documentSession.canvasAuthority.status, "verified");
 });
 
-test("ensureCurrentCanvas fails closed when the canvas cannot render", async () => {
+test("repairCurrentCanvas fails closed when the canvas cannot render", async () => {
   const html = "<!doctype html><html><body><p>one</p></body></html>";
   const harness = createHarness({
     html,
@@ -2768,12 +3484,14 @@ test("ensureCurrentCanvas fails closed when the canvas cannot render", async () 
       },
     },
   });
-  const outcome = await harness.workflow.ensureCurrentCanvas({
+  const outcome = await harness.workflow.repairCurrentCanvas({
     context: harness.context,
   });
-  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.source.status, "unchanged");
+  assert.equal(outcome.value.page.status, "repair-required");
   assert.equal(harness.documentSession.canvasAuthority.status, "failed");
-  assert.equal(harness.documentSession.canvasAuthority.generation, 0);
+  assert.equal(harness.documentSession.canvasAuthority.generation, 1);
 });
 
 for (const change of ['none', 'working-copy', 'project-root', 'epoch', 'invalid-ack', 'independent-edit']) {

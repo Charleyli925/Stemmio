@@ -121,7 +121,7 @@ test("release commands use one automated artifact lane with full tests and packa
   const impactMap = JSON.parse(impactMapText);
   assert.equal(
     packageJson.scripts.typecheck,
-    "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:browser-open",
+    "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:document-source-operation && npm run typecheck:browser-open",
   );
   assert.equal(packageJson.scripts.verify, "npm run gate:task");
   assert.equal(packageJson.scripts["release:mac"], "npm run gate:artifact:auto");

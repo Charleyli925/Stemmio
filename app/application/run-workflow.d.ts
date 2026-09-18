@@ -1,6 +1,11 @@
 import type { BridgeClient } from "./bridge-client.js";
 import type { CommentSession } from "./comment-session.js";
 import type { DocumentSession } from "./document-session.js";
+import type {
+  DocumentSourceOperationResult,
+  DocumentWorkflowOutcome,
+  ExternalSourceObservationReceipt,
+} from "./document-workflow.js";
 import type { ProjectSession } from "./project-session.js";
 import type { RunSession } from "./run-session.js";
 import type { VersionSession } from "./version-session.js";
@@ -98,6 +103,17 @@ export type RunWorkflowConstruction = Readonly<{
   runSession: RunSession;
   documentWorkflow: Readonly<{
     enqueueEdit(input: Record<string, unknown>): RunWorkflowOutcome;
+    previewExternalSource(input: {
+      context: import("./project-session.js").ProjectContext;
+    }): Promise<DocumentWorkflowOutcome<ExternalSourceObservationReceipt>>;
+    hasPendingExternalAcceptance(input: {
+      context: import("./project-session.js").ProjectContext;
+      acceptedSourceSha256: string;
+    }): boolean;
+    adoptShownExternalPreview(input: {
+      context: import("./project-session.js").ProjectContext;
+      previewReceipt: ExternalSourceObservationReceipt;
+    }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   }>;
   drain(input: { boundary: string; deadlineAt: number }): Promise<Readonly<{
     ok: boolean;
@@ -214,7 +230,12 @@ export class RunWorkflow {
   resolveConflict(input: {
     run?: ActiveRun | null;
     action: "adopt-ai" | "keep-external";
-  }): Promise<RunWorkflowOutcome>;
+  }): Promise<RunWorkflowOutcome<Readonly<{
+    run: ActiveRun;
+    action: "adopt-ai" | "keep-external";
+    current: boolean;
+    documentSourceResult: DocumentWorkflowOutcome<DocumentSourceOperationResult> | null;
+  }>>>;
   hydrateRecentRuns(input?: {
     projects?: Array<{ sourcePath?: string | null }>;
     activeSourcePath?: string | null;
