@@ -365,13 +365,28 @@ const integrationsApi = Object.freeze({
   persistSessionCredential: (payload) => invokeProject(
     integrationChannels.persistSessionCredential,
     {
+      operationId: String(payload?.operationId || "").trim(),
       vendorId: String(payload?.vendorId || "").trim(),
       baseUrl: String(payload?.baseUrl || "").trim(),
+      modelId: String(payload?.modelId || "").trim(),
       apiKey: String(payload?.apiKey || ""),
     },
   ),
-  clearSessionCredential: () => invokeProject(integrationChannels.clearSessionCredential),
-  sessionCredentialStatus: () => invokeProject(integrationChannels.sessionCredentialStatus),
+  clearSessionCredential: (payload) => invokeProject(
+    integrationChannels.clearSessionCredential,
+    {
+      operationId: String(payload?.operationId || "").trim(),
+      expectedRecordId: payload?.expectedRecordId === null || payload?.expectedRecordId === undefined
+        ? null
+        : String(payload.expectedRecordId).trim(),
+    },
+  ),
+  sessionCredentialStatus: (payload) => invokeProject(
+    integrationChannels.sessionCredentialStatus,
+    payload?.operationId
+      ? { operationId: String(payload.operationId).trim() }
+      : {},
+  ),
   restoreSessionCredential: () => invokeProject(integrationChannels.restoreSessionCredential),
 });
 const updateStatusListeners = new Map();

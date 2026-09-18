@@ -1,4 +1,5 @@
 import type { BridgeClient } from "./bridge-client.js";
+import type { AgentCredentialOperationPort } from "./agent-credential-operation-contract.js";
 import type {
   BrowserOpenRequest,
   BrowserOpenResult,
@@ -265,7 +266,27 @@ export type WorkspaceControllerConstruction = Readonly<{
     projectSource?: ProjectSourceActivationPort;
     editRuntime?: EditAuthorRuntimePort;
     uiPreferences?: WorkspacePreferencesPort;
-    agentCredentialStatus?: () => Promise<{ remembered?: boolean }>;
+    agentPreferences?: Readonly<{
+      getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
+      saveAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
+      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      commitDefaultAgent(input: {
+        intentId: string;
+        providerId: string;
+        isCurrent(): boolean;
+      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      setProviderDisabled(input: {
+        intentId: string;
+        providerId: string;
+        disabled: boolean;
+        isCurrent(): boolean;
+      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    }>;
+    agentCredential?: AgentCredentialOperationPort & Readonly<{
+      restore(): Promise<Record<string, unknown>>;
+    }>;
     workbenchTabs?: Readonly<{
       get(): Promise<unknown>;
       set(value: Readonly<Record<string, unknown>>): Promise<unknown>;
@@ -628,8 +649,8 @@ export class WorkspaceController {
   clearPendingDefaultAgent(expectedIntentId?: string): import("../domain/agent-provider-state.js").AgentSelection | null;
   commitPendingDefaultAgent(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
-    options?: Readonly<{ saveDefault?(providerId: string): Promise<unknown> }>,
   ): Promise<RunWorkflowOutcome>;
+  selectDefaultAgent(selection: import("../domain/agent-provider-state.js").AgentSelection): Promise<RunWorkflowOutcome>;
   beginAccessRepair(
     run?: import("../domain/run-lifecycle.js").ActiveRun | null,
     field?: "apiKey" | "login" | "install" | "model" | "provider",
@@ -647,39 +668,14 @@ export class WorkspaceController {
   disconnectAgentApiKey(
     selection: import("../domain/agent-provider-state.js").AgentSelection,
   ): Promise<RunWorkflowOutcome>;
-  holdAgentCredential(
-    selection: import("../domain/agent-provider-state.js").AgentSelection,
-    payload: Readonly<{
-      apiKey: string;
-      vendorId?: string | null;
-      baseUrl?: string | null;
-      modelId?: string | null;
-    }>,
-  ): unknown;
-  noteAgentCredentialPersist(
-    selection: import("../domain/agent-provider-state.js").AgentSelection,
-    result: Readonly<{ status: string; reason?: string | null }>,
-  ): unknown;
   retryAgentCredentialPersist(
     selection: import("../domain/agent-provider-state.js").AgentSelection,
-    persist: (held: Readonly<{
-      apiKey: string;
-      vendorId: string | null;
-      baseUrl: string | null;
-      modelId: string | null;
-    }>) => Promise<{ ok?: boolean; code?: string }>,
   ): Promise<RunWorkflowOutcome>;
   stopRunsForProvider(providerId: string): Promise<readonly RunWorkflowOutcome[]>;
   manageAgentAccess(
     kind: "disconnect" | "remove-key" | "reconnect" | "logout",
     selection: import("../domain/agent-provider-state.js").AgentSelection,
-    options?: Readonly<{
-      stopRelatedRuns?: boolean;
-      credentials?: Readonly<{
-        clear?(): Promise<{ ok?: boolean }>;
-        restore?(): Promise<unknown>;
-      }>;
-    }>,
+    options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
   refreshQoderAvailability(): Promise<RunWorkflowOutcome>;
   checkQoderUsability(): Promise<RunWorkflowOutcome>;

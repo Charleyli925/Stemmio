@@ -420,10 +420,40 @@ never written to `ui-preferences.json`, logs, GET responses or renderer
 snapshots. If the user explicitly checks “在此 Mac 上记住 API Key”, Main encrypts
 it with Electron `safeStorage` into `agent-session-credential.v1.json` and never
 returns the plaintext. Custom vendors may also persist the non-secret Model ID
-in that same file. Encryption unavailable refuses to persist and does not
-fall back to plaintext. Persist failure cannot be rewritten as a complete
-connection success. Shutdown discards the session copy; a remembered
-ciphertext may be restored into Coordinator memory after Bridge is ready.
+in that same file. The version-2 record at this compatibility path adds only a
+non-secret operation ID, random record ID and a bounded receipt/tombstone
+ledger; legacy version-1 ciphertext remains readable and is replaced only by
+an explicit save or clear. Main serializes every save and clear for this
+provider in accepted order. Operation replay returns the authoritative receipt,
+clear may use the record ID as a strict CAS, and a clear without one writes a
+tombstone after every mutation accepted before it so an older save cannot
+resurrect the Key. Encryption unavailable refuses to persist and does not fall
+back to plaintext. Missing, unavailable and corrupt records remain distinct;
+corrupt records are not automatically deleted. Persist failure cannot be
+rewritten as a complete connection success. Shutdown discards the session
+copy; a remembered ciphertext may be restored into Coordinator memory after
+Bridge is ready.
+Renderer `RunWorkflow` is the sole application coordinator for connection,
+remembered-credential persistence/reconciliation, clear/restore and default
+preference adoption. One provider-scoped intent fences startup status and the
+live connect, configuration, credential-persist and default-preference effects.
+The shared pure interpreter gives `unreadable`, `unavailable`, `rejected` and
+`unknown` precedence over compatibility `remembered`; `saved` additionally
+requires the exact queried operation ID and a legal credential record ID. The
+public projection distinguishes persist from clear reconciliation so an
+unconfirmed clear stays actionable without claiming that an unknown persist was
+saved. A lost clear response is reconciled with its original operation ID; only
+after that operation is terminal may the same explicit remove command clear a
+newer saved record. Provider disabled-preference writes carry the same intent
+through the single preferences Session and restore their prior durable value
+when a newer connect or disposal supersedes them. Disposal closes ordinary
+updates and presentation immediately, while an already-started fenced Agent
+write may perform only its predetermined durable rollback. It may retain one short-lived Key only while the same
+save/reconciliation intent can still use it; replacement, disconnect, remove,
+disposal and terminal receipts retire that reference (without claiming that JS
+memory can be wiped). `AgentCatalogState` receives only status, reason,
+operation ID and record ID. Workbench and Settings never receive a persistence
+callback or query Main directly for presentation state.
 Anthropic is not registered. Codex and Qoder do not accept a session Token.
 
 This is an explicit trusted-local-Agent policy, not hostile-process isolation.

@@ -727,3 +727,24 @@ V1/V2 viewing, current return, default export and optional V3 creation with no
 duplicate on unchanged content. Shared sidebar helpers select the current row
 or explicitly expand and select historical Vn; first-row selectors cannot stand
 in for current identity.
+
+### Agent credential and preference ordering
+
+`tests/agent-session-credential-store.test.mjs` owns Main acceptance order,
+random record IDs, operation receipts, strict CAS, unscoped clear semantics,
+tombstones and old-write replay refusal. `tests/run-workflow.test.mjs` owns the
+separate connection/persistence/default results, lost-receipt status
+reconciliation without rewriting, same-operation clear reconciliation, startup
+success/failure fences, deferred configuration-save/remove ordering, held-secret
+reference retirement, replacement-save/old-clear ordering, Settings clear-action
+gating, provider-disabled preference rollback, retry without reconnect/default
+commit, receipt precedence, and slow-A/fast-B projection fencing. The checked production interpreter and
+the test stubs share the union in `agent-credential-operation-contract.d.ts`.
+`tests/desktop-preload-ipc.test.mjs` proves
+missing capabilities fail explicitly and forwards operation/model identity.
+Electron may restore a synthetic Key only for an isolated profile with explicit
+`STEMMIO_E2E_RESTORE_CREDENTIAL=1` and an ephemeral
+`STEMMIO_E2E_CREDENTIAL_ENCRYPTION_KEY`; the unpackaged test process uses that
+key only for isolated AES-GCM ciphertext and must prove restart restoration and
+no plaintext on disk or in logs. Packaged builds always use Electron
+`safeStorage`. Default E2E launches still suppress restoration.

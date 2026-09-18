@@ -763,6 +763,7 @@ export default function Workbench() {
     desktopUiPreferencesApi,
     { workspaceController, agentCatalogSnapshot, documentId: documentId ?? "" },
   );
+  const workspacePreferencesSessionPort = workspacePreferencesController.sessionPort;
   const workspacePreferencesSnapshot = workspacePreferencesController.snapshot;
   const workspacePreferences = workspacePreferencesSnapshot.workspace;
   const [previewAttachment, setPreviewAttachment] = useState<CommentAttachment | null>(null);
@@ -941,7 +942,62 @@ export default function Workbench() {
         rebindTargetsPreservingGlobal,
       }),
       ports: {
-        agentCredentialStatus: () => window.stemmioIntegrations?.sessionCredentialStatus?.() ?? Promise.resolve({}),
+        agentCredential: {
+          persist: (payload) => {
+            const operation = window.stemmioIntegrations?.persistSessionCredential;
+            if (!operation) return Promise.reject(Object.assign(new Error("Credential persistence is unavailable."), { code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE" }));
+            return operation({
+              operationId: payload.operationId,
+              apiKey: payload.apiKey,
+              ...(payload.vendorId ? { vendorId: payload.vendorId } : {}),
+              ...(payload.baseUrl ? { baseUrl: payload.baseUrl } : {}),
+              ...(payload.modelId ? { modelId: payload.modelId } : {}),
+            });
+          },
+          clear: (payload) => {
+            const operation = window.stemmioIntegrations?.clearSessionCredential;
+            if (!operation) return Promise.reject(Object.assign(new Error("Credential clearing is unavailable."), { code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE" }));
+            return operation(payload);
+          },
+          status: (payload) => {
+            const operation = window.stemmioIntegrations?.sessionCredentialStatus;
+            if (!operation) return Promise.reject(Object.assign(new Error("Credential status is unavailable."), { code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE" }));
+            return operation(payload);
+          },
+          restore: () => {
+            const operation = window.stemmioIntegrations?.restoreSessionCredential;
+            if (!operation) return Promise.reject(Object.assign(new Error("Credential restore is unavailable."), { code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE" }));
+            return operation();
+          },
+        },
+        agentPreferences: {
+          getAgentConfigurations: async () => (
+            (await workspacePreferencesSessionPort.load()).workspace.agentConfigurations
+          ),
+          saveAgentConfigurations: async (agentConfigurations, intent = null) => (
+            intent
+              ? workspacePreferencesSessionPort.commitAgentConfigurations({
+                intentId: intent.intentId,
+                agentConfigurations,
+                isCurrent: intent.isCurrent,
+              })
+              : workspacePreferencesSessionPort.update({ agentConfigurations })
+          ),
+          commitDefaultAgent: async ({ providerId, isCurrent }) => (
+            workspacePreferencesSessionPort.commitDefaultAgent({
+              providerId: providerId as WorkspacePreferences["defaultAgentProviderId"],
+              isCurrent,
+            })
+          ),
+          setProviderDisabled: async ({ intentId, providerId, disabled, isCurrent }) => (
+            workspacePreferencesSessionPort.setProviderDisabled({
+              intentId,
+              providerId: providerId as WorkspacePreferences["defaultAgentProviderId"],
+              disabled,
+              isCurrent,
+            })
+          ),
+        },
         hash: { sha256: browserSha256 },
         canvas: { invalidateRenderAcks: invalidateCanvasRenderAcks },
         ...(window.stemmioWorkbenchTabs ? {
@@ -1447,6 +1503,7 @@ export default function Workbench() {
     invalidateCanvasRenderAcks,
     isViewTransitioning,
     desktopHostReady,
+    workspacePreferencesSessionPort,
   ]);
   const invalidateEditCanvasRenderAck = useCallback(() => {
     setCanvasRenderAcks((current) => (
@@ -3137,6 +3194,7 @@ export default function Workbench() {
   }, [
     currentCommentSessionSnapshot,
     rememberAttachmentObjectUrl,
+    setInterruption,
     workspaceController,
   ]);
 
@@ -3176,7 +3234,7 @@ export default function Workbench() {
         cause,
       });
     }
-  }, [ensureAttachmentObjectUrl]);
+  }, [ensureAttachmentObjectUrl, setPreviewAttachment]);
 
   const downloadAttachment = useCallback(async (
     attachment: CommentAttachment,
@@ -3397,7 +3455,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [currentProjectSessionSnapshot]);
+  }, [currentProjectSessionSnapshot, setInterruption]);
 
   const openSelectedHtmlInDefaultBrowser = useCallback(async () => {
     if (!workspaceController) return;
@@ -3426,7 +3484,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [workspaceController]);
+  }, [setInterruption, workspaceController]);
 
   const handleCanvasChange = useCallback((
     nextHtml: string,
@@ -4822,15 +4880,6 @@ export default function Workbench() {
     viewMode,
     workspaceController,
   ]);
-  const commitPendingDefaultIfReady = useCallback(async (selection: AgentSelection) => {
-    await workspaceController?.commitPendingDefaultAgent?.(selection, {
-      saveDefault: async (providerId) => {
-        await workspacePreferencesController.update({
-          defaultAgentProviderId: providerId as WorkspacePreferences["defaultAgentProviderId"],
-        });
-      },
-    });
-  }, [workspaceController, workspacePreferencesController]);
   const checkAgentUsability = useCallback(async (selection?: AgentSelection) => (
     workspaceController?.checkAgentUsability(selection) ?? null
   ), [workspaceController]);
@@ -4838,12 +4887,8 @@ export default function Workbench() {
     workspaceController?.copyAgentGuidance({ kind, selection }) ?? null
   ), [workspaceController]);
   const startAgentLogin = useCallback(async (selection?: AgentSelection | null) => {
-    const outcome = await workspaceController?.startAgentLogin(selection) ?? null;
-    if (outcome && ["succeeded", "stale"].includes(outcome.status) && selection) {
-      await commitPendingDefaultIfReady(selection);
-    }
-    return outcome;
-  }, [commitPendingDefaultIfReady, workspaceController]);
+    return workspaceController?.startAgentLogin(selection) ?? null;
+  }, [workspaceController]);
   const reopenAgentLogin = useCallback(async (selection?: AgentSelection | null) => (
     workspaceController?.reopenAgentLogin(selection) ?? null
   ), [workspaceController]);
@@ -4862,57 +4907,8 @@ export default function Workbench() {
       modelId?: string;
       remember?: boolean;
     }>,
-  ) => {
-    const outcome = await workspaceController?.connectAgentApiKey(selection, apiKey, extras) ?? null;
-    if (!outcome || outcome.status !== "succeeded") return outcome;
-    const integrations = window.stemmioIntegrations;
-    try {
-      if (extras?.remember === true && apiKey) {
-        workspaceController?.holdAgentCredential?.(selection, {
-          apiKey,
-          vendorId: extras.vendorId,
-          baseUrl: extras.baseUrl,
-          modelId: extras.modelId,
-        });
-        const persisted = await integrations?.persistSessionCredential?.({
-          apiKey,
-          vendorId: extras.vendorId,
-          baseUrl: extras.baseUrl,
-          modelId: extras.modelId,
-        });
-        if (persisted?.ok !== true || persisted.remembered !== true) {
-          const reason = persisted?.code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE"
-            ? "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。"
-            : "已连接，但新的 API Key 未保存。";
-          workspaceController?.noteAgentCredentialPersist?.(selection, {
-            status: "failed",
-            reason,
-          });
-          await commitPendingDefaultIfReady(selection);
-          return Object.freeze({
-            ...outcome,
-            persistFailed: true,
-            reason,
-          });
-        }
-        workspaceController?.noteAgentCredentialPersist?.(selection, { status: "saved" });
-      }
-    } catch {
-      const reason = "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。";
-      workspaceController?.noteAgentCredentialPersist?.(selection, {
-        status: "failed",
-        reason,
-      });
-      await commitPendingDefaultIfReady(selection);
-      return Object.freeze({
-        ...outcome,
-        persistFailed: true,
-        reason,
-      });
-    }
-    await commitPendingDefaultIfReady(selection);
-    return outcome;
-  }, [commitPendingDefaultIfReady, workspaceController]);
+  ) => workspaceController?.connectAgentApiKey(selection, apiKey, extras) ?? null,
+  [workspaceController]);
   const openVendorApiKeyPage = useCallback(async (vendorId: string) => {
     try {
       const result = await window.stemmioIntegrations?.openVendorApiKeyPage?.(vendorId);
@@ -5191,6 +5187,7 @@ export default function Workbench() {
     reviewAnalysisSession,
     reviewPreparing,
     runCapability,
+    setInterruption,
     workspaceController,
   ]);
 
@@ -5243,42 +5240,11 @@ export default function Workbench() {
     kind: "disconnect" | "remove-key" | "reconnect" | "logout",
     selection: AgentSelection,
   ) => {
-    const disabledIds = workspacePreferences.disabledAgentProviderIds;
-    if (kind === "reconnect") {
-      await workspacePreferencesController.update({
-        disabledAgentProviderIds: disabledIds.filter((id) => id !== selection.providerId),
-      });
-    }
     const outcome = await workspaceController?.manageAgentAccess(kind, selection, {
       stopRelatedRuns: kind !== "reconnect",
-      credentials: {
-        clear: async () => {
-          if (typeof window.stemmioIntegrations?.clearSessionCredential !== "function") {
-            return { ok: false };
-          }
-          return window.stemmioIntegrations.clearSessionCredential();
-        },
-        restore: () => window.stemmioIntegrations?.restoreSessionCredential?.()
-          ?? Promise.resolve({ ok: true }),
-      },
     }) ?? { status: "rejected" as const, reason: "工作台尚未就绪。" };
-    if (
-      kind === "disconnect"
-      && outcome
-      && ["succeeded", "stale"].includes(outcome.status)
-    ) {
-      const nextDisabled = Array.from(new Set([
-        ...disabledIds,
-        selection.providerId,
-      ])) as WorkspacePreferences["disabledAgentProviderIds"];
-      await workspacePreferencesController.update({ disabledAgentProviderIds: nextDisabled });
-    }
     return outcome;
-  }, [
-    workspaceController,
-    workspacePreferences.disabledAgentProviderIds,
-    workspacePreferencesController,
-  ]);
+  }, [workspaceController]);
 
   const requestActiveRunEnd = useCallback(() => {
     if (!activeRun) return;
@@ -5291,6 +5257,7 @@ export default function Workbench() {
     activeRun,
     cancelActiveRun,
     handoffCancellationNeedsConfirmation,
+    setCancelRunConfirmationKey,
   ]);
 
   const resolveAiConflict = useCallback(async (action: "adopt-ai" | "keep-external") => {
@@ -5622,6 +5589,7 @@ export default function Workbench() {
     requestActiveRunEnd,
     resolveAiConflict,
     reviewReadyResult,
+    setInterruption,
   ]);
 
   const aiAssistantEntry = (
@@ -5672,11 +5640,8 @@ export default function Workbench() {
   // pre-promotion source identity. Accepting promotes the Working Copy to a
   // new path while this overlay is still visible; the live path would rebuild
   // both preview sessions (and retitle the header) mid-accept for nothing.
-  const selectDefaultAgent = (selection: AgentSelection) => {
-    workspaceController?.clearPendingDefaultAgent?.();
-    void workspacePreferencesController.update({
-      defaultAgentProviderId: selection.providerId as WorkspacePreferences["defaultAgentProviderId"],
-    });
+  const selectDefaultAgent = async (selection: AgentSelection) => {
+    await workspaceController?.selectDefaultAgent?.(selection);
   };
   const selectDocumentAgent = async (selection: AgentSelection) => {
     try {
@@ -5706,15 +5671,7 @@ export default function Workbench() {
       onCheckSelection: checkAgentUsability,
       onConnectApiKey: connectAgentApiKey,
       onRetryPersistCredential: (selection: AgentSelection) => (
-        workspaceController?.retryAgentCredentialPersist?.(selection, (held) => (
-          window.stemmioIntegrations?.persistSessionCredential?.({
-            apiKey: held.apiKey,
-            vendorId: held.vendorId ?? undefined,
-            baseUrl: held.baseUrl ?? undefined,
-            modelId: held.modelId ?? undefined,
-          })
-          ?? Promise.resolve({ ok: false })
-        )) ?? Promise.resolve({
+        workspaceController?.retryAgentCredentialPersist?.(selection) ?? Promise.resolve({
           status: "rejected",
           reason: "没有可重试保存的 API Key。",
         })
@@ -5729,11 +5686,7 @@ export default function Workbench() {
       workspaceController?.queuePendingDefaultAgent(selection);
     },
     onReconnect: async (selection: AgentSelection) => {
-      const outcome = await manageAgentAccess("reconnect", selection);
-      if (outcome && ["succeeded", "stale"].includes(outcome.status)) {
-        await commitPendingDefaultIfReady(selection);
-      }
-      return outcome;
+      return manageAgentAccess("reconnect", selection);
     },
     onBeginAccessRepair: (field: "apiKey" | "login" | "install" | "model" | "provider" = "apiKey") => {
       if (activeRun) workspaceController?.beginAccessRepair(activeRun, field);
@@ -6298,19 +6251,15 @@ export default function Workbench() {
           onCancelInstall={cancelAgentInstall}
           onConnectApiKey={connectAgentApiKey}
           onRetryPersistCredential={(selection) => (
-            workspaceController?.retryAgentCredentialPersist?.(selection, (held) => (
-              window.stemmioIntegrations?.persistSessionCredential?.({
-                apiKey: held.apiKey,
-                vendorId: held.vendorId ?? undefined,
-                baseUrl: held.baseUrl ?? undefined,
-                modelId: held.modelId ?? undefined,
-              })
-              ?? Promise.resolve({ ok: false })
-            )) ?? Promise.resolve({
+            workspaceController?.retryAgentCredentialPersist?.(selection) ?? Promise.resolve({
               status: "rejected",
               reason: "没有可重试保存的 API Key。",
             })
           )}
+          rememberedKey={agentCards.some((card) => (
+            card.selection.providerId === "stemmio"
+            && card.credentialPersist?.status === "saved"
+          ))}
           onDisconnectApiKey={disconnectAgentApiKey}
           onDisconnectProvider={(selection) => manageAgentAccess("disconnect", selection)}
           onRemoveRememberedKey={(selection) => manageAgentAccess("remove-key", selection)}

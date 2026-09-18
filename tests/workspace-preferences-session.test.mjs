@@ -182,3 +182,220 @@ test("a transient preference failure retries once without losing the current cho
   assert.equal(session.snapshot.workspace.defaultAgentProviderId, "stemmio");
   session.dispose();
 });
+
+test("a superseded default commit restores the prior durable default", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => { releaseFirstWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await firstWrite;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  let currentIntent = "intent-a";
+  const committing = session.commitDefaultAgent({
+    providerId: "stemmio",
+    isCurrent: () => currentIntent === "intent-a",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  currentIntent = "intent-b";
+  releaseFirstWrite();
+  assert.deepEqual(await committing, { status: "superseded" });
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "codex" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "codex");
+  assert.equal(session.snapshot.workspace.defaultAgentProviderId, "codex");
+  session.dispose();
+});
+
+test("a credential intent reaches the single preferences session and restores superseded configuration", async () => {
+  let durable = structuredClone(persisted);
+  let releaseWrite;
+  const write = new Promise((resolve) => { releaseWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await write;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  let currentIntent = "credential-intent-a";
+  const committing = session.commitAgentConfigurations({
+    intentId: "credential-intent-a",
+    agentConfigurations: {
+      stemmio: { modelId: "stemmio:deepseek-v4-pro", reasoning: "high" },
+    },
+    isCurrent: () => currentIntent === "credential-intent-a",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  currentIntent = "remove-intent-b";
+  releaseWrite();
+  assert.deepEqual(await committing, { status: "superseded" });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(durable.workspace.agentConfigurations, {});
+  session.dispose();
+});
+
+test("concurrent provider access changes preserve both disabled providers", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstWrite;
+  const firstWrite = new Promise((resolve) => { releaseFirstWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await firstWrite;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  const disableStemmio = session.setProviderDisabled({
+    intentId: "disable-stemmio",
+    providerId: "stemmio",
+    disabled: true,
+    isCurrent: () => true,
+  });
+  const disableCodex = session.setProviderDisabled({
+    intentId: "disable-codex",
+    providerId: "codex",
+    disabled: true,
+    isCurrent: () => true,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstWrite();
+  assert.deepEqual(await disableStemmio, { status: "committed" });
+  assert.deepEqual(await disableCodex, { status: "committed" });
+  assert.deepEqual(calls.map((call) => call.workspace.disabledAgentProviderIds), [
+    ["stemmio"],
+    ["stemmio", "codex"],
+  ]);
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, ["stemmio", "codex"]);
+  session.dispose();
+});
+
+test("a slow superseded provider-disable write restores the prior durable preference", async () => {
+  let durable = structuredClone(persisted);
+  let releaseWrite;
+  const write = new Promise((resolve) => { releaseWrite = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await write;
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  let currentIntent = "disconnect-old";
+  const disabling = session.setProviderDisabled({
+    intentId: "disconnect-old",
+    providerId: "stemmio",
+    disabled: true,
+    isCurrent: () => currentIntent === "disconnect-old",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  currentIntent = "connect-new";
+  releaseWrite();
+  assert.deepEqual(await disabling, { status: "superseded" });
+  assert.deepEqual(calls.map((call) => call.workspace.disabledAgentProviderIds), [
+    ["stemmio"],
+    [],
+  ]);
+  assert.deepEqual(durable.workspace.disabledAgentProviderIds, []);
+  session.dispose();
+});
+
+test("dispose lets started Agent mutations finish only their predetermined rollback", async (t) => {
+  const cases = [
+    {
+      name: "default Agent",
+      start(session, isCurrent) {
+        return session.commitDefaultAgent({ providerId: "stemmio", isCurrent });
+      },
+      changed: (workspace) => workspace.defaultAgentProviderId === "stemmio",
+      restored: (workspace) => workspace.defaultAgentProviderId === "codex",
+    },
+    {
+      name: "Agent configuration",
+      start(session, isCurrent) {
+        return session.commitAgentConfigurations({
+          intentId: "configuration-before-dispose",
+          agentConfigurations: {
+            stemmio: { modelId: "stemmio:deepseek-v4-pro", reasoning: "high" },
+          },
+          isCurrent,
+        });
+      },
+      changed: (workspace) => Boolean(workspace.agentConfigurations?.stemmio),
+      restored: (workspace) => Object.keys(workspace.agentConfigurations || {}).length === 0,
+    },
+    {
+      name: "provider access",
+      start(session, isCurrent) {
+        return session.setProviderDisabled({
+          intentId: "disconnect-before-dispose",
+          providerId: "stemmio",
+          disabled: true,
+          isCurrent,
+        });
+      },
+      changed: (workspace) => workspace.disabledAgentProviderIds?.includes("stemmio") === true,
+      restored: (workspace) => workspace.disabledAgentProviderIds?.length === 0,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      let durable = structuredClone(persisted);
+      let releaseFirstRecord;
+      let firstRecordStarted;
+      const firstRecord = new Promise((resolve) => { firstRecordStarted = resolve; });
+      const firstResponse = new Promise((resolve) => { releaseFirstRecord = resolve; });
+      const calls = [];
+      const session = new WorkspacePreferencesSession({ port: {
+        async get() { return durable; },
+        async record(input) {
+          calls.push(input);
+          durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+          if (calls.length === 1) {
+            firstRecordStarted();
+            await firstResponse;
+          }
+          return durable;
+        },
+      } });
+      await session.load();
+      let current = true;
+      let publications = 0;
+      session.subscribe(() => { publications += 1; });
+      const mutation = fixture.start(session, () => current);
+      await firstRecord;
+      assert.equal(fixture.changed(durable.workspace), true);
+      current = false;
+      session.dispose();
+      const publicationsAtDispose = publications;
+      assert.equal(await session.update({ sidebarWidth: 320 }), false);
+      releaseFirstRecord();
+      assert.deepEqual(await mutation, { status: "superseded" });
+      assert.equal(fixture.restored(durable.workspace), true);
+      assert.equal(calls.length, 2);
+      assert.equal(publications, publicationsAtDispose);
+    });
+  }
+});

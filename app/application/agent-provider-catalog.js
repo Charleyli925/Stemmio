@@ -31,6 +31,7 @@ import {
   DEFAULT_OPENAI_COMPATIBLE_REASONING,
   normalizeOpenAiCompatibleReasoning,
   publicOpenAiCompatibleVendors,
+  publicModelsForVendor,
 } from "../../shared/openai-compatible-vendors.mjs";
 
 const QODER_FAILURE_REASONS = Object.freeze({
@@ -656,8 +657,7 @@ export class AgentCatalogState {
   #disposed = false;
   #pendingDefault = null;
   #pendingDefaultSeq = 0;
-  #heldCredentials = new Map();
-  #preferencesPort;
+  #configurationPreferencesPort;
   #preferencesLoaded;
   #configurationWrite = Promise.resolve();
 
@@ -668,8 +668,7 @@ export class AgentCatalogState {
     diagnoseTimeoutMs = 30_000,
     providers = defaultAgentProviders(),
     selected = null,
-    preferencesPort = null,
-    credentialStatusPort = null,
+    configurationPreferencesPort = null,
   } = {}) {
     if (!bridgeClient || typeof bridgeClient.preflightAgent !== "function") {
       throw new TypeError("AgentCatalogState requires an Agent bridge client.");
@@ -681,7 +680,7 @@ export class AgentCatalogState {
     this.#handoffPort = handoffPort;
     this.#clock = clock;
     this.#diagnoseTimeoutMs = Math.max(1, Number(diagnoseTimeoutMs) || 30_000);
-    this.#preferencesPort = preferencesPort;
+    this.#configurationPreferencesPort = configurationPreferencesPort;
     for (const descriptor of providers) {
       if (!descriptor?.providerId || !descriptor?.runtimeId || !descriptor?.selection) {
         throw new TypeError("Agent provider descriptor is invalid.");
@@ -714,25 +713,10 @@ export class AgentCatalogState {
       if (entry) this.#providers.set(entry.providerId, Object.freeze({ ...entry, selection: this.#selected }));
     }
     const initialConfigurations = new Map([...this.#providers].map(([id, entry]) => [id, agentPreflightKey(entry.selection)]));
-    if (credentialStatusPort) {
-      void credentialStatusPort().then((status) => {
-        if (!this.#disposed && this.#providers.has("stemmio") && !this.credentialPersist("stemmio")) {
-          if (status?.unreadable === true || status?.reconnectRequired === true) {
-            this.noteCredentialPersist("stemmio", {
-              status: "failed",
-              reason: status?.reason
-                || "无法读取已保存的连接凭证。你仍可编辑项目。",
-            });
-          } else {
-            this.noteCredentialPersist("stemmio", { status: status?.remembered === true ? "saved" : "skipped" });
-          }
-        }
-      }).catch(() => {});
-    }
-    this.#preferencesLoaded = preferencesPort
-      ? preferencesPort.get().then((value) => {
+    this.#preferencesLoaded = configurationPreferencesPort
+      ? configurationPreferencesPort.getAgentConfigurations().then((agentConfigurations) => {
         if (this.#disposed) return;
-        for (const [id, choice] of Object.entries(value?.workspace?.agentConfigurations || {})) {
+        for (const [id, choice] of Object.entries(agentConfigurations || {})) {
           const provider = this.#providers.get(id);
           if (!provider || agentPreflightKey(provider.selection) !== initialConfigurations.get(id)) continue;
           this.configureProvider({
@@ -905,32 +889,37 @@ export class AgentCatalogState {
     return ready;
   }
 
-  holdRememberedCredential(providerId, payload) {
+  publishCredentialPersist(providerId, {
+    status,
+    operationKind = null,
+    reason = null,
+    operationId = null,
+    recordId = null,
+    code = null,
+  } = {}) {
     const id = String(providerId || "");
-    const apiKey = String(payload?.apiKey || "");
-    if (!id || !apiKey) return this.credentialPersist(id);
-    this.#heldCredentials.set(id, Object.freeze({
-      apiKey,
-      vendorId: payload?.vendorId || null,
-      baseUrl: payload?.baseUrl || null,
-      modelId: payload?.modelId || null,
-    }));
+    const allowed = new Set([
+      "pending",
+      "saved",
+      "failed",
+      "unreadable",
+      "unavailable",
+      "rejected",
+      "unknown",
+      "skipped",
+      "missing",
+      "superseded",
+    ]);
     this.#patchProvider(id, {
       credentialPersist: Object.freeze({
-        status: "pending",
-        reason: null,
-      }),
-    });
-    return this.credentialPersist(id);
-  }
-
-  noteCredentialPersist(providerId, { status, reason = null } = {}) {
-    const id = String(providerId || "");
-    if (status !== "failed") this.#heldCredentials.delete(id);
-    this.#patchProvider(id, {
-      credentialPersist: Object.freeze({
-        status: status === "failed" ? "failed" : status === "saved" ? "saved" : "skipped",
-        reason: status === "failed" ? String(reason || "已连接，但新的 API Key 未保存。") : null,
+        status: allowed.has(status) ? status : "unknown",
+        operationKind: ["startup", "persist", "clear"].includes(operationKind)
+          ? operationKind
+          : null,
+        reason: reason ? String(reason) : null,
+        operationId: operationId ? String(operationId) : null,
+        recordId: recordId ? String(recordId) : null,
+        code: code ? String(code) : null,
       }),
     });
     return this.credentialPersist(id);
@@ -940,26 +929,27 @@ export class AgentCatalogState {
     return this.#providers.get(String(providerId || ""))?.credentialPersist || null;
   }
 
-  async retryRememberedCredential(providerId, persist) {
+  publishRestoredCredentialConnection(providerId, { vendorId } = {}) {
     const id = String(providerId || "");
-    const held = this.#heldCredentials.get(id);
-    if (!held || typeof persist !== "function") {
-      throw Object.assign(new Error("没有可重试保存的 API Key。"), {
-        code: "AGENT_CREDENTIAL_RETRY_UNAVAILABLE",
-      });
-    }
-    const persisted = await persist(held);
-    if (persisted?.ok !== true || persisted.remembered !== true) {
-      this.noteCredentialPersist(id, {
-        status: "failed",
-        reason: persisted?.code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE"
-          ? "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。"
-          : "已连接，但新的 API Key 未保存。",
-      });
-      return this.credentialPersist(id);
-    }
-    this.noteCredentialPersist(id, { status: "saved" });
-    return this.credentialPersist(id);
+    const normalizedVendorId = String(vendorId || "").trim();
+    const provider = this.#providers.get(id);
+    const vendor = agentProviderCardPresentation(provider).vendors
+      .find((entry) => entry.id === normalizedVendorId);
+    if (!provider || !vendor) return null;
+    const connection = Object.freeze({
+      vendorId: vendor.id,
+      vendorDisplayName: vendor.label,
+      baseUrl: "",
+    });
+    const modelEnvironment = globalThis.stemmioRuntime?.betaAgentModelsEnabled === true
+      ? { STEMMIO_ENABLE_BETA_AGENT_MODELS: "1" }
+      : {};
+    this.#patchProvider(id, {
+      credentialConfigured: true,
+      connection,
+      models: publicModels(publicModelsForVendor(vendor.id, modelEnvironment)),
+    });
+    return connection;
   }
 
   freezeSelected() {
@@ -1895,17 +1885,35 @@ export class AgentCatalogState {
     return frozen;
   }
 
-  async saveConfiguration() {
+  async saveConfiguration(intent = null) {
     await this.#preferencesLoaded;
-    if (!this.#preferencesPort) return;
+    if (!this.#configurationPreferencesPort) return;
     const agentConfigurations = Object.fromEntries([...this.#providers].map(([id, provider]) => [id, {
       modelId: provider.selection.requestedModelId,
       reasoning: provider.selection.reasoning.requested,
     }]));
-    const write = this.#configurationWrite.catch(() => {}).then(() =>
-      this.#preferencesPort.record({ workspace: { agentConfigurations } }));
+    const write = this.#configurationWrite.catch(() => {}).then(async () => {
+      if (intent && !intent.isCurrent()) return Object.freeze({ status: "superseded" });
+      return this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations, intent);
+    });
     this.#configurationWrite = write;
-    await write;
+    const result = await write;
+    if (intent && !intent.isCurrent()) {
+      throw Object.assign(new Error("Agent configuration operation was superseded."), {
+        code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
+      });
+    }
+    const status = result?.status || (result === false ? "failed" : "committed");
+    if (status === "superseded") {
+      throw Object.assign(new Error("Agent configuration operation was superseded."), {
+        code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
+      });
+    }
+    if (status === "failed") {
+      throw Object.assign(new Error("Agent configuration was not persisted."), {
+        code: "AGENT_PREFERENCES_SAVE_FAILED",
+      });
+    }
   }
 
   selectReasoning(reasoning, expectedSelection = this.#selected) {
@@ -2064,7 +2072,6 @@ export class AgentCatalogState {
       selection: returnedSelection,
       models: publicModels(result.models),
       credentialConfigured: true,
-      ...(apiKey ? { credentialPersist: Object.freeze({ status: "skipped", reason: null }) } : {}),
       connection: Object.freeze({
         vendorId: String(result.vendorId || extras.vendorId || ""),
         vendorDisplayName: String(result.vendorDisplayName || extras.vendorId || ""),
@@ -2077,11 +2084,23 @@ export class AgentCatalogState {
     }));
     this.bindPendingDefaultSelection(returnedSelection);
     this.#publish();
-    await this.saveConfiguration();
-    return result;
+    let configurationPersist = Object.freeze({ status: "saved", code: null });
+    try {
+      await this.saveConfiguration(
+        extras.intentId && typeof extras.isCurrent === "function"
+          ? Object.freeze({ intentId: extras.intentId, isCurrent: extras.isCurrent })
+          : null,
+      );
+    } catch (cause) {
+      configurationPersist = Object.freeze({
+        status: "failed",
+        code: cause?.code || "AGENT_PREFERENCES_SAVE_FAILED",
+      });
+    }
+    return Object.freeze({ ...result, configurationPersist });
   }
 
-  async disconnectApiKey(selection = this.freezeSelected()) {
+  async disconnectApiKey(selection = this.freezeSelected(), { isCurrent = () => true } = {}) {
     const frozen = freezeAgentSelection(selection);
     const provider = this.provider(frozen);
     const updateConfiguration = typeof this.#bridgeClient.updateAgentConfiguration === "function"
@@ -2096,6 +2115,11 @@ export class AgentCatalogState {
       providerId: frozen.providerId,
       disconnect: true,
     });
+    if (!isCurrent()) {
+      throw Object.assign(new Error("更新的连接操作已取代本次结果。"), {
+        code: "AGENT_SESSION_CREDENTIAL_STALE",
+      });
+    }
     this.#invalidateProvider(frozen.providerId);
     const resetSelection = freezeAgentSelection({ ...provider.selection, resolvedModelId: null });
     if (this.#selected?.providerId === frozen.providerId) this.#selected = resetSelection;

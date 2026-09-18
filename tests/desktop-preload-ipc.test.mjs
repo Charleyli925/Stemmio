@@ -7,6 +7,7 @@ import {
   PROJECT_IPC_PROTOCOL,
   PROJECT_IPC_VERSION,
 } from "../desktop/export-copy.mjs";
+import { registerAgentIpc } from "../desktop/ipc/agent-ipc.mjs";
 
 async function loadPreloadApis(invoke, { env = {}, search = "" } = {}) {
   const source = await readFile(
@@ -1283,16 +1284,86 @@ test("preload opens only allowlisted vendor Key pages and never reads stored sec
   assert.match(String(unsupportedVendorError?.message || ""), /API Key 页面/u);
   assert.equal(unsupportedVendorError?.code, "AGENT_VENDOR_KEY_UNSUPPORTED");
   await integrations.persistSessionCredential({
+    operationId: "credential_preload_save_1",
     apiKey: "sk-secret",
     vendorId: "deepseek",
+    modelId: "deepseek-v4-pro",
   });
   assert.equal(calls[1][0], "html-agent-access:persist-credential");
   assert.equal(calls[1][1].vendorId, "deepseek");
   assert.equal(calls[1][1].apiKey, "sk-secret");
+  assert.equal(calls[1][1].operationId, "credential_preload_save_1");
+  assert.equal(calls[1][1].modelId, "deepseek-v4-pro");
   await integrations.restoreSessionCredential();
   assert.equal(calls[2][0], "html-agent-access:restore-credential");
-  await integrations.clearSessionCredential();
+  await integrations.clearSessionCredential({
+    operationId: "credential_preload_clear_1",
+    expectedRecordId: "cred_0123456789abcdef0123456789abcdef",
+  });
   assert.equal(calls[3][0], "html-agent-access:clear-credential");
+  assert.equal(calls[3][1].operationId, "credential_preload_clear_1");
+  assert.equal(calls[3][1].expectedRecordId, "cred_0123456789abcdef0123456789abcdef");
+  await integrations.sessionCredentialStatus({ operationId: "credential_preload_save_1" });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[4])), [
+    "html-agent-access:credential-status",
+    { operationId: "credential_preload_save_1" },
+  ]);
+});
+
+test("agent credential IPC forwards operation identity and fails closed when a capability is absent", async () => {
+  const handlers = new Map();
+  const ipcMain = {
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  };
+  const channels = {
+    qoderHandoff: "qoder",
+    openAgentLogin: "login",
+    openVendorApiKey: "vendor-key",
+    persistSessionCredential: "persist",
+    clearSessionCredential: "clear",
+    sessionCredentialStatus: "status",
+    restoreSessionCredential: "restore",
+  };
+  const persisted = [];
+  registerAgentIpc({
+    ipcMain,
+    trustedProject: (handler) => (_event, payload) => handler(payload),
+    INTEGRATION_CHANNELS: channels,
+    clipboard: { writeText() {}, readText() { return ""; } },
+    persistSessionCredential: async (payload) => {
+      persisted.push(payload);
+      return { ok: true, status: "saved" };
+    },
+  });
+
+  await handlers.get("persist")({}, {
+    operationId: "credential_ipc_save_01",
+    apiKey: "sk-secret",
+    vendorId: "custom",
+    baseUrl: "https://api.example.com/v1",
+    modelId: "private-model",
+  });
+  assert.deepEqual(persisted[0], {
+    operationId: "credential_ipc_save_01",
+    apiKey: "sk-secret",
+    vendorId: "custom",
+    baseUrl: "https://api.example.com/v1",
+    modelId: "private-model",
+  });
+  await assert.rejects(
+    () => handlers.get("clear")({}, { operationId: "credential_ipc_clear_1", expectedRecordId: null }),
+    (error) => error?.code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+  );
+  await assert.rejects(
+    () => handlers.get("status")({}, { operationId: "credential_ipc_save_01" }),
+    (error) => error?.code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+  );
+  await assert.rejects(
+    () => handlers.get("restore")({}, {}),
+    (error) => error?.code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+  );
 });
 
 test("preload exposes update status, restart installation, and the fixed release fallback", async () => {

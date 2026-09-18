@@ -87,6 +87,7 @@ export function registerAgentIpc({
         );
       }
       return persistSessionCredential({
+        operationId: payload?.operationId,
         apiKey: payload?.apiKey,
         vendorId: payload?.vendorId,
         baseUrl: payload?.baseUrl,
@@ -96,32 +97,39 @@ export function registerAgentIpc({
   );
   ipcMain.handle(
     INTEGRATION_CHANNELS.clearSessionCredential,
-    trustedProject(async () => {
+    trustedProject(async (payload) => {
       if (typeof clearSessionCredential !== "function") {
-        return Object.freeze({ ok: true, remembered: false });
+        throw new ProjectFileError(
+          "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+          "无法安全移除 API Key。",
+        );
       }
-      return clearSessionCredential();
+      return clearSessionCredential({
+        operationId: payload?.operationId,
+        expectedRecordId: payload?.expectedRecordId ?? null,
+      });
     }, "agent_clear_credential"),
   );
   ipcMain.handle(
     INTEGRATION_CHANNELS.sessionCredentialStatus,
-    trustedProject(async () => {
+    trustedProject(async (payload) => {
       if (typeof sessionCredentialStatus !== "function") {
-        return Object.freeze({
-          available: false,
-          remembered: false,
-          providerId: "stemmio",
-          vendorId: null,
-        });
+        throw new ProjectFileError(
+          "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+          "无法确认 API Key 的保存状态。",
+        );
       }
-      return sessionCredentialStatus();
+      return sessionCredentialStatus({ operationId: payload?.operationId });
     }, "agent_credential_status"),
   );
   ipcMain.handle(
     INTEGRATION_CHANNELS.restoreSessionCredential,
     trustedProject(async () => {
       if (typeof restoreSessionCredential !== "function") {
-        return Object.freeze({ ok: true, restored: false });
+        throw new ProjectFileError(
+          "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+          "无法读取已保存的 API Key。",
+        );
       }
       return restoreSessionCredential();
     }, "agent_restore_credential"),

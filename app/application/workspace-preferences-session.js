@@ -173,6 +173,7 @@ export class WorkspacePreferencesSession {
   #snapshot = freezeSnapshot();
   #loadPromise = null;
   #writePromise = null;
+  #agentMutationTail = Promise.resolve();
   #pendingPatch = null;
   #disposed = false;
 
@@ -268,6 +269,60 @@ export class WorkspacePreferencesSession {
     return this.#writePromise;
   }
 
+  commitDefaultAgent({ providerId, isCurrent }) {
+    if (typeof isCurrent !== "function") {
+      throw new TypeError("Default Agent commit requires a current-intent guard.");
+    }
+    return this.#enqueueAgentMutation(async () => {
+      await this.load();
+      if (!isCurrent()) return Object.freeze({ status: "superseded" });
+      const previousProviderId = this.#snapshot.workspace.defaultAgentProviderId;
+      const saved = await this.update({ defaultAgentProviderId: providerId });
+      if (!saved) return Object.freeze({ status: "failed" });
+      if (isCurrent()) return Object.freeze({ status: "committed" });
+      const restored = await this.#rollbackAgentMutation({ defaultAgentProviderId: previousProviderId });
+      return Object.freeze({ status: restored ? "superseded" : "failed" });
+    });
+  }
+
+  commitAgentConfigurations({ intentId, agentConfigurations, isCurrent }) {
+    if (!String(intentId || "") || typeof isCurrent !== "function") {
+      throw new TypeError("Agent configuration commit requires a current intent.");
+    }
+    if (!validAgentConfigurations(agentConfigurations)) {
+      throw new TypeError("服务配置无效。");
+    }
+    return this.#enqueueAgentMutation(async () => {
+      await this.load();
+      if (!isCurrent()) return Object.freeze({ status: "superseded" });
+      const previous = this.#snapshot.workspace.agentConfigurations;
+      const saved = await this.update({ agentConfigurations });
+      if (!saved) return Object.freeze({ status: "failed" });
+      if (isCurrent()) return Object.freeze({ status: "committed" });
+      const restored = await this.#rollbackAgentMutation({ agentConfigurations: previous });
+      return Object.freeze({ status: restored ? "superseded" : "failed" });
+    });
+  }
+
+  setProviderDisabled({ intentId, providerId, disabled, isCurrent }) {
+    if (!String(intentId || "") || typeof isCurrent !== "function") {
+      throw new TypeError("Agent access preference commit requires a current intent.");
+    }
+    return this.#enqueueAgentMutation(async () => {
+      await this.load();
+      if (!isCurrent()) return Object.freeze({ status: "superseded" });
+      const current = this.#snapshot.workspace.disabledAgentProviderIds;
+      const next = disabled
+        ? Array.from(new Set([...current, providerId]))
+        : current.filter((id) => id !== providerId);
+      const saved = await this.update({ disabledAgentProviderIds: next });
+      if (!saved) return Object.freeze({ status: "failed" });
+      if (isCurrent()) return Object.freeze({ status: "committed" });
+      const restored = await this.#rollbackAgentMutation({ disabledAgentProviderIds: current });
+      return Object.freeze({ status: restored ? "superseded" : "failed" });
+    });
+  }
+
   retry() {
     if (this.#disposed || !this.#pendingPatch || !this.#port) return false;
     this.#publish({ ...this.#snapshot, saving: true, error: null });
@@ -338,6 +393,31 @@ export class WorkspacePreferencesSession {
       }
     }
     return successful && !this.#pendingPatch;
+  }
+
+  #enqueueAgentMutation(task) {
+    const mutation = this.#agentMutationTail.then(task, task);
+    this.#agentMutationTail = mutation.catch(() => {});
+    return mutation;
+  }
+
+  async #rollbackAgentMutation(patch) {
+    const normalized = normalizeWorkspacePatch(patch);
+    if (!this.#disposed) return this.update(normalized);
+    if (!this.#port) return true;
+    // Disposal closes public preference writes and presentation, but an Agent
+    // mutation whose first durable write already started still owns its fixed
+    // rollback. Complete that rollback directly without reopening the Session
+    // pump or publishing a disposed snapshot.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.#port.record({ workspace: normalized });
+        return true;
+      } catch {
+        if (attempt === 0) await this.#port.get().catch(() => {});
+      }
+    }
+    return false;
   }
 
   #publish(next) {

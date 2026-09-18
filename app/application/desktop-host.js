@@ -19,6 +19,10 @@ const REQUIRED_DESKTOP_HOST_FUNCTIONS = Object.freeze([
   ["stemmioAppLifecycle", "onCloseAborted"],
   ["stemmioAppLifecycle", "reportReady"],
   ["stemmioAppLifecycle", "reportBlocked"],
+  ["stemmioIntegrations", "persistSessionCredential"],
+  ["stemmioIntegrations", "clearSessionCredential"],
+  ["stemmioIntegrations", "sessionCredentialStatus"],
+  ["stemmioIntegrations", "restoreSessionCredential"],
 ]);
 
 export function assertDesktopHost(host) {

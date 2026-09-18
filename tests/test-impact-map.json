@@ -899,7 +899,10 @@
       "id": "run-workflow",
       "patterns": [
         "^app/application/run-workflow(?:-codecs)?\\.(?:js|d\\.ts)$",
+        "^app/application/agent-credential-operation(?:-contract)?\\.(?:js|d\\.ts)$",
         "^app/application/run/(?:submit-plan|text-locator-validation)\\.(?:js|d\\.ts)$",
+        "^tests/agent-credential-operation-contract\\.typecheck\\.ts$",
+        "^tsconfig\\.agent-credential-operation\\.json$",
         "^tests/(?:run-workflow|text-locator-validation)\\.test\\.mjs$",
         "^tests/run-submit-plan\\.test\\.mjs$"
       ],

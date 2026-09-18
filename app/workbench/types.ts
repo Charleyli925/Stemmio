@@ -4,6 +4,12 @@ import type {
 } from "../components/HtmlCanvasEditor";
 import type { DraftSnapshot } from "../application/draft-session.js";
 import type { BrowserOpenRequest } from "../application/browser-open-workflow.js";
+import type {
+  AgentCredentialClearRequest,
+  AgentCredentialOperationReceipt,
+  AgentCredentialPersistRequest,
+  AgentCredentialStatusRequest,
+} from "../application/agent-credential-operation-contract.js";
 import type { SourceHistoryDirection, SourceHistoryEntry } from "../domain/source-history.js";
 import type {
   CandidateAssessment,
@@ -349,22 +355,9 @@ export type DesktopIntegrationsApi = {
     providerId: string;
   }) => Promise<{ opened?: boolean }>;
   openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
-  persistSessionCredential?: (payload: {
-    apiKey: string;
-    vendorId?: string;
-    baseUrl?: string;
-    modelId?: string;
-  }) => Promise<{ ok?: boolean; code?: string; remembered?: boolean }>;
-  clearSessionCredential?: () => Promise<{ ok?: boolean; remembered?: boolean }>;
-  sessionCredentialStatus?: () => Promise<{
-    available?: boolean;
-    remembered?: boolean;
-    vendorId?: string | null;
-    unreadable?: boolean;
-    reconnectRequired?: boolean;
-    reason?: string;
-    code?: string;
-  }>;
+  persistSessionCredential?: (payload: AgentCredentialPersistRequest) => Promise<AgentCredentialOperationReceipt>;
+  clearSessionCredential?: (payload: AgentCredentialClearRequest) => Promise<AgentCredentialOperationReceipt>;
+  sessionCredentialStatus?: (payload?: AgentCredentialStatusRequest) => Promise<AgentCredentialOperationReceipt>;
   restoreSessionCredential?: () => Promise<{
     ok?: boolean;
     restored?: boolean;
