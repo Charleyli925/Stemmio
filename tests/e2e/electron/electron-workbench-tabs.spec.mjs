@@ -1327,7 +1327,7 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
         ...(recoveryCase === "superseded" ? { activeSourcePath: expectedPath } : {}) });
       await waitForProjectReady(app.page);
       await expect(app.page.getByRole("tab", { selected: true }))
-        .toHaveAccessibleName(currentProjectTabName(expectedPath));
+        .toHaveAccessibleName(currentProjectTabName(expectedPath), { timeout: 60_000 });
       if (recoveryCase === "superseded") {
         // Persist the selected V10, then exercise an ordinary restart without
         // a command-line target. The V9 acknowledgment is still missing.

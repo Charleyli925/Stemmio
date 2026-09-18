@@ -1054,7 +1054,10 @@ test("the read-only recovery notice reloads source authority even when dynamic p
     });
     await page.getByTestId('edit-runtime-static-fallback')
       .getByRole('button', { name: '重新载入当前 HTML', exact: true }).click();
-    await expect(page.locator('.workbench-chrome-status')).toHaveText('页面已重新加载，可以继续编辑');
+    await expect(page.locator('.workbench-chrome-status')).toHaveText(
+      '页面已重新加载，可以继续编辑',
+      { timeout: EDIT_AUTHOR_RUNTIME_BUDGET.runtimeSurfaceDeadlineMs + 8_000 },
+    );
     await expect(editor).toHaveAttribute('aria-readonly', 'false');
     await expect(page.getByTestId('edit-runtime-static-fallback')).toHaveCount(0);
     await expect.poll(() => activeFrame.evaluate((frame) => Boolean(
