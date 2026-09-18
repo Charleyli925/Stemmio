@@ -35,6 +35,7 @@ import { nonReplaceTemporaryName } from "../../shared/project-storage-contract.m
 import {
   PROJECT_FILE_SCHEMA_VERSION,
   MAX_HTML_BYTES,
+  SAFE_OPERATION_ID,
   SAVE_RECOVERY_ID,
   SHA256,
   SOURCE_ELEMENT_IDENTITY_MIGRATION_RECOVERY_ID,
@@ -929,6 +930,23 @@ export function draftRelativePathFor(workingCopy) {
   return `drafts/${workingCopy.workingCopyId}.json`;
 }
 
+function validForceUnlockReceipt(receipt) {
+  if (receipt === undefined) return true;
+  if (
+    !isObject(receipt)
+    || !["pending", "completed", "superseded"].includes(receipt.status)
+    || !SAFE_OPERATION_ID.test(String(receipt.operationId || ""))
+    || !SHA256.test(String(receipt.expectedSourceSha256 || ""))
+    || !SHA256.test(String(receipt.acceptedSourceSha256 || ""))
+    || receipt.expectedSourceSha256 !== receipt.acceptedSourceSha256
+  ) return false;
+  if (receipt.status === "pending") {
+    return validStateTimestamp(receipt.preparedAt);
+  }
+  return SHA256.test(String(receipt.sourceSha256 || ""))
+    && validStateTimestamp(receipt.completedAt);
+}
+
 export function assertWorkingCopyState(
   state,
   loaded,
@@ -962,6 +980,7 @@ export function assertWorkingCopyState(
     || !validRevision(state.lastPersistedRevision)
     || !validStateTimestamp(state.lastSavedAt)
     || !validStateTimestamp(state.lastOpenedAt)
+    || !validForceUnlockReceipt(state.forceUnlockReceipt)
     || (
       state.sourceElementIdentitySchemaVersion !== undefined
       && state.sourceElementIdentitySchemaVersion !== STEMMIO_ELEMENT_ID_SCHEMA_VERSION

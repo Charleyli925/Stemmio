@@ -300,6 +300,17 @@ fill only otherwise-valid new-element omissions after proving every prior claim
 survives. Explicit force-unlock clears both the marker and binding seal before
 adopting disk bytes and re-entering migration, including recovery from a prior
 build that already recorded the disk Hash. Runtime DOM never participates.
+The repository records the exact force-unlock operation and preview Hash before
+its first adoption side effect. A lost response is reconciled through that
+single Working Copy receipt; the renderer cannot issue a new mutation while
+the original result remains unknown. The receipt keeps the previewed accepted
+Hash separate from any final Hash produced by Stable ID materialization.
+Until the identity CAS succeeds, the Working Copy stays unresolved and the
+active Request remains intact; a racing external Hash cannot be silently
+accepted by ordinary workspace reconciliation. The single pending operation
+cannot be overwritten by a later force-unlock; a third external Hash retires
+it as a durable, repeat-queryable `superseded` receipt without writing that
+external content.
 
 The external AI Agent can write within the Request / Attempt workspace, so
 those files are evidence to validate rather than runtime authority. Reopen and

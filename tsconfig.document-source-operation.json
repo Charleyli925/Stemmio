@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": [
+    "app/application/document-source-operation-result.js",
+    "app/application/document-source-operation-contract.d.ts",
+    "app/application/source-receipt-contract.d.ts",
+    "app/application/project-session.d.ts",
+    "tests/document-source-operation-contract.typecheck.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

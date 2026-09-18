@@ -148,6 +148,9 @@ function createHarness({
     rebuildActiveFrame() {
       this.rebuilds += 1;
     },
+    captureActiveFrameFence() {
+      return undefined;
+    },
     unlock() {
       this.unlocks += 1;
     },
@@ -1783,11 +1786,15 @@ test("DocumentWorkflow keeps an externally accepted source when its canvas canno
   assert.equal(outcome.value.permission.status, "accepted");
   assert.equal(outcome.value.source.status, "accepted");
   assert.equal(outcome.value.page.status, "repair-required");
-  assert.deepEqual(conflictResolutions, [{
+  assert.equal(conflictResolutions.length, 1);
+  assert.match(conflictResolutions[0].operationId, /^accept-external-conflict_/u);
+  const resolution = { ...conflictResolutions[0] };
+  delete resolution.operationId;
+  assert.deepEqual(resolution, {
     ...harness.context,
     action: "force-unlock",
     expectedSourceSha256: sha256(external),
-  }]);
+  });
   assert.equal(harness.documentSession.html, external);
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(external));
   assert.equal(harness.documentSession.pendingWrite, null);
@@ -1797,6 +1804,125 @@ test("DocumentWorkflow keeps an externally accepted source when its canvas canno
     events.some((event) => event.type === "document-conflict-force-unlocked"),
     true,
   );
+});
+
+test("a lost force-unlock reply reconciles the original operation without issuing a new mutation", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const external = before.replace("one", "external");
+  const conflictResolutions = [];
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return {
+          content: external,
+          sha256: sha256(external),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
+      },
+      async resolveConflict(request) {
+        conflictResolutions.push(request);
+        if (request.action === "force-unlock") {
+          throw new BridgeRequestError("force-unlock reply lost", { outcome: "unknown" });
+        }
+        return {
+          status: "unknown",
+          operationId: request.operationId,
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+        };
+      },
+    },
+  });
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
+    error: "源文件在磁盘上被其他程序修改了。",
+  });
+
+  const firstRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const first = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: firstRequest.confirmation },
+  });
+  assert.equal(first.status, "unknown");
+
+  const retryRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const retried = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: retryRequest.confirmation },
+  });
+
+  assert.equal(retried.status, "unknown");
+  assert.equal(retried.operationId, first.operationId);
+  assert.equal(conflictResolutions.length, 2);
+  assert.equal(conflictResolutions[0].action, "force-unlock");
+  assert.equal(conflictResolutions[1].action, "force-unlock-result");
+  assert.equal(conflictResolutions[1].operationId, conflictResolutions[0].operationId);
+});
+
+test("a lost force-unlock reply reconciles preview Hash separately from the materialized final Hash", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const acceptedExternal = "<!doctype html><html><body><p>external</p></body></html>";
+  const materializedExternal = "<!doctype html><html><body><p data-stemmio-id=\"sm1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">external</p></body></html>";
+  let previewHtml = acceptedExternal;
+  const conflictResolutions = [];
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async sourcePreview() {
+        return {
+          content: previewHtml,
+          sha256: sha256(previewHtml),
+          lastModifiedAt: "2026-08-11T00:00:01.000Z",
+        };
+      },
+      async resolveConflict(request) {
+        conflictResolutions.push(request);
+        if (request.action === "force-unlock") {
+          throw new BridgeRequestError("force-unlock reply lost", { outcome: "unknown" });
+        }
+        return {
+          status: "force-unlocked",
+          operationId: request.operationId,
+          acceptedSourceSha256: sha256(acceptedExternal),
+          projectId: PROJECT_ID,
+          documentId: DOCUMENT_ID,
+          sourcePath: SOURCE_PATH,
+          sourceSha256: sha256(materializedExternal),
+          sha256: sha256(materializedExternal),
+          content: materializedExternal,
+          lastModifiedAt: "2026-08-11T00:00:02.000Z",
+        };
+      },
+    },
+  });
+  harness.documentSession.recordPersistenceFailure({
+    conflict: true,
+    error: "源文件在磁盘上被其他程序修改了。",
+  });
+
+  const firstRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const first = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: firstRequest.confirmation },
+  });
+  assert.equal(first.status, "unknown");
+
+  previewHtml = materializedExternal;
+  const retryRequest = await harness.workflow.acceptExternalConflict({ context: harness.context });
+  const retried = await harness.workflow.acceptExternalConflict({
+    context: harness.context,
+    intent: { kind: "confirm", confirmation: retryRequest.confirmation },
+  });
+
+  assert.equal(retried.status, "succeeded", JSON.stringify(retried));
+  assert.equal(retried.value.source.html, materializedExternal);
+  assert.equal(retried.value.source.sourceSha256, sha256(materializedExternal));
+  assert.equal(conflictResolutions.length, 2);
+  assert.equal(conflictResolutions[0].action, "force-unlock");
+  assert.equal(conflictResolutions[1].action, "force-unlock-result");
+  assert.equal(conflictResolutions[1].operationId, conflictResolutions[0].operationId);
 });
 
 test("DocumentWorkflow rebuilds one timed-out accepted projection without repeating source acceptance", async () => {
@@ -2704,11 +2830,15 @@ test("DocumentWorkflow accepts a Working Copy conflict through preview-bound for
   });
 
   assert.equal(outcome.status, "succeeded");
-  assert.deepEqual(conflictResolutions, [{
+  assert.equal(conflictResolutions.length, 1);
+  assert.match(conflictResolutions[0].operationId, /^accept-external-conflict_/u);
+  const resolution = { ...conflictResolutions[0] };
+  delete resolution.operationId;
+  assert.deepEqual(resolution, {
     ...harness.context,
     action: "force-unlock",
     expectedSourceSha256: sha256(external),
-  }]);
+  });
   assert.equal(harness.documentSession.html, external);
   assert.equal(harness.documentSession.persistState, "idle");
   assert.equal(harness.documentSession.pendingWrite, null);
@@ -3010,7 +3140,7 @@ test("repairCurrentCanvas joins the existing document save before rebuilding the
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(after));
   assert.equal(autosaveCalls, 1);
   assert.equal(sourceCalls, 0);
-  assert.equal(harness.canvas.rebuilds, 1);
+  assert.equal(harness.canvas.rebuilds, 0);
 });
 
 test("repairCurrentCanvas coalesces duplicate intents for one exact source", async () => {
@@ -3241,6 +3371,59 @@ test("repairCurrentCanvas restores only the accepted projection without reading 
   assert.equal(harness.documentSession.html, oldHtml);
   assert.notEqual(harness.documentSession.sourceReceipt.sequence, beforeReceipt.sequence);
   assert.equal(sourceCalls, 0);
+});
+
+test("repairCurrentCanvas verifies its one rebuild fence and does not rebuild again after timeout", async () => {
+  const html = "<!doctype html><html><body><p>one rebuild</p></body></html>";
+  const rebuildFence = Object.freeze({ frameGeneration: 19, frameDocument: {} });
+  const observed = [];
+  let sourceCalls = 0;
+  let harness;
+  harness = createHarness({
+    html,
+    canvasOverrides: {
+      captureActiveFrameFence() {
+        return rebuildFence;
+      },
+      async verifyRendered(
+        renderedHtml,
+        renderedSha256,
+        _context,
+        receipt,
+        receivedRebuildFence,
+      ) {
+        observed.push({
+          renderedHtml,
+          renderedSha256,
+          receipt,
+          rebuildFence: receivedRebuildFence,
+        });
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    bridge: {
+      async source() {
+        sourceCalls += 1;
+        throw new Error("projection repair must not read source");
+      },
+    },
+  });
+
+  const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.source.status, "unchanged");
+  assert.equal(outcome.value.page.status, "repair-required");
+  assert.equal(harness.canvas.rebuilds, 0);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].renderedHtml, html);
+  assert.equal(observed[0].renderedSha256, sha256(html));
+  assert.equal(observed[0].receipt, harness.documentSession.sourceReceipt);
+  assert.equal(observed[0].rebuildFence, rebuildFence);
+  assert.equal(sourceCalls, 0);
+  assert.equal(harness.documentSession.canvasAuthority.status, "failed");
 });
 
 test("Canvas rebuild timeout fails the current R2 and a later R2 authority can verify", async () => {

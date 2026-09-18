@@ -3075,33 +3075,11 @@ export class ProjectWorkflow {
       return retireStaleStage();
     }
     if (current.phase === "canvas") {
-      let canvasOutcome = await this.#documentWorkflow.repairCurrentCanvas({
+      const canvasOutcome = await this.#documentWorkflow.repairCurrentCanvas({
         context: current.context || undefined,
       });
       if (!this.#preparedOpenStageIsCurrent(current)) {
         return retireStaleStage();
-      }
-      if (canvasOutcome.status !== "succeeded"
-        || (canvasOutcome.value?.page
-          && canvasOutcome.value.page.status !== "restored")) {
-        const retryOutcome = await this.#documentWorkflow.repairCurrentCanvas({
-          context: current.context || undefined,
-        });
-        if (!this.#preparedOpenStageIsCurrent(current)) {
-          return retireStaleStage();
-        }
-        if (retryOutcome.status === "succeeded"
-          && (!retryOutcome.value?.page
-            || retryOutcome.value.page.status === "restored")) {
-          reportInternalFailure({
-            area: "canvas",
-            operation: "import-canvas-ack",
-            code: "canvas-retried",
-            recovered: true,
-            cause: canvasOutcome.reason,
-          });
-        }
-        canvasOutcome = retryOutcome;
       }
       if (canvasOutcome.status !== "succeeded"
         || (canvasOutcome.value?.page

@@ -106,6 +106,10 @@ export type RunWorkflowConstruction = Readonly<{
     previewExternalSource(input: {
       context: import("./project-session.js").ProjectContext;
     }): Promise<DocumentWorkflowOutcome<ExternalSourceObservationReceipt>>;
+    hasPendingExternalAcceptance(input: {
+      context: import("./project-session.js").ProjectContext;
+      acceptedSourceSha256: string;
+    }): boolean;
     adoptShownExternalPreview(input: {
       context: import("./project-session.js").ProjectContext;
       previewReceipt: ExternalSourceObservationReceipt;
