@@ -2729,9 +2729,10 @@ export default function Workbench() {
           || (requirePhysicalReload && frameDocument === initialFrameDocument)
         ) {
           // Same bytes in the old frame are not a reload receipt. Let the new
-          // author candidate finish; only a settled failure/static state needs
-          // the bounded rebuild below, which must not cancel a healthy load.
-          if (!runtimePending) return null;
+          // author candidate finish. A static Runtime phase is a valid interval
+          // before React commits the authority receipt's replacement frame, so
+          // keep observing within the existing bound instead of misclassifying
+          // that interval as an immediate acknowledgement timeout.
           continue;
         }
         const renderedSha256 = await browserSha256(renderedSource);

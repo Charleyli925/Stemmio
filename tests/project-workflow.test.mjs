@@ -3384,6 +3384,94 @@ test("a Canvas acknowledgement failure rolls the hydration publication back", as
   );
 });
 
+test("hydration delegates one typed Canvas timeout to DocumentWorkflow repair", async (t) => {
+  const canonicalHtml = "<!doctype html><html><body><p>canonical</p></body></html>";
+  let verifyCount = 0;
+  let repairCount = 0;
+  let repairReceipt = null;
+  const harness = createHarness({
+    bridge: {
+      async workspace() {
+        return workspacePayload(OLD_PATH, canonicalHtml);
+      },
+      async source() {
+        return sourcePayload(OLD_PATH, canonicalHtml);
+      },
+    },
+    canvas: {
+      async verifyRendered() {
+        verifyCount += 1;
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    documentWorkflow: {
+      async repairCurrentCanvas({ expectedSourceReceipt }) {
+        repairCount += 1;
+        repairReceipt = expectedSourceReceipt;
+        return succeeded({ page: { status: "restored" } });
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  const outcome = await harness.workflow.refreshWorkspace({
+    sourcePath: OLD_PATH,
+    epoch: harness.projectSession.epoch,
+  });
+
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(verifyCount, 1);
+  assert.equal(repairCount, 1);
+  assert.equal(repairReceipt, harness.documentSession.sourceReceipt);
+  assert.equal(harness.documentSession.html, canonicalHtml);
+  assert.equal(harness.workflow.projectLoadError, null);
+});
+
+test("hydration fails after one rejected repair for a typed Canvas timeout", async (t) => {
+  const canonicalHtml = "<!doctype html><html><body><p>canonical</p></body></html>";
+  let repairCount = 0;
+  const harness = createHarness({
+    bridge: {
+      async workspace() {
+        return workspacePayload(OLD_PATH, canonicalHtml);
+      },
+      async source() {
+        return sourcePayload(OLD_PATH, canonicalHtml);
+      },
+    },
+    canvas: {
+      async verifyRendered() {
+        throw Object.assign(new Error("canvas acknowledgement timed out"), {
+          code: "DOCUMENT_CANVAS_ACK_TIMEOUT",
+        });
+      },
+    },
+    documentWorkflow: {
+      async repairCurrentCanvas() {
+        repairCount += 1;
+        return {
+          status: "rejected",
+          code: "DOCUMENT_CANVAS_REPAIR_REJECTED",
+          reason: "replacement frame did not settle",
+        };
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  const outcome = await harness.workflow.refreshWorkspace({
+    sourcePath: OLD_PATH,
+    epoch: harness.projectSession.epoch,
+  });
+
+  assert.equal(outcome.status, "rejected");
+  assert.equal(repairCount, 1);
+  assert.equal(harness.workflow.projectLoadError, "replacement frame did not settle");
+  assert.equal(harness.documentSession.html, OLD_HTML);
+});
+
 test("source rename is a typed ProjectWorkflow transition with one synchronous Session publication", async (t) => {
   let renamePayload = null;
   const harness = createHarness({
