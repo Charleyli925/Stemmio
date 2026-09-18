@@ -1107,6 +1107,7 @@ test("v4 attachments and absent conflicts stay bound to the project root", async
       ...identity,
       sourcePath: workingPath,
       action: "force-unlock",
+      operationId: "force_unlock_identity_mismatch_01",
       expectedSourceSha256: sha256(Buffer.from(html("attach"), "utf8")),
     });
     assert.equal(mismatched.response.status, 409, JSON.stringify(mismatched.body));
@@ -1121,11 +1122,25 @@ test("v4 attachments and absent conflicts stay bound to the project root", async
     projectId: ensured.body.projectId,
     documentId: ensured.body.documentId,
     action: "force-unlock",
+    operationId: "force_unlock_bridge_01",
     expectedSourceSha256: sha256(Buffer.from(html("attach"), "utf8")),
   });
   assert.equal(unlocked.response.status, 200, JSON.stringify(unlocked.body));
   assert.equal(unlocked.body.status, "force-unlocked");
+  assert.equal(unlocked.body.operationId, "force_unlock_bridge_01");
   assert.equal(unlocked.body.content, html("attach"));
+
+  const reconciledUnlock = await postJson(bridge, "/conflict/resolve", {
+    sourcePath: workingPath,
+    projectId: ensured.body.projectId,
+    documentId: ensured.body.documentId,
+    action: "force-unlock-result",
+    operationId: "force_unlock_bridge_01",
+  });
+  assert.equal(reconciledUnlock.response.status, 200, JSON.stringify(reconciledUnlock.body));
+  assert.equal(reconciledUnlock.body.status, "force-unlocked");
+  assert.equal(reconciledUnlock.body.operationId, "force_unlock_bridge_01");
+  assert.equal(reconciledUnlock.body.content, html("attach"));
 
   const sourcePreview = await bridge.requestJson(
     `/source-preview?sourcePath=${encodeURIComponent(workingPath)}`,

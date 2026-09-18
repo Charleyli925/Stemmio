@@ -1039,6 +1039,10 @@ export default function Workbench() {
           },
           freeze: (reason) => fenceAndFreezeCurrentCanvasRef.current(reason),
           unlock: () => editorRef.current?.unlockNow?.(),
+          captureActiveFrameFence: () => Object.freeze({
+              previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,
+              previousFrameDocument: editorRef.current?.getRenderedFrameDocument() || null,
+            }),
           rebuildActiveFrame: () => {
             const rebuildFence = Object.freeze({
               previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,

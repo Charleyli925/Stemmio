@@ -540,7 +540,8 @@ export class WorkspaceController {
   acknowledgeEditCanvas(input?: DocumentCanvasRenderObservation): boolean;
   retryCanvasVerification(input?: {
     context?: ProjectContext;
-  }): Promise<DocumentWorkflowOutcome>;
+    expectedSourceReceipt?: DocumentSourceReceipt | null;
+  }): Promise<DocumentWorkflowOutcome<DocumentSourceOperationResult>>;
   resumeDeferredExternalProject(): ProjectWorkflowOutcome;
   resumeDeferredProjectApplication(): ProjectWorkflowOutcome;
   reconcileProjectTransitions(): void;

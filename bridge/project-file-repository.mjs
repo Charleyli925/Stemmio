@@ -87,6 +87,7 @@ import {
   SAFE_OPERATION_ID,
   SAFE_REQUEST_ID,
   SHA256,
+  SOURCE_ELEMENT_IDENTITY_MIGRATION_RECOVERY_ID,
   VERSION_ID,
   WORKING_COPY_ID,
 } from "./project-file-repository/constants.mjs";
@@ -204,6 +205,20 @@ const LEGACY_PROMOTION_WORKING_COPY_HASH = Symbol(
   "legacy-promotion-working-copy-hash",
 );
 const SAVE_RETIREMENT_ATTEMPT_LIMIT = 16;
+
+async function retireOlderIdentityTransactions(paths, workingCopyId, keepPath) {
+  const keepName = path.basename(keepPath);
+  const prefix = `identity_${workingCopyId}_v${STEMMIO_ELEMENT_ID_SCHEMA_VERSION}_`;
+  const entries = await readdir(paths.transactionsRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.isSymbolicLink() || entry.name === keepName) continue;
+    if (!entry.name.startsWith(prefix) || !entry.name.endsWith(".json")) continue;
+    const recoveryId = entry.name.slice(0, -".json".length);
+    if (!SOURCE_ELEMENT_IDENTITY_MIGRATION_RECOVERY_ID.test(recoveryId)) continue;
+    await unlink(path.join(paths.transactionsRoot, entry.name));
+  }
+  await syncDirectory(paths.transactionsRoot).catch(() => {});
+}
 
 export const DEFAULT_PROJECT_RULES_TEMPLATE = `# 项目长期规则
 
@@ -536,12 +551,28 @@ export class ProjectFileRepository {
     documentId,
     sourcePath,
     expectedSourceSha256,
+    operationId,
   } = {}) {
     return this.#writeSerial(() => this.#forceUnlockWorkingCopy({
       projectId,
       documentId,
       sourcePath,
       expectedSourceSha256,
+      operationId,
+    }));
+  }
+
+  async queryForceUnlockWorkingCopy({
+    projectId,
+    documentId,
+    sourcePath,
+    operationId,
+  } = {}) {
+    return this.#writeSerial(() => this.#queryForceUnlockWorkingCopy({
+      projectId,
+      documentId,
+      sourcePath,
+      operationId,
     }));
   }
 
@@ -1361,6 +1392,11 @@ export class ProjectFileRepository {
         ...target,
         sourceSha256: source.sha256,
       });
+      if (adoptExternalConflict && loaded.runtime.activeRequest) {
+        loaded.runtime.activeRequest = null;
+        loaded.runtime.activeCandidateId = null;
+        await this.#writeRuntime(loaded);
+      }
     }
     performanceTiming.checkpoint("workingCopyIdentityMs");
     // The active Working Copy can be reconciled from a clean external edit
@@ -1440,6 +1476,18 @@ export class ProjectFileRepository {
     }
     const recordedSha256 = String(state.currentSha256 || "");
     if (recordedSha256 === source.sha256) return { state, recovered: false };
+    if (state.forceUnlockReceipt?.status === "pending") {
+      throw new ProjectFileRepositoryError(
+        "WORKING_COPY_CONFLICT",
+        "The Working Copy changed while a force-unlock operation is still unresolved.",
+        {
+          workingCopyId: workingCopy.workingCopyId,
+          recordedSha256,
+          diskSha256: source.sha256,
+          operationId: state.forceUnlockReceipt.operationId || null,
+        },
+      );
+    }
     if (state.saveState !== "saved") {
       throw new ProjectFileRepositoryError(
         "WORKING_COPY_CONFLICT",
@@ -1493,7 +1541,10 @@ export class ProjectFileRepository {
       workingCopyId: workingCopy.workingCopyId,
       currentSha256: source.sha256,
       differsFromBase: source.sha256 !== state.baseSha256,
-      saveState: "saved",
+      // Remain unresolved until identity materialization passes its source
+      // CAS. Ordinary workspace reconciliation must not adopt newer bytes in
+      // this pending operation window.
+      saveState: "saving",
       lastOpenedAt: nowIso(this.#clock),
       // lastPersistedRevision stays at the last successful Stemmio write.
       // Adopting disk bytes does not invent a new persisted edit. The
@@ -1507,11 +1558,10 @@ export class ProjectFileRepository {
       nextState,
       "Working Copy state",
     );
-    if (loaded.runtime.activeRequest) {
-      loaded.runtime.activeRequest = null;
-      loaded.runtime.activeCandidateId = null;
-      await this.#writeRuntime(loaded);
-    }
+    await this.#hit("force-unlock-adopted-state-written", {
+      operationId: nextState.forceUnlockReceipt?.operationId || null,
+      workingCopyId: workingCopy.workingCopyId,
+    });
     return { state: nextState, recovered: true };
   }
 
@@ -1549,6 +1599,7 @@ export class ProjectFileRepository {
             "recovered",
             "rolled-back-incomplete-staging",
             "source-changed-before-cas",
+            "external-superseded",
           ].includes(transaction.outcome)
           || !validStateTimestamp(transaction.committedAt)
         )
@@ -1658,6 +1709,56 @@ export class ProjectFileRepository {
     );
     await rm(recoveryPaths.operationRoot, { recursive: true, force: true }).catch(() => {});
     await syncDirectory(loaded.paths.recoveryRoot).catch(() => {});
+    await retireOlderIdentityTransactions(
+      loaded.paths,
+      transaction.workingCopyId,
+      transactionPath,
+    );
+  }
+
+  async #completeRecoveredForceUnlock({
+    loaded,
+    workingCopy,
+    state,
+    source,
+    acceptedSourceSha256,
+  }) {
+    const pending = state.forceUnlockReceipt;
+    const identity = inspectSourceElementIdentity(source.html);
+    const canComplete = pending?.status === "pending"
+      && SAFE_OPERATION_ID.test(String(pending.operationId || ""))
+      && pending.expectedSourceSha256 === acceptedSourceSha256
+      && pending.acceptedSourceSha256 === acceptedSourceSha256
+      && state.saveState === "saved"
+      && state.currentSha256 === source.sha256
+      && state.sourceElementIdentitySchemaVersion === STEMMIO_ELEMENT_ID_SCHEMA_VERSION
+      && identity.complete
+      && state.sourceElementIdentityBindingSha256
+        === sourceElementIdentityBindingSha256(identity);
+    if (!canComplete) return state;
+    if (loaded.runtime.activeRequest) {
+      loaded.runtime.activeRequest = null;
+      loaded.runtime.activeCandidateId = null;
+      await this.#writeRuntime(loaded);
+    }
+    const nextState = {
+      ...state,
+      forceUnlockReceipt: {
+        status: "completed",
+        operationId: pending.operationId,
+        expectedSourceSha256: acceptedSourceSha256,
+        acceptedSourceSha256,
+        sourceSha256: source.sha256,
+        completedAt: nowIso(this.#clock),
+      },
+    };
+    await atomicWriteProjectJson(
+      loaded.paths.projectRootPath,
+      workingCopyStatePath(loaded.paths, workingCopy),
+      nextState,
+      "force-unlock receipt",
+    );
+    return nextState;
   }
 
   async #ensureSourceElementIdentity({ loaded, workingCopy, state, source }) {
@@ -1675,7 +1776,13 @@ export class ProjectFileRepository {
       }
       return { source, state, migrated: false, adopted: false };
     }
-    if (state.saveState !== "saved") {
+    const pendingForceUnlock = state.saveState === "saving"
+      && state.forceUnlockReceipt?.status === "pending"
+      && SAFE_OPERATION_ID.test(String(state.forceUnlockReceipt.operationId || ""))
+      && state.forceUnlockReceipt.expectedSourceSha256 === source.sha256
+      && state.forceUnlockReceipt.acceptedSourceSha256 === source.sha256
+      && state.currentSha256 === source.sha256;
+    if (state.saveState !== "saved" && !pendingForceUnlock) {
       throw new ProjectFileRepositoryError(
         "IDENTITY_MIGRATION_BLOCKED",
         "The Working Copy identity cannot migrate while its save state is unresolved.",
@@ -1801,6 +1908,11 @@ export class ProjectFileRepository {
       this.#assertSourceElementIdentityMigrationTransaction(loaded, transaction);
     if (transaction.state === "committed") {
       await rm(recoveryPaths.operationRoot, { recursive: true, force: true }).catch(() => {});
+      await retireOlderIdentityTransactions(
+        loaded.paths,
+        transaction.workingCopyId,
+        transactionPath,
+      );
       return {
         kind: "source-element-identity-migration",
         workingCopyId: workingCopy.workingCopyId,
@@ -1887,6 +1999,27 @@ export class ProjectFileRepository {
         migratedSource = cas.written;
       }
     } else if (source.sha256 !== transaction.targetSourceSha256) {
+      const pendingForceUnlock = state.forceUnlockReceipt;
+      if (
+        pendingForceUnlock?.status === "pending"
+        && SAFE_OPERATION_ID.test(String(pendingForceUnlock.operationId || ""))
+        && pendingForceUnlock.expectedSourceSha256 === transaction.expectedSourceSha256
+        && pendingForceUnlock.acceptedSourceSha256 === transaction.expectedSourceSha256
+      ) {
+        await this.#finishSourceElementIdentityMigration({
+          loaded,
+          transactionPath,
+          transaction,
+          recoveryPaths,
+          outcome: "external-superseded",
+        });
+        return {
+          kind: "source-element-identity-migration",
+          workingCopyId: workingCopy.workingCopyId,
+          state: "external-superseded",
+          sourceSha256: source.sha256,
+        };
+      }
       throw new ProjectFileRepositoryError(
         "IDENTITY_MIGRATION_RECOVERY_CONFLICT",
         "The Working Copy no longer matches either complete side of its identity migration.",
@@ -1898,11 +2031,18 @@ export class ProjectFileRepository {
         },
       );
     }
-    const nextState = await this.#commitSourceElementIdentityMetadata({
+    let nextState = await this.#commitSourceElementIdentityMetadata({
       loaded,
       workingCopy,
       state,
       source: migratedSource,
+    });
+    nextState = await this.#completeRecoveredForceUnlock({
+      loaded,
+      workingCopy,
+      state: nextState,
+      source: migratedSource,
+      acceptedSourceSha256: transaction.expectedSourceSha256,
     });
     await this.#finishSourceElementIdentityMigration({
       loaded,
@@ -1926,16 +2066,151 @@ export class ProjectFileRepository {
     documentId,
     sourcePath,
     expectedSourceSha256,
+    operationId,
   }) {
+    const acceptedOperationId = String(operationId || "");
+    if (!SAFE_OPERATION_ID.test(acceptedOperationId)) {
+      throw new ProjectFileRepositoryError(
+        "INVALID_OPERATION_ID",
+        "The force-unlock operationId is invalid.",
+      );
+    }
+    const acceptedProjectId = assertId(projectId, PROJECT_ID, "projectId");
+    const acceptedDocumentId = assertId(documentId, DOCUMENT_ID, "documentId");
+    const acceptedSourcePath = normalizedPath(sourcePath);
+    const acceptedSourceSha256 = assertSha256(
+      expectedSourceSha256,
+      "expectedSourceSha256",
+    );
+    const target = await this.#resolveOpenTarget({
+      sourcePath: acceptedSourcePath,
+      readOnly: true,
+    });
+    if (!target) {
+      throw new ProjectFileRepositoryError(
+        "PROJECT_NOT_FOUND",
+        "No Stemmio project is registered for this HTML.",
+      );
+    }
+    if (
+      target.projectId !== acceptedProjectId
+      || target.documentId !== acceptedDocumentId
+      || !samePath(target.exactSourcePath, acceptedSourcePath)
+    ) {
+      throw new ProjectFileRepositoryError(
+        "SOURCE_IDENTITY_MISMATCH",
+        "The force-unlock target no longer matches the confirmed document identity.",
+      );
+    }
+    let preparedProject = await this.#loadRegisteredProject({
+      projectId: target.projectId,
+      documentId: target.documentId,
+      declaredProjectRootPath: target.projectRootPath,
+    });
+    let preparedWorkingCopy = preparedProject.manifest.workingCopies.find(
+      (entry) => entry.workingCopyId === target.workingCopyId,
+    );
+    if (!preparedWorkingCopy) {
+      throw new ProjectFileRepositoryError(
+        "WORKING_COPY_NOT_FOUND",
+        "The force-unlock Working Copy no longer exists.",
+      );
+    }
+    let preparedSource = await readHtmlFile(target.exactSourcePath, "managed HTML", {
+      projectRootPath: preparedProject.paths.projectRootPath,
+    });
+    let preparedStatePath = workingCopyStatePath(
+      preparedProject.paths,
+      preparedWorkingCopy,
+    );
+    let preparedState = await readJsonFile(preparedStatePath, "Working Copy state", {
+      projectRootPath: preparedProject.paths.projectRootPath,
+    });
+    assertWorkingCopyState(preparedState, preparedProject, preparedWorkingCopy, {
+      allowMissingIdentityBinding: true,
+    });
+    if (preparedState.forceUnlockReceipt?.status === "pending") {
+      const pendingOperationId = String(
+        preparedState.forceUnlockReceipt.operationId || "",
+      );
+      const reconciled = await this.#queryForceUnlockWorkingCopy({
+        projectId: acceptedProjectId,
+        documentId: acceptedDocumentId,
+        sourcePath: acceptedSourcePath,
+        operationId: pendingOperationId,
+      });
+      if (pendingOperationId === acceptedOperationId) return reconciled;
+      if (reconciled.status === "unknown") {
+        throw new ProjectFileRepositoryError(
+          "FORCE_UNLOCK_OPERATION_PENDING",
+          "A previous force-unlock operation is still unresolved.",
+          { operationId: pendingOperationId },
+        );
+      }
+      preparedProject = await this.#loadRegisteredProject({
+        projectId: target.projectId,
+        documentId: target.documentId,
+        declaredProjectRootPath: target.projectRootPath,
+      });
+      preparedWorkingCopy = preparedProject.manifest.workingCopies.find(
+        (entry) => entry.workingCopyId === target.workingCopyId,
+      );
+      if (!preparedWorkingCopy) {
+        throw new ProjectFileRepositoryError(
+          "WORKING_COPY_NOT_FOUND",
+          "The force-unlock Working Copy no longer exists.",
+        );
+      }
+      preparedSource = await readHtmlFile(target.exactSourcePath, "managed HTML", {
+        projectRootPath: preparedProject.paths.projectRootPath,
+      });
+      preparedStatePath = workingCopyStatePath(
+        preparedProject.paths,
+        preparedWorkingCopy,
+      );
+      preparedState = await readJsonFile(preparedStatePath, "Working Copy state", {
+        projectRootPath: preparedProject.paths.projectRootPath,
+      });
+      assertWorkingCopyState(preparedState, preparedProject, preparedWorkingCopy, {
+        allowMissingIdentityBinding: true,
+      });
+    }
+    if (preparedSource.sha256 !== acceptedSourceSha256) {
+      throw new ProjectFileRepositoryError(
+        "SOURCE_HASH_CONFLICT",
+        "The Working Copy changed after the external version was confirmed.",
+        {
+          expectedSourceSha256: acceptedSourceSha256,
+          actualSourceSha256: preparedSource.sha256,
+        },
+      );
+    }
+    await atomicWriteProjectJson(
+      preparedProject.paths.projectRootPath,
+      preparedStatePath,
+      {
+        ...preparedState,
+        forceUnlockReceipt: {
+          status: "pending",
+          operationId: acceptedOperationId,
+          expectedSourceSha256: acceptedSourceSha256,
+          acceptedSourceSha256,
+          preparedAt: nowIso(this.#clock),
+        },
+      },
+      "pending force-unlock receipt",
+    );
+    await this.#hit("force-unlock-pending-receipt-written", {
+      operationId: acceptedOperationId,
+      projectId: acceptedProjectId,
+      documentId: acceptedDocumentId,
+    });
     const workspace = await this.#workspace({
-      sourcePath,
+      sourcePath: acceptedSourcePath,
       adoptExternalConflict: true,
-      expectedProjectId: projectId,
-      expectedDocumentId: documentId,
-      expectedExternalSha256: assertSha256(
-        expectedSourceSha256,
-        "expectedSourceSha256",
-      ),
+      expectedProjectId: acceptedProjectId,
+      expectedDocumentId: acceptedDocumentId,
+      expectedExternalSha256: acceptedSourceSha256,
     });
     if (!workspace) {
       throw new ProjectFileRepositoryError(
@@ -1943,8 +2218,10 @@ export class ProjectFileRepository {
         "No Stemmio project is registered for this HTML.",
       );
     }
-    return {
+    const result = {
       status: "force-unlocked",
+      operationId: acceptedOperationId,
+      acceptedSourceSha256,
       projectId: workspace.project.projectId,
       documentId: workspace.project.documentId,
       sourcePath: workspace.target.exactSourcePath,
@@ -1953,6 +2230,252 @@ export class ProjectFileRepository {
       content: workspace.content,
       lastModifiedAt: workspace.lastModifiedAt,
       workingCopyState: workspace.workingCopyState,
+    };
+    await this.#hit("force-unlock-before-completed-receipt", {
+      operationId: acceptedOperationId,
+      projectId: workspace.project.projectId,
+      documentId: workspace.project.documentId,
+    });
+    const loaded = await this.#loadRegisteredProject({
+      projectId: workspace.project.projectId,
+      documentId: workspace.project.documentId,
+      declaredProjectRootPath: workspace.target.projectRootPath,
+    });
+    const workingCopy = loaded.manifest.workingCopies.find(
+      (entry) => entry.workingCopyId === workspace.target.workingCopyId,
+    );
+    if (!workingCopy) {
+      throw new ProjectFileRepositoryError(
+        "WORKING_COPY_NOT_FOUND",
+        "The force-unlock Working Copy no longer exists.",
+      );
+    }
+    const statePath = workingCopyStatePath(loaded.paths, workingCopy);
+    const state = await readJsonFile(statePath, "Working Copy state", {
+      projectRootPath: loaded.paths.projectRootPath,
+    });
+    assertWorkingCopyState(state, loaded, workingCopy);
+    const receipt = {
+      status: "completed",
+      operationId: acceptedOperationId,
+      expectedSourceSha256: acceptedSourceSha256,
+      acceptedSourceSha256,
+      sourceSha256: workspace.sourceSha256,
+      completedAt: nowIso(this.#clock),
+    };
+    await atomicWriteProjectJson(
+      loaded.paths.projectRootPath,
+      statePath,
+      { ...state, forceUnlockReceipt: receipt },
+      "force-unlock receipt",
+    );
+    return result;
+  }
+
+  async #queryForceUnlockWorkingCopy({
+    projectId,
+    documentId,
+    sourcePath,
+    operationId,
+  }) {
+    const acceptedOperationId = String(operationId || "");
+    if (!SAFE_OPERATION_ID.test(acceptedOperationId)) {
+      throw new ProjectFileRepositoryError(
+        "INVALID_OPERATION_ID",
+        "The force-unlock operationId is invalid.",
+      );
+    }
+    const expectedProjectId = assertId(projectId, PROJECT_ID, "projectId");
+    const expectedDocumentId = assertId(documentId, DOCUMENT_ID, "documentId");
+    const expectedSourcePath = normalizedPath(sourcePath);
+    const target = await this.#resolveOpenTarget({
+      sourcePath: expectedSourcePath,
+      readOnly: true,
+    });
+    if (!target) {
+      throw new ProjectFileRepositoryError(
+        "PROJECT_NOT_FOUND",
+        "No Stemmio project is registered for this HTML.",
+      );
+    }
+    if (
+      target.projectId !== expectedProjectId
+      || target.documentId !== expectedDocumentId
+      || !samePath(target.exactSourcePath, expectedSourcePath)
+    ) {
+      throw new ProjectFileRepositoryError(
+        "SOURCE_IDENTITY_MISMATCH",
+        "The force-unlock result target no longer matches the confirmed document identity.",
+      );
+    }
+    await this.#recoverProject(target.projectRootPath);
+    const loaded = await this.#loadRegisteredProject({
+      projectId: target.projectId,
+      documentId: target.documentId,
+      declaredProjectRootPath: target.projectRootPath,
+    });
+    const workingCopy = loaded.manifest.workingCopies.find(
+      (entry) => entry.workingCopyId === target.workingCopyId,
+    );
+    if (!workingCopy) {
+      throw new ProjectFileRepositoryError(
+        "WORKING_COPY_NOT_FOUND",
+        "The force-unlock Working Copy no longer exists.",
+      );
+    }
+    let state = await readJsonFile(
+      workingCopyStatePath(loaded.paths, workingCopy),
+      "Working Copy state",
+      { projectRootPath: loaded.paths.projectRootPath },
+    );
+    assertWorkingCopyState(state, loaded, workingCopy);
+    let receipt = state.forceUnlockReceipt;
+    if (!receipt || receipt.operationId !== acceptedOperationId) {
+      return {
+        status: "unknown",
+        operationId: acceptedOperationId,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        sourcePath: target.exactSourcePath,
+      };
+    }
+    let source = await readHtmlFile(target.exactSourcePath, "managed HTML", {
+      projectRootPath: loaded.paths.projectRootPath,
+    });
+    if (receipt.status === "superseded") {
+      return {
+        status: "superseded",
+        operationId: acceptedOperationId,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        sourcePath: target.exactSourcePath,
+        sourceSha256: source.sha256,
+      };
+    }
+    if (receipt.status === "pending") {
+      state = await this.#completeRecoveredForceUnlock({
+        loaded,
+        workingCopy,
+        state,
+        source,
+        acceptedSourceSha256: String(receipt.acceptedSourceSha256 || ""),
+      });
+      receipt = state.forceUnlockReceipt;
+    }
+    if (receipt?.status === "pending") {
+      if (source.sha256 !== receipt.acceptedSourceSha256) {
+        const supersededReceipt = {
+          ...receipt,
+          status: "superseded",
+          sourceSha256: source.sha256,
+          completedAt: nowIso(this.#clock),
+        };
+        state = { ...state, forceUnlockReceipt: supersededReceipt };
+        await atomicWriteProjectJson(
+          loaded.paths.projectRootPath,
+          workingCopyStatePath(loaded.paths, workingCopy),
+          state,
+          "superseded force-unlock receipt",
+        );
+        receipt = supersededReceipt;
+        return {
+          status: "superseded",
+          operationId: acceptedOperationId,
+          projectId: target.projectId,
+          documentId: target.documentId,
+          sourcePath: target.exactSourcePath,
+          sourceSha256: source.sha256,
+        };
+      }
+      const resumed = await this.#workspace({
+        sourcePath: target.exactSourcePath,
+        adoptExternalConflict: true,
+        expectedProjectId: target.projectId,
+        expectedDocumentId: target.documentId,
+        expectedExternalSha256: receipt.acceptedSourceSha256,
+      });
+      if (!resumed) {
+        return {
+          status: "unknown",
+          operationId: acceptedOperationId,
+          projectId: target.projectId,
+          documentId: target.documentId,
+          sourcePath: target.exactSourcePath,
+        };
+      }
+      const resumedLoaded = await this.#loadRegisteredProject({
+        projectId: target.projectId,
+        documentId: target.documentId,
+        declaredProjectRootPath: target.projectRootPath,
+      });
+      const resumedWorkingCopy = resumedLoaded.manifest.workingCopies.find(
+        (entry) => entry.workingCopyId === target.workingCopyId,
+      );
+      if (!resumedWorkingCopy) {
+        throw new ProjectFileRepositoryError(
+          "WORKING_COPY_NOT_FOUND",
+          "The force-unlock Working Copy no longer exists.",
+        );
+      }
+      source = await readHtmlFile(target.exactSourcePath, "managed HTML", {
+        projectRootPath: resumedLoaded.paths.projectRootPath,
+      });
+      state = await readJsonFile(
+        workingCopyStatePath(resumedLoaded.paths, resumedWorkingCopy),
+        "Working Copy state",
+        { projectRootPath: resumedLoaded.paths.projectRootPath },
+      );
+      state = await this.#completeRecoveredForceUnlock({
+        loaded: resumedLoaded,
+        workingCopy: resumedWorkingCopy,
+        state,
+        source,
+        acceptedSourceSha256: String(receipt.acceptedSourceSha256 || ""),
+      });
+      receipt = state.forceUnlockReceipt;
+    }
+    if (receipt.status === "completed" && source.sha256 !== receipt.sourceSha256) {
+      return {
+        status: "superseded",
+        operationId: acceptedOperationId,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        sourcePath: target.exactSourcePath,
+        sourceSha256: source.sha256,
+      };
+    }
+    const identity = inspectSourceElementIdentity(source.html);
+    const completed = receipt.status === "completed" || Boolean(
+      receipt.status === "pending"
+      && state.saveState === "saved"
+      && state.currentSha256 === source.sha256
+      && loaded.runtime.activeRequest === null
+      && state.sourceElementIdentitySchemaVersion === STEMMIO_ELEMENT_ID_SCHEMA_VERSION
+      && identity.complete
+      && state.sourceElementIdentityBindingSha256
+        === sourceElementIdentityBindingSha256(identity),
+    );
+    if (!completed) {
+      return {
+        status: "unknown",
+        operationId: acceptedOperationId,
+        projectId: target.projectId,
+        documentId: target.documentId,
+        sourcePath: target.exactSourcePath,
+      };
+    }
+    return {
+      status: "force-unlocked",
+      operationId: acceptedOperationId,
+      acceptedSourceSha256: String(receipt.acceptedSourceSha256 || ""),
+      projectId: target.projectId,
+      documentId: target.documentId,
+      sourcePath: target.exactSourcePath,
+      sourceSha256: source.sha256,
+      sha256: source.sha256,
+      content: source.html,
+      lastModifiedAt: source.lastModifiedAt,
+      workingCopyState: state,
     };
   }
 

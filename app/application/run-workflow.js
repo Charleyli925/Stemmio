@@ -473,6 +473,7 @@ export class RunWorkflow {
       !documentWorkflow
       || typeof documentWorkflow.enqueueEdit !== "function"
       || typeof documentWorkflow.previewExternalSource !== "function"
+      || typeof documentWorkflow.hasPendingExternalAcceptance !== "function"
       || typeof documentWorkflow.adoptShownExternalPreview !== "function"
     ) {
       throw new TypeError("RunWorkflow requires DocumentWorkflow composition.");
@@ -1830,9 +1831,14 @@ export class RunWorkflow {
           return preview.status === "stale" ? stale(run) : preview;
         }
         const previewSha256 = await this.#hashPort.sha256(String(preview.value.html || ""));
+        const reconcilesPendingAcceptance =
+          this.#documentWorkflow.hasPendingExternalAcceptance({
+            context,
+            acceptedSourceSha256: expectedSourceSha256,
+          });
         if (
           previewSha256 !== preview.value.sourceSha256
-          || previewSha256 !== expectedSourceSha256
+          || (previewSha256 !== expectedSourceSha256 && !reconcilesPendingAcceptance)
         ) {
           return blocked(
             "RUN_EXTERNAL_SOURCE_STALE",

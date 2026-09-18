@@ -13,7 +13,15 @@ import type {
 } from "./source-history-session.js";
 import type { VersionSession } from "./version-session.js";
 import type { DocumentWorkflowCodecs } from "./document-workflow-codecs.js";
+import type {
+  DocumentSourceOperationResult,
+} from "./document-source-operation-contract.js";
 import type { SourceHistoryEntry } from "../domain/source-history.js";
+
+export type {
+  DocumentSourceOperationKind,
+  DocumentSourceOperationResult,
+} from "./document-source-operation-contract.js";
 
 export type DocumentWorkflowOutcome<T> =
   | Readonly<{ status: "succeeded"; value: T }>
@@ -26,12 +34,6 @@ export type DocumentWorkflowOutcome<T> =
   | Readonly<{ status: "rejected"; code: string; reason: string }>
   | Readonly<{ status: "unknown"; operationId: string; reason: string }>
   | Readonly<{ status: "stale"; context: ProjectContext }>;
-
-export type DocumentSourceOperationKind =
-  | "reload-from-disk"
-  | "repair-current-canvas"
-  | "accept-shown-external-preview"
-  | "accept-external-conflict";
 
 export type DocumentSourceConfirmationReceipt = Readonly<{
   kind: "document-source-confirmation";
@@ -57,23 +59,6 @@ export type ExternalSourceObservationReceipt = Readonly<{
   expectedWorkingSha256: string;
 }>;
 
-export type DocumentSourceOperationResult = Readonly<{
-  operationId: string;
-  operation: DocumentSourceOperationKind;
-  permission: Readonly<{ status: "not-required" | "accepted" }>;
-  source: Readonly<{
-    status: "unchanged" | "accepted";
-    receipt: DocumentSourceReceipt | null;
-    html: string;
-    sourceSha256: string;
-    lastModifiedAt?: string;
-  }>;
-  page: Readonly<{
-    status: "restored" | "repair-required" | "not-current";
-    reason?: string;
-  }>;
-}>;
-
 export type DocumentWorkflowRecoveryJournal = Readonly<{
   commit(input: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   readVerified(input: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>> | null>;
@@ -90,6 +75,7 @@ export type DocumentWorkflowTransitionAuthority = Readonly<{
 export type DocumentWorkflowCanvasPort = Readonly<{
   invalidateRenderAcks(): void;
   unlock?(): void;
+  captureActiveFrameFence?(): unknown;
   rebuildActiveFrame?(): unknown;
   verifyRendered?(
     html: string,
@@ -243,6 +229,10 @@ export class DocumentWorkflow {
   previewExternalSource(input?: {
     context?: ProjectContext;
   }): Promise<DocumentWorkflowOutcome<ExternalSourceObservationReceipt>>;
+  hasPendingExternalAcceptance(input?: {
+    context?: ProjectContext;
+    acceptedSourceSha256?: string;
+  }): boolean;
   observeExternalSourceChange(input?: {
     sourcePath?: string | null;
   }): Promise<DocumentWorkflowOutcome<Record<string, unknown>>>;

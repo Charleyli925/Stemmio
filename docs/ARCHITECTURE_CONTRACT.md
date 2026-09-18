@@ -554,9 +554,13 @@ discarded and never become source authority. Local/history receipts keep the
 mounted iframe, while every authority receipt advances Canvas generation and
 requires a fresh physical frame, including when the HTML bytes are equal. The safe-save projection
 requires both the persisted Document revision/Hash and the currently visible
-surface acknowledgement. A missing acknowledgement triggers at most one
-Canvas rebuild; a clean source mismatch triggers at most one authoritative
-reread before that rebuild. Neither recovery path delegates internal
+surface acknowledgement. An ordinary accepted source may observe once and,
+after an acknowledgement timeout, publish at most one replacement receipt.
+`repairCurrentCanvas` instead captures the old physical-frame fence, publishes
+one authority receipt whose Canvas effect is the sole rebuild executor, and
+only verifies that result; its timeout remains `repair-required` until an
+explicit later retry. A clean source mismatch triggers at most one authoritative
+reread before its rebuild. Neither recovery path delegates internal
 reconciliation to the user.
 
 The preview-to-edit `PageViewContext` is a non-durable projection owned by the

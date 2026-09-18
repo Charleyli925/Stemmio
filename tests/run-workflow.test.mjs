@@ -346,6 +346,9 @@ function createHarness({
     async previewExternalSource() {
       return blocked("SOURCE_PREVIEW_UNAVAILABLE", "preview test double was not configured");
     },
+    hasPendingExternalAcceptance() {
+      return false;
+    },
     async adoptShownExternalPreview() {
       return blocked("SOURCE_ADOPTION_UNAVAILABLE", "adoption test double was not configured");
     },
@@ -3291,6 +3294,61 @@ test("keep-external retains the run when the preview Hash differs from the confl
   assert.equal(outcome.code, "RUN_EXTERNAL_SOURCE_STALE");
   assert.equal(adoptCalls, 0);
   assert.equal(harness.runSession.hasRun(conflict), true);
+});
+
+test("keep-external lets Document reconcile a lost acceptance whose final identity Hash changed", async () => {
+  const accepted = "<main>external</main>";
+  const materialized = "<main data-stemmio-id=\"sm1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">external</main>";
+  let pendingCheck = null;
+  let adopted = null;
+  const preview = Object.freeze({
+    kind: "external-source-observation",
+    operationId: "preview_materialized_retry",
+    html: materialized,
+    sourceSha256: sha256(materialized),
+  });
+  const harness = createHarness({
+    documentWorkflowOverrides: {
+      async previewExternalSource() {
+        return succeeded(preview);
+      },
+      hasPendingExternalAcceptance(input) {
+        pendingCheck = input;
+        return input.acceptedSourceSha256 === sha256(accepted);
+      },
+      async adoptShownExternalPreview(input) {
+        adopted = input;
+        return succeeded({
+          operationId: "accept_original_lost_reply",
+          operation: "accept-shown-external-preview",
+          permission: { status: "accepted" },
+          source: {
+            status: "accepted",
+            receipt: null,
+            html: materialized,
+            sourceSha256: sha256(materialized),
+          },
+          page: { status: "restored" },
+        });
+      },
+    },
+  });
+  const conflict = runRecord({
+    status: "awaiting-conflict-resolution",
+    conflictId: "conflict_materialized_retry",
+    externalSourceSha256: sha256(accepted),
+  });
+  harness.runSession.trackRun(conflict, { activate: "always" });
+
+  const outcome = await harness.workflow.resolveConflict({
+    run: conflict,
+    action: "keep-external",
+  });
+
+  assert.equal(outcome.status, "succeeded", JSON.stringify(outcome));
+  assert.equal(pendingCheck.acceptedSourceSha256, sha256(accepted));
+  assert.equal(adopted.previewReceipt, preview);
+  assert.equal(harness.runSession.hasRun(conflict), false);
 });
 
 test("a late keep-external acceptance reports not-current without touching a reopened generation", async () => {

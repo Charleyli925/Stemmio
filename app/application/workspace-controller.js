@@ -733,6 +733,7 @@ export class WorkspaceController {
             verifyRendered: documentWorkflow.canvas?.verifyRendered,
             freeze: documentWorkflow.canvas?.freeze,
             unlock: documentWorkflow.canvas?.unlock,
+            captureActiveFrameFence: documentWorkflow.canvas?.captureActiveFrameFence,
             rebuildActiveFrame: documentWorkflow.canvas?.rebuildActiveFrame,
             adoptHistorySource: documentWorkflow.canvas?.adoptHistorySource,
           },

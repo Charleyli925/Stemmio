@@ -1,5 +1,6 @@
 import { isBridgeRequestError } from "./bridge-client.js";
 import { createDocumentWorkflowCodecs } from "./document-workflow-codecs.js";
+import { createDocumentSourceOperationResult } from "./document-source-operation-result.js";
 import {
   planDocumentEnqueue,
   planDocumentSave,
@@ -235,6 +236,7 @@ export class DocumentWorkflow {
   #sourceOperation = null;
   #sourceConfirmations = new Map();
   #externalObservations = new Map();
+  #unknownForceUnlock = null;
   #disposed = false;
 
   constructor({
@@ -342,6 +344,7 @@ export class DocumentWorkflow {
     this.#sourceOperation = null;
     this.#sourceConfirmations.clear();
     this.#externalObservations.clear();
+    this.#unknownForceUnlock = null;
     this.#listeners.clear();
   }
 
@@ -680,6 +683,7 @@ export class DocumentWorkflow {
     this.#sourceOperation = null;
     this.#sourceConfirmations.clear();
     this.#externalObservations.clear();
+    this.#unknownForceUnlock = null;
     this.#clearAutosaveTimer();
     this.#auditPending = [];
     this.#auditInFlight.clear();
@@ -1091,6 +1095,11 @@ export class DocumentWorkflow {
         expectedEditRevision: expected.editRevision,
         expectedWorkingSha256: String(expected.workingHtmlSha256 || ""),
       });
+      for (const [storedOperationId, stored] of this.#externalObservations) {
+        if (sameContext(stored.context, activeContext, this.#codecs.sameSourcePath)) {
+          this.#externalObservations.delete(storedOperationId);
+        }
+      }
       this.#externalObservations.set(receipt.operationId, receipt);
       return succeeded(receipt);
     } catch (cause) {
@@ -1109,6 +1118,18 @@ export class DocumentWorkflow {
         message,
       );
     }
+  }
+
+  hasPendingExternalAcceptance({ context, acceptedSourceSha256 } = {}) {
+    const activeContext = copyContext(context) || this.#projectSession.context;
+    const pending = this.#unknownForceUnlock;
+    return Boolean(
+      activeContext
+      && pending
+      && this.#isCurrent(activeContext)
+      && sameContext(pending.context, activeContext, this.#codecs.sameSourcePath)
+      && pending.expectedSourceSha256 === String(acceptedSourceSha256 || "")
+    );
   }
 
   async adoptShownExternalPreview({ context, previewReceipt } = {}) {
@@ -1263,12 +1284,12 @@ export class DocumentWorkflow {
           || this.#documentSession.editRevision !== source.editRevision) {
           return stale(activeContext);
         }
+        const rebuildFence = this.#canvasPort.captureActiveFrameFence?.();
         const reloaded = this.#documentSession.reloadCanvas({
           context: activeContext,
           operationId,
         });
         this.#canvasPort.invalidateRenderAcks();
-        this.#canvasPort.rebuildActiveFrame?.();
         return this.#restoreAcceptedPage({
           operationId,
           operation: "repair-current-canvas",
@@ -1277,6 +1298,11 @@ export class DocumentWorkflow {
           sourceSha256: reloaded.workingHtmlSha256,
           sourceStatus: "unchanged",
           permissionStatus: "not-required",
+          canvasExecution: Object.freeze({
+            expectedReceipt: reloaded.sourceReceipt,
+            rebuildFence,
+            remainingRebuilds: 0,
+          }),
         });
       },
     });
@@ -2942,6 +2968,12 @@ export class DocumentWorkflow {
 
   #sourceConfirmation(action, context, expectedExternalSha256 = "") {
     const document = this.#documentSession.snapshot;
+    for (const [storedOperationId, stored] of this.#sourceConfirmations) {
+      if (stored.action === action
+        && sameContext(stored.context, context, this.#codecs.sameSourcePath)) {
+        this.#sourceConfirmations.delete(storedOperationId);
+      }
+    }
     const confirmation = Object.freeze({
       kind: "document-source-confirmation",
       operationId: this.#nextOperationId("source-confirmation"),
@@ -3005,11 +3037,51 @@ export class DocumentWorkflow {
     if (!SHA256.test(expected)) {
       return blocked("EXTERNAL_SOURCE_PREVIEW_STALE", "外部源回执缺少可验证的 Hash。");
     }
-    const payload = await this.#bridgeClient.resolveConflict({
-      ...context,
-      action: "force-unlock",
-      expectedSourceSha256: expected,
-    });
+    const pending = this.#unknownForceUnlock;
+    let payload;
+    if (pending && sameContext(pending.context, context, this.#codecs.sameSourcePath)) {
+      payload = await this.#bridgeClient.resolveConflict({
+        ...context,
+        action: "force-unlock-result",
+        operationId: pending.operationId,
+      });
+      if (payload?.status === "unknown") {
+        return unknown(
+          pending.operationId,
+          "外部版本采用结果尚未确认，不会重复执行覆盖操作。",
+        );
+      }
+      this.#unknownForceUnlock = null;
+      if (payload?.status === "superseded"
+        || payload?.acceptedSourceSha256 !== pending.expectedSourceSha256
+        || payload?.sourceSha256 !== expected) {
+        return blocked(
+          "EXTERNAL_SOURCE_PREVIEW_STALE",
+          "磁盘版本已变化，请重新预览后再接受。",
+        );
+      }
+    } else {
+      try {
+        payload = await this.#bridgeClient.resolveConflict({
+          ...context,
+          action: "force-unlock",
+          operationId,
+          expectedSourceSha256: expected,
+        });
+      } catch (cause) {
+        const code = sourceErrorCode(cause, "");
+        if (isBridgeRequestError(cause)
+          && cause.outcome === "unknown"
+          && !["SOURCE_HASH_CONFLICT", "SOURCE_IDENTITY_MISMATCH", "PROJECT_NOT_FOUND", "INVALID_OPERATION_ID"].includes(code)) {
+          this.#unknownForceUnlock = Object.freeze({
+            operationId,
+            context: Object.freeze({ ...context }),
+            expectedSourceSha256: expected,
+          });
+        }
+        throw cause;
+      }
+    }
     return this.#acceptSourcePayload({
       operationId,
       operation,
@@ -3127,23 +3199,19 @@ export class DocumentWorkflow {
     }
     if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
       if (durableSourceAccepted) {
-        return succeeded(Object.freeze({
+        return succeeded(createDocumentSourceOperationResult({
           operationId,
           operation,
-          permission: Object.freeze({ status: permissionStatus }),
-          source: Object.freeze({
-            status: "accepted",
-            receipt: null,
-            html,
-            sourceSha256,
-            ...(payload.lastModifiedAt
-              ? { lastModifiedAt: String(payload.lastModifiedAt) }
-              : {}),
-          }),
-          page: Object.freeze({
-            status: "not-current",
-            reason: "外部源文件已接纳，当前页面已切换。",
-          }),
+          permissionStatus,
+          sourceStatus: "accepted",
+          receipt: null,
+          html,
+          sourceSha256,
+          lastModifiedAt: payload.lastModifiedAt
+            ? String(payload.lastModifiedAt)
+            : undefined,
+          pageStatus: "not-current",
+          reason: "外部源文件已接纳，当前页面已切换。",
         }));
       }
       return stale(context);
@@ -3204,63 +3272,56 @@ export class DocumentWorkflow {
     lastModifiedAt = "",
     permissionStatus = "not-required",
     receipt: acceptedReceipt = this.#documentSession.sourceReceipt,
+    canvasExecution = null,
   }) {
     if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
-      return succeeded(Object.freeze({
+      return succeeded(createDocumentSourceOperationResult({
         operationId,
         operation,
-        permission: Object.freeze({ status: permissionStatus }),
-        source: Object.freeze({
-          status: sourceStatus,
-          receipt: acceptedReceipt,
-          html,
-          sourceSha256,
-          ...(lastModifiedAt ? { lastModifiedAt } : {}),
-        }),
-        page: Object.freeze({
-          status: "not-current",
-          reason: "源文件已接纳，当前页面已切换。",
-        }),
-      }));
-    }
-    const restored = await this.#acknowledgeCanvas(html, sourceSha256, context);
-    if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
-      return succeeded(Object.freeze({
-        operationId,
-        operation,
-        permission: Object.freeze({ status: permissionStatus }),
-        source: Object.freeze({
-          status: sourceStatus,
-          receipt: acceptedReceipt,
-          html,
-          sourceSha256,
-          ...(lastModifiedAt ? { lastModifiedAt } : {}),
-        }),
-        page: Object.freeze({
-          status: "not-current",
-          reason: "源文件已接纳，当前页面已切换。",
-        }),
-      }));
-    }
-    const page = restored
-      ? Object.freeze({ status: "restored" })
-      : Object.freeze({
-        status: "repair-required",
-        reason: this.#documentSession.canvasAuthority.error
-          || "文件已经接纳，但页面尚未恢复。",
-      });
-    return succeeded(Object.freeze({
-      operationId,
-      operation,
-      permission: Object.freeze({ status: permissionStatus }),
-      source: Object.freeze({
-        status: sourceStatus,
+        permissionStatus,
+        sourceStatus,
         receipt: acceptedReceipt,
         html,
         sourceSha256,
-        ...(lastModifiedAt ? { lastModifiedAt } : {}),
-      }),
-      page,
+        lastModifiedAt: lastModifiedAt || undefined,
+        pageStatus: "not-current",
+        reason: "源文件已接纳，当前页面已切换。",
+      }));
+    }
+    const restored = await this.#acknowledgeCanvas(
+      html,
+      sourceSha256,
+      context,
+      canvasExecution,
+    );
+    if (this.#sourceOperation?.operationId !== operationId || !this.#isCurrent(context)) {
+      return succeeded(createDocumentSourceOperationResult({
+        operationId,
+        operation,
+        permissionStatus,
+        sourceStatus,
+        receipt: acceptedReceipt,
+        html,
+        sourceSha256,
+        lastModifiedAt: lastModifiedAt || undefined,
+        pageStatus: "not-current",
+        reason: "源文件已接纳，当前页面已切换。",
+      }));
+    }
+    return succeeded(createDocumentSourceOperationResult({
+      operationId,
+      operation,
+      permissionStatus,
+      sourceStatus,
+      receipt: acceptedReceipt,
+      html,
+      sourceSha256,
+      lastModifiedAt: lastModifiedAt || undefined,
+      pageStatus: restored ? "restored" : "repair-required",
+      reason: restored
+        ? undefined
+        : this.#documentSession.canvasAuthority.error
+          || "文件已经接纳，但页面尚未恢复。",
     }));
   }
 
@@ -3285,15 +3346,27 @@ export class DocumentWorkflow {
     });
   }
 
-  async #acknowledgeCanvas(html, sourceSha256, context) {
+  async #acknowledgeCanvas(html, sourceSha256, context, canvasExecution = null) {
     if (typeof this.#canvasPort.verifyRendered !== "function") return true;
+    const expectedReceipt = canvasExecution?.expectedReceipt || null;
+    const initialRebuildFence = canvasExecution?.rebuildFence;
+    const remainingRebuilds = Number.isInteger(canvasExecution?.remainingRebuilds)
+      ? canvasExecution.remainingRebuilds
+      : 1;
     let observation;
     try {
-      observation = await this.#verifyRendered(html, sourceSha256, context);
+      observation = await this.#verifyRendered(
+        html,
+        sourceSha256,
+        context,
+        expectedReceipt,
+        initialRebuildFence,
+      );
     } catch (cause) {
       if (context && !this.#isCurrent(context)) return false;
       const current = this.#documentSession.snapshot;
       const canRebuild = sourceErrorCode(cause, "") === DOCUMENT_CANVAS_ACK_TIMEOUT
+        && remainingRebuilds > 0
         && typeof this.#canvasPort.rebuildActiveFrame === "function"
         && current.html === html
         && current.workingHtmlSha256 === sourceSha256;
