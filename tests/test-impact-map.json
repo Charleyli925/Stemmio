@@ -1695,7 +1695,6 @@
     {
       "id": "workspace-preferences-contract",
       "patterns": [
-        "^app/application/workspace-preferences-session\\.(?:js|d\\.ts)$",
         "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
         "^shared/agent-configuration-preferences\\.d\\.mts$",
         "^scripts/verify-workspace-preferences-typecheck\\.mjs$",
