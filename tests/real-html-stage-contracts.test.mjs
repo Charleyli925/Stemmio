@@ -298,6 +298,81 @@ test("a stopped capability probe keeps the full static denominator as partial di
   }
 });
 
+test("capability normalization admits only complete proven authored denominator exclusions", () => {
+  const wrapperId = "sm1_10000000000000000000000000000000";
+  const descendantId = "sm1_20000000000000000000000000000000";
+  const observation = {
+    stableId: wrapperId,
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [descendantId],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+    },
+  };
+  const normalized = normalizeCapabilityProbeObservations([observation]);
+  assert.deepEqual(normalized.liveDom, []);
+  assert.deepEqual(normalized.denominatorExclusions, [{
+    elementId: wrapperId,
+    reason: CAPABILITY_MANIFEST_REASONS.AUTHORED_DESCENDANT_OCCLUSION,
+    descendantStableIds: [descendantId],
+    hitTest: {
+      sampleCount: 25,
+      validSampleCount: 25,
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+    },
+  }]);
+  for (const hitTest of [
+    { ...observation.hitTest, validSampleCount: 24 },
+    { ...observation.hitTest, sourceAncestorVerified: false },
+    { ...observation.hitTest, liveUniqueVerified: false },
+    { ...observation.hitTest, descendantStableIds: [] },
+    { ...observation.hitTest, descendantStableIds: ["private-dom-id"] },
+  ]) {
+    assert.throws(
+      () => normalizeCapabilityProbeObservations([{ ...observation, hitTest }]),
+      { code: "CAPABILITY_PROBE_DENOMINATOR_EXCLUSION_INVALID" },
+    );
+  }
+});
+
+test("a reviewed descendant-occlusion exclusion removes only its exact authored denominator row", () => {
+  const wrapperId = "sm1_30000000000000000000000000000000";
+  const siblingId = "sm1_40000000000000000000000000000000";
+  const denominator = [
+    { probeStableId: wrapperId, operationStableId: wrapperId, expectations: [] },
+    { probeStableId: siblingId, operationStableId: siblingId, expectations: [] },
+  ];
+  const normalized = normalizeCapabilityProbeObservations([{
+    stableId: wrapperId,
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [siblingId],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+    },
+  }]);
+  const excludedIds = new Set(normalized.denominatorExclusions.map((entry) => entry.elementId));
+  const reviewed = denominator.filter((entry) => !excludedIds.has(entry.probeStableId));
+  const draft = createCapabilityManifestDraft({ authoredDenominator: reviewed });
+  assert.deepEqual(reviewed.map((entry) => entry.probeStableId), [siblingId]);
+  assert.equal(draft.coveragePlan.denominator, 1);
+  assert.equal(draft.coveragePlan.required, 1);
+  assert.equal(createCapabilityManifestDraft({ authoredDenominator: [] }).issues
+    .includes("AUTHORED_DENOMINATOR_EMPTY"), true);
+});
+
 test("real HTML discovery observations do not turn a successful preflight into a failure", () => {
   const trace = createDiscoveryTrace();
   recordDiscoveryObservation(

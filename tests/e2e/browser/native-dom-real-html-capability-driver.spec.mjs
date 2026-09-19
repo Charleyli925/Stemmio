@@ -848,6 +848,106 @@ test("capability probe uses a bounded real mouse hit for a continuously moving t
   expect(Date.now() - startedAt).toBeLessThan(5_000);
 });
 
+test("capability probe excludes a source-proven wrapper covered by unique authored descendants without clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section id="wrapper" data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:100%;height:100%">covered</span>
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [CORRECT_ID],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+    },
+  });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
+test("capability probe blocks a descendant-covered wrapper when source ancestry is unproven", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:100%;height:100%">covered</span>
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    probeReason: "NO_EXACT_HIT_POINT",
+    hitTest: { kind: "blocked", hitKind: "unproven-descendant" },
+  });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
 test("capability probe rejects a foreign hit interceptor without force-clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
   await capabilityFixture(page);
   await page.locator("#target").evaluate((element) => {
@@ -1175,6 +1275,95 @@ test("Runtime-generated discovery trusts controller diagnostics and freezes one 
     deniedCapabilityFamilies: ["text", "format", "copy", "move", "delete"],
   }]);
   expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics])).toBeNull();
+});
+
+test("Runtime-generated discovery clicks an active-frame SVG through its descendant with a real mouse", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <style>iframe { width:320px; height:180px; border:0; }</style>
+    <main data-runtime-root><iframe data-runtime-slot-role="active" data-frame-generation="7"></iframe></main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  const iframeElement = await page.locator("iframe").elementHandle();
+  const child = await iframeElement.contentFrame();
+  await child.setContent(`
+    <section data-stemmio-id="${CORRECT_ID}">
+      <svg id="runtime-svg" width="240" height="100"><rect width="240" height="100"></rect></svg>
+    </section>
+  `);
+  await child.locator("#runtime-svg").evaluate((element, anchorId) => {
+    window.__runtimeProbeClickCount = 0;
+    element.addEventListener("click", () => {
+      window.__runtimeProbeClickCount += 1;
+      const root = window.parent.document.querySelector("[data-runtime-root]");
+      root.setAttribute("data-selection-runtime-generated", "true");
+      root.setAttribute("data-selection-runtime-generation", "7");
+      root.setAttribute("data-selection-runtime-source-anchor-id", anchorId);
+      root.setAttribute("data-selection-runtime-kind", "svg");
+      root.setAttribute("data-selection-runtime-path", "svg");
+    });
+  }, CORRECT_ID);
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: child,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.diagnostics).toMatchObject({
+    candidateCount: 1,
+    probedCount: 1,
+    runtimeGeneratedCount: 1,
+    frozenTargetCount: 1,
+    probeFailureCount: 0,
+    firstFailure: null,
+  });
+  expect(await child.evaluate(() => window.__runtimeProbeClickCount)).toBe(1);
+});
+
+test("Runtime-generated discovery rejects an active-frame host overlay without clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <style>
+      iframe { width:320px; height:180px; border:0; }
+      #host-overlay { position:fixed; left:8px; top:8px; width:320px; height:180px; z-index:20; }
+    </style>
+    <main data-runtime-root>
+      <iframe data-runtime-slot-role="active" data-frame-generation="7"></iframe>
+      <div id="host-overlay" hidden></div>
+    </main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  const iframeElement = await page.locator("iframe").elementHandle();
+  const child = await iframeElement.contentFrame();
+  await child.setContent(`
+    <section data-stemmio-id="${CORRECT_ID}">
+      <svg id="runtime-svg" width="240" height="100"><rect width="240" height="100"></rect></svg>
+    </section>
+  `);
+  await child.locator("#runtime-svg").evaluate((element) => {
+    window.__runtimeProbeClickCount = 0;
+    element.addEventListener("click", () => { window.__runtimeProbeClickCount += 1; });
+  });
+  await page.locator("iframe").evaluate((iframe) => {
+    iframe.addEventListener("mouseenter", () => {
+      document.querySelector("#host-overlay")?.removeAttribute("hidden");
+    });
+  });
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: child,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.targets).toEqual([]);
+  expect(frozen.diagnostics).toMatchObject({
+    probedCount: 0,
+    probeFailureCount: 1,
+    firstFailure: {
+      substage: "target-click",
+      code: "RUNTIME_PROBE_HOST_POINTER_INTERCEPTED",
+      hitKind: "div",
+    },
+  });
+  expect(await child.evaluate(() => window.__runtimeProbeClickCount)).toBe(0);
 });
 
 test("Runtime-generated discovery records an authored-only page without a probe failure", HARNESS_TEST_OPTIONS, async ({ page }) => {

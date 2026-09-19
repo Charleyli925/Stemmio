@@ -893,6 +893,12 @@ async function freezeCapabilityManifest(
         },
       );
       probed.push({ ...observation, type: majorElementType(observation.tag) });
+      if (observation.probeReason === "AUTHORED_DESCENDANT_OCCLUSION") {
+        // A wrapper wholly covered by proven, unique authored descendants is
+        // not independently reachable. The normalizer validates the complete
+        // hit-test proof before this candidate can leave the denominator.
+        continue;
+      }
       if (
         allowUnresolved
         && typeof observation.probeReason === "string"
@@ -964,12 +970,21 @@ async function freezeCapabilityManifest(
       liveDom: normalized.liveDom,
     }),
   );
+  const denominatorExclusionById = new Map(
+    normalized.denominatorExclusions.map((entry) => [entry.elementId, entry]),
+  );
   const aliasByProbeId = new Map(normalized.aliases.map((entry) => [
     entry.probeStableId,
     entry.operationStableId,
   ]));
   manifest.excluded = manifest.excluded.map((entry) => (
-    aliasByProbeId.has(entry.elementId)
+    denominatorExclusionById.has(entry.elementId)
+      ? {
+        elementId: entry.elementId,
+        reasons: [CAPABILITY_MANIFEST_REASONS.AUTHORED_DESCENDANT_OCCLUSION],
+        descendantStableIds: denominatorExclusionById.get(entry.elementId).descendantStableIds,
+      }
+      : aliasByProbeId.has(entry.elementId)
       ? {
         ...entry,
         reasons: [CAPABILITY_MANIFEST_REASONS.CANONICALIZED_TO_OPERATION_ANCESTOR],
@@ -977,6 +992,9 @@ async function freezeCapabilityManifest(
       }
       : entry
   ));
+  const reviewedAuthoredDenominator = authoredDenominator.filter(
+    (entry) => !denominatorExclusionById.has(entry.probeStableId),
+  );
   const observationsById = new Map(normalized.liveDom.map((entry) => [entry.stableId, entry]));
   manifest.entries = manifest.entries.map((entry) => {
     const observation = observationsById.get(entry.elementId);
@@ -1000,7 +1018,7 @@ async function freezeCapabilityManifest(
   const discovery = {
     complete: stopReason == null && examinedCandidateCount === candidatesById.size,
     knownCandidateCount: candidatesById.size,
-    authoredDenominatorCount: authoredDenominator.length,
+    authoredDenominatorCount: reviewedAuthoredDenominator.length,
     examinedCandidateCount,
     probedCandidateCount,
     unexaminedCandidateCount: Math.max(0, candidatesById.size - examinedCandidateCount),
@@ -1075,7 +1093,7 @@ async function freezeCapabilityManifest(
     };
   });
   const denominatorWithOperations = attachOperationGroupsToAuthoredDenominator({
-    authoredDenominator,
+    authoredDenominator: reviewedAuthoredDenominator,
     operationGroups,
     liveDom: canonicalObservations,
     aliases: normalized.aliases,

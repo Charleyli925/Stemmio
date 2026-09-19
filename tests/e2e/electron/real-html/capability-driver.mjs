@@ -203,32 +203,95 @@ export async function collectVisibleAuthoredCandidates(frame, sourceElements, ta
   }, { sourceElements, tabId });
 }
 
-async function safeAuthoredHitPoint(target) {
-  return target.evaluate((element) => {
+async function authoredHitTest(frame, target, sourceElements) {
+  const sampled = await target.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
+    const descendantStableIds = new Set();
+    let sampleCount = 0;
+    let blockedHitKind = null;
     for (const yFraction of fractions) {
       for (const xFraction of fractions) {
         const x = rect.left + Math.max(1, rect.width * xFraction);
         const y = rect.top + Math.max(1, rect.height * yFraction);
+        if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+        sampleCount += 1;
         const hit = element.ownerDocument.elementFromPoint(x, y);
         if (hit?.closest("[data-stemmio-id]") === element) {
           return {
+            kind: "exact",
             targetX: x - rect.left,
             targetY: y - rect.top,
             clientX: x,
             clientY: y,
           };
         }
+        const stableHit = hit?.closest?.("[data-stemmio-id]") || null;
+        const stableId = stableHit?.getAttribute("data-stemmio-id") || null;
+        if (
+          !hit
+          || !stableHit
+          || !stableId
+          || stableHit === element
+          || !element.contains(stableHit)
+          || !element.contains(hit)
+        ) {
+          blockedHitKind ||= stableHit ? "stable-id-non-descendant" : hit?.localName || "no-hit";
+          continue;
+        }
+        descendantStableIds.add(stableId);
       }
     }
-    return null;
+    return {
+      kind: blockedHitKind || descendantStableIds.size === 0
+        ? "blocked"
+        : "descendant-candidate",
+      sampleCount,
+      descendantStableIds: [...descendantStableIds].sort(),
+      hitKind: blockedHitKind,
+    };
   });
+  if (sampled.kind === "exact") return sampled;
+  if (
+    sampled.kind !== "descendant-candidate"
+    || !Number.isInteger(sampled.sampleCount)
+    || sampled.sampleCount <= 0
+    || sampled.descendantStableIds.length === 0
+  ) return { ...sampled, kind: "blocked" };
+  const targetStableId = await target.getAttribute("data-stemmio-id");
+  for (const descendantStableId of sampled.descendantStableIds) {
+    if (!CAPABILITY_STABLE_ID_PATTERN.test(descendantStableId)) {
+      return { ...sampled, kind: "blocked", hitKind: "invalid-descendant-stable-id" };
+    }
+    const relationship = canonicalSourceRelationship(
+      sourceElements,
+      descendantStableId,
+      targetStableId,
+    );
+    if (
+      !relationship.validProbe
+      || !relationship.validOperation
+      || !relationship.sourceAncestor
+      || await frame.locator(
+        `[data-stemmio-id=${JSON.stringify(descendantStableId)}]`,
+      ).count() !== 1
+    ) {
+      return { ...sampled, kind: "blocked", hitKind: "unproven-descendant" };
+    }
+  }
+  return {
+    kind: "valid-descendant-occlusion",
+    sampleCount: sampled.sampleCount,
+    validSampleCount: sampled.sampleCount,
+    descendantStableIds: sampled.descendantStableIds,
+    sourceAncestorVerified: true,
+    liveUniqueVerified: true,
+  };
 }
 
-async function pageSpaceAuthoredHitPoint({ frame, editor, target }) {
-  const position = await safeAuthoredHitPoint(target);
-  if (!position) return null;
+async function pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements }) {
+  const position = await authoredHitTest(frame, target, sourceElements);
+  if (position.kind !== "exact") return position;
   const topLevel = typeof frame.mainFrame === "function";
   if (topLevel) {
     return {
@@ -430,6 +493,7 @@ export function normalizeCapabilityProbeObservations(
     "NO_EXACT_HIT_POINT",
   ]);
   const passthrough = [];
+  const denominatorExclusions = [];
   const groups = new Map();
   for (const observation of observations || []) {
     const canonicalObservation = (
@@ -438,6 +502,53 @@ export function normalizeCapabilityProbeObservations(
       && observation.stableId === observation.operationStableId
     );
     if (!canonicalObservation) {
+      if (observation?.probeReason === "AUTHORED_DESCENDANT_OCCLUSION") {
+        const hitTest = observation?.hitTest;
+        const descendantStableIds = hitTest?.descendantStableIds;
+        const completeHitTest = Boolean(
+          CAPABILITY_STABLE_ID_PATTERN.test(observation?.stableId || "")
+          && hitTest?.kind === "valid-descendant-occlusion"
+          && Number.isInteger(hitTest.sampleCount)
+          && hitTest.sampleCount > 0
+          && hitTest.validSampleCount === hitTest.sampleCount
+          && hitTest.sourceAncestorVerified === true
+          && hitTest.liveUniqueVerified === true
+          && Array.isArray(descendantStableIds)
+          && descendantStableIds.length > 0
+          && new Set(descendantStableIds).size === descendantStableIds.length
+          && descendantStableIds.every((stableId) => (
+            CAPABILITY_STABLE_ID_PATTERN.test(stableId)
+            && stableId !== observation.stableId
+          ))
+          && !observation?.probeStableId
+          && !observation?.operationStableId
+          && (observation?.capabilityFamilies?.length || 0) === 0
+          && (observation?.behaviorFamilies?.length || 0) === 0
+        );
+        if (!completeHitTest) {
+          const error = new Error("Authored denominator exclusion is missing complete hit-test proof.");
+          error.code = "CAPABILITY_PROBE_DENOMINATOR_EXCLUSION_INVALID";
+          error.details = {
+            stableId: CAPABILITY_STABLE_ID_PATTERN.test(observation?.stableId || "")
+              ? observation.stableId
+              : null,
+            probeReason: observation?.probeReason || null,
+          };
+          throw error;
+        }
+        denominatorExclusions.push({
+          elementId: observation.stableId,
+          reason: observation.probeReason,
+          descendantStableIds: [...descendantStableIds],
+          hitTest: {
+            sampleCount: hitTest.sampleCount,
+            validSampleCount: hitTest.validSampleCount,
+            sourceAncestorVerified: true,
+            liveUniqueVerified: true,
+          },
+        });
+        continue;
+      }
       const explicitPreProbeRejection = (
         preProbeRejectionReasons.has(observation?.probeReason)
         && !observation?.probeStableId
@@ -504,7 +615,12 @@ export function normalizeCapabilityProbeObservations(
       }
     }
   }
-  return { liveDom: [...passthrough, ...liveDom], aliases, conflicts };
+  return {
+    liveDom: [...passthrough, ...liveDom],
+    aliases,
+    conflicts,
+    denominatorExclusions,
+  };
 }
 
 function behaviorFamiliesFor(capabilities) {
@@ -624,6 +740,81 @@ function recordRuntimeProbeFailure(diagnostics, context, {
   };
 }
 
+async function pageSpaceRuntimeHitPoint({ frame, editor, target }) {
+  const point = await target.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
+    for (const yFraction of fractions) {
+      for (const xFraction of fractions) {
+        const clientX = rect.left + Math.max(1, rect.width * xFraction);
+        const clientY = rect.top + Math.max(1, rect.height * yFraction);
+        if (clientX < 0 || clientY < 0 || clientX >= innerWidth || clientY >= innerHeight) {
+          continue;
+        }
+        const hit = element.ownerDocument.elementFromPoint(clientX, clientY);
+        if (hit === element || (hit && element.contains(hit))) {
+          return {
+            clientX,
+            clientY,
+            hitKind: hit === element ? "target" : "target-descendant",
+          };
+        }
+      }
+    }
+    return null;
+  });
+  if (!point) return null;
+  const topLevel = typeof frame.mainFrame === "function";
+  if (topLevel) {
+    return { ...point, pageX: point.clientX, pageY: point.clientY, topLevel };
+  }
+  const frameGeometry = await editor.evaluate((root) => {
+    const frames = root.querySelectorAll('iframe[data-runtime-slot-role="active"]');
+    if (frames.length !== 1) return { count: frames.length };
+    const activeFrame = frames[0];
+    const rect = activeFrame.getBoundingClientRect();
+    const scaleX = activeFrame.offsetWidth > 0 ? rect.width / activeFrame.offsetWidth : 1;
+    const scaleY = activeFrame.offsetHeight > 0 ? rect.height / activeFrame.offsetHeight : 1;
+    return {
+      count: 1,
+      contentLeft: rect.left + activeFrame.clientLeft * scaleX,
+      contentTop: rect.top + activeFrame.clientTop * scaleY,
+      scaleX,
+      scaleY,
+    };
+  });
+  if (frameGeometry.count !== 1) return null;
+  return {
+    ...point,
+    pageX: frameGeometry.contentLeft + point.clientX * frameGeometry.scaleX,
+    pageY: frameGeometry.contentTop + point.clientY * frameGeometry.scaleY,
+    topLevel,
+  };
+}
+
+async function runtimeHitStillSafe({ editor, target, point }) {
+  const frameHitStillSafe = await target.evaluate((element, hitPoint) => {
+    const hit = element.ownerDocument.elementFromPoint(hitPoint.clientX, hitPoint.clientY);
+    return hit === element || Boolean(hit && element.contains(hit));
+  }, point).catch(() => false);
+  if (!frameHitStillSafe) {
+    return { accepted: false, hitKind: "target-moved" };
+  }
+  if (point.topLevel) return { accepted: true, hitKind: point.hitKind };
+  return editor.evaluate((root, hitPoint) => {
+    const frames = root.querySelectorAll('iframe[data-runtime-slot-role="active"]');
+    const hit = document.elementFromPoint(hitPoint.pageX, hitPoint.pageY);
+    return {
+      accepted: frames.length === 1 && hit === frames[0],
+      hitKind: frames.length !== 1
+        ? "active-frame-not-unique"
+        : hit === frames[0]
+          ? "active-runtime-frame"
+          : hit?.localName || "no-hit",
+    };
+  }, point);
+}
+
 export function runtimeGeneratedDiagnosticsIssue(diagnostics) {
   if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
     return "RUNTIME_GENERATED_DIAGNOSTICS_MISSING";
@@ -660,8 +851,6 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
   for (let index = 0; index < Math.min(candidateCount, 512); index += 1) {
     const target = candidates.nth(index);
     if (!await target.isVisible().catch(() => false)) continue;
-    const box = await target.boundingBox();
-    if (!box || box.width <= 2 || box.height <= 2) continue;
     diagnostics.visibleCount += 1;
     const context = await runtimeProbeContext({
       editor,
@@ -706,13 +895,31 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
       });
       continue;
     }
-    try {
-      await target.click({
-        position: {
-          x: Math.max(1, Math.min(box.width - 1, box.width / 2)),
-          y: Math.max(1, Math.min(box.height - 1, box.height / 2)),
-        },
+    const point = await pageSpaceRuntimeHitPoint({ frame, editor, target }).catch(() => null);
+    if (!point) {
+      recordRuntimeProbeFailure(diagnostics, context, {
+        substage: RUNTIME_PROBE_SUBSTAGES.TARGET_CLICK,
+        code: "RUNTIME_PROBE_NO_SAFE_HIT_POINT",
       });
+      continue;
+    }
+    try {
+      await page.mouse.move(point.pageX, point.pageY);
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const safeHit = await runtimeHitStillSafe({ editor, target, point });
+      if (!safeHit.accepted) {
+        recordRuntimeProbeFailure(diagnostics, context, {
+          substage: RUNTIME_PROBE_SUBSTAGES.TARGET_CLICK,
+          code: safeHit.hitKind === "target-moved"
+            ? "RUNTIME_PROBE_TARGET_MOVED_BEFORE_POINTER_DOWN"
+            : "RUNTIME_PROBE_HOST_POINTER_INTERCEPTED",
+          hitKind: safeHit.hitKind,
+        });
+        continue;
+      }
+      await page.mouse.click(point.pageX, point.pageY);
       await page.evaluate(() => new Promise((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(resolve));
       }));
@@ -915,14 +1122,31 @@ export async function probeAuthoredCapability({
     error.details = { expectedStableId: candidate.stableId, expectedTag: liveTag, relocated };
     throw error;
   }
-  const initialPoint = await pageSpaceAuthoredHitPoint({ frame, editor, target });
-  if (!initialPoint) {
+  const initialPoint = await pageSpaceAuthoredHitPoint({
+    frame,
+    editor,
+    target,
+    sourceElements,
+  });
+  if (initialPoint.kind === "valid-descendant-occlusion") {
+    return {
+      ...candidate,
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      visible: false,
+      probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+      hitTest: initialPoint,
+      selectionReset,
+    };
+  }
+  if (initialPoint.kind !== "exact") {
     return {
       ...candidate,
       capabilityFamilies: [],
       behaviorFamilies: [],
       visible: false,
       probeReason: "NO_EXACT_HIT_POINT",
+      hitTest: initialPoint,
       selectionReset,
     };
   }
@@ -930,8 +1154,8 @@ export async function probeAuthoredCapability({
   let hostPointer = null;
   let iframeHitStillExact = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    point = await pageSpaceAuthoredHitPoint({ frame, editor, target });
-    if (!point) break;
+    point = await pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements });
+    if (point.kind !== "exact") break;
     await page.mouse.move(point.pageX, point.pageY);
     await page.evaluate(() => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -950,7 +1174,7 @@ export async function probeAuthoredCapability({
     ), point);
     if (iframeHitStillExact) break;
   }
-  if (!point || !hostPointer?.accepted) {
+  if (!point || point.kind !== "exact" || !hostPointer?.accepted) {
     const error = new Error("A host overlay intercepted the real capability probe point.");
     error.code = "CAPABILITY_PROBE_HOST_POINTER_INTERCEPTED";
     error.details = {
