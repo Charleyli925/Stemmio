@@ -448,7 +448,12 @@ newer saved record. Provider disabled-preference writes carry the same intent
 through the single preferences Session and restore their prior durable value
 when a newer connect or disposal supersedes them. Disposal closes ordinary
 updates and presentation immediately, while an already-started fenced Agent
-write may perform only its predetermined durable rollback. It may retain one short-lived Key only while the same
+write may perform only its predetermined durable reconciliation and rollback.
+That rollback shares the ordinary durable-write turn and checks its field
+generation after the authoritative read, so it cannot overwrite a newer
+same-field intent. Only a complete validated workspace envelope can confirm an
+Agent preference commit or rollback; a missing, partial or default-normalized
+response remains unconfirmed. It may retain one short-lived Key only while the same
 save/reconciliation intent can still use it; replacement, disconnect, remove,
 disposal and terminal receipts retire that reference (without claiming that JS
 memory can be wiped). `AgentCatalogState` receives only status, reason,

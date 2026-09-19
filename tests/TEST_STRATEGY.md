@@ -745,11 +745,27 @@ gating, provider-disabled preference rollback, retry without reconnect/default
 commit, receipt precedence, and slow-A/fast-B projection fencing. The checked production interpreter and
 the test stubs share the union in `agent-credential-operation-contract.d.ts`.
 `tests/workspace-preferences-session.test.mjs` separately owns the single
-renderer preference pump, lost-response reconciliation, field-owned
-superseded rollback, disposal fencing and a Main-backed reopen oracle. The
-actual production Session and its precise mutation receipt are checked by
-`typecheck:workspace-preferences`; the verifier rejects directed mutations and
-fails if the JavaScript implementation leaves the official compiler inputs.
+renderer durable-write turn, lost-response reconciliation, field-generation
+owned rollback, disposal fencing, strict complete persistence receipts and a
+Main-backed reopen oracle. The actual production Session, precise mutation
+receipt and RunWorkflow/Catalog receipt interpreter are checked by
+`typecheck:workspace-preferences`; the verifier rejects directed producer and
+consumer mutations and fails if either JavaScript implementation leaves the
+official compiler inputs.
+
+| Preference ordering proof | Deterministic test evidence |
+| --- | --- |
+| P01 hydration versus first update | `the first preference change waits for hydration without losing the optimistic patch` |
+| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a same-field update accepted after rollback record invocation writes last` |
+| P03 stale durable A owns only its field | `a same-field update accepted during rollback authority read fences the restore` |
+| P04 unrelated field during rollback | `an unrelated update during rollback authority read does not block the narrow restore` |
+| P05 failed patch followed by newer value | `a newer ordinary preference beats the failed patch retained for one retry` |
+| P06 queued operation disposed before write | `dispose prevents a queued Agent mutation from starting a write`; `a same-field intent that replaces an Agent patch before record leaves it not-started` |
+| P07 dispose after durable write starts | `dispose reconciles a durable Agent write whose response was lost`; `dispose lets started Agent mutations finish only their predetermined rollback` |
+| P08 rollback failure or lost response | `a lost rollback response is confirmed only when authority shows the restore`; `an unconfirmed rollback remains unknown and does not claim restoration` |
+| P09 Agent preference operations stay distinct | `a credential intent reaches the single preferences session and restores superseded configuration`; `concurrent provider access changes preserve both disabled providers`; `a later unrelated terminal failure cannot downgrade confirmed Agent persistence` |
+| P10 reopen matches the promise | `a confirmed Agent preference survives a real Main persistence reopen` |
+
 `tests/desktop-preload-ipc.test.mjs` proves
 missing capabilities fail explicitly and forwards operation/model identity.
 Electron may restore a synthetic Key only for an isolated profile with explicit

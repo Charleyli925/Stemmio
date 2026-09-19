@@ -20,7 +20,12 @@ const persisted = {
     inspectorWidth: 410,
     motion: "reduced",
     restoreTabsOnLaunch: false,
+    reviewChangeContextVisibility: 25,
+    reviewCommentContextVisibility: 15,
     defaultAgentProviderId: "codex",
+    agentConfigurations: {},
+    documentAgentSelections: {},
+    disabledAgentProviderIds: [],
   },
 };
 
@@ -563,6 +568,421 @@ test("a newer ordinary write is never overwritten by an older Agent rollback", a
   ]);
   assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
   assert.equal(session.snapshot.workspace.defaultAgentProviderId, "qoder");
+  session.dispose();
+});
+
+test("a same-field update accepted during rollback authority read fences the restore", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstRecord;
+  const firstRecord = new Promise((resolve) => { releaseFirstRecord = resolve; });
+  let reads = 0;
+  let session;
+  let newer;
+  const calls = [];
+  const port = {
+    async get() {
+      reads += 1;
+      if (reads === 3) {
+        newer = session.update({ defaultAgentProviderId: "qoder" });
+      }
+      return durable;
+    },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      if (calls.length === 1) await firstRecord;
+      return durable;
+    },
+  };
+  session = new WorkspacePreferencesSession({ port });
+  await session.load();
+  let current = true;
+  const older = session.commitDefaultAgent({
+    intentId: "rollback-window-a",
+    providerId: "stemmio",
+    isCurrent: () => current,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  current = false;
+  releaseFirstRecord();
+  assert.deepEqual(await older, {
+    status: "superseded",
+    intentId: "rollback-window-a",
+    rollback: "not-needed",
+  });
+  assert.equal(await newer, true);
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "qoder" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
+  assert.equal(session.snapshot.workspace.defaultAgentProviderId, "qoder");
+  session.dispose();
+});
+
+test("an unrelated update during rollback authority read does not block the narrow restore", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstRecord;
+  const firstRecord = new Promise((resolve) => { releaseFirstRecord = resolve; });
+  let reads = 0;
+  let session;
+  let sidebarWrite;
+  const calls = [];
+  const port = {
+    async get() {
+      reads += 1;
+      if (reads === 3) sidebarWrite = session.update({ sidebarWidth: 320 });
+      return durable;
+    },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      if (calls.length === 1) await firstRecord;
+      return durable;
+    },
+  };
+  session = new WorkspacePreferencesSession({ port });
+  await session.load();
+  let current = true;
+  const mutation = session.commitDefaultAgent({
+    intentId: "narrow-rollback",
+    providerId: "stemmio",
+    isCurrent: () => current,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  current = false;
+  releaseFirstRecord();
+  assert.deepEqual(await mutation, {
+    status: "superseded",
+    intentId: "narrow-rollback",
+    rollback: "confirmed",
+  });
+  assert.equal(await sidebarWrite, true);
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "codex" } },
+    { workspace: { sidebarWidth: 320 } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "codex");
+  assert.equal(durable.workspace.sidebarWidth, 320);
+  session.dispose();
+});
+
+test("a same-field update accepted after rollback record invocation writes last", async () => {
+  let durable = structuredClone(persisted);
+  let releaseFirstRecord;
+  const firstRecord = new Promise((resolve) => { releaseFirstRecord = resolve; });
+  let session;
+  let newer;
+  const calls = [];
+  const port = {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      if (calls.length === 1) await firstRecord;
+      if (calls.length === 2) {
+        newer = session.update({ defaultAgentProviderId: "qoder" });
+      }
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  };
+  session = new WorkspacePreferencesSession({ port });
+  await session.load();
+  let current = true;
+  const mutation = session.commitDefaultAgent({
+    intentId: "after-rollback-record",
+    providerId: "stemmio",
+    isCurrent: () => current,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  current = false;
+  releaseFirstRecord();
+  assert.deepEqual(await mutation, {
+    status: "superseded",
+    intentId: "after-rollback-record",
+    rollback: "confirmed",
+  });
+  assert.equal(await newer, true);
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "codex" } },
+    { workspace: { defaultAgentProviderId: "qoder" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
+  session.dispose();
+});
+
+test("Agent mutations without a persistence port fail as not-written", async (t) => {
+  const cases = [
+    ["default", (session) => session.commitDefaultAgent({
+      intentId: "no-port-default",
+      providerId: "stemmio",
+      isCurrent: () => true,
+    }), "no-port-default"],
+    ["configuration", (session) => session.commitAgentConfigurations({
+      intentId: "no-port-configuration",
+      agentConfigurations: {
+        stemmio: { modelId: "stemmio:deepseek-v4-pro", reasoning: "high" },
+      },
+      isCurrent: () => true,
+    }), "no-port-configuration"],
+    ["provider access", (session) => session.setProviderDisabled({
+      intentId: "no-port-access",
+      providerId: "stemmio",
+      disabled: true,
+      isCurrent: () => true,
+    }), "no-port-access"],
+  ];
+  for (const [name, start, intentId] of cases) {
+    await t.test(name, async () => {
+      const session = new WorkspacePreferencesSession();
+      assert.deepEqual(await start(session), {
+        status: "failed",
+        intentId,
+        phase: "commit",
+        persistence: "not-written",
+      });
+      session.dispose();
+    });
+  }
+});
+
+test("Agent persistence accepts only strict complete workspace receipts", async (t) => {
+  await t.test("malformed record reconciles from a complete durable read", async () => {
+    let durable = structuredClone(persisted);
+    const session = new WorkspacePreferencesSession({ port: {
+      async get() { return durable; },
+      async record(input) {
+        durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+        return {};
+      },
+    } });
+    await session.load();
+    assert.deepEqual(await session.commitDefaultAgent({
+      intentId: "malformed-record-reconciled",
+      providerId: "stemmio",
+      isCurrent: () => true,
+    }), {
+      status: "committed",
+      intentId: "malformed-record-reconciled",
+      persistence: "confirmed",
+    });
+    session.dispose();
+  });
+
+  await t.test("empty and partial receipts cannot prove a write", async () => {
+    let reads = 0;
+    const session = new WorkspacePreferencesSession({ port: {
+      async get() {
+        reads += 1;
+        return reads === 1 ? persisted : {};
+      },
+      async record() {
+        return { workspace: { defaultAgentProviderId: "stemmio" } };
+      },
+    } });
+    await session.load();
+    assert.deepEqual(await session.commitDefaultAgent({
+      intentId: "malformed-unconfirmed",
+      providerId: "stemmio",
+      isCurrent: () => true,
+    }), {
+      status: "unknown",
+      intentId: "malformed-unconfirmed",
+      phase: "commit",
+      pending: true,
+    });
+    session.dispose();
+  });
+
+  await t.test("complete authority proving the old value reports not-written", async () => {
+    let records = 0;
+    const session = new WorkspacePreferencesSession({ port: {
+      async get() { return persisted; },
+      async record() {
+        records += 1;
+        return {};
+      },
+    } });
+    await session.load();
+    assert.deepEqual(await session.commitDefaultAgent({
+      intentId: "strict-not-written",
+      providerId: "stemmio",
+      isCurrent: () => true,
+    }), {
+      status: "failed",
+      intentId: "strict-not-written",
+      phase: "commit",
+      persistence: "not-written",
+    });
+    assert.equal(records, 2);
+    session.dispose();
+  });
+});
+
+test("dispose reconciles a durable Agent write whose response was lost", async () => {
+  let durable = structuredClone(persisted);
+  let releaseResponse;
+  let recordStarted;
+  const started = new Promise((resolve) => { recordStarted = resolve; });
+  const response = new Promise((resolve) => { releaseResponse = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      if (calls.length === 1) {
+        recordStarted();
+        await response;
+        throw new Error("commit response lost after durable write");
+      }
+      return durable;
+    },
+  } });
+  await session.load();
+  let publications = 0;
+  session.subscribe(() => { publications += 1; });
+  const mutation = session.commitDefaultAgent({
+    intentId: "dispose-lost-commit",
+    providerId: "stemmio",
+    isCurrent: () => true,
+  });
+  await started;
+  session.dispose();
+  const publicationsAtDispose = publications;
+  releaseResponse();
+  assert.deepEqual(await mutation, {
+    status: "superseded",
+    intentId: "dispose-lost-commit",
+    rollback: "confirmed",
+  });
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "codex" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "codex");
+  assert.equal(publications, publicationsAtDispose);
+});
+
+test("dispose reports unknown when a lost durable response cannot be reconciled", async () => {
+  let durable = structuredClone(persisted);
+  let reads = 0;
+  let releaseResponse;
+  let recordStarted;
+  const started = new Promise((resolve) => { recordStarted = resolve; });
+  const response = new Promise((resolve) => { releaseResponse = resolve; });
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() {
+      reads += 1;
+      if (reads === 1) return durable;
+      throw new Error("authority unavailable after disposal");
+    },
+    async record(input) {
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      recordStarted();
+      await response;
+      throw new Error("commit response lost after durable write");
+    },
+  } });
+  await session.load();
+  let publications = 0;
+  session.subscribe(() => { publications += 1; });
+  const mutation = session.commitDefaultAgent({
+    intentId: "dispose-unreconciled-commit",
+    providerId: "stemmio",
+    isCurrent: () => true,
+  });
+  await started;
+  session.dispose();
+  const publicationsAtDispose = publications;
+  releaseResponse();
+  assert.deepEqual(await mutation, {
+    status: "unknown",
+    intentId: "dispose-unreconciled-commit",
+    phase: "commit",
+    pending: true,
+  });
+  assert.equal(durable.workspace.defaultAgentProviderId, "stemmio");
+  assert.equal(publications, publicationsAtDispose);
+});
+
+test("a later unrelated terminal failure cannot downgrade confirmed Agent persistence", async () => {
+  let durable = structuredClone(persisted);
+  let releaseAgentResponse;
+  let agentRecordStarted;
+  const agentStarted = new Promise((resolve) => { agentRecordStarted = resolve; });
+  const agentResponse = new Promise((resolve) => { releaseAgentResponse = resolve; });
+  let sidebarWrite;
+  let records = 0;
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      records += 1;
+      if (Object.hasOwn(input.workspace, "defaultAgentProviderId")) {
+        durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+        agentRecordStarted();
+        await agentResponse;
+        return durable;
+      }
+      throw new Error("sidebar persistence unavailable");
+    },
+  } });
+  await session.load();
+  const mutation = session.commitDefaultAgent({
+    intentId: "confirmed-before-unrelated-failure",
+    providerId: "stemmio",
+    isCurrent: () => true,
+  });
+  await agentStarted;
+  sidebarWrite = session.update({ sidebarWidth: 320 });
+  releaseAgentResponse();
+  assert.deepEqual(await mutation, {
+    status: "committed",
+    intentId: "confirmed-before-unrelated-failure",
+    persistence: "confirmed",
+  });
+  assert.equal(await sidebarWrite, false);
+  assert.equal(records, 3);
+  assert.equal(durable.workspace.defaultAgentProviderId, "stemmio");
+  assert.ok(session.snapshot.error);
+  session.dispose();
+});
+
+test("a same-field intent that replaces an Agent patch before record leaves it not-started", async () => {
+  let durable = structuredClone(persisted);
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() { return durable; },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  let replacement;
+  let replaced = false;
+  const unsubscribe = session.subscribe((snapshot) => {
+    if (!replaced && snapshot.workspace.defaultAgentProviderId === "stemmio") {
+      replaced = true;
+      replacement = session.update({ defaultAgentProviderId: "qoder" });
+    }
+  });
+  assert.deepEqual(await session.commitDefaultAgent({
+    intentId: "replaced-before-record",
+    providerId: "stemmio",
+    isCurrent: () => true,
+  }), {
+    status: "superseded",
+    intentId: "replaced-before-record",
+    write: "not-started",
+  });
+  assert.equal(await replacement, true);
+  assert.deepEqual(calls, [{ workspace: { defaultAgentProviderId: "qoder" } }]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
+  unsubscribe();
   session.dispose();
 });
 

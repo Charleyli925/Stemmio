@@ -133,6 +133,7 @@
       "id": "agent-preferences",
       "patterns": [
         "^app/application/workspace-preferences-session",
+        "^app/application/workspace-preference-mutation-outcome",
         "^app/application/(?:run-workflow|agent-provider-catalog)(?:\\.js|\\.d\\.ts)$",
         "^app/application/workspace-controller\\.d\\.ts$",
         "^app/workbench/use-workspace-preferences",
@@ -143,6 +144,7 @@
       ],
       "entryInterfaces": [
         "app/application/workspace-preferences-session.d.ts",
+        "app/application/workspace-preference-mutation-outcome.d.ts",
         "app/application/run-workflow.d.ts",
         "app/application/agent-provider-catalog.d.ts"
       ],
@@ -153,6 +155,7 @@
       ],
       "implementationFiles": [
         "app/application/workspace-preferences-session.js",
+        "app/application/workspace-preference-mutation-outcome.js",
         "app/application/run-workflow.js",
         "app/application/agent-provider-catalog.js",
         "app/workbench/use-workspace-preferences.ts"

@@ -305,7 +305,7 @@ See `tests/TEST_STRATEGY.md` for the separate eight-file core acceptance scope.
 | Command | Purpose |
 | --- | --- |
 | `npm run gate:edit` | Fast, impact-selected feedback for uncommitted work |
-| `npm run typecheck:workspace-preferences` | Check the actual renderer preference Session plus its receipt contract, then prove directed implementation mutations are rejected by that same official config |
+| `npm run typecheck:workspace-preferences` | Check the actual renderer preference Session and production receipt interpreter, then prove directed implementation and consumer mutations are rejected by that same official config |
 | `npm run gate:plan -- --base origin/main` | Compact JSON of the task-lane selection: owners, Node tests, capability canaries, estimated fan-out and capability reading sets |
 | `npm run gate:plan -- --context-domain <id>` | Same reading map before any files have changed; does not select tests or change `task:finish` |
 | `node scripts/capability-context-locate.mjs` | Compare five representative locate tasks against the frozen pre-change map and size snapshot; reports preset first-locate reading size, not observed Agent reading |

@@ -8,6 +8,9 @@ import { normalizeAgentConfigurations, validAgentConfigurations, normalizeDocume
 /** @typedef {Readonly<Partial<WorkspacePreferences>>} WorkspacePreferencesPatch */
 /** @typedef {Readonly<{ now(): number }>} ClockPort */
 /** @typedef {Readonly<{ ok: true; workspace: WorkspacePreferences }> | Readonly<{ ok: false }>} WorkspaceAuthorityRead */
+/** @typedef {Readonly<Record<string, number>>} WorkspacePreferenceGenerations */
+/** @typedef {{ attempted: Set<number>; confirmed: Set<number> }} WorkspacePreferenceOperationEvidence */
+/** @typedef {Readonly<{ completion: Promise<boolean>; generations: WorkspacePreferenceGenerations }>} QueuedWorkspacePatch */
 
 export const DEFAULT_WORKSPACE_PREFERENCES = Object.freeze({
   rememberPanelWidths: true,
@@ -220,6 +223,18 @@ function workspaceMatchesPatch(patch, workspace) {
   ));
 }
 
+/** @param {unknown} value @returns {WorkspacePreferences | null} */
+function strictWorkspaceReceipt(value) {
+  if (!isRecord(value) || !isRecord(value.workspace)) return null;
+  const source = value.workspace;
+  if ([...WORKSPACE_KEYS].some((key) => !Object.hasOwn(source, key))) return null;
+  const normalized = normalizeWorkspacePreferences(source);
+  const record = /** @type {Record<string, unknown>} */ (normalized);
+  return [...WORKSPACE_KEYS].every((key) => samePreferenceValue(source[key], record[key]))
+    ? normalized
+    : null;
+}
+
 export class WorkspacePreferencesSession {
   /** @type {WorkspacePreferencesPort | null} */
   #port;
@@ -232,11 +247,20 @@ export class WorkspacePreferencesSession {
   /** @type {Promise<WorkspacePreferencesSnapshot> | null} */
   #loadPromise = null;
   /** @type {Promise<boolean> | null} */
-  #writePromise = null;
+  #pumpPromise = null;
+  /** @type {Promise<unknown>} */
+  #writeTail = Promise.resolve();
   /** @type {Promise<unknown>} */
   #agentMutationTail = Promise.resolve();
   /** @type {WorkspacePreferencesPatch | null} */
   #pendingPatch = null;
+  /** @type {Map<string, number>} */
+  #pendingGenerations = new Map();
+  /** @type {Map<string, number>} */
+  #fieldIntentGenerations = new Map();
+  /** @type {Map<number, WorkspacePreferenceOperationEvidence>} */
+  #operationEvidence = new Map();
+  #nextGeneration = 0;
   #disposed = false;
 
   /** @param {{ port?: WorkspacePreferencesPort | null; clock?: ClockPort }} [options] */
@@ -310,6 +334,20 @@ export class WorkspacePreferencesSession {
   update(patch) {
     if (this.#disposed) return Promise.resolve(false);
     const normalized = normalizeWorkspacePatch(patch);
+    return this.#queuePatch(normalized).completion;
+  }
+
+  /**
+   * @param {WorkspacePreferencesPatch} normalized
+   * @param {WorkspacePreferenceOperationEvidence | null} [evidence]
+   * @returns {QueuedWorkspacePatch}
+   */
+  #queuePatch(normalized, evidence = null) {
+    const generations = this.#claimFieldGenerations(normalized);
+    for (const key of Object.keys(normalized)) {
+      this.#pendingGenerations.set(key, generations[key]);
+      if (evidence) this.#operationEvidence.set(generations[key], evidence);
+    }
     this.#pendingPatch = {
       ...(this.#pendingPatch || {}),
       ...normalized,
@@ -322,18 +360,13 @@ export class WorkspacePreferencesSession {
     });
     if (!this.#port) {
       this.#pendingPatch = null;
-      return Promise.resolve(true);
+      this.#pendingGenerations.clear();
+      return Object.freeze({ completion: Promise.resolve(true), generations });
     }
-    // Hydration and the first user change can happen in the same turn. Let the
-    // read establish the persisted baseline before the first read-modify-write
-    // so a stale get result cannot overwrite an optimistic Settings change.
-    if (!this.#snapshot.loaded) {
-      if (!this.#writePromise) {
-        this.#writePromise = this.load().then(() => this.#pump());
-      }
-      return this.#writePromise;
-    }
-    return this.#writePromise || this.#startPump();
+    return Object.freeze({
+      completion: this.#pumpPromise || this.#startPump(),
+      generations,
+    });
   }
 
   /**
@@ -403,13 +436,13 @@ export class WorkspacePreferencesSession {
   retry() {
     if (this.#disposed || !this.#pendingPatch || !this.#port) return false;
     this.#publish({ ...this.#snapshot, saving: true, error: null });
-    if (!this.#writePromise) this.#startPump();
+    if (!this.#pumpPromise) this.#startPump();
     return true;
   }
 
   /** @param {{ deadlineAt?: number }} [input] */
   async flush({ deadlineAt } = {}) {
-    const pending = this.#writePromise;
+    const pending = this.#pumpPromise;
     if (!pending) return !this.#pendingPatch;
     if (!Number.isFinite(Number(deadlineAt))) return pending;
     const result = await Promise.race([
@@ -423,14 +456,24 @@ export class WorkspacePreferencesSession {
     this.#disposed = true;
     this.#listeners.clear();
     this.#pendingPatch = null;
+    this.#pendingGenerations.clear();
   }
 
   /** @returns {Promise<boolean>} */
   #startPump() {
-    // Publish the shared promise before record() can synchronously re-enter
-    // update(), preserving one renderer write pump under adversarial ports.
-    this.#writePromise = Promise.resolve().then(() => this.#pump());
-    return this.#writePromise;
+    const turn = this.#enqueueWriteTurn(async () => {
+      // Hydration and the first user change can happen in the same turn. Let
+      // the read establish the persisted baseline before the first write.
+      if (!this.#snapshot.loaded && !this.#disposed) await this.load();
+      return this.#pump();
+    });
+    /** @type {Promise<boolean>} */
+    let completion;
+    completion = turn.finally(() => {
+      if (this.#pumpPromise === completion) this.#pumpPromise = null;
+    });
+    this.#pumpPromise = completion;
+    return completion;
   }
 
   async #pump() {
@@ -439,15 +482,19 @@ export class WorkspacePreferencesSession {
     try {
       while (!this.#disposed && this.#pendingPatch) {
         const patch = this.#pendingPatch;
+        const generations = this.#takePendingGenerations(patch);
         const port = this.#port;
         if (!port) break;
         this.#pendingPatch = null;
+        this.#markAttempted(generations);
         try {
           const preferences = await port.record({ workspace: patch });
+          const workspace = strictWorkspaceReceipt(preferences);
+          if (!workspace || !workspaceMatchesPatch(patch, workspace)) {
+            throw new Error("Workspace preferences write returned an invalid persistence receipt.");
+          }
+          this.#markConfirmed(generations);
           if (this.#disposed) break;
-          const workspace = normalizeWorkspacePreferences(
-            isRecord(preferences) ? preferences.workspace : undefined,
-          );
           const pendingPatch = this.#pendingPatch;
           this.#publish({
             ...this.#snapshot,
@@ -458,13 +505,14 @@ export class WorkspacePreferencesSession {
             error: null,
           });
         } catch (cause) {
-          this.#pendingPatch = { ...patch, ...(this.#pendingPatch || {}) };
+          if (!this.#disposed) this.#requeuePatch(patch, generations);
           // Preferences are reversible. Re-read the disk receipt and retry once;
           // a matching read proves a lost response without repeating the write.
           if (!this.#disposed) {
-            const authority = await this.#readAuthority();
+            const authority = await this.#readAuthorityInTurn();
             if (authority.ok && workspaceMatchesPatch(patch, authority.workspace)) {
-              this.#dropConfirmedPendingFields(patch);
+              this.#markConfirmed(generations);
+              this.#dropConfirmedPendingFields(patch, generations);
               this.#publishAuthority(authority.workspace);
               continue;
             }
@@ -474,27 +522,96 @@ export class WorkspacePreferencesSession {
             }
           }
           successful = false;
-          this.#publish({
-            ...this.#snapshot,
-            saving: false,
-            error: String(
-              isRecord(cause) && typeof cause.message === "string"
-                ? cause.message
-                : cause || "工作台偏好暂时无法保存。",
-            ),
-          });
+          if (!this.#disposed) {
+            this.#publish({
+              ...this.#snapshot,
+              saving: false,
+              error: String(
+                isRecord(cause) && typeof cause.message === "string"
+                  ? cause.message
+                  : cause || "工作台偏好暂时无法保存。",
+              ),
+            });
+          }
           break;
         }
       }
     } finally {
-      this.#writePromise = null;
-      if (this.#pendingPatch && successful) {
-        this.#publish({ ...this.#snapshot, saving: false });
-      } else if (!this.#pendingPatch && this.#snapshot.saving) {
-        this.#publish({ ...this.#snapshot, saving: false });
+      if (!this.#disposed) {
+        if (this.#pendingPatch && successful) {
+          this.#publish({ ...this.#snapshot, saving: false });
+        } else if (!this.#pendingPatch && this.#snapshot.saving) {
+          this.#publish({ ...this.#snapshot, saving: false });
+        }
       }
     }
     return successful && !this.#pendingPatch;
+  }
+
+  /** @template T @param {() => Promise<T>} task @returns {Promise<T>} */
+  #enqueueWriteTurn(task) {
+    const turn = this.#writeTail.then(task, task);
+    this.#writeTail = turn.catch(() => {});
+    return turn;
+  }
+
+  /** @param {WorkspacePreferencesPatch} patch @returns {WorkspacePreferenceGenerations} */
+  #claimFieldGenerations(patch) {
+    /** @type {Record<string, number>} */
+    const generations = {};
+    for (const key of Object.keys(patch)) {
+      const generation = ++this.#nextGeneration;
+      generations[key] = generation;
+      this.#fieldIntentGenerations.set(key, generation);
+    }
+    return Object.freeze(generations);
+  }
+
+  /** @param {WorkspacePreferencesPatch} patch @returns {WorkspacePreferenceGenerations} */
+  #takePendingGenerations(patch) {
+    /** @type {Record<string, number>} */
+    const generations = {};
+    for (const key of Object.keys(patch)) {
+      const generation = this.#pendingGenerations.get(key);
+      if (generation !== undefined) generations[key] = generation;
+      if (this.#pendingGenerations.get(key) === generation) {
+        this.#pendingGenerations.delete(key);
+      }
+    }
+    return Object.freeze(generations);
+  }
+
+  /** @param {WorkspacePreferenceGenerations} generations */
+  #markAttempted(generations) {
+    for (const generation of Object.values(generations)) {
+      this.#operationEvidence.get(generation)?.attempted.add(generation);
+    }
+  }
+
+  /** @param {WorkspacePreferenceGenerations} generations */
+  #markConfirmed(generations) {
+    for (const generation of Object.values(generations)) {
+      this.#operationEvidence.get(generation)?.confirmed.add(generation);
+    }
+  }
+
+  /**
+   * @param {WorkspacePreferencesPatch} patch
+   * @param {WorkspacePreferenceGenerations} generations
+   */
+  #requeuePatch(patch, generations) {
+    /** @type {Record<string, unknown>} */
+    const pending = { ...(this.#pendingPatch || {}) };
+    for (const [key, value] of Object.entries(patch)) {
+      const generation = generations[key];
+      const pendingGeneration = this.#pendingGenerations.get(key);
+      if (pendingGeneration !== undefined && pendingGeneration > generation) continue;
+      pending[key] = value;
+      this.#pendingGenerations.set(key, generation);
+    }
+    this.#pendingPatch = Object.keys(pending).length
+      ? /** @type {WorkspacePreferencesPatch} */ (pending)
+      : null;
   }
 
   /** @template T @param {() => Promise<T>} task @returns {Promise<T>} */
@@ -538,23 +655,48 @@ export class WorkspacePreferencesSession {
    * @returns {Promise<WorkspacePreferenceMutationResult>}
    */
   async #runStartedAgentMutation({ intentId, ownedPatch, restorePatch, isCurrent }) {
-    const saved = await this.update(ownedPatch);
-    if (!saved) {
-      return Object.freeze({
-        status: "unknown",
-        intentId,
-        phase: "commit",
-        pending: true,
+    if (!this.#port) return this.#notWrittenResult(intentId);
+    /** @type {WorkspacePreferenceOperationEvidence} */
+    const evidence = { attempted: new Set(), confirmed: new Set() };
+    const operation = this.#queuePatch(ownedPatch, evidence);
+    try {
+      await operation.completion;
+      let commitReconcile = "unneeded";
+      if (!this.#operationConfirmed(operation.generations, evidence)) {
+        commitReconcile = await this.#reconcileAgentCommit({
+          ownedPatch,
+          generations: operation.generations,
+        });
+      }
+      const ownsFields = this.#ownsFieldGenerations(operation.generations);
+      const current = !this.#disposed && isCurrent() && ownsFields;
+      if (current && this.#operationConfirmed(operation.generations, evidence)) {
+        return Object.freeze({ status: "committed", intentId, persistence: "confirmed" });
+      }
+      if (current) {
+        if (commitReconcile === "not-written") return this.#notWrittenResult(intentId);
+        return this.#unknownResult(intentId, "commit");
+      }
+      if (!this.#operationAttempted(operation.generations, evidence)) {
+        return this.#notStartedResult(intentId);
+      }
+      const rollback = await this.#rollbackAgentMutation({
+        ownedPatch,
+        restorePatch,
+        generations: operation.generations,
       });
+      if (rollback === "confirmed" || rollback === "not-needed") {
+        return Object.freeze({ status: "superseded", intentId, rollback });
+      }
+      return this.#unknownResult(
+        intentId,
+        this.#operationConfirmed(operation.generations, evidence) ? "rollback" : "commit",
+      );
+    } finally {
+      for (const generation of Object.values(operation.generations)) {
+        this.#operationEvidence.delete(generation);
+      }
     }
-    if (!this.#disposed && isCurrent()) {
-      return Object.freeze({ status: "committed", intentId, persistence: "confirmed" });
-    }
-    const rollback = await this.#rollbackAgentMutation({ ownedPatch, restorePatch });
-    if (rollback === "confirmed" || rollback === "not-needed") {
-      return Object.freeze({ status: "superseded", intentId, rollback });
-    }
-    return Object.freeze({ status: "unknown", intentId, phase: "rollback", pending: true });
   }
 
   /** @param {string} intentId @returns {WorkspacePreferenceMutationResult} */
@@ -562,79 +704,151 @@ export class WorkspacePreferencesSession {
     return Object.freeze({ status: "superseded", intentId, write: "not-started" });
   }
 
+  /** @param {string} intentId @returns {WorkspacePreferenceMutationResult} */
+  #notWrittenResult(intentId) {
+    return Object.freeze({
+      status: "failed",
+      intentId,
+      phase: "commit",
+      persistence: "not-written",
+    });
+  }
+
   /**
-   * @param {Readonly<{ ownedPatch: WorkspacePreferencesPatch; restorePatch: WorkspacePreferencesPatch }>} input
+   * @param {string} intentId
+   * @param {"commit" | "rollback"} phase
+   * @returns {WorkspacePreferenceMutationResult}
+   */
+  #unknownResult(intentId, phase) {
+    return Object.freeze({ status: "unknown", intentId, phase, pending: true });
+  }
+
+  /**
+   * @param {WorkspacePreferenceGenerations} generations
+   * @param {WorkspacePreferenceOperationEvidence} evidence
+   */
+  #operationAttempted(generations, evidence) {
+    return Object.values(generations).every((generation) => evidence.attempted.has(generation));
+  }
+
+  /**
+   * @param {WorkspacePreferenceGenerations} generations
+   * @param {WorkspacePreferenceOperationEvidence} evidence
+   */
+  #operationConfirmed(generations, evidence) {
+    return Object.values(generations).every((generation) => evidence.confirmed.has(generation));
+  }
+
+  /** @param {WorkspacePreferenceGenerations} generations */
+  #ownsFieldGenerations(generations) {
+    return Object.entries(generations).every(([key, generation]) => (
+      this.#fieldIntentGenerations.get(key) === generation
+    ));
+  }
+
+  /**
+   * @param {Readonly<{
+   *   ownedPatch: WorkspacePreferencesPatch;
+   *   generations: WorkspacePreferenceGenerations;
+   * }>} input
+   * @returns {Promise<"confirmed" | "not-written" | "unknown">}
+   */
+  #reconcileAgentCommit({ ownedPatch, generations }) {
+    return this.#enqueueWriteTurn(async () => {
+      const authority = await this.#readAuthorityInTurn();
+      if (!authority.ok) return "unknown";
+      this.#publishAuthority(authority.workspace);
+      if (!workspaceMatchesPatch(ownedPatch, authority.workspace)) return "not-written";
+      this.#markConfirmed(generations);
+      return "confirmed";
+    });
+  }
+
+  /**
+   * @param {Readonly<{
+   *   ownedPatch: WorkspacePreferencesPatch;
+   *   restorePatch: WorkspacePreferencesPatch;
+   *   generations: WorkspacePreferenceGenerations;
+   * }>} input
    * @returns {Promise<"confirmed" | "not-needed" | "unknown">}
    */
-  async #rollbackAgentMutation({ ownedPatch, restorePatch }) {
-    const authority = await this.#readAuthority();
-    if (!authority.ok) return "unknown";
-    if (workspaceMatchesPatch(restorePatch, authority.workspace)) {
-      this.#publishAuthority(authority.workspace);
-      return "confirmed";
-    }
-    if (!workspaceMatchesPatch(ownedPatch, authority.workspace)) {
-      this.#publishAuthority(authority.workspace);
-      return "not-needed";
-    }
-    if (!this.#port) {
-      if (!this.#disposed) {
-        this.#publish({ ...this.#snapshot, workspace: { ...authority.workspace, ...restorePatch } });
-      }
-      return "confirmed";
-    }
-    try {
-      const recorded = await this.#port.record({ workspace: restorePatch });
-      const workspace = normalizeWorkspacePreferences(
-        isRecord(recorded) ? recorded.workspace : undefined,
-      );
-      if (workspaceMatchesPatch(restorePatch, workspace)) {
-        this.#publishAuthority(workspace);
+  #rollbackAgentMutation({ ownedPatch, restorePatch, generations }) {
+    return this.#enqueueWriteTurn(async () => {
+      const authority = await this.#readAuthorityInTurn();
+      if (!authority.ok) return "unknown";
+      if (workspaceMatchesPatch(restorePatch, authority.workspace)) {
+        this.#publishAuthority(authority.workspace);
         return "confirmed";
       }
-    } catch {
-      // A thrown response can still follow a completed atomic write. Only an
-      // authoritative reread may call that rollback confirmed.
-    }
-    const reconciled = await this.#readAuthority();
-    if (!reconciled.ok) return "unknown";
-    if (workspaceMatchesPatch(restorePatch, reconciled.workspace)) {
-      this.#publishAuthority(reconciled.workspace);
-      return "confirmed";
-    }
-    if (!workspaceMatchesPatch(ownedPatch, reconciled.workspace)) {
-      this.#publishAuthority(reconciled.workspace);
-      return "not-needed";
-    }
-    return "unknown";
+      if (!workspaceMatchesPatch(ownedPatch, authority.workspace)) {
+        this.#publishAuthority(authority.workspace);
+        return "not-needed";
+      }
+      this.#markConfirmed(generations);
+      // update() claims fields synchronously. A same-field intent arriving
+      // while get() was in flight owns the next durable turn, so this rollback
+      // must not overwrite it. There is intentionally no await between this
+      // fence and the record() call.
+      if (!this.#ownsFieldGenerations(generations)) return "not-needed";
+      const port = this.#port;
+      if (!port) return "unknown";
+      try {
+        const recorded = await port.record({ workspace: restorePatch });
+        const workspace = strictWorkspaceReceipt(recorded);
+        if (workspace && workspaceMatchesPatch(restorePatch, workspace)) {
+          this.#publishAuthority(workspace);
+          return "confirmed";
+        }
+      } catch {
+        // A thrown response can still follow a completed atomic write. Only an
+        // authoritative reread may call that rollback confirmed.
+      }
+      const reconciled = await this.#readAuthorityInTurn();
+      if (!reconciled.ok) return "unknown";
+      if (workspaceMatchesPatch(restorePatch, reconciled.workspace)) {
+        this.#publishAuthority(reconciled.workspace);
+        return "confirmed";
+      }
+      if (!workspaceMatchesPatch(ownedPatch, reconciled.workspace)) {
+        this.#publishAuthority(reconciled.workspace);
+        return "not-needed";
+      }
+      if (!this.#ownsFieldGenerations(generations)) return "not-needed";
+      return "unknown";
+    });
   }
 
   /** @returns {Promise<WorkspaceAuthorityRead>} */
-  async #readAuthority() {
-    if (!this.#port) {
-      return Object.freeze({ ok: true, workspace: this.#snapshot.workspace });
-    }
+  async #readAuthorityInTurn() {
+    if (!this.#port) return Object.freeze({ ok: false });
     try {
       const preferences = await this.#port.get();
-      return Object.freeze({
-        ok: true,
-        workspace: normalizeWorkspacePreferences(
-          isRecord(preferences) ? preferences.workspace : undefined,
-        ),
-      });
+      const workspace = strictWorkspaceReceipt(preferences);
+      return workspace
+        ? Object.freeze({ ok: true, workspace })
+        : Object.freeze({ ok: false });
     } catch {
       return Object.freeze({ ok: false });
     }
   }
 
-  /** @param {WorkspacePreferencesPatch} confirmedPatch */
-  #dropConfirmedPendingFields(confirmedPatch) {
+  /**
+   * @param {WorkspacePreferencesPatch} confirmedPatch
+   * @param {WorkspacePreferenceGenerations} generations
+   */
+  #dropConfirmedPendingFields(confirmedPatch, generations) {
     if (!this.#pendingPatch) return;
     const confirmed = /** @type {Record<string, unknown>} */ (confirmedPatch);
     const remaining = Object.fromEntries(Object.entries(this.#pendingPatch).filter(
-      ([key, value]) => !Object.hasOwn(confirmedPatch, key)
+      ([key, value]) => this.#pendingGenerations.get(key) !== generations[key]
+        || !Object.hasOwn(confirmedPatch, key)
         || !samePreferenceValue(confirmed[key], value),
     ));
+    for (const key of Object.keys(confirmedPatch)) {
+      if (this.#pendingGenerations.get(key) === generations[key]) {
+        this.#pendingGenerations.delete(key);
+      }
+    }
     this.#pendingPatch = Object.keys(remaining).length
       ? /** @type {WorkspacePreferencesPatch} */ (remaining)
       : null;

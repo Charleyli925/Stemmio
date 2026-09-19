@@ -8,6 +8,7 @@
   },
   "include": [
     "app/application/workspace-preferences-session.js",
+    "app/application/workspace-preference-mutation-outcome.js",
     "shared/agent-configuration-preferences.d.mts",
     "tests/workspace-preferences-contract.typecheck.ts"
   ],

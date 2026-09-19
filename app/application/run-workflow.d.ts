@@ -125,10 +125,11 @@ export type RunWorkflowConstruction = Readonly<{
   ports: Readonly<{
     agentPreferences?: Readonly<{
       getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
-      saveAgentConfigurations(
+      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      commitAgentConfigurations(
         value: Record<string, { modelId: string | null; reasoning: string | null }>,
-        intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
-      ): Promise<boolean | WorkspacePreferenceMutationResult>;
+        intent: Readonly<{ intentId: string; isCurrent(): boolean }>,
+      ): Promise<WorkspacePreferenceMutationResult>;
       commitDefaultAgent(input: {
         intentId: string;
         providerId: string;

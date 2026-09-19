@@ -1670,6 +1670,7 @@
       "id": "workspace-preferences",
       "patterns": [
         "^app/application/workspace-preferences-session\\.(?:js|d\\.ts)$",
+        "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
         "^app/application/workspace-agent-preference\\.(?:js|d\\.ts)$",
         "^app/components/desktop-ui-preferences-api\\.ts$",
         "^app/components/SettingsPage\\.tsx$",
@@ -1696,6 +1697,7 @@
       "id": "workspace-preferences-contract",
       "patterns": [
         "^app/application/workspace-preferences-session\\.(?:js|d\\.ts)$",
+        "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
         "^shared/agent-configuration-preferences\\.d\\.mts$",
         "^scripts/verify-workspace-preferences-typecheck\\.mjs$",
         "^tests/workspace-preferences-(?:contract\\.typecheck|typecheck-verifier\\.test)\\.(?:mjs|ts)$",
@@ -1705,7 +1707,9 @@
         "typecheck"
       ],
       "nodeTests": [
-        "tests/workspace-preferences-typecheck-verifier.test.mjs"
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
       ]
     },
     {

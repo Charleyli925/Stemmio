@@ -372,6 +372,23 @@ test("SourceReceipt implementation type checks keep their runtime owner coverage
   }
 });
 
+test("the checked preference interpreter selects its producer and direct consumers", () => {
+  for (const file of [
+    "app/application/workspace-preference-mutation-outcome.js",
+    "app/application/workspace-preference-mutation-outcome.d.ts",
+    "scripts/verify-workspace-preferences-typecheck.mjs",
+    "tsconfig.workspace-preferences.json",
+  ]) {
+    const plan = selectGatePlan({ map, lane: "task", changedFiles: [file] });
+    assert.ok(suiteIds(plan).includes("typecheck"), file);
+    for (const owner of [
+      "tests/workspace-preferences-typecheck-verifier.test.mjs",
+      "tests/run-workflow.test.mjs",
+      "tests/agent-provider-catalog.test.mjs",
+    ]) assert.ok(plan.selectedNodeTests.includes(owner), `${file}: ${owner}`);
+  }
+});
+
 test("owner rules select only the direct regression coverage for representative files", () => {
   let totalNodeTests = 0;
   for (const ownerCase of TASK_OWNER_CASES) {

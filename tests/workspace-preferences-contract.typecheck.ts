@@ -2,6 +2,7 @@ import {
   WorkspacePreferencesSession,
   type WorkspacePreferenceMutationResult,
 } from "../app/application/workspace-preferences-session.js";
+import { interpretWorkspacePreferenceMutation } from "../app/application/workspace-preference-mutation-outcome.js";
 
 declare const session: WorkspacePreferencesSession;
 declare const result: WorkspacePreferenceMutationResult;
@@ -39,3 +40,9 @@ session.commitDefaultAgent({ providerId: "stemmio", isCurrent: () => true });
 // @ts-expect-error A boolean cannot masquerade as a durable mutation receipt.
 const legacyBoolean: WorkspacePreferenceMutationResult = true;
 void legacyBoolean;
+
+const outcome = interpretWorkspacePreferenceMutation(result);
+if (outcome.kind === "unknown") {
+  const errorCode: "AGENT_PREFERENCES_SAVE_UNKNOWN" = outcome.errorCode;
+  void errorCode;
+}

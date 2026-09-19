@@ -9,6 +9,10 @@ const defaultSourcePath = path.join(
   productRoot,
   "app/application/workspace-preferences-session.js",
 );
+const defaultConsumerPath = path.join(
+  productRoot,
+  "app/application/workspace-preference-mutation-outcome.js",
+);
 const mutations = Object.freeze([
   Object.freeze({
     name: "committed-persistence",
@@ -24,15 +28,16 @@ const mutations = Object.freeze([
   }),
   Object.freeze({
     name: "unknown-pending",
-    anchor: [
-      'phase: "commit",',
-      "        pending: true,",
-    ].join("\n"),
-    replacement: [
-      'phase: "commit",',
-      "        pending: false,",
-    ].join("\n"),
+    anchor: 'return Object.freeze({ status: "unknown", intentId, phase, pending: true });',
+    replacement: 'return Object.freeze({ status: "unknown", intentId, phase, pending: false });',
     diagnosticFragment: "Type 'false' is not assignable to type 'true'",
+  }),
+  Object.freeze({
+    name: "consumer-unknown-error-code",
+    source: "consumer",
+    anchor: 'errorCode: "AGENT_PREFERENCES_SAVE_UNKNOWN",',
+    replacement: 'errorCode: "AGENT_PREFERENCES_SAVE_FAILED",',
+    diagnosticFragment: 'Type \'"AGENT_PREFERENCES_SAVE_FAILED"\' is not assignable to type \'"AGENT_PREFERENCES_SAVE_UNKNOWN"\'',
   }),
 ]);
 
@@ -111,16 +116,26 @@ export function verifyWorkspacePreferencesTypecheck({
   parsedConfig = loadWorkspacePreferencesTypecheckConfig(),
   sourcePath = defaultSourcePath,
   sourceText = ts.sys.readFile(sourcePath),
+  consumerPath = defaultConsumerPath,
+  consumerText = ts.sys.readFile(consumerPath),
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
+  const resolvedConsumerPath = path.resolve(consumerPath);
   if (parsedConfig.options.allowJs !== true || parsedConfig.options.checkJs !== true) {
     throw new Error("official WorkspacePreferences config must enable allowJs and checkJs");
   }
-  if (!new Set(parsedConfig.fileNames.map((fileName) => path.resolve(fileName))).has(resolvedSourcePath)) {
+  const compilerInputs = new Set(parsedConfig.fileNames.map((fileName) => path.resolve(fileName)));
+  if (!compilerInputs.has(resolvedSourcePath)) {
     throw new Error(`WorkspacePreferences implementation is missing from the official compiler inputs: ${resolvedSourcePath}`);
+  }
+  if (!compilerInputs.has(resolvedConsumerPath)) {
+    throw new Error(`WorkspacePreferences consumer is missing from the official compiler inputs: ${resolvedConsumerPath}`);
   }
   if (typeof sourceText !== "string") {
     throw new Error(`cannot read WorkspacePreferences implementation: ${resolvedSourcePath}`);
+  }
+  if (typeof consumerText !== "string") {
+    throw new Error(`cannot read WorkspacePreferences consumer: ${resolvedConsumerPath}`);
   }
   const baseline = ts.getPreEmitDiagnostics(programFor({
     parsedConfig,
@@ -131,14 +146,18 @@ export function verifyWorkspacePreferencesTypecheck({
     throw new Error(`official WorkspacePreferences typecheck must pass before mutation:\n${formatDiagnostics(baseline)}`);
   }
   const diagnosticCodes = mutations.map((mutation) => {
+    const mutationSourcePath = mutation.source === "consumer"
+      ? resolvedConsumerPath
+      : resolvedSourcePath;
+    const mutationSourceText = mutation.source === "consumer" ? consumerText : sourceText;
     const diagnostics = ts.getPreEmitDiagnostics(programFor({
       parsedConfig,
-      sourcePath: resolvedSourcePath,
-      sourceText: mutateExactly(sourceText, mutation),
+      sourcePath: mutationSourcePath,
+      sourceText: mutateExactly(mutationSourceText, mutation),
     }));
     const expected = diagnostics.filter((diagnostic) => (
       diagnostic.code === 2322
-      && path.resolve(diagnostic.file?.fileName || "") === resolvedSourcePath
+      && path.resolve(diagnostic.file?.fileName || "") === mutationSourcePath
       && diagnosticMessage(diagnostic).includes(mutation.diagnosticFragment)
     ));
     if (expected.length !== 1 || diagnostics.length !== 1) {
@@ -152,6 +171,7 @@ export function verifyWorkspacePreferencesTypecheck({
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
     sourcePath: resolvedSourcePath,
+    consumerPath: resolvedConsumerPath,
     diagnosticCodes: Object.freeze(diagnosticCodes),
   });
 }

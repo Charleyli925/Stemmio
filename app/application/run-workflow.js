@@ -5,6 +5,7 @@ import { revalidateCommentTextLocators } from "./run/text-locator-validation.js"
 import { createRunWorkflowCodecs } from "./run-workflow-codecs.js";
 import { verifyOpenTarget, verifyProjectContext } from "./verified-project-context.js";
 import { AgentCatalogState } from "./agent-provider-catalog.js";
+import { interpretWorkspacePreferenceMutation } from "./workspace-preference-mutation-outcome.js";
 import {
   interpretAgentCredentialOperation,
   isAgentCredentialRecordId,
@@ -2585,14 +2586,11 @@ export class RunWorkflow {
       providerId: ready.providerId,
       isCurrent,
     });
-    const saveStatus = saved.status;
-    if (saveStatus === "unknown") {
-      return rejected("AGENT_PREFERENCES_SAVE_UNKNOWN", "默认 Agent 暂时无法保存。");
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    if (saveOutcome.errorCode) {
+      return rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。");
     }
-    if (saveStatus === "failed") {
-      return rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。");
-    }
-    if (saveStatus === "superseded" || !isCurrent()) {
+    if (saveOutcome.kind === "superseded" || !isCurrent()) {
       return succeeded({ committed: false, superseded: true });
     }
     const committed = this.#agentCatalog.commitPendingDefault(intentId);
@@ -2618,14 +2616,12 @@ export class RunWorkflow {
       providerId: selected.providerId,
       isCurrent,
     });
-    const saveStatus = saved.status;
-    return saveStatus === "unknown"
-      ? rejected("AGENT_PREFERENCES_SAVE_UNKNOWN", "默认 Agent 暂时无法保存。")
-      : saveStatus === "failed"
-      ? rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。")
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    return saveOutcome.errorCode
+      ? rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。")
       : succeeded({
-        committed: saveStatus === "committed",
-        superseded: saveStatus === "superseded",
+        committed: saveOutcome.kind === "committed",
+        superseded: saveOutcome.kind === "superseded",
         selection: selected,
         intentId,
       });
@@ -3225,12 +3221,11 @@ export class RunWorkflow {
           disabled,
           isCurrent: () => this.#credentialIntentCurrent(intent),
         });
-        if (!this.#credentialIntentCurrent(intent) || receipt.status === "superseded") {
+        const outcome = interpretWorkspacePreferenceMutation(receipt);
+        if (!this.#credentialIntentCurrent(intent) || outcome.kind === "superseded") {
           return "superseded";
         }
-        return receipt.status === "committed"
-          ? "committed"
-          : receipt.status === "unknown" ? "unknown" : "failed";
+        return outcome.kind;
       } catch {
         return this.#credentialIntentCurrent(intent) ? "failed" : "superseded";
       }
