@@ -93,6 +93,7 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
 - 核心 Node：算法、状态机、序列化、事务、错误关闭和 forward/inverse 不变量。
 - Runtime Continuity Probe：`runtime-continuity-probe.js` 只在测试调用 enable 后记录 `frameCreated` / `candidateCreated`、canvas/评论栏宽度、scrollTop 和可见 Frame。生产路径默认静默。Electron `electron-runtime-continuity.spec.mjs` 用静态页、嵌套滚动页和 Script 图表页证明连续编辑不重建 Runtime、评论栏宽度不闪、以及重建后第 6 个空行的 Caret 落点。`electron-seeded-faults.spec.mjs` 在同一探针上注入 Active iframe 消失和编辑中 Candidate iframe，证明 canary 会失败并在恢复后收敛。
 - 编辑链路计算计数：`edit-pipeline-counters.js` 只在测试显式 enable 后累计整文 `buildSourceIndex`、完整 `applyPatchPlan` 和插入点全树扫描。默认关闭，事件不含 HTML。`tests/edit-pipeline-baseline.test.mjs` 冻结当前 kernel 与 Canvas 单路物化次数；后续删除重复工作时必须更新这些数字。kernel 在同一次 apply 内复用已构建索引后，不得把状态包装或身份计算的重复解析算回基线。插入点全树扫描只在源码 Hash 或 iframe document 身份变化时发生，overlay/滚动/选区更新不得另计一次。片段解析、浏览器 DOM 解析和独立持久化验证不计入同一组。
+  评论目标重绑还必须证明空目标和仅全局页面目标不会建立整文索引，非空本地目标仍恰好进入一次重绑索引；对应计数由 `tests/comment-workflow.test.mjs` 固定。
 - 已删除的 Canvas `useCallback` 源码切片断言由既有 Electron 行为测试接替，映射写在 `tests/html-canvas-runtime-startup.test.mjs`。保留的只是退役路径禁令（例如 `forceRuntimeHandoff`、`lastValidCommentLayoutRef`）和 queued-static oracle。
 - 测试 Inventory 与风险账本：`npm run test:inventory` 从实际 Playwright 配置的 `testMatch` 生成执行清单（含 Ready / Draft smoke / packaged / DOM 编辑兼容性扫描，以及明确标为 `on-demand` 的 review-annotation），并核对 `tests/test-risk-ledger.json` 的 `ready-full` 文件确实被某个 Ready 配置选中。源码正则只用于辅助提取标题与 Tag，不能单独证明用例会被执行。
 - `DocumentWorkflow`：fake Scheduler、Hash、RecoveryStore、Canvas Port 和 Bridge
