@@ -35,20 +35,14 @@ export function verifyProjectOpenCoreSource(input: Readonly<{
 
 export function resolveProjectOpenSource(input: Readonly<{
   core: Readonly<Record<string, unknown>>;
-  bridgeClient: Readonly<{ source(sourcePath: string): Promise<Record<string, unknown>> }>;
-  canonicalSourcePath: string;
   hashPort: Readonly<{ sha256(content: string): Promise<string> }>;
   expectedSourceSha256?: string;
-  projectId: string;
-  documentId: string;
-  isCurrent(): boolean;
   markStage?(stage: string): void;
 }>): Promise<Readonly<{
   stale?: boolean;
   content?: string;
   sourceSha256?: string;
   lastModifiedAt?: string;
-  legacyVersionAuthority?: Readonly<Record<string, unknown>> | null;
 }>>;
 
 export function prepareProjectOpenCore(input: Readonly<Record<string, unknown>>): Readonly<{

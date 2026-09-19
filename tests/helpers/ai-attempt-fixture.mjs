@@ -27,8 +27,8 @@ export function submitRequest(bridge, request, requestOptions) {
 
 /**
  * Writes only the product-selected Attempt HTML artifact under output/.
- * Historic Attempts use output/index.html; current Attempts use the frozen
- * original-name-plus-Version file selected by Stemmio.
+ * Current Attempts use the frozen original-name-plus-Version file selected by
+ * Stemmio.
  */
 export async function writeAttemptOutput(run, html) {
   assertRunIdentity(run);
@@ -39,8 +39,7 @@ export async function writeAttemptOutput(run, html) {
   }
   const outputRelativePath = relative(attemptPath, outputPath);
   if (
-    outputRelativePath !== join("output", "index.html")
-    && outputRelativePath !== join("output", "candidate.html")
+    outputRelativePath !== join("output", "candidate.html")
     && !attemptOutputPathPattern.test(outputRelativePath)
   ) {
     throw new Error(

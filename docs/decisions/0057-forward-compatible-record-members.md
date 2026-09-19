@@ -16,16 +16,15 @@ has never seen?".
 
 - `manifest.json` and `project.json` validate their required members and return
   the object they read. An unknown member survives.
-- `runtime-state.json` goes further: `normalizeRuntimeDisplayAnchors` spreads the
-  record it read and only fills absent display anchors, with a comment stating
-  that writes converge old valid files without a schema-version bump. An unknown
-  member survives.
+- `runtime-state.json` preserves the current root record while authored
+  request/task anchors are rebuilt from current authority. Unsupported
+  historical activation receipts are rejected.
 - The Registry rejected any record carrying a key outside a hard-coded allowlist.
   A single added member turned the whole Registry into
   `UNSUPPORTED_REGISTRY_SCHEMA`, which locks the user out of **every** managed
-  project, not just the one that changed. The Runtime `historyActivation` receipt
-  used the same `hasExactKeys` rejection, so a single added member made the whole
-  Runtime unreadable.
+  project, not just the one that changed. Historical Runtime
+  `historyActivation` receipts are no longer part of the current record and
+  fail closed.
 - The now-retired persistent source-history record once did the opposite and
   the most damaging thing. Its fixed-field decoder rebuilt each object, so an
   unknown member was **silently discarded**, and the next atomic write
@@ -80,8 +79,7 @@ One rule applies to every mutable record.
 
 Covered and pinned by tests: the Registry, the source history journal, the Draft
 aggregate, `manifest.json` (manifest, Version entries, Working Copy entries),
-`working-copy-state.json`, and `runtime-state.json` at its root and in
-`historyActivation`.
+`working-copy-state.json`, and the current root of `runtime-state.json`.
 
 Deliberately excluded: `project.json` is written once at import and never
 rewritten, so it is an immutable record. The authored sub-records listed in item

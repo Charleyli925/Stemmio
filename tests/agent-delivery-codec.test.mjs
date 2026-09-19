@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   agentRecoveryKindForError,
   defaultManagedAgentDelivery,
-  legacyDriverForAgentDelivery,
   normalizeAgentDelivery,
   normalizeNewAgentDelivery,
 } from "../shared/agent-delivery.mjs";
@@ -33,14 +32,11 @@ test("structured Agent errors map technical retry safety to truthful recovery", 
   assert.equal(agentRecoveryKindForError("AGENT_BALANCE_INSUFFICIENT", { safeToRetry: false }), "end");
 });
 
-test("legacy qoder-acp projects to the canonical managed Agent delivery without mutating input", () => {
-  const legacy = {
+test("legacy qoder-acp delivery is rejected without conversion", () => {
+  assert.throws(() => normalizeAgentDelivery({
     mode: "qoder-acp",
     trustPolicyVersion: "trusted-local-agent-v1",
-  };
-  const bytes = JSON.stringify(legacy);
-  assert.deepEqual(normalizeAgentDelivery(legacy), defaultManagedAgentDelivery());
-  assert.equal(JSON.stringify(legacy), bytes);
+  }), { code: "AGENT_DELIVERY_INVALID" });
 });
 
 test("canonical writer shape and clipboard delivery remain exact", () => {
@@ -106,37 +102,19 @@ test("unknown provider history is readable but cannot resolve to a shipped start
     trustPolicyVersion: "trusted-local-agent-v1",
   });
   assert.equal(delivery.selection.providerId, "future-agent");
-  assert.throws(() => legacyDriverForAgentDelivery(delivery), {
-    code: "AGENT_PROVIDER_UNSUPPORTED",
-  });
   assert.throws(() => normalizeNewAgentDelivery(delivery), {
     code: "AGENT_PROVIDER_UNSUPPORTED",
   });
 });
 
-test("new Request validation uses the shipped binding, not a leftover driver alias", () => {
-  const qoder = defaultManagedAgentDelivery();
-  assert.equal(legacyDriverForAgentDelivery(qoder), "qoder-acp");
-  const codex = {
-    mode: "managed-agent",
-    selection: {
-      providerId: "codex",
-      runtimeId: "acp",
-      requestedModelId: null,
-      resolvedModelId: null,
-      reasoning: { requested: null, applied: null, resolution: "provider-default" },
-    },
-    trustPolicyVersion: "trusted-local-agent-v1",
-  };
-  assert.equal(legacyDriverForAgentDelivery(codex), null);
-});
-
-test("new writers reject legacy delivery while its historical projection stays readable", () => {
+test("new writers reject the removed legacy delivery format", () => {
   const legacy = {
     mode: "qoder-acp",
     trustPolicyVersion: "trusted-local-agent-v1",
   };
-  assert.equal(normalizeAgentDelivery(legacy).mode, "managed-agent");
+  assert.throws(() => normalizeAgentDelivery(legacy), {
+    code: "AGENT_DELIVERY_INVALID",
+  });
   assert.throws(() => normalizeNewAgentDelivery(legacy), {
     code: "AGENT_DELIVERY_INVALID",
   });
@@ -182,7 +160,6 @@ test("shipped Codex ACP and 源页 HTTP deliveries can be newly frozen", () => {
       },
     };
     assert.deepEqual(normalizeNewAgentDelivery(delivery).selection.providerId, selection.providerId);
-    assert.equal(legacyDriverForAgentDelivery(delivery), null);
   }
 });
 

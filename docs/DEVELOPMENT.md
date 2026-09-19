@@ -50,18 +50,17 @@ boundary.
 ## Product ACP Agent Bridge
 
 The packaged Bridge owns the product session through
-`bridge/agent/agent-runtime-coordinator.mjs`; the old Service exports only
-delegate existing routes. Current execution binds by canonical selection;
-historical `mode: "qoder-acp"` is projected at the delivery codec, not by a
-registry driver map. The registry registers both Qoder and Codex through the single
+`bridge/agent/agent-runtime-coordinator.mjs`; the service keeps the route
+adaptation boundary. Current execution binds by canonical selection and rejects
+removed delivery aliases. The registry registers both Qoder and Codex through the single
 `acp` runtime in `bridge/agent/runtimes/acp-runtime.mjs`; unknown
 provider/runtime IDs fail closed. The restricted Host Ports now live in
 `bridge/agent/hosts/`, while frozen execution policy lives in
 `bridge/agent/policies/`.
-`bridge/qoder-acp-client.mjs` retains the legacy transport façade and exact
-compatibility exports without a second policy brand. The
-renderer can request `POST /agent/preflight` and `POST /agent/start` with
-registered task identity, the fixed `qoder-acp` driver, explicit
+`bridge/qoder-acp-client.mjs` owns the current Qoder ACP transport adapter
+without a second policy brand. The renderer can request
+`POST /agent/preflight` and `POST /agent/start` with
+registered task identity, the explicit canonical
 `trusted-local-agent-v1` consent and an opaque short-lived ticket. When Qoder
 is not installed it may also `POST /agent/install` for the catalog-pinned
 managed copy. It cannot provide a command, cwd, environment or filesystem path
@@ -76,7 +75,7 @@ Codex verifies login plus ACP `initialize` without opening a task session. The
 route creates no preflight ticket or ACP session and cannot change the selected
 model. A diagnosis is selection-keyed single-flight with a bounded 30-second UI receipt and configuration-generation fencing. Native Codex login owns automatic browser opening; Stemmio only reopens it on explicit user action. Concurrent login callers reuse the live Bridge operation, including unconfirmed cleanup. A weak Settings result
 cannot erase a stronger failure learned during preflight or execution.
-`GET /agent/availability` remains the disk-only compatibility route. Codex
+`GET /agent/availability` is the current disk-only route. Codex
 collects all candidates before applying explicit-test, managed, then
 user-global priority, so a broken lower-priority global shim cannot mask a
 valid managed installation.
@@ -86,8 +85,9 @@ its pinned native executable identity; a changed or incomplete closure fails
 closed without spawning the Agent.
 
 Discussion is retired. The renderer and Bridge expose no discussion start,
-status or cancel route; only execution-purpose tickets are accepted. Historical
-Conversation records remain readable through the ordinary conversation routes.
+status or cancel route; only execution-purpose tickets are accepted. Conversation
+records must use the current schema; older records are rejected through the
+ordinary conversation routes.
 
 Product discovery accepts a protected standalone `@qoder-ai/qodercli` package
 at version 1.1.27 or newer. It intentionally rejects the executable embedded in
@@ -464,6 +464,6 @@ See `tests/TEST_STRATEGY.md` for suite ownership and `docs/ARCHITECTURE.md` for 
 
 Single-current project changes are mapped to the current-draft lifecycle,
 history and adoption Node owners plus the Electron project lifecycle canary.
-Use the existing gate selection; legacy independent Working Copies belong in
-explicit migration fixtures. New imports, history creation and adoption retain
+Use the existing gate selection; retired independent Working Copies belong only
+in explicit rejection fixtures. New imports, history creation and adoption retain
 one editable current identity. See ADR 0073 and TEST_STRATEGY.

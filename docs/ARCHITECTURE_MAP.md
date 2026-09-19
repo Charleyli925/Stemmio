@@ -45,8 +45,7 @@ sidebar's Grid row and column before positioning it against the right edge.
 | Comments | `CommentSession`; `sourceAnchor` is the only persistent source authority and resolves through `TargetResolver`; bounded `visualHint` is explanatory runtime context, including when `body` is only a safe fallback anchor | `CommentWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.comments`), `comment-workflow.js`, `comment/commit-plan.js`, `target-resolver.js`, `runtime-comment-hint.js`, `comment-text-locator.js`, `comment-rail-container.tsx`, `comment-canvas-port.js`, `comment-rail-view.tsx` |
 | Attachments | Draft attachment repository; Request freeze owns independent byte copies and recovery staging | `CommentWorkflow` before send, `ProjectFileRepository` during Request preparation/publication | `comment-workflow.js` upload/read/delete, `bridge/project-file-repository/request-attachments.mjs`, `request-draft.mjs` |
 | Run and AI request | `RunSession` | `RunWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.runs`), `run-workflow.js`, `run/text-locator-validation.js`, `run/submit-plan.js`, `run-conversation-outlet.tsx` |
-| Review and Candidate | Repository owns immutable Candidate HTML, runtime seal, source-identity report and bounded Stable-ID impact assessment with descendant scope closure; historical Version records may still store full-array impact, which `candidateAssessmentFromRecord` projects into the same bounded facts; `VersionSession` owns only the renderer projection | Repository validates/normalizes full-HTML Candidate; `VersionWorkflow` prepares Review and accepts; the explicit Review command starts cancellable source-fact analysis, then projects comments and the current session onto those facts and presents bounded warning-only impact context | `bridge/candidate-assessment.mjs`, `bridge/candidate-assessment-decoder.mjs`, `bridge/project-file-repository/candidate-identity.mjs`, `bridge/project-file-repository/version-candidate.mjs`, `app/domain/run-lifecycle.js`, `app/application/version-workflow.js`, `app/workbench/review-analysis.ts`, `app/workbench/review-document.ts`, `app/workbench/AiReviewWorkspace.tsx` |
-| Review and Candidate | Repository owns immutable Candidate HTML, runtime seal, source-identity report and bounded Stable-ID impact assessment with descendant scope closure; historical Version records may still store full-array impact, which `candidateAssessmentFromRecord` projects into the same bounded facts; `VersionSession` owns only the renderer projection | Repository validates/normalizes full-HTML Candidate; `VersionWorkflow` prepares Review and accepts; the explicit Review command starts cancellable source-fact analysis (only canonical-fact overflow disables optional annotations), then projects comments and the current session onto those facts and presents bounded warning-only impact context | `bridge/candidate-assessment.mjs`, `bridge/candidate-assessment-decoder.mjs`, `bridge/project-file-repository/candidate-identity.mjs`, `bridge/project-file-repository/version-candidate.mjs`, `app/domain/run-lifecycle.js`, `app/application/version-workflow.js`, `app/workbench/review-analysis.ts`, `app/workbench/review-document.ts`, `app/workbench/AiReviewWorkspace.tsx` |
+| Review and Candidate | Repository owns immutable Candidate HTML, runtime seal, source-identity report and bounded Stable-ID impact assessment with descendant scope closure; `VersionSession` owns only the renderer projection | Repository validates/normalizes full-HTML Candidate; `VersionWorkflow` prepares Review and accepts; the explicit Review command starts cancellable source-fact analysis, then projects comments and the current session onto those facts and presents bounded warning-only impact context | `bridge/candidate-assessment.mjs`, `bridge/candidate-assessment-decoder.mjs`, `bridge/project-file-repository/candidate-identity.mjs`, `bridge/project-file-repository/version-candidate.mjs`, `app/domain/run-lifecycle.js`, `app/application/version-workflow.js`, `app/workbench/review-analysis.ts`, `app/workbench/review-document.ts`, `app/workbench/AiReviewWorkspace.tsx` |
 | Version and history | `VersionSession` owns immutable records and verified history preview bytes; `DocumentSession` remains the current working source | `VersionWorkflow` owns local version save, recovery, exact HTML export and operation reconciliation; history is verified read-only projection over one current draft | `version-workflow.js`, `version/review-plan.js` |
 | Open selected HTML in the default browser | `ProjectSession` and `VersionSession` own the selected current/history identity; `DocumentSession` owns current bytes and persistence proof | `BrowserOpenWorkflow` checkpoints and flushes the exact current revision or carries the selected immutable Version Hash; Desktop reauthorizes the path and rereads the Hash immediately before the one external launch | `browser-open-workflow.js`, `browser-open-workflow.d.ts`, `desktop/open-in-default-browser.mjs` |
 | Project context and version navigation | `ProjectSession`, `ProjectRulesSession`, `VersionSession` | `ProjectWorkflow`, `ProjectRulesWorkflow` | `workspace-controller-capabilities.d.ts` (`controller.projectCatalog`), `workbench-sidebar-container.tsx`, `WorkbenchChrome.tsx`, `project-rules-editor.tsx` |
@@ -276,9 +275,9 @@ subscription may suppress composer-text and edit-text-only revisions; saved
 comments, attachment structure, persistence errors and every non-comment
 capability still invalidate the composition root.
 Saved and historical comments have one writable `sourceAnchor` in the renderer model.
-The existing injected `comment-model` codec alone reads the old `target` alias and
-writes compatible Draft/Request records; application workflows never synchronize a
-second target. `commentVisualTarget` derives Canvas/card presentation from that anchor
+The existing injected `comment-model` codec alone reads and writes the current
+`target`/`sourceAnchor` pair; application workflows never synchronize a second
+authority. `commentVisualTarget` derives Canvas/card presentation from that anchor
 and the bounded hint. Unknown record extensions survive the codec without preserving
 known legacy target fields as a second authority.
 Persistent `sourceAnchor.elementId`, refreshed expected source Hash and optional text locator are
@@ -331,8 +330,8 @@ writers must still match the current attempt. Repository `sourceWorkingCopyId`
 reaches both Bridge active-Run projections and the domain decoder; missing legacy
 origin stays unknown. Pending submissions use the existing token, and
 rename/managed-source transition rebind only the exact old locator. See
-`STATE_OWNERSHIP.md` for the distinction between Request origin and the
-post-Promotion display target.
+  `STATE_OWNERSHIP.md` for the distinction between Request origin and the
+  post-adoption display target.
 
 Locator revisions/tombstones are coordination metadata, not a second public
 fact store. Hydration carries a locator revision, per-query sequence and
@@ -430,9 +429,7 @@ verified native client tools into the shared ACP host; lifecycle remains in
 `acp-process.mjs`, authority in `hosts/execution-host.mjs`. See ADR 0053's
 2026-09-09 client-tool execution section.
 
-Legacy `historyActivation` records remain Repository/Runtime facts. The retired
-continue-editing Renderer command and its response decoder are removed. The old
-HTTP continuation route only replays a matching persisted receipt; it cannot
-create one. Replay and confirmation reject mismatches before any Workspace or
-external-source coordination. Ordinary hydration and generic Desktop managed
-source activation retain compatibility with already active historical files.
+History preview is read-only. Creating a Version from history uses the current
+single-draft Version transaction and keeps its crash recovery and idempotent
+query/open acknowledgement. Retired activation receipts and continuation
+routes are unsupported input and are never replayed.

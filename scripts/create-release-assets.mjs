@@ -23,7 +23,7 @@ async function main() {
   const packageJson = JSON.parse(await readFile(path.join(productRoot, "package.json"), "utf8"));
   const layout = expectedArtifactLayout({ productRoot, packageJson, arch: architecture });
   const expected = await expectedBuildInfo({ productRoot, architecture, requireClean: true });
-  const buildInfo = assertBuildInfo(
+  assertBuildInfo(
     JSON.parse(await readFile(path.join(productRoot, buildInfoRelativePath), "utf8")),
     expected,
   );
@@ -31,19 +31,7 @@ async function main() {
     throw new Error(`Tag ${process.env.GITHUB_REF_NAME} does not match package version ${packageJson.version}.`);
   }
 
-  const manifest = {
-    schemaVersion: 1,
-    version: packageJson.version,
-    minimumMacOS: packageJson.build.mac.minimumSystemVersion,
-    architectures: [architecture],
-    publishedAt: buildInfo.builtAt,
-  };
   await Promise.all([
-    writeFile(
-      path.join(layout.releaseDirectory, "update-manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      "utf8",
-    ),
     copyFile(
       path.join(productRoot, buildInfoRelativePath),
       path.join(layout.releaseDirectory, "build-info.json"),
@@ -54,7 +42,6 @@ async function main() {
     layout.zipPath,
     layout.blockmapPath,
     layout.updateInfoPath,
-    path.join(layout.releaseDirectory, "update-manifest.json"),
     path.join(layout.releaseDirectory, "build-info.json"),
   ];
   const checksumEntries = await Promise.all(checksumPaths.map(async (filePath) => ({

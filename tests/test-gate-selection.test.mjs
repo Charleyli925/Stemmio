@@ -248,7 +248,6 @@ const TASK_OWNER_CASES = [
     nodeTests: [
       "tests/durable-working-copy-binding.test.mjs",
       "tests/history-creation.test.mjs",
-      "tests/legacy-history-activation.test.mjs",
       "tests/project-ai-task-projection.test.mjs",
       "tests/project-candidate-promotion.test.mjs",
       "tests/project-catalog-readonly.test.mjs",

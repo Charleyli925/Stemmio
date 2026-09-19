@@ -3,18 +3,18 @@
   "$id": "https://stemmio.local/schemas/project-manifest.v4.schema.json",
   "$comment": "Forward compatible. The manifest, each Version entry and each Working Copy entry are mutated in place and written back as the object that was read, so a member added by a newer Stemmio is preserved. `fileIdentity` is the exception: it is authored from a fresh stat on every save and stays strict. ADR 0022 forbids one specific member, a project-wide `fileNaming`, and that prohibition is stated directly rather than left to a blanket unknown-member rejection. The forward-compatible member rule is ADR 0057.",
   "type": "object",
-  "not": { "required": ["fileNaming"] },
+  "not": { "anyOf": [
+    { "required": ["fileNaming"] },
+    { "required": ["retiredWorkingCopies"] }
+  ] },
   "required": [
     "schemaVersion",
     "projectId",
     "documentId",
     "latestOfficialVersionId",
     "versions",
-    "workingCopies"
-  ],
-  "allOf": [
-    {"if": {"required": ["currentDraftSchemaVersion"]}, "then": {"properties": {"workingCopies": {"type": "array", "maxItems": 1}}}},
-    {"if": {"required": ["retiredWorkingCopies"]}, "then": {"required": ["currentDraftSchemaVersion"]}}
+    "workingCopies",
+    "currentDraftSchemaVersion"
   ],
   "properties": {
     "currentDraftSchemaVersion": { "const": "1.0.0" },
@@ -54,22 +54,10 @@
         }
       }
     },
-    "retiredWorkingCopies": {
-      "type": "array",
-      "items": {
-        "allOf": [
-          { "$ref": "#/properties/workingCopies/items" },
-          {
-            "type": "object",
-            "required": ["recoveryId"],
-            "properties": { "recoveryId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,160}$" } }
-          }
-        ]
-      }
-    },
     "workingCopies": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 1,
       "items": {
         "type": "object",
         "required": [

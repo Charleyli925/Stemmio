@@ -17,8 +17,7 @@ import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 // synchronises that folder carries it verbatim to another machine. Every member
 // must therefore still mean something there.
 //
-// `workingCopies[].fileIdentity` (including retained copies in
-// `retiredWorkingCopies`) is the documented exception. It is not
+// `workingCopies[].fileIdentity` is the documented exception. It is not
 // a cache: the promotion protocol compares it to detect that the allocated
 // Version Working Copy was replaced (`PROMOTION_PATH_REPLACED`) and that the
 // committed facts still match the sealed transaction
@@ -35,7 +34,6 @@ const PORTABLE_MANIFEST_MEMBERS = {
     "currentDraftSchemaVersion",
     "versions",
     "workingCopies",
-    "retiredWorkingCopies",
   ],
   version: [
     "versionId",
@@ -61,15 +59,8 @@ const PORTABLE_MANIFEST_MEMBERS = {
     "stateRelativePath",
   ],
 };
-// Retired members retain portable lineage and a recovery identity. Their old
-// physical witness remains device-scoped, just like the current member's.
-PORTABLE_MANIFEST_MEMBERS.retiredWorkingCopy = [
-  ...PORTABLE_MANIFEST_MEMBERS.workingCopy,
-  "recoveryId",
-];
 const DEVICE_SCOPED_MANIFEST_MEMBERS = {
   workingCopy: ["fileIdentity"],
-  retiredWorkingCopy: ["fileIdentity"],
 };
 
 function html(label) {
@@ -112,17 +103,8 @@ test("the manifest schema classifies every member as portable or device scoped",
     root: Object.keys(schema.properties),
     version: Object.keys(schema.properties.versions.items.properties),
     workingCopy: Object.keys(schema.properties.workingCopies.items.properties),
-    retiredWorkingCopy: Object.keys(Object.assign({},
-      ...schema.properties.retiredWorkingCopies.items.allOf.map((part) => {
-        if (part.$ref) {
-          assert.equal(part.$ref, "#/properties/workingCopies/items");
-          return schema.properties.workingCopies.items.properties;
-        }
-        return part.properties;
-      }),
-    )),
   };
-  for (const level of ["root", "version", "workingCopy", "retiredWorkingCopy"]) {
+  for (const level of ["root", "version", "workingCopy"]) {
     assert.deepEqual(
       declared[level].slice().sort(),
       [
@@ -135,7 +117,6 @@ test("the manifest schema classifies every member as portable or device scoped",
   }
   assert.deepEqual(DEVICE_SCOPED_MANIFEST_MEMBERS, {
     workingCopy: ["fileIdentity"],
-    retiredWorkingCopy: ["fileIdentity"],
   });
 });
 

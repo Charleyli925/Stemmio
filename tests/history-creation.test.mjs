@@ -1,11 +1,10 @@
-import { seedLegacyHistoryActivation } from "./helpers/legacy-history-activation.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import path from "node:path";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { readFile, writeFile, rename, unlink } from "node:fs/promises";
-import { fixture, html, importSource, importLegacySource, promoteNextVersion } from "./project-file-repository-harness.mjs";
+import { fixture, html, importSource, promoteNextVersion } from "./project-file-repository-harness.mjs";
 
 test("history creation allocates V9 from V3 and replays the same operation", async (t) => {
   const value = await fixture(t);
@@ -119,26 +118,6 @@ test("a changed source before manifest commit aborts without overwriting user fi
   await restarted.recoverProject({ projectRootPath: target.projectRootPath });
   assert.equal((await restarted.workspace({ sourcePath: next.sourcePath })).manifest.versions.length, 2);
 });
-
-test("legacy current Working Copy remains selected until explicit historical creation", async (t) => {
-  const value = await fixture(t);
-  const { target } = await importLegacySource(value);
-  const latest = await promoteNextVersion(value.repository, target, "latest");
-  const activated = await value.repository.replayHistoryVersionActivation(await seedLegacyHistoryActivation({ target: latest, versionId: "ver_0001",
-    operationId: "legacy_activation_0001", expectedActiveWorkingCopyId: "work_ver_0002" }));
-  await value.repository.confirmVersionWorkingCopyActivation({ target: latest, operationId: "legacy_activation_0001",
-    previousWorkingCopyId: "work_ver_0002", activatedWorkingCopyId: "work_ver_0001", versionId: "ver_0001" });
-  const before = await value.repository.workspace({ sourcePath: activated.target.exactSourcePath });
-  assert.equal(before.runtime.activeWorkingCopyId, "work_ver_0001");
-  assert.equal(before.manifest.latestOfficialVersionId, "ver_0002");
-  const created = await value.repository.createVersionFromHistory({ target: activated.target, versionId: "ver_0001",
-    operationId: "history_legacy_create_0001", expectedSourceSha256: activated.target.sourceSha256, expectedSnapshotSha256: target.sourceSha256 });
-  assert.equal(created.versionId, "ver_0003");
-  assert.equal(created.basedOnVersionId, "ver_0001");
-  assert.equal(created.previousVersionId, "ver_0002");
-  assert.equal(await readFile(activated.target.exactSourcePath, "utf8"), html("V1"));
-});
-
 
 test("completed creation survives registered rename and reports supersession without changing its fact", async (t) => {
   const value = await fixture(t);

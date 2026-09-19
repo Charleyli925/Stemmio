@@ -53,11 +53,6 @@ assessment、冻结 base 与候选 output。它代表仍受 v1 Schema 支持的�
 | `attempt-outcome.cancelled.json` | `attempt-outcome.v1` | 恢复评论且释放候选号的取消终态 |
 | `attempt-outcome.failed.json` | `attempt-outcome.v1` | 协议、执行或 Scope 失败的诊断终态 |
 | `attempt-outcome.external-source-kept.json` | `attempt-outcome.v1` | 保留外部源且不提交候选的冲突终态 |
-| `version-transaction.prepared.json` | `version-transaction.v1` | 两阶段事务已准备 |
-| `version-transaction.source-applied.json` | `version-transaction.v1` | 源已替换、尚待发布或提交的恢复边界 |
-| `version-transaction.cache-rebuilt.json` | `version-transaction.v1` | marker 提交后已从事实重建缓存 |
-| `version-transaction.conflict-confirmed.json` | `version-transaction.v1` | 采用 AI 候选后的冲突事务 |
-| `version-transaction.external-kept.json` | `version-transaction.v1` | 明确保留外部源后的冲突终态 |
 | `committed-marker.initial.json` | `committed-marker.v1` | 初始 V1 的历史可见提交点 |
 | `committed-marker.valid.json` | `committed-marker.v1` | 内部 AI Version 的历史可见提交点 |
 

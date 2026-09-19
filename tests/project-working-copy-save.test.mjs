@@ -90,113 +90,6 @@ test("save silently adopts external disk bytes when Stemmio has no dirty buffer"
   assert.equal(state.currentSha256, saved.currentSha256);
 });
 
-test("workspace recovers a legacy parked save journal to complete new bytes", async (t) => {
-  const value = await fixture(t);
-  const imported = await importSource(value, "save-legacy-parked.html");
-  const previousHtml = html("V1");
-  const nextHtml = html("recovered from legacy parked journal");
-  const recoveryId = `save_${imported.target.workingCopyId}_1_${"a".repeat(32)}`;
-  const recoveryRoot = path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "recovery",
-    recoveryId,
-  );
-  const manifest = await json(path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "manifest.json",
-  ));
-  const workingCopy = manifest.workingCopies.find(
-    (entry) => entry.workingCopyId === imported.target.workingCopyId,
-  );
-  await mkdir(recoveryRoot, { recursive: true });
-  await writeFile(path.join(recoveryRoot, "previous.html"), previousHtml, "utf8");
-  await writeFile(path.join(recoveryRoot, "next.html"), nextHtml, "utf8");
-  await rm(imported.target.exactSourcePath);
-  await writeFile(path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "transactions",
-    `${recoveryId}.json`,
-  ), JSON.stringify({
-    schemaVersion: "4.0.0",
-    kind: "save",
-    state: "source-parked",
-    projectId: imported.target.projectId,
-    documentId: imported.target.documentId,
-    workingCopyId: imported.target.workingCopyId,
-    sourceRelativePath: workingCopy.sourceRelativePath,
-    expectedSourceSha256: imported.target.sourceSha256,
-    targetSourceSha256: sha256(Buffer.from(nextHtml, "utf8")),
-    editRevision: 1,
-    recoveryId,
-    preparedAt: "2026-08-15T00:00:00.000Z",
-  }), "utf8");
-
-  const reopened = await new ProjectFileRepository({ projectsRoot: value.projects }).workspace({
-    sourcePath: imported.target.exactSourcePath,
-  });
-  assert.equal(reopened.content, nextHtml);
-  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), nextHtml);
-});
-
-test("workspace recovers a legacy parked journal whose previous inode changed", async (t) => {
-  const value = await fixture(t);
-  const imported = await importSource(value, "save-legacy-parked-conflict.html");
-  const previousHtml = html("external descriptor write after publication");
-  const nextHtml = html("Stemmio save survives beside external write");
-  const recoveryId = `save_${imported.target.workingCopyId}_1_${"b".repeat(32)}`;
-  const recoveryRoot = path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "recovery",
-    recoveryId,
-  );
-  const manifest = await json(path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "manifest.json",
-  ));
-  const workingCopy = manifest.workingCopies.find(
-    (entry) => entry.workingCopyId === imported.target.workingCopyId,
-  );
-  await mkdir(recoveryRoot, { recursive: true });
-  await writeFile(path.join(recoveryRoot, "previous.html"), previousHtml, "utf8");
-  await writeFile(path.join(recoveryRoot, "next.html"), nextHtml, "utf8");
-  await writeFile(imported.target.exactSourcePath, nextHtml, "utf8");
-  await writeFile(path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "transactions",
-    `${recoveryId}.json`,
-  ), JSON.stringify({
-    schemaVersion: "4.0.0",
-    kind: "save",
-    state: "committed",
-    projectId: imported.target.projectId,
-    documentId: imported.target.documentId,
-    workingCopyId: imported.target.workingCopyId,
-    sourceRelativePath: workingCopy.sourceRelativePath,
-    expectedSourceSha256: imported.target.sourceSha256,
-    targetSourceSha256: sha256(Buffer.from(nextHtml, "utf8")),
-    editRevision: 1,
-    recoveryId,
-    preparedAt: "2026-08-15T00:00:00.000Z",
-    committedAt: "2026-08-15T00:00:01.000Z",
-  }), "utf8");
-
-  await assert.rejects(
-    new ProjectFileRepository({ projectsRoot: value.projects }).workspace({
-      sourcePath: imported.target.exactSourcePath,
-    }),
-    (error) => error instanceof ProjectFileRepositoryError
-      && error.code === "SAVE_RECOVERY_CONFLICT",
-  );
-  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), nextHtml);
-  assert.equal(await readFile(path.join(recoveryRoot, "previous.html"), "utf8"), previousHtml);
-});
-
 test("save refuses a missing Working Copy state before replacing HTML", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "save-state-boundary.html");
@@ -1218,11 +1111,9 @@ test("unknown manifest and Working Copy state members survive an ordinary save",
 });
 
 // runtime-state.json is layered rather than uniformly preserved or authored.
-// Its root is spread by normalizeRuntimeDisplayAnchors, and historyActivation is
-// mutated in place when the desktop confirms, so both carry a member a newer
-// Stemmio added. activeRequest is replaced with a fresh literal on every status
-// transition and lastAiTask is re-derived from the AI task record, so those two
-// are authored and their schemas stay strict.
+// Its current root and active request are preserved through the current runtime
+// normalizer, while authored status members remain strict. Historical activation
+// receipts are rejected instead of being replayed.
 
 test("a stored Draft keeps its authoritative envelope while preserving unknown members", async (t) => {
   const value = await fixture(t);

@@ -471,6 +471,11 @@ export function candidateAssessmentFromRecord(value) {
   if (!isRecord(value)) return null;
   const status = String(value.status || "");
   if (!["ready", "attention", "blocked"].includes(status)) return null;
+  if ([
+    "changedStableElementIds",
+    "requestedTargetElementIds",
+    "outsideRequestedTargetElementIds",
+  ].some((field) => Object.hasOwn(value, field))) return null;
   const health = isRecord(value.health) ? value.health : {};
   const continuity = isRecord(value.continuity) ? value.continuity : {};
   const assessment = {
@@ -500,12 +505,6 @@ const BOUNDED_IMPACT_FIELDS = [
   "outsideTargetElementIdSample",
   "truncated",
 ];
-const LEGACY_IMPACT_ARRAY_FIELDS = [
-  "changedStableElementIds",
-  "requestedTargetElementIds",
-  "outsideRequestedTargetElementIds",
-];
-
 function validImpactIdList(ids, { bounded } = {}) {
   return Array.isArray(ids)
     && (!bounded || ids.length <= IMPACT_SAMPLE_LIMIT)
@@ -517,10 +516,6 @@ function canonicalImpactFromRecord(value) {
   const hasBoundedImpact = BOUNDED_IMPACT_FIELDS.every(
     (field) => Object.hasOwn(value, field),
   );
-  const hasLegacyImpact = LEGACY_IMPACT_ARRAY_FIELDS.every(
-    (field) => Object.hasOwn(value, field),
-  );
-  if (hasBoundedImpact && hasLegacyImpact) return null;
   if (hasBoundedImpact) {
     const changed = Array.isArray(value.changedElementIdSample)
       ? value.changedElementIdSample.map(String)
@@ -555,37 +550,7 @@ function canonicalImpactFromRecord(value) {
     }
     return null;
   }
-  if (!hasLegacyImpact) return null;
-  const changed = Array.isArray(value.changedStableElementIds)
-    ? value.changedStableElementIds.map(String)
-    : [];
-  const requested = Array.isArray(value.requestedTargetElementIds)
-    ? value.requestedTargetElementIds.map(String)
-    : [];
-  const outside = Array.isArray(value.outsideRequestedTargetElementIds)
-    ? value.outsideRequestedTargetElementIds.map(String)
-    : [];
-  const requestedTargetCount = Number.isSafeInteger(value.requestedTargetCount)
-    && value.requestedTargetCount >= 0
-    ? value.requestedTargetCount
-    : requested.length;
-  if (
-    !validImpactIdList(changed)
-    || !validImpactIdList(requested)
-    || !validImpactIdList(outside)
-    || outside.some((id) => !changed.includes(id))
-  ) {
-    return null;
-  }
-  return {
-    changedElementCount: changed.length,
-    requestedTargetCount,
-    outsideTargetCount: outside.length,
-    changedElementIdSample: changed.slice(0, IMPACT_SAMPLE_LIMIT),
-    outsideTargetElementIdSample: outside.slice(0, IMPACT_SAMPLE_LIMIT),
-    truncated: changed.length > IMPACT_SAMPLE_LIMIT
-      || outside.length > IMPACT_SAMPLE_LIMIT,
-  };
+  return null;
 }
 
 function isRecord(value) {

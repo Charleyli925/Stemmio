@@ -1,4 +1,3 @@
-import { seedLegacyHistoryActivation } from "../../helpers/legacy-history-activation.mjs";
 import { expect, test } from "@playwright/test";
 import {
   ORIGINAL_LIST_TEXT,

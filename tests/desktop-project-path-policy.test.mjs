@@ -26,7 +26,7 @@ test("source rename authorization accepts only the active physical file identity
   }), false);
 });
 
-test("history reveal accepts current readable and verified legacy project directories", () => {
+test("history reveal accepts only current readable project directories", () => {
   assert.equal(
     isManagedProjectStorageDirectory(READABLE_DIRECTORY, PROJECT_ID),
     true,
@@ -51,7 +51,7 @@ test("history reveal accepts current readable and verified legacy project direct
         versionId: VERSION_ID,
       },
     ),
-    true,
+    false,
   );
 });
 

@@ -178,7 +178,7 @@ test("unreadable remembered credentials stay on disk and do not trigger retry lo
   assert.equal(await readFile(credentialPath, "utf8"), before);
 });
 
-test("legacy v1 ciphertext remains readable and migrates only on an explicit mutation", async () => {
+test("legacy v1 credential records are rejected without rewriting the file", async () => {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), "stemmio-credential-"));
   const credentialPath = path.join(userDataPath, "agent-session-credential.v1.json");
   const crypto = memorySafeStorage();
@@ -192,6 +192,7 @@ test("legacy v1 ciphertext remains readable and migrates only on an explicit mut
     rememberedAt: "2026-01-01T00:00:00.000Z",
   };
   await writeFile(credentialPath, `${JSON.stringify(legacy)}\n`, { mode: 0o600 });
+  const before = await readFile(credentialPath, "utf8");
   const store = createAgentSessionCredentialStore({
     userDataPath,
     encryptString: (value) => crypto.encryptString(value),
@@ -200,33 +201,11 @@ test("legacy v1 ciphertext remains readable and migrates only on an explicit mut
   });
 
   const status = await store.publicStatus();
-  assert.equal(status.status, "saved");
-  assert.match(status.recordId, /^legacy_[a-f0-9]{24}$/u);
-  assert.deepEqual(
-    await store.publicStatus({ operationId: "credential_unknown_legacy_1" }),
-    {
-      available: true,
-      remembered: false,
-      providerId: "stemmio",
-      vendorId: null,
-      recordId: null,
-      status: "unknown",
-      operationId: "credential_unknown_legacy_1",
-      code: "AGENT_CREDENTIAL_OPERATION_UNKNOWN",
-    },
-  );
-  assert.equal((await store.load()).apiKey, "sk-legacy");
-  assert.equal(JSON.parse(await readFile(credentialPath, "utf8")).schemaVersion, 1);
-
-  const cleared = await store.clear({
-    operationId: "credential_clear_legacy_1",
-    expectedRecordId: status.recordId,
-  });
-  assert.equal(cleared.status, "missing");
-  const migrated = JSON.parse(await readFile(credentialPath, "utf8"));
-  assert.equal(migrated.schemaVersion, 2);
-  assert.equal(migrated.state, "cleared");
-  assert.equal("ciphertext" in migrated, false);
+  assert.equal(status.status, "unreadable");
+  assert.equal(status.recordId, null);
+  assert.equal((await store.loadResult()).status, "unreadable");
+  assert.equal(await store.load(), null);
+  assert.equal(await readFile(credentialPath, "utf8"), before);
 });
 
 test("provider mutations commit in Main acceptance order even when the first write is pending", async () => {

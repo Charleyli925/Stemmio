@@ -268,7 +268,6 @@ export class AgentRuntimeCoordinator {
 
   #selectionForInput({ selection, trustPolicyAccepted } = {}) {
     // Current execution binds only by canonical selection. Historical
-    // `mode: "qoder-acp"` records are converted at the delivery codec, not here.
     if (!selection) {
       failAgentRuntime(
         "AGENT_SELECTION_UNSUPPORTED",

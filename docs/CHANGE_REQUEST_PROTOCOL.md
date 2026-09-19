@@ -1,7 +1,7 @@
 # Stemmio Change Request 协议
 
 - 协议主版本：3
-- 状态：v3 历史执行合同；不是 v4 Project 打开或迁移合同
+- 状态：当前冻结 Request 合同；只接受当前 Project File 流程
 - 上位文档：[架构说明](ARCHITECTURE.md)
 - 安全边界：[安全模型](SECURITY_MODEL.md)
 - Schema 入口：[schemas](../schemas)
@@ -9,38 +9,28 @@
 
 本协议规定 Stemmio 与内部 AI 通过本地可见文件夹交接时的身份、目录、冻结、完成、校验、事务和恢复规则。
 
-本文件保留 v3 历史 Request 的执行合同。桌面打开路径以
-[版本与项目文件产品需求](VERSION_AND_PROJECT_FILES_PRD.md) 和 v4 Schema 为准：
-只有有效 v4 Project 可以作为既有项目打开；所有 v4 以前的项目状态都不迁移、
-不恢复、也不作为读取回退，所选 HTML 会作为新外部来源建立 v4 V1。本文件的
-v3 目录、字段和样本不构成 v4 兼容 Reader 或迁移要求。
+本文件定义当前 Project File Request 的冻结、执行、候选、版本和恢复合同。
+Project v4 与 Request v3 是当前正式格式；发现其他主版本、缺失必填字段或旧
+目录结构时直接返回 `UNSUPPORTED_SCHEMA_VERSION` / 无效格式错误。外部 HTML
+仍可按正常导入流程建立新项目，但不会带入旧的评论、Request、Attempt 或 Version
+关系。
 
-v3 Attempt / finalizer CLI `--workspace` / `--project-id` 是历史归档。当前
-受支持的官方 finalizer 入口是 `bridge/finalize-attempt.mjs --project-root`
-→ `finalizeProjectFileAttempt`。Bridge 不再创建或完成 v3 Attempt。
-v3 supplement CLI `--workspace` 同样归档；`bridge/record-user-supplement.mjs --project-root`
-只对给定项目目录写入，不再读取 `project-registry.json`。
+受支持的 finalizer 入口是 `bridge/finalize-attempt.mjs --project-root`
+→ `finalizeProjectFileAttempt`；supplement 入口是
+`bridge/record-user-supplement.mjs --project-root`。两者都只处理当前项目目录，
+不会读取旧 registry、旧 Request 或旧工作副本。
 
-v3 在其历史切换边界内不兼容 v1/v2；新写入不得沿用以下旧路径：
-
-- 通过本地编辑创建 `local-editor` Version。
-- 通过历史恢复创建 `restore` Version。
-- 使用全局可变 `current/` 作为当前事实源。
-- 只因 HTML 在固定窗口内未变化就自动成功。
-- 把非权威摘要文件当作可选或替代完成信号。
-
-## v4 当前稿与手动建版
+## 当前稿与手动建版
 
 当前合同见 [ADR 0073](decisions/0073-single-current-draft.md) 和
-[版本与项目文件需求](VERSION_AND_PROJECT_FILES_PRD.md)。下文 v3 旧工作文件规则
-不是当前 v4 的写入合同，也不是本次迁移的来源。
+[版本与项目文件需求](VERSION_AND_PROJECT_FILES_PRD.md)。
 
-v4 本地保存使用 sourceType=local-save，历史创建使用 history-copy，保留稿件
+Project File 本地保存使用 sourceType=local-save，历史创建使用 history-copy，保留稿件
 恢复使用 recovery-copy。它们不生成 AI Request/Candidate/finalizer，来源 AI
 字段为 null，以 sourceOperationId 幂等绑定事务；基于版本与前序版本仍独立记录。
 一个项目只维护一份当前 Working Copy，AI 采纳也更新同一身份和路径；冻结的
 Request 输入、既有 Version 快照和 Candidate 校验边界保持不变。
-v4 独立工作稿迁移由 Repository 在真实活动稿上完成并保全其他稿件；不迁移 v3。
+Repository 只接受一个当前可编辑稿；历史版本是不可变快照，不存在旧多工作稿迁移。
 
 ## 1. 协议原则
 
@@ -103,7 +93,7 @@ v4 独立工作稿迁移由 Repository 在真实活动稿上完成并保全其�
                         ├── USER_SUPPLEMENT.json
                         ├── supplement-attachments/
                         ├── candidate-assessment.json
-                        ├── validation-review.json (legacy only)
+                        ├── validation-review.json
                         ├── annotations.json
                         ├── output/<原用户文件名>-V1.x.html
                         ├── completion.json
@@ -113,11 +103,8 @@ v4 独立工作稿迁移由 Repository 在真实活动稿上完成并保全其�
 约束：
 
 - 每个项目拥有独立目录、runtime state、事务、Version 和 Request。
-- 完整 `projectId` 只作为历史 v3 协议身份；registry 通过不可变
-  `storageDirectoryName` 定位其历史可读目录。仅完整且身份可验证的 Stemmio
-  0.9.0 v3 记录可由历史适配器在原目录补写
-  `storageDirectoryName=projectId`；该适配器不是 v4 Project 打开路径的一部分，
-  v1/v2、记录不完整或身份不一致的旧目录不迁移。
+- registry 通过不可变 `storageDirectoryName` 定位当前项目目录。缺少当前
+  storage identity、主版本或完整身份的记录直接拒绝，不会补写、迁移或按目录猜测。
 - `PROJECT.md` 是整个项目长期使用的 AI 修改规则，不只属于某一次 Request；新项目首次打开时默认创建包含“项目目标、目标受众、内容与事实规则、视觉与表达、AI 修改边界”五段的简洁 Markdown 模板，用户也可以清空后按需填写。项目空闲时允许用户修改并由工作台自动保存，处理期间只读。Request 会把任务开始时已持久化的规则冻结到 `input/PROJECT.md`；Stemmio 通用边界只写在 `AI_RULES.md`，不预填到项目规则中。
 - `runtime-state.json` 与 `edit-audit.jsonl` 是系统运行和本地直接编辑的审计文件，只建议查看，不提供普通用户编辑入口。
 - `working/<原用户文件名>-V1.x.html` 是有效 AI 结果通过校验后创建的完整 HTML。它先进入“可审阅/打开”状态；审阅只读不会切换项目当前源，只有用户点击“直接打开”或在审阅页确认“打开 AI 修改后”才成为项目当前源。旧工作文件永不原地改写。
@@ -165,7 +152,7 @@ v4 独立工作稿迁移由 Repository 在真实活动稿上完成并保全其�
 - 内部 AI 不得自行改名、递增或另建版本身份。
 - 候选只有成功提交后才被占用。
 
-协议字段继续使用既有 `candidateVersionLabel=V1/V2/V3`，以兼容严格 v3 Schema；UI 按同一 ordinal 显示“版本 1、版本 2、版本 3”。内部 AI 必须原样保留协议标签，不能把显示标签写回旧字段。
+协议字段使用当前严格 Schema 的 `candidateVersionLabel=V1/V2/V3`；UI 按同一 ordinal 显示“版本 1、版本 2、版本 3”。内部 AI 必须原样保留协议标签，不能把显示标签写回其他字段。
 
 ### 3.3 AI 输出文件命名
 
@@ -180,7 +167,7 @@ Prompt 指定的精确路径，不能自行计算、递增或改名：
 - 初始基线 `ver_0001` 对应 `V1.0`；候选 `ver_0002` 对应 `V1.1`，候选 `ver_0010` 对应 `V1.9`。
 - `input/base/index.html` 只是冻结输入的机器存储名，绝不能据此把输出命名为 `index.html`。
 - 同一文件名同时用于 Attempt 的 `output/` 和成功后的 `working/`；它不是严格 Schema 中的 `candidateVersionLabel`。
-- 已冻结的旧 Request 仍可声明 `output/index.html`，以免升级后中断进行中的 Attempt；新 Request 一律使用上述版本化名称。
+- 当前 Request 一律使用上述版本化名称；`output/index.html` 是无效旧格式。
 
 ## 4. 提交前冻结
 
@@ -270,11 +257,12 @@ execution Turn 可以仍 queued。后续执行事实和重启恢复在 ADR 0071 
 
 要求包含：
 
-- 一句摘要。
+- `taskSchemaVersion`、`objective`、`scopePolicy`、`instructions`、
+  `globalAcceptanceCriteria`、`nonGoals`、`targets` 和 `attachments`。
 - 至少一条带稳定 `instructionId` 的指令。
 - 每条指令引用明确 `targetRefs`。
 - 每个 target 保存稳定 ID、用户可读 label、层级和定位。
-- `preserveOutsideTargets=true`。
+- 不再写入 `legacySummary`、旧摘要兜底或 `preserveOutsideTargets`。
 
 目标层级：
 
@@ -312,7 +300,7 @@ offset 统一按 JavaScript UTF-16 code unit 计算。Request 只能把 `exact` 
 
 冻结：
 
-- `outputRelativePath=output/<原用户文件名>-V1.x.html`，其精确值由 Stemmio 按 3.3 写入；仅已冻结的旧 Request 保留 `output/index.html`
+- `outputRelativePath=output/<原用户文件名>-V1.x.html`，其精确值由 Stemmio 按 3.3 写入；其他输出路径直接拒绝
 - `completionRelativePath=completion.json`
 - `completionSchema=completion.v1.schema.json`
 - 受支持 finalizer 版本
@@ -320,10 +308,9 @@ offset 统一按 JavaScript UTF-16 code unit 计算。Request 只能把 `exact` 
 
 Request 不定义任何基于时间窗口的成功条件。
 
-### 5.5 当前 v4 Request 的 Task Spec v1
+### 5.5 Task Spec v1
 
-历史 v3 `requirements.preserveOutsideTargets=true` 保持只读兼容；当前 v4
-Project File Request 不再复用这一二元范围字段。系统在冻结时从已重新校验的
+系统在冻结时从已重新校验的
 评论自动编译严格的 [Task Spec v1](../schemas/task-spec.v1.schema.json)：
 
 - `objective` 忠实合并评论原文，不新增用户没有表达的目标；
@@ -343,8 +330,8 @@ Project File Request 不再复用这一二元范围字段。系统在冻结时�
 内部不可变 Request 记录中：前者是用户表达证据，后者是审计事实，均不是需要
 再次执行的动作。新 Request 同时冻结 `taskSchemaVersion`、`policyVersion` 和
 `promptTemplateVersion`。当前规则与 Prompt 模板版本均为 `2.0.0`；`1.0.0`
-冻结 Request 仍可读、可完成，不做原地改写。更早的 Request 缺少这些字段时，
-按既有只读合同继续完成或取消。
+当前 Request 必须具备这些字段；缺失字段或更早版本直接拒绝，不做原地改写、补齐、
+完成或取消。
 
 ## 6. Annotation records v3
 
@@ -618,20 +605,16 @@ refresh 指令属于普通候选内容，不检测、不分级、不产生用户
 `changedElementCount`、`requestedTargetCount`、`outsideTargetCount`，以及每类最多 100
 个 ID 样例和 `truncated`。允许范围是每个评论目标根及其源码后代；整页 `body` 目标覆盖
 页面，重叠目标取并集，目标内新增元素随 Candidate 目标根计入范围。兄弟顺序证据使用
-parent ID 和前/后一个保留兄弟 ID，不使用绝对 sibling index。旧的三个无界 ID 数组只作
-只读兼容；该 impact 仅产生 Review 警告和导航入口，不是 Candidate 拒绝或源码写入边界。
+parent ID 和前/后一个保留兄弟 ID，不使用绝对 sibling index。旧的三个无界 ID 数组
+不是当前 Candidate 格式；出现时直接拒绝，不进入 Review 或源码写入边界。
 
 当前 writer 只写完整文档、非空 body 与连续性字段，不写 `executable` 或
-`health.executableSurfaceUnchanged`。这两个退役字段在 v1 Schema 中保持可选，只为读取
-短期 Developer Preview 的不可变历史。历史 Version 或已归档终态查询要求冻结 base 与
-不可变候选证据均为普通文件、四个精确/比较 Hash 全部匹配，并按当前文档健康与连续性算法
-重算 assessment。Reader 在内存中移除退役字段，也会移除旧的脚本阻断结论；不改写
-Attempt，不把归档 outcome 变成可打开候选。相关 Developer Preview 数据退出支持窗口后
-删除该 adapter。
+`health.executableSurfaceUnchanged`。这两个退役字段以及旧 Candidate 记录直接拒绝；
+不会在内存中补齐、删除后继续执行或把归档 outcome 变成可打开候选。
 
-v3 TargetRef、评论和 supplement 继续作为生成指令与历史证据，但不再逐节点限制候选
-Version。旧 Attempt 的 `scope-report.json` 与 `validation-review.json` 仍可只读展示；新
-Attempt 不生成它们。`scope-validator.mjs` 已从源码删除：它不再服务直接 source patch
+TargetRef、评论和 supplement 继续作为生成指令与证据，但不再逐节点限制候选
+Version。当前 Attempt 不生成 `scope-report.json` 或 `validation-review.json`；发现这些
+退役记录时直接拒绝。`scope-validator.mjs` 已从源码删除：它不再服务直接 source patch
 合同，也不得重新接入 AI Version 的接受门禁。直接编辑的岛外字节校验由
 `source-patch-engine` 在提交点执行。Bridge 身份检查从 `html-source-parser.mjs`
 读取 `rawStartTagAttributes`。现行候选政策（脚本改动不阻断、弱连续性只进审阅、
@@ -665,104 +648,31 @@ Attempt 不生成它们。`scope-validator.mjs` 已从源码删除：它不再�
 `health.executableSurfaceUnchanged` 只读字段；当前 producer 和 Renderer 都不生成、读取或
 展示这些字段。
 
-## 14. 两阶段 Version 事务
+## 14. Current Version transaction
 
 权威 Schema：
 
-[version-transaction.v1.schema.json](../schemas/version-transaction.v1.schema.json)
+[current-version-transaction.v1.schema.json](../schemas/current-version-transaction.v1.schema.json)
 
-### 14.1 准备
+当前 Version 创建、历史创建和 AI 采纳都使用同一份 current-version transaction。记录从创建时写齐 project/document、operation、source type、expected/after Hash、before/after Working Copy、state、draft 和 Version evidence。Repository 在每次恢复、查询和提交前重新验证这些身份与文件 Hash；缺少字段、旧状态或旧工作副本路径直接走无效事务错误，不会补齐或回放旧格式。
 
-1. 再读 runtime state，确认 active run。
-2. 分配 `transactionId`。
-3. 写 `transaction.json`，包含 `previousSourcePath`、冻结源 Hash、候选 Hash、冻结的 Attempt 输出路径、`activeWorkingCopyRelativePath=working/<原用户文件名>-V1.x.html` 与全部身份。
-4. 将 output 复制到 `prepared-version/files/index.html`。
-5. 写 v3 `version.json` 和 annotations archive；assessment 留在 Attempt，并由同一 `requestId + attemptId` 关联。
-6. 校验准备内容 Hash。
-7. 读取提交前项目当前指向的 HTML。
-8. 若源 Hash 已变化，事务进入 `awaiting-conflict-resolution`。
-9. 否则保存 `recovery/source.html` 作为恢复与审计证据并校验；它不授权覆盖原文件。
-10. 刷盘并原子标记 `prepared`。
+事务状态只有 `prepared`、`source-written`、`completed`、`aborting` 和 `aborted`。`prepared` 保存完整的 before/after 文件与 binding 证据；`source-written` 表示当前 Working Copy 已写入 after bytes；`completed` 表示 manifest、runtime 和 Version snapshot 已经以同一身份提交。中断时只恢复当前事务保存的 before/after 证据，不覆盖外部编辑。
 
-### 14.2 应用
+Workspace 启动、项目打开、Version 查询和 AI 采纳都会扫描当前事务目录。相同 operation identity 的重试返回既有结果；Hash、路径、Working Copy 或 Candidate 不匹配时拒绝。当前保存中断、事务中断、超时和重复提交继续保留幂等恢复。
 
-1. 再次确认源 Hash 等于 `expectedSourceSha256`。
-2. 以 create-new/no-clobber 语义写入候选工作文件 `working/<原用户文件名>-V1.x.html`；同名不同内容时失败关闭。
-3. 重读候选工作文件并校验候选 Hash，同时再次确认提交前当前 HTML 未被修改。
-4. 标记 `source-applied`；该状态表示候选工作文件已完整落盘，不表示旧源文件被替换。
-5. 原子发布 Version 目录。
-6. 标记 `version-published`。
-7. 原子写 `committed.json`。
-8. 标记 `committed`。
-9. 只推进 `project.json.latestVersionId`，保留 `sourcePath`、current exact Version 与当前画布不变。
-10. 写入 Attempt outcome，将 runtime 与 transaction 标记为 `ready-to-open`；重启后仍可恢复这项待打开结果。
+历史预览只读取不可变 Version snapshot。用户选择从历史创建新版本时，仍在同一 current Working Copy 上创建新的 Version，并以当前 transaction 记录替换结果；旧多 Working Copy 迁移、history activation receipt 和旧 promotion journal 不属于恢复输入。
 
-### 14.3 用户审阅或确认打开
+### 14.1 Current adoption and recovery
 
-`ready-to-open` 的正式处理页必须同时提供“审阅对比”和“直接打开”，其中“审阅对比”为默认强调操作。“审阅对比”读取冻结基础 HTML 与不可变候选 Version，不调用激活事务；正式审阅页不得带 Demo 标记，并复用正式工作台顶栏。
+AI Candidate 采纳由 current-version transaction 绑定 Candidate、Request、Attempt 和当前源 Hash。提交前会再次核对 Candidate evidence、source identity 和 binding；任何冲突都保留当前 HTML 并返回可重试的当前错误。重启后 `#recoverProject` 只恢复 current-version、save、source-element-identity 和当前 Request freeze 记录。
 
-审阅状态必须保存为正交字段：`pageView`、`changeFilter`、`navigationTarget`、`activeFocusGroupId`、两侧 `activeFocusRegionIds`、`pagePresentationState`、两侧阅读位置、`scrollMode` 和 `zoomMode`。默认值为“双页 + 全部变化 + 同步滚动 + 100%”总览；首次 frame ready 可以把第一处变化设为导航目标并定位一次，但不得激活 focus。页面按钮只写 `pageView`；变化按钮只写 `changeFilter`（只允许 `all / text / structure`），仅当当前导航目标在新筛选下不再匹配时一并把 `navigationTarget` 移到第一处匹配变化；“变化 N 处”目录与页边提示负责显式导航和聚焦，不提供上一处/下一处。无匹配时保留筛选、不移动导航并显示空态。每个文档标签分别保存并在同一 session/document 身份下恢复该组展示状态；单双页文档均应铺满可用 Canvas，只保留边框、分隔与工具栏避让所需的最小间隙。变化聚焦与评论聚焦的上下文可见度是工作台设置偏好，默认分别为 25% / 15%，不属于审阅工具栏即时状态。
-
-导航区域与可见变化 marker 必须分离。分析器必须先以显式身份、完全相同内容、语义标题、有效类身份或足够文字相似度建立高置信度节点配对；同标签、同位置不能单独授权配对。文案事实来自叶子级精确增删。
-
-字符证据标记（冻结合同）：删除与新增都以「字」为颗粒度，一个字符只画一个标记（嵌套 marker 由最内层 marker 拥有其文字）。修改前的精确删除字符用红色横虚线穿过被删的字，并照常穿过标点；圆头线帽会给每段实线两端各加半个线宽、并从每个间隙中吃掉一个线宽，因此必须按线宽补偿后再写入 `stroke-dasharray`，并保证可见间隙不窄于可见实线段，否则虚线会退化成一条实线。修改后的精确新增字符在每个字下显示一个绿色实点，与该字水平居中；标点与独立符号不带绿点，它们只打断点阵节奏而不增加证据；同一渲染文字行、同一字号的绿点统一取该行最低基线与同一半径，使一行读作一条均匀点线，不同字号不并成一行。标记不得改变作者颜色、字号、字重、行距或原有装饰；绿色实点禁止做成下划线或 `text-emphasis`，必须画在不参与排版的叠层上。权威实现是 `app/lib/review-text-evidence-marks.js`。句子配对是 1:1 的，无法表达“多句合写成一句”或“一句拆成多句”；句层配对之后必须再做一次幸存词对齐，把两侧已标记 token 流互相比较，删去仍然出现在页面上的文字，不得因为整句未配对就把幸存文字整段划为删除或新增。该对齐单向收缩，只能减少标记而永不新增标记；只有连续相邻、含词且至少两个可见字符的词串才算幸存，单个汉字或单个标点不算；若两侧将同时被清空则保留原范围，以免隐藏纯顺序调整；只剩标点的残留差异在任一侧仍有实词差异时丢弃，当标点是唯一差异时仍然上报。文本 diff 的权威实现是 `app/lib/review-text-diff.js`。
-
-分析器先生成变化事实，再生成有界 Focus Group/Region plan；Runtime 只解析 plan 的实时局部几何，显示层消费独立 paint plan。精确字符 evidence、页边 navigation cue、聚焦 context mask 与可选 focus outline 互不推导。文字变化聚焦时每侧至多一个局部遮罩孔但永不画框；普通属性默认无框；新增、删除、移动等来源明确的结构变化可画一个局部框；style 只有 best-effort Runtime 视觉观察明确为 `changed` 时才画框，`unchanged/unverified` 均无框。遮罩可在没有框时存在；框存在时才与遮罩孔复用同一 region canonical path。多个目标不提升为父容器框，同一 CSS group 在不同阅读局部或 owner 上保留精确 region，页边可聚合密度而目录不能丢位置。新增/删除元素内部不再生成后代结构框或逐字文字框。有效唯一 stable ID 支持移动、普通属性、内联样式及 CSS/Script 源码事实；视觉观察只影响 style outline，不覆盖这些源码事实。
-
-Review 只接受 `text` 与 `structure` 事实；结构变化接受 `added/removed/moved/attribute/style/css-source/script-source`。标签词表为文字“新增内容 / 删除内容 / 文本调整 / 段落改写”和元素“新增元素 / 删除元素 / 移动元素 / 属性调整 / 样式调整 / CSS 源码调整 / Script 源码调整”。桌面与浏览器共用同一静态分析合同；桌面不再拥有 Review 截图 owner、PNG parser、候选宿主发现、专用 IPC 或运行态投影端口。
-正式审阅页在共享顶栏提供“变化 N 处”目录：每条 change 有一个稳定入口，并可展开其全部精确 region；页边位置提示可按同一阅读局部聚合密度，但不能替代目录或制造父容器边框。目录之外不再提供把手式内容地图、上一处/下一处或重复顺序导航。修改前/后文档的 panel 与 action key 必须成对建立稳定映射；AI 改动控件文案或顺序时，优先依据显式目标、同 panel 控件类型与语义位置匹配。任一侧的安全页内动作始终镜像到另一侧，包括 Tab、折叠、业务按钮以及 input/select/textarea 的值与选中态；该合同不受同步/独立滚动控制，匹配失败时静默保持当前侧，不显示额外提示。导航、提交、弹窗、下载和宿主 IPC 仍由沙箱阻止。同步滚动联动横向位置；纵向以当前直接输入侧为唯一主控，按布局稳定点缓存的共同内容区域及区内进度建立连续单调映射，跟随侧每帧只应用最新目标。换侧必须让旧代次失效；短页边界只钳制短页，不得强拉长页到顶/底。滚动事件内不得扫描锚点、重建聚焦投影或重测评论，布局映射在手势空闲后更新。独立滚动只关闭滚动跟随。页内动作和布局变化后必须自动刷新投影，目录选择不是刷新前置条件。运行态不得写回 HTML、Version 或项目状态。
-
-审阅页点击“返回 AI 修改前”必须先逐行展示确认提醒：不会采用本次 AI 返回；继续以修改前版本为基线重新修改；AI HTML 已自动保留，且整句链接直接调用不可变 Version 的精确文件定位，在 Finder 中选中候选 HTML，而不是只打开本轮目录。确认后把该 active run 以 `declined-ai-candidate-after-review` 结束并令 runtime 回到 `editing`，直接恢复原 HTML 编辑状态；评论、编辑记录、候选 Version、working HTML 与本轮审计记录均不删除。“继续审阅”为紫色建议操作，“返回修改前版本”为灰色操作。审阅页不提供退回本轮处理页的入口：左上角 HTML 图标与编辑态语义一致，只打开“关于源页”；离开审阅只能通过“返回 AI 修改前”或“采纳 AI 修改”这两个明确决定。
-
-“打开 AI 修改后”必须先确认项目将切换到完整 AI 候选，同时说明修改前版本与本轮记录仍保留；最终按钮为“确认并打开”。审阅开始前先跨过当前编辑画布的 source-authority fence；确认后让原编辑画布继续在审阅层下方完成激活、Hash 核对和候选渲染，处理抽屉保持关闭。只有候选画布已就绪且抽屉关闭状态至少完成一次渲染后才移除审阅层，禁止闪现等待 AI 页面。用户点击“直接打开”或在审阅页确认“打开 AI 修改后”后：
-
-1. 重新核对 active run、transaction、Version、commit marker 与全部身份。
-2. 确认当前源 HTML 仍等于校验时的旧 Hash；若已变化，保留新 Version 但拒绝切换。
-3. 将 `project.json.sourcePath` 与 registry canonical path 切换到候选工作文件，并保留原始路径与旧工作路径作为同一项目的别名。文件系统对同一路径的不同拼写（例如 macOS 的 `/var` 与 `/private/var`）必须先归一到真实父目录；registry 合并重复指纹，并且每个项目只能有一个 `role=current` 的来源记录。
-4. 更新 current based-on 与 exact Version，清空本轮已归档的草稿评论和编辑事件。
-5. 从新的当前工作文件打开画布，并校验工作文件、不可变 Version 与画布三侧 Hash。
-6. 标记 `cache-rebuilt`，清理恢复文件并解锁编辑。
-
-### 14.4 Commit marker
+### 14.2 Commit marker
 
 权威 Schema：
 
 [committed-marker.v1.schema.json](../schemas/committed-marker.v1.schema.json)
 
-历史与 latest discovery 只承认：
-
-- Version 目录存在。
-- v3 manifest 有效。
-- entry HTML Hash 有效。
-- `committed.json` 有效。
-- marker 的 Version、Transaction、Request、Attempt、manifest Hash 和 content Hash 全部匹配。
-
-Version 目录发布但 marker 未写入时，对用户不可见。
-
-初始 V1 使用 commit marker 的 `sourceType=initial` 分支，由项目初始化事务提交；该分支没有 Request、Attempt、previous 或 basedOn。内部 AI Version 使用 `sourceType=internal-ai` 分支并要求完整交接身份。
-
-### 14.5 恢复
-
-| 事务状态 | 恢复 |
-|---|---|
-| `prepared`，提交前当前 HTML 仍为旧 Hash | 创建候选工作文件并继续，或完整放弃候选 |
-| `source-applied`，候选工作文件为候选 Hash | 继续发布与提交 |
-| `version-published`，无 marker | 校验后写 marker |
-| `committed` | 完成校验与工作文件落盘，进入 `ready-to-open`，不切换当前画布 |
-| `ready-to-open` | 重启后继续等待用户审阅或打开；审阅不切换当前源，确认打开时重新核对旧源 Hash 后切换 canonical path |
-| 提交前当前 HTML 不再是旧 Hash | 进入持久冲突，绝不覆盖 |
-| 同名候选工作文件为其他 Hash | `WORKING_COPY_COLLISION`，绝不覆盖 |
-| `cache-rebuilt` | 幂等核对并结束 |
-
-恢复不能重新分配候选 ID，也不能重复创建 Version。
-
-事务同时保留两个不同语义的源 Hash：
-
-- `baseSnapshotSha256` 永远是交给内部 AI 的冻结输入，不能修改。
-- `expectedSourceSha256` 是创建新工作文件和切换项目路径前，提交前当前 HTML 必须匹配的 Hash；只有用户明确采用 AI 结果解决外部冲突时，才可更新为用户确认的外部源 Hash。
-
-事务还必须保存 candidate manifest、completion、恢复源和新工作文件的 Hash 与相对路径，确保崩溃恢复不依赖目录猜测。恢复只能完成同一个工作文件和 Version，不能重新编号或覆盖任一旧 HTML。
-
+Version snapshot、manifest 和 runtime 只接受当前写入方产生的身份与 Hash。旧 marker、旧事务字段和缺少私有 anchor 的记录直接拒绝；不会寻找替代证据或修改旧文件。
 ## 15. Version manifest v3
 
 权威 Schema：
@@ -868,7 +778,7 @@ Attempt 的 `outcome.json` 是工作台写入的严格诊断终态，不是完�
 
 - `clipboard`：源页只能取消自己的 Request；若交接已确认，先提示用户外部 Agent 可能仍
   在运行，再写 durable cancel。
-- `qoder-acp`：Agent Bridge 先关闭 ACP mutation surface、发送取消并有界终止受管进程组；
+- `managed-agent`：Agent Bridge 先关闭 ACP mutation surface、发送取消并有界终止受管进程组；
   只有停止完成后才允许写 durable cancel 并解锁 Canvas。应用关闭走同一 dispose 边界。
   Bridge 重启后只把处理中的会话投影为不可重试的 `interrupted`，不扫描、复活或声称旧进程
   已停止。此时“结束本轮”把 durable cancel 作为旧 Request 的 authority fence，并保守提醒
@@ -897,17 +807,13 @@ Attempt 的 `outcome.json` 是工作台写入的严格诊断终态，不是完�
 
 保留外部内容时，候选不提交，评论恢复，outcome 写 `external-source-kept`。
 
-## 20. v3 干净切换
+## 20. 旧格式处理
 
-正式切换固定采用整体归档，不做逐记录迁移：
-
-1. 保留 0.6.1 安装包、源码和验证记录。
-2. 完整复制切换前 `项目记录` 与活动 HTML，并校验 Hash。
-3. 将旧记录目录标记为只读归档。
-4. v3 从空 registry 和空 `projects/` 开始。
-5. 用户要继续编辑的当前 HTML 作为普通文件重新登记为新项目和 V1。
-
-新程序必须在读取 registry、project、runtime、Request、annotations 和 Version 时严格要求 v3 主 Schema。发现 v1/v2 数据必须返回清晰的 `UNSUPPORTED_SCHEMA_VERSION`，不得尝试推断、补字段、迁移、展示 legacy history 或复用旧版本序号。
+新程序必须在读取 registry、project、runtime、Request、annotations、Candidate、
+Version 和事务时严格要求当前主 Schema。发现旧主版本、旧字段组合、旧回执或旧
+工作副本路径必须返回清晰的 `UNSUPPORTED_SCHEMA_VERSION` / 无效格式错误，不得
+推断、补字段、迁移、展示旧历史、回放旧回执或复用旧版本序号。若用户主动选择
+旧 HTML，按普通外部 HTML 导入创建新项目 V1。
 
 ## 21. 完整性与安全
 
@@ -961,8 +867,8 @@ Attempt 的 `outcome.json` 是工作台写入的严格诊断终态，不是完�
 
 New Request writers persist `{mode: "clipboard"}` or canonical
 `managed-agent` provider/runtime, namespaced-model and reasoning selection with
-`trusted-local-agent-v1`. `qoder-acp` is read only through the compatibility
-codec. Frozen requirements, recovery/status reads and the one-use ticket compare
+`trusted-local-agent-v1`. The removed `qoder-acp` delivery shape is rejected.
+Frozen requirements, recovery/status reads and the one-use ticket compare
 the same selection. Unknown-provider history remains reviewable and cancellable,
 but cannot start, restart, or fall back to clipboard or another provider.
 Candidate and Version codecs contain no provider selection and remain unchanged;

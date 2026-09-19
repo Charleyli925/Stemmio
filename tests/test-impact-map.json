@@ -2190,7 +2190,7 @@
         "^tests/project-file-(?:finalizer|bridge|schema)\\.test\\.mjs$",
         "^tests/project-file-repository(?:-harness|\\.integration\\.test)\\.mjs$",
         "^tests/project-(?:registry-and-open|working-copy-save|candidate-promotion|request-authority|ai-task-projection|path-security-and-locks)\\.test\\.mjs$",
-        "^tests/(?:history-creation|legacy-history-activation|workspace-performance-timing|durable-working-copy-binding|save-retirement)\\.test\\.mjs$"
+        "^tests/(?:history-creation|workspace-performance-timing|durable-working-copy-binding|save-retirement)\\.test\\.mjs$"
       ],
       "suites": [
         "ai-review-smoke"
@@ -2211,8 +2211,7 @@
         "tests/durable-working-copy-binding.test.mjs",
         "tests/project-catalog-readonly.test.mjs",
         "tests/save-retirement.test.mjs",
-        "tests/history-creation.test.mjs",
-        "tests/legacy-history-activation.test.mjs"
+        "tests/history-creation.test.mjs"
       ]
     },
     {

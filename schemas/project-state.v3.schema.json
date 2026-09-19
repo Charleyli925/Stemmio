@@ -41,8 +41,8 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 240,
-      "pattern": "^(?:.+__[0-9]{8}-[0-9]{6}__[a-f0-9]{8,32}|project_[A-Za-z0-9_-]+)$",
-      "description": "Immutable managed-directory locator. New projects use a readable timestamped name; verified Stemmio 0.9.0 v3 projects retain their projectId directory during the additive metadata upgrade."
+      "pattern": "^.+__[0-9]{8}-[0-9]{6}__[a-f0-9]{8,32}$",
+      "description": "Immutable managed-directory locator. Current projects use a readable timestamped name."
     },
     "sourcePath": {
       "type": "string",

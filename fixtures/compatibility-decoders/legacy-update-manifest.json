@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "version": "0.9.5",
-  "minimumMacOS": "12.0",
-  "architectures": [
-    "arm64"
-  ],
-  "publishedAt": "2026-08-04T07:45:14.371Z"
-}

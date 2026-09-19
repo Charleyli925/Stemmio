@@ -16,7 +16,7 @@ import {
 } from "./path-safety.mjs";
 import {
   assertWorkingCopyState, compareAndSwapWorkingCopyFile, draftRelativePathFor,
-  inspectSourceElementIdentity, materializeSourceElementIdentity, sourceElementIdentityBindingSha256,
+  materializeSourceElementIdentity, sourceElementIdentityBindingSha256,
   workingCopySourcePath, workingCopyStatePath,
 } from "./working-copy.mjs";
 import { findBoundSource, refreshSourceBinding } from "./source-binding.mjs";
@@ -221,85 +221,6 @@ export async function restorePreservedAttachments(loaded, record) {
     const output = path.join(loaded.paths.projectRootPath, attachment.relativePath);
     await ensureProjectDirectory(loaded.paths.projectRootPath, path.dirname(output), "draft attachments");
     await writeFileNoReplace(output, bytes.buffer, bytes.sha256, "restored attachment", options(loaded));
-  }
-}
-
-export async function migrateCurrentDraft(loaded, { resolveSource, clock, hit }) {
-  if (loaded.manifest.currentDraftSchemaVersion === CURRENT_DRAFT_SCHEMA_VERSION) return loaded;
-  // Frozen jobs and their legacy completion transactions retain their exact identities.
-  if (loaded.runtime.activeRequest || loaded.runtime.activeCandidateId) return loaded;
-  const active = loaded.manifest.workingCopies.find((w) => w.workingCopyId === loaded.runtime.activeWorkingCopyId);
-  if (!active) fail("ACTIVE_WORKING_COPY_REQUIRED", "The current draft is not identified.");
-  const retired = [];
-  let activeEvidence;
-  for (const member of loaded.manifest.workingCopies) {
-    const resolved = await resolveSource(loaded, member);
-    const evidence = await currentDraftEvidence(loaded, member, resolved.source);
-    if (member.workingCopyId === active.workingCopyId) { activeEvidence = evidence; continue; }
-    const recoveryId = `legacy_${member.workingCopyId}`;
-    await preserveDraft(loaded, member, evidence, { recoveryId, reason: "legacy-working-copy", createdAt: clock() });
-    retired.push({ member: { ...member }, recoveryId, source: evidence.source });
-  }
-  await hit("current-draft-migration-preserved");
-  // Initial Stable IDs are editor materialization, not an authored local change.
-  if (!activeEvidence.state.snapshotBaselineSha256) {
-    const base = loaded.manifest.versions.find((v) => v.versionId === active.basedOnVersionId);
-    const snapshot = await readHtmlFile(versionSnapshotPath(loaded.paths, base), "migration base", options(loaded));
-    if (snapshot.sha256 !== base.contentSha256) fail("VERSION_SNAPSHOT_HASH_MISMATCH", "The migration base changed.");
-    const before = inspectSourceElementIdentity(snapshot.html);
-    const after = inspectSourceElementIdentity(activeEvidence.source.html);
-    let materialized = snapshot.html;
-    if (before.valid && after.valid && after.complete && before.elements.length === after.elements.length) {
-      for (const element of [...before.missing].sort((a, b) => b.closingDelimiterOffset - a.closingDelimiterOffset)) {
-        const index = before.elements.indexOf(element);
-        materialized = materialized.slice(0, element.closingDelimiterOffset)
-          + ` data-stemmio-id="${after.elements[index].stemmioId}"` + materialized.slice(element.closingDelimiterOffset);
-      }
-      if (materialized === activeEvidence.source.html) {
-        activeEvidence.state.snapshotBaselineSha256 = activeEvidence.source.sha256;
-        await atomicWriteProjectJson(loaded.paths.projectRootPath, workingCopyStatePath(loaded.paths, active), activeEvidence.state, "current draft baseline");
-      }
-    }
-  }
-  // Preserve obsolete Runtime receipts before dropping references to retired members.
-  if (loaded.runtime.historyActivation || (loaded.runtime.lastAiTask && loaded.runtime.lastAiTask.sourceWorkingCopyId !== active.workingCopyId)) {
-    const bytes = encoded(loaded.runtime);
-    const receipt = path.join(loaded.paths.recoveryRoot, "current-draft-runtime.json");
-    await writeFileNoReplace(receipt, bytes, sha256(bytes), "legacy Runtime receipt", options(loaded));
-    loaded.runtime.historyActivation = null;
-    if (loaded.runtime.lastAiTask?.sourceWorkingCopyId !== active.workingCopyId) loaded.runtime.lastAiTask = null;
-    await atomicWriteProjectJson(loaded.paths.projectRootPath, loaded.paths.runtimePath, loaded.runtime, "current draft Runtime");
-  }
-  // A single manifest publication removes all inactive write authority.
-  loaded.manifest.workingCopies = [active];
-  loaded.manifest.currentDraftSchemaVersion = CURRENT_DRAFT_SCHEMA_VERSION;
-  loaded.manifest.retiredWorkingCopies = retired.map(({ member, recoveryId }) => ({ ...member, recoveryId }));
-  assertManifest(loaded.manifest, loaded.project);
-  await atomicWriteProjectJson(loaded.paths.projectRootPath, loaded.paths.manifestPath, loaded.manifest, "current draft manifest");
-  await hit("current-draft-migration-committed");
-  await retireLegacyDraftFiles(loaded);
-  return loaded;
-}
-
-export async function retireLegacyDraftFiles(loaded) {
-  for (const member of loaded.manifest.retiredWorkingCopies || []) {
-    const record = await readPreservedDraft(loaded, member.recoveryId);
-    if (record.originalWorkingCopyId !== member.workingCopyId || record.originalSourceRelativePath !== member.sourceRelativePath) {
-      fail("PRESERVED_DRAFT_INVALID", "The retired file does not match its preserved authority.");
-    }
-    if (loaded.manifest.workingCopies.some((active) => active.sourceRelativePath === member.sourceRelativePath)) continue;
-    const sourcePath = workingCopySourcePath(loaded.paths, member);
-    const source = await readRegularFileWithSha256(sourcePath, "retired draft", options(loaded));
-    if (!source) continue;
-    // A user replacement after migration belongs to the user and is left in place.
-    const originalBinding = await regularInformation(path.join(preservedRoot(loaded, member.recoveryId), "original-binding.ref"), "preserved original binding", options(loaded));
-    if (source.sha256 !== record.sourceSha256 || !originalBinding || !sameFileIdentity(copyFileIdentity(source.information), copyFileIdentity(originalBinding))) continue;
-    const destination = path.join(preservedRoot(loaded, member.recoveryId), "retired-source.html");
-    if (await regularInformation(destination, "retired source", options(loaded))) continue;
-    await rename(sourcePath, destination);
-    await syncDirectory(path.dirname(sourcePath));
-    await syncDirectory(path.dirname(destination));
-    // The syscall preserves the displaced object even if an external writer raced it.
   }
 }
 

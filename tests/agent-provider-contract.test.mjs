@@ -329,7 +329,7 @@ test("Bridge keeps preflight internals private while public execution sessions i
   });
   t.after(() => service.dispose());
 
-  assert.deepEqual(await service.availability(), {
+  assert.deepEqual(await service.availability({ selection: providerSelection() }), {
     ok: true,
     status: "ready",
   });

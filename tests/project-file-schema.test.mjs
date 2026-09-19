@@ -1,4 +1,3 @@
-import { seedLegacyHistoryActivation } from "./helpers/legacy-history-activation.mjs";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -107,15 +106,17 @@ test("v4 schemas accept repository-produced identity, Working Copy, Candidate an
     validateRejects("working-copy-state.v4.schema.json", missingIdentityBinding),
     validateRejects("working-copy-state.v4.schema.json", bindingWithoutIdentitySchema),
   ]);
-  const legacyRuntimeWithoutDisplayAnchors = await json(path.join(
+  const unsupportedRuntime = await json(path.join(
     controlRoot,
     "runtime-state.json",
   ));
-  delete legacyRuntimeWithoutDisplayAnchors.historyActivation;
-  delete legacyRuntimeWithoutDisplayAnchors.lastAiTask;
-  await validate(
+  unsupportedRuntime.historyActivation = {
+    operationId: "history_activation_legacy",
+    state: "desktop-pending",
+  };
+  await validateRejects(
     "project-runtime-state.v4.schema.json",
-    legacyRuntimeWithoutDisplayAnchors,
+    unsupportedRuntime,
   );
   const terminalDisplayRuntime = await json(path.join(
     controlRoot,
@@ -202,10 +203,6 @@ test("v4 schemas accept repository-produced identity, Working Copy, Candidate an
     validateRejects("project-runtime-state.v4.schema.json", activeRequestWithTerminalDisplay),
   ]);
 
-  // A pending adoption written by the old build still uses its recoverable legacy journal.
-  const legacyManifest = await json(path.join(controlRoot, "manifest.json"));
-  delete legacyManifest.currentDraftSchemaVersion;
-  await writeFile(path.join(controlRoot, "manifest.json"), JSON.stringify(legacyManifest));
   const promoted = await repository.promoteCandidate({
     target: imported.target,
     candidateId: candidate.candidate.candidateId,
@@ -214,48 +211,34 @@ test("v4 schemas accept repository-produced identity, Working Copy, Candidate an
   const transaction = await json(path.join(
     controlRoot,
     "transactions",
-    `promote_${candidate.candidate.candidateId}`,
+    `current_promote_${candidate.candidate.candidateId}`,
     "transaction.json",
   ));
-  const missingWorkingCopySourceHash = structuredClone(transaction);
-  delete missingWorkingCopySourceHash.workingCopySourceSha256;
+  const missingAfterHash = structuredClone(transaction);
+  delete missingAfterHash.afterSha256;
   await Promise.all([
     validate("candidate.v4.schema.json", await json(candidatePath)),
-    validate("promotion-transaction.v4.schema.json", transaction),
     validate("project-manifest.v4.schema.json", await json(path.join(controlRoot, "manifest.json"))),
     validate("project-runtime-state.v4.schema.json", await json(path.join(controlRoot, "runtime-state.json"))),
     validate(
       "working-copy-state.v4.schema.json",
-      await json(path.join(controlRoot, "working-copies", "work_ver_0002.json")),
+      await json(path.join(controlRoot, "working-copies", "work_ver_0001.json")),
+    ),
+    validate(
+      "current-version-transaction.v1.schema.json",
+      transaction,
     ),
     validateRejects(
-      "promotion-transaction.v4.schema.json",
-      missingWorkingCopySourceHash,
+      "current-version-transaction.v1.schema.json",
+      missingAfterHash,
     ),
   ]);
   assert.equal(promoted.version.versionId, "ver_0002");
 
-  await repository.replayHistoryVersionActivation(await seedLegacyHistoryActivation({
-    target: promoted.target,
-    versionId: "ver_0001",
-    operationId: "schema_history_continue_v1_0001",
-    expectedActiveWorkingCopyId: "work_ver_0002",
-  }));
-  const historyRuntime = await json(path.join(controlRoot, "runtime-state.json"));
-  await validate("project-runtime-state.v4.schema.json", historyRuntime);
-  const malformedHistoryActivation = structuredClone(historyRuntime);
-  malformedHistoryActivation.historyActivation = {
-    ...malformedHistoryActivation.historyActivation,
-    operationId: "bad",
-  };
-  await validateRejects("project-runtime-state.v4.schema.json", malformedHistoryActivation);
-
-  // The Runtime is forward compatible per level. Its root and historyActivation
-  // are preserved across a write, so both accept a member a newer Stemmio
-  // added; activeRequest and lastAiTask are authored and stay strict.
-  const futureRuntime = structuredClone(historyRuntime);
+  // The Runtime is forward compatible per level. Unknown root members remain
+  // readable, while authored activeRequest and lastAiTask fields stay strict.
+  const futureRuntime = await json(path.join(controlRoot, "runtime-state.json"));
   futureRuntime.ownerAccountId = "account_future";
-  futureRuntime.historyActivation.provenance = { seq: 1 };
   await validate("project-runtime-state.v4.schema.json", futureRuntime);
 
   // ADR 0022 forbids one specific member, a project-wide `fileNaming`; ADR 0057
@@ -329,42 +312,19 @@ test("current draft disk schemas validate one member, local snapshots and recove
   assert.equal(saved.workingCopyId, target.workingCopyId);
 });
 
-test("retired members retain the complete former Working Copy schema and a unique recovery identity", async (t) => {
-  const { fixture, importLegacySource, promoteNextVersion } = await import("./project-file-repository-harness.mjs");
+test("manifest rejects retired Working Copy members and missing current marker", async (t) => {
+  const { fixture, importSource } = await import("./project-file-repository-harness.mjs");
   const { assertManifest } = await import("../bridge/project-file-repository/registry.mjs");
-  const value = await fixture(t); const { target } = await importLegacySource(value);
-  const active = await promoteNextVersion(value.repository, target, "retired_schema_next");
-  await value.repository.initialize();
-  const manifest = await json(path.join(target.projectRootPath, ".stemmio/manifest.json"));
+  const value = await fixture(t);
+  const { target } = await importSource(value);
+  const manifestPath = path.join(target.projectRootPath, ".stemmio/manifest.json");
   const project = await json(path.join(target.projectRootPath, ".stemmio/project.json"));
-  assert.equal(manifest.retiredWorkingCopies.length, 1);
-  await validate("project-manifest.v4.schema.json", manifest);
-  assert.doesNotThrow(() => assertManifest(manifest, project));
-  for (const mutate of [
-    (value) => { delete value.retiredWorkingCopies[0].recoveryId; },
-    (value) => { value.retiredWorkingCopies[0].recoveryId = "../unsafe"; },
-    (value) => { delete value.retiredWorkingCopies[0].preferredFileStem; },
-    (value) => { value.retiredWorkingCopies[0].sourceRelativePath = "../outside.html"; },
-    (value) => { delete value.currentDraftSchemaVersion; },
-    (value) => { value.retiredWorkingCopies = {}; },
+  const manifest = await json(manifestPath);
+  for (const invalid of [
+    { ...structuredClone(manifest), retiredWorkingCopies: [] },
+    (() => { const copy = structuredClone(manifest); delete copy.currentDraftSchemaVersion; return copy; })(),
   ]) {
-    const invalid = structuredClone(manifest); mutate(invalid);
     await validateRejects("project-manifest.v4.schema.json", invalid);
     assert.throws(() => assertManifest(invalid, project));
   }
-  for (const mutate of [
-    (value) => { value.retiredWorkingCopies.push(structuredClone(value.retiredWorkingCopies[0])); },
-    (value) => { value.retiredWorkingCopies[0].workingCopyId = value.workingCopies[0].workingCopyId; },
-    (value) => { value.retiredWorkingCopies[0].basedOnVersionId = "ver_0999"; },
-  ]) {
-    const invalid = structuredClone(manifest); mutate(invalid);
-    assert.throws(() => assertManifest(invalid, project));
-  }
-  const reusedName = path.join(target.projectRootPath, manifest.retiredWorkingCopies[0].sourceRelativePath);
-  const { rename } = await import("node:fs/promises");
-  await rename(active.exactSourcePath, reusedName);
-  const opened = await value.repository.workspace({ sourcePath: reusedName });
-  assert.equal(opened.target.workingCopyId, active.workingCopyId);
-  assert.equal(opened.target.exactSourcePath, reusedName);
-  assert.equal(opened.manifest.retiredWorkingCopies[0].sourceRelativePath, manifest.retiredWorkingCopies[0].sourceRelativePath);
 });

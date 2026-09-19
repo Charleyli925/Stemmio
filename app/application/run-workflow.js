@@ -18,7 +18,6 @@ import {
   agentRecoveryKindForError,
   CLIPBOARD_DELIVERY_MODE,
   MANAGED_AGENT_MODE,
-  TRUSTED_LOCAL_AGENT_POLICY_VERSION,
   normalizeAgentDelivery,
 } from "../../shared/agent-delivery.mjs";
 
@@ -356,24 +355,14 @@ function frozenDeliveryForMode(deliveryMode, selection, provider) {
       trustPolicyVersion: provider.trustPolicyVersion,
     });
   }
-  return normalizeAgentDelivery({
-    mode: deliveryMode,
-    trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-  });
+  throw responseError("RUN_DELIVERY_MODE_INVALID", "选择的 Agent 交接方式无效。");
 }
 
 function deliveryForRun(run) {
   try {
     return normalizeAgentDelivery(run?.agentDelivery);
   } catch {
-    try {
-      return normalizeAgentDelivery({
-        ...run?.agentDelivery,
-        trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-      });
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 

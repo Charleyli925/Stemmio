@@ -46,7 +46,7 @@
     "submittedAt": "2026-07-17T08:34:00Z",
     "requestRelativePath": "requests/req_metrics_cards",
     "attemptRelativePath": "requests/req_metrics_cards/attempts/attempt_001",
-    "outputRelativePath": "requests/req_metrics_cards/attempts/attempt_001/output/index.html",
+    "outputRelativePath": "requests/req_metrics_cards/attempts/attempt_001/output/仪表盘-V1.8.html",
     "completionRelativePath": "requests/req_metrics_cards/attempts/attempt_001/completion.json",
     "frozenAnnotationsRelativePath": "requests/req_metrics_cards/input/annotations/records.json",
     "frozenAnnotationsSha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -73,6 +73,6 @@
     "expectedSourceSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "externalSourceSha256": "sha256:1313131313131313131313131313131313131313131313131313131313131313",
     "candidateOutputSha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "candidateRelativePath": "requests/req_metrics_cards/attempts/attempt_001/output/index.html"
+    "candidateRelativePath": "requests/req_metrics_cards/attempts/attempt_001/output/仪表盘-V1.8.html"
   }
 }
