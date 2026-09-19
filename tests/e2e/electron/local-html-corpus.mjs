@@ -47,6 +47,7 @@ import {
 } from "./real-html/capability-manifest.mjs";
 import {
   capabilityObservationSnapshot,
+  classifyCapabilityProbeFailure,
   collectVisibleAuthoredCandidates,
   discoverRuntimeGeneratedTargets,
   driveAuthoredTabActivation,
@@ -931,18 +932,28 @@ async function freezeCapabilityManifest(
       }
     } catch (cause) {
       if (!allowUnresolved) throw cause;
+      const classified = classifyCapabilityProbeFailure(cause);
+      const reportedCause = typeof cause?.code === "string"
+        ? cause
+        : Object.assign(new Error("Capability probe failed without an explicit product or harness code."), {
+          code: classified.code,
+          details: {
+            reasonClass: classified.reasonClass,
+            errorName: classified.errorName,
+          },
+        });
       noteDiscoveryFailure(
         discoveryTrace,
         REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
-        cause,
+        reportedCause,
         { candidateCount: candidates.length, candidateTabKnown: candidate.tabId !== null },
       );
-      stopReason ||= cause?.code || "CAPABILITY_PROBE_FAILED";
+      stopReason ||= classified.code;
       unresolvedProbes.push({
         probeStableId: candidate.stableId,
         operationStableId: cause?.details?.selectedId || null,
-        code: cause?.code || "CAPABILITY_PROBE_FAILED",
-        details: publicDiagnosticValue(cause?.details),
+        code: classified.code,
+        details: publicDiagnosticValue(reportedCause.details),
       });
       await page.keyboard.press("Escape").catch(() => {});
       await waitUntilEditable(page).catch(() => {});

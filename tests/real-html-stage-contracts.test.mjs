@@ -41,7 +41,10 @@ import {
   STALE_CANDIDATE_REASONS,
 } from "./e2e/electron/real-html/continuity-chain.mjs";
 import { summarizeRuntimeObserverRecords } from "./e2e/electron/real-html/runtime-observer.mjs";
-import { normalizeCapabilityProbeObservations } from "./e2e/electron/real-html/capability-driver.mjs";
+import {
+  classifyCapabilityProbeFailure,
+  normalizeCapabilityProbeObservations,
+} from "./e2e/electron/real-html/capability-driver.mjs";
 import {
   REAL_HTML_DISCOVERY_STAGES,
   createDiscoveryTrace,
@@ -313,6 +316,9 @@ test("capability normalization admits only complete proven authored denominator 
       descendantStableIds: [descendantId],
       sourceAncestorVerified: true,
       liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableId: descendantId,
     },
   };
   const normalized = normalizeCapabilityProbeObservations([observation]);
@@ -326,12 +332,18 @@ test("capability normalization admits only complete proven authored denominator 
       validSampleCount: 25,
       sourceAncestorVerified: true,
       liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableId: descendantId,
     },
   }]);
   for (const hitTest of [
     { ...observation.hitTest, validSampleCount: 24 },
     { ...observation.hitTest, sourceAncestorVerified: false },
     { ...observation.hitTest, liveUniqueVerified: false },
+    { ...observation.hitTest, coverageVerified: false },
+    { ...observation.hitTest, coverageKind: "sampled-grid" },
+    { ...observation.hitTest, coverageStableId: wrapperId },
     { ...observation.hitTest, descendantStableIds: [] },
     { ...observation.hitTest, descendantStableIds: ["private-dom-id"] },
   ]) {
@@ -340,6 +352,25 @@ test("capability normalization admits only complete proven authored denominator 
       { code: "CAPABILITY_PROBE_DENOMINATOR_EXCLUSION_INVALID" },
     );
   }
+});
+
+test("capability probe failures without explicit codes retain an actionable safe class", () => {
+  assert.deepEqual(classifyCapabilityProbeFailure(Object.assign(new Error("wait timed out"), {
+    name: "TimeoutError",
+  })), {
+    code: "CAPABILITY_PROBE_TIMEOUT",
+    reasonClass: "TIMEOUT",
+    errorName: "TimeoutError",
+  });
+  assert.deepEqual(classifyCapabilityProbeFailure(new Error("locator resolved to 2 elements")), {
+    code: "CAPABILITY_PROBE_LOCATOR_AMBIGUOUS",
+    reasonClass: "LOCATOR_AMBIGUOUS",
+    errorName: "Error",
+  });
+  assert.equal(
+    classifyCapabilityProbeFailure(new Error("opaque third-party failure")).code,
+    "CAPABILITY_PROBE_UNCLASSIFIED_ERROR",
+  );
 });
 
 test("a reviewed descendant-occlusion exclusion removes only its exact authored denominator row", () => {
@@ -361,6 +392,9 @@ test("a reviewed descendant-occlusion exclusion removes only its exact authored 
       descendantStableIds: [siblingId],
       sourceAncestorVerified: true,
       liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableId: siblingId,
     },
   }]);
   const excludedIds = new Set(normalized.denominatorExclusions.map((entry) => entry.elementId));

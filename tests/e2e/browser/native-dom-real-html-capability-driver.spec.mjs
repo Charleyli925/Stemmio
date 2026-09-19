@@ -898,6 +898,71 @@ test("capability probe excludes a source-proven wrapper covered by unique author
       descendantStableIds: [CORRECT_ID],
       sourceAncestorVerified: true,
       liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableId: CORRECT_ID,
+    },
+  });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
+test("capability probe keeps a wrapper in the denominator when sparse descendants cover only the sample grid", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
+  const descendantIds = fractions.flatMap((_, row) => fractions.map((__, column) => (
+    `sm1_${(row * fractions.length + column + 100).toString(16).padStart(32, "0")}`
+  )));
+  const dots = descendantIds.map((stableId, index) => {
+    const row = Math.floor(index / fractions.length);
+    const column = index % fractions.length;
+    return `<span data-stemmio-id="${stableId}" style="position:absolute;left:calc(${fractions[column] * 100}% - 3px);top:calc(${fractions[row] * 100}% - 3px);width:6px;height:6px"></span>`;
+  }).join("");
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${PARENT_ID}" style="position:relative;display:block;width:240px;height:100px">
+        ${dots}
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      ...descendantIds.map((stableId, index) => ({
+        stemmioId: stableId,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: index + 1,
+        sourceEditable: false,
+      })),
+    ],
+  });
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    probeReason: "NO_EXACT_HIT_POINT",
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    hitTest: {
+      kind: "blocked",
+      hitKind: "descendant-coverage-unproven",
+      sampleCount: 25,
+      descendantStableIds: descendantIds,
     },
   });
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
@@ -1314,9 +1379,41 @@ test("Runtime-generated discovery clicks an active-frame SVG through its descend
     runtimeGeneratedCount: 1,
     frozenTargetCount: 1,
     probeFailureCount: 0,
+    unreachableCandidateCount: 0,
     firstFailure: null,
   });
   expect(await child.evaluate(() => window.__runtimeProbeClickCount)).toBe(1);
+});
+
+test("Runtime-generated discovery records a visible but unhit-testable SVG as an unreachable candidate", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${CORRECT_ID}">
+        <svg id="unreachable-svg" width="240" height="100" style="pointer-events:none"><rect width="240" height="100"></rect></svg>
+      </section>
+    </main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.targets).toEqual([]);
+  expect(frozen.diagnostics).toMatchObject({
+    visibleCount: 1,
+    probedCount: 0,
+    runtimeGeneratedCount: 0,
+    probeFailureCount: 0,
+    unreachableCandidateCount: 1,
+    firstUnreachable: {
+      targetTag: "svg",
+      reason: "NO_INNER_FRAME_HIT_POINT",
+    },
+    firstFailure: null,
+  });
+  expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics])).toBeNull();
 });
 
 test("Runtime-generated discovery rejects an active-frame host overlay without clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {

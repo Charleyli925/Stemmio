@@ -208,6 +208,7 @@ async function authoredHitTest(frame, target, sourceElements) {
     const rect = element.getBoundingClientRect();
     const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
     const descendantStableIds = new Set();
+    const exactPoints = [];
     let sampleCount = 0;
     let blockedHitKind = null;
     for (const yFraction of fractions) {
@@ -218,13 +219,13 @@ async function authoredHitTest(frame, target, sourceElements) {
         sampleCount += 1;
         const hit = element.ownerDocument.elementFromPoint(x, y);
         if (hit?.closest("[data-stemmio-id]") === element) {
-          return {
-            kind: "exact",
+          exactPoints.push({
             targetX: x - rect.left,
             targetY: y - rect.top,
             clientX: x,
             clientY: y,
-          };
+          });
+          continue;
         }
         const stableHit = hit?.closest?.("[data-stemmio-id]") || null;
         const stableId = stableHit?.getAttribute("data-stemmio-id") || null;
@@ -241,6 +242,13 @@ async function authoredHitTest(frame, target, sourceElements) {
         }
         descendantStableIds.add(stableId);
       }
+    }
+    if (exactPoints.length > 0) {
+      return {
+        kind: "exact",
+        points: exactPoints,
+        pointCount: exactPoints.length,
+      };
     }
     return {
       kind: blockedHitKind || descendantStableIds.size === 0
@@ -279,6 +287,53 @@ async function authoredHitTest(frame, target, sourceElements) {
       return { ...sampled, kind: "blocked", hitKind: "unproven-descendant" };
     }
   }
+  const coverage = await target.evaluate((element, descendantStableIds) => {
+    const targetRects = [...element.getClientRects()];
+    if (targetRects.length !== 1) return null;
+    const targetRect = targetRects[0];
+    const epsilon = 0.5;
+    const safePointerBox = (candidate) => {
+      if (!(candidate instanceof HTMLElement)) return false;
+      const style = getComputedStyle(candidate);
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && style.pointerEvents !== "none"
+        && style.transform === "none"
+        && style.clipPath === "none"
+        && style.maskImage === "none"
+        && style.borderTopLeftRadius === "0px"
+        && style.borderTopRightRadius === "0px"
+        && style.borderBottomRightRadius === "0px"
+        && style.borderBottomLeftRadius === "0px";
+    };
+    for (const stableId of descendantStableIds) {
+      const matches = [...element.querySelectorAll("[data-stemmio-id]")]
+        .filter((candidate) => candidate.getAttribute("data-stemmio-id") === stableId);
+      if (matches.length !== 1 || !safePointerBox(matches[0])) continue;
+      const descendantRects = [...matches[0].getClientRects()];
+      if (descendantRects.length !== 1) continue;
+      const rect = descendantRects[0];
+      if (
+        rect.left <= targetRect.left + epsilon
+        && rect.top <= targetRect.top + epsilon
+        && rect.right >= targetRect.right - epsilon
+        && rect.bottom >= targetRect.bottom - epsilon
+      ) {
+        return {
+          kind: "single-untransformed-hit-box",
+          stableId,
+        };
+      }
+    }
+    return null;
+  }, sampled.descendantStableIds);
+  if (!coverage) {
+    return {
+      ...sampled,
+      kind: "blocked",
+      hitKind: "descendant-coverage-unproven",
+    };
+  }
   return {
     kind: "valid-descendant-occlusion",
     sampleCount: sampled.sampleCount,
@@ -286,6 +341,9 @@ async function authoredHitTest(frame, target, sourceElements) {
     descendantStableIds: sampled.descendantStableIds,
     sourceAncestorVerified: true,
     liveUniqueVerified: true,
+    coverageVerified: true,
+    coverageKind: coverage.kind,
+    coverageStableId: coverage.stableId,
   };
 }
 
@@ -295,10 +353,14 @@ async function pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements
   const topLevel = typeof frame.mainFrame === "function";
   if (topLevel) {
     return {
-      ...position,
-      pageX: position.clientX,
-      pageY: position.clientY,
-      topLevel,
+      kind: "exact",
+      points: position.points.map((point) => ({
+        ...point,
+        kind: "exact",
+        pageX: point.clientX,
+        pageY: point.clientY,
+        topLevel,
+      })),
     };
   }
   const frameGeometry = await editor.evaluate((root) => {
@@ -323,10 +385,14 @@ async function pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements
     throw error;
   }
   return {
-    ...position,
-    pageX: frameGeometry.contentLeft + position.clientX * frameGeometry.scaleX,
-    pageY: frameGeometry.contentTop + position.clientY * frameGeometry.scaleY,
-    topLevel,
+    kind: "exact",
+    points: position.points.map((point) => ({
+      ...point,
+      kind: "exact",
+      pageX: frameGeometry.contentLeft + point.clientX * frameGeometry.scaleX,
+      pageY: frameGeometry.contentTop + point.clientY * frameGeometry.scaleY,
+      topLevel,
+    })),
   };
 }
 
@@ -469,6 +535,24 @@ export function canonicalSourceRelationship(sourceElements, probeStableId, opera
   };
 }
 
+export function classifyCapabilityProbeFailure(cause) {
+  if (typeof cause?.code === "string" && cause.code.length > 0) {
+    return { code: cause.code, reasonClass: "EXPLICIT_CODE", errorName: cause?.name || null };
+  }
+  const name = typeof cause?.name === "string" ? cause.name : null;
+  const message = String(cause?.message || "");
+  const classification = /timeout/iu.test(`${name || ""} ${message}`)
+    ? ["CAPABILITY_PROBE_TIMEOUT", "TIMEOUT"]
+    : /strict mode|resolved to \d+ elements/iu.test(message)
+      ? ["CAPABILITY_PROBE_LOCATOR_AMBIGUOUS", "LOCATOR_AMBIGUOUS"]
+      : /not attached|detached/iu.test(message)
+        ? ["CAPABILITY_PROBE_TARGET_DETACHED", "TARGET_DETACHED"]
+        : /target page, context or browser has been closed|execution context was destroyed/iu.test(message)
+          ? ["CAPABILITY_PROBE_CONTEXT_CLOSED", "CONTEXT_CLOSED"]
+          : ["CAPABILITY_PROBE_UNCLASSIFIED_ERROR", "UNCLASSIFIED_ERROR"];
+  return { code: classification[0], reasonClass: classification[1], errorName: name };
+}
+
 export function capabilityObservationSnapshot(entry) {
   return {
     capabilityFamilies: [...(entry.capabilityFamilies || [])].sort(),
@@ -513,6 +597,9 @@ export function normalizeCapabilityProbeObservations(
           && hitTest.validSampleCount === hitTest.sampleCount
           && hitTest.sourceAncestorVerified === true
           && hitTest.liveUniqueVerified === true
+          && hitTest.coverageVerified === true
+          && hitTest.coverageKind === "single-untransformed-hit-box"
+          && CAPABILITY_STABLE_ID_PATTERN.test(hitTest.coverageStableId || "")
           && Array.isArray(descendantStableIds)
           && descendantStableIds.length > 0
           && new Set(descendantStableIds).size === descendantStableIds.length
@@ -520,6 +607,7 @@ export function normalizeCapabilityProbeObservations(
             CAPABILITY_STABLE_ID_PATTERN.test(stableId)
             && stableId !== observation.stableId
           ))
+          && descendantStableIds.includes(hitTest.coverageStableId)
           && !observation?.probeStableId
           && !observation?.operationStableId
           && (observation?.capabilityFamilies?.length || 0) === 0
@@ -545,6 +633,9 @@ export function normalizeCapabilityProbeObservations(
             validSampleCount: hitTest.validSampleCount,
             sourceAncestorVerified: true,
             liveUniqueVerified: true,
+            coverageVerified: true,
+            coverageKind: hitTest.coverageKind,
+            coverageStableId: hitTest.coverageStableId,
           },
         });
         continue;
@@ -740,10 +831,22 @@ function recordRuntimeProbeFailure(diagnostics, context, {
   };
 }
 
+function recordRuntimeProbeUnreachable(diagnostics, context) {
+  diagnostics.unreachableCandidateCount += 1;
+  diagnostics.firstUnreachable ||= {
+    targetIndex: context?.targetIndex ?? null,
+    targetTag: context?.targetTag || null,
+    connected: context?.connected ?? null,
+    frameGeneration: context?.frameGeneration || null,
+    reason: "NO_INNER_FRAME_HIT_POINT",
+  };
+}
+
 async function pageSpaceRuntimeHitPoint({ frame, editor, target }) {
-  const point = await target.evaluate((element) => {
+  const points = await target.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
+    const hitPoints = [];
     for (const yFraction of fractions) {
       for (const xFraction of fractions) {
         const clientX = rect.left + Math.max(1, rect.width * xFraction);
@@ -753,20 +856,27 @@ async function pageSpaceRuntimeHitPoint({ frame, editor, target }) {
         }
         const hit = element.ownerDocument.elementFromPoint(clientX, clientY);
         if (hit === element || (hit && element.contains(hit))) {
-          return {
+          hitPoints.push({
             clientX,
             clientY,
             hitKind: hit === element ? "target" : "target-descendant",
-          };
+          });
         }
       }
     }
-    return null;
+    return hitPoints;
   });
-  if (!point) return null;
+  if (points.length === 0) return null;
   const topLevel = typeof frame.mainFrame === "function";
   if (topLevel) {
-    return { ...point, pageX: point.clientX, pageY: point.clientY, topLevel };
+    return {
+      points: points.map((point) => ({
+        ...point,
+        pageX: point.clientX,
+        pageY: point.clientY,
+        topLevel,
+      })),
+    };
   }
   const frameGeometry = await editor.evaluate((root) => {
     const frames = root.querySelectorAll('iframe[data-runtime-slot-role="active"]');
@@ -785,10 +895,12 @@ async function pageSpaceRuntimeHitPoint({ frame, editor, target }) {
   });
   if (frameGeometry.count !== 1) return null;
   return {
-    ...point,
-    pageX: frameGeometry.contentLeft + point.clientX * frameGeometry.scaleX,
-    pageY: frameGeometry.contentTop + point.clientY * frameGeometry.scaleY,
-    topLevel,
+    points: points.map((point) => ({
+      ...point,
+      pageX: frameGeometry.contentLeft + point.clientX * frameGeometry.scaleX,
+      pageY: frameGeometry.contentTop + point.clientY * frameGeometry.scaleY,
+      topLevel,
+    })),
   };
 }
 
@@ -846,6 +958,8 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
     rejectedDiagnosticCount: 0,
     diagnosticTargetMismatchCount: 0,
     probeFailureCount: 0,
+    unreachableCandidateCount: 0,
+    firstUnreachable: null,
     firstFailure: null,
   };
   for (let index = 0; index < Math.min(candidateCount, 512); index += 1) {
@@ -895,27 +1009,43 @@ export async function discoverRuntimeGeneratedTargets({ page, frame, editor, tab
       });
       continue;
     }
-    const point = await pageSpaceRuntimeHitPoint({ frame, editor, target }).catch(() => null);
-    if (!point) {
+    let pointSet = null;
+    try {
+      pointSet = await pageSpaceRuntimeHitPoint({ frame, editor, target });
+    } catch (cause) {
       recordRuntimeProbeFailure(diagnostics, context, {
         substage: RUNTIME_PROBE_SUBSTAGES.TARGET_CLICK,
-        code: "RUNTIME_PROBE_NO_SAFE_HIT_POINT",
+        code: cause?.code || "RUNTIME_PROBE_HIT_POINT_READ_FAILED",
       });
       continue;
     }
+    if (!pointSet) {
+      recordRuntimeProbeUnreachable(diagnostics, context);
+      continue;
+    }
+    let point = null;
+    let lastUnsafeHit = null;
     try {
-      await page.mouse.move(point.pageX, point.pageY);
-      await page.evaluate(() => new Promise((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
-      }));
-      const safeHit = await runtimeHitStillSafe({ editor, target, point });
-      if (!safeHit.accepted) {
+      for (const candidatePoint of pointSet.points) {
+        await page.mouse.move(candidatePoint.pageX, candidatePoint.pageY);
+        await page.evaluate(() => new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }));
+        const safeHit = await runtimeHitStillSafe({ editor, target, point: candidatePoint });
+        if (!safeHit.accepted) {
+          lastUnsafeHit = safeHit;
+          continue;
+        }
+        point = candidatePoint;
+        break;
+      }
+      if (!point) {
         recordRuntimeProbeFailure(diagnostics, context, {
           substage: RUNTIME_PROBE_SUBSTAGES.TARGET_CLICK,
-          code: safeHit.hitKind === "target-moved"
+          code: lastUnsafeHit?.hitKind === "target-moved"
             ? "RUNTIME_PROBE_TARGET_MOVED_BEFORE_POINTER_DOWN"
             : "RUNTIME_PROBE_HOST_POINTER_INTERCEPTED",
-          hitKind: safeHit.hitKind,
+          hitKind: lastUnsafeHit?.hitKind,
         });
         continue;
       }
@@ -1122,40 +1252,43 @@ export async function probeAuthoredCapability({
     error.details = { expectedStableId: candidate.stableId, expectedTag: liveTag, relocated };
     throw error;
   }
-  const initialPoint = await pageSpaceAuthoredHitPoint({
+  const initialPoints = await pageSpaceAuthoredHitPoint({
     frame,
     editor,
     target,
     sourceElements,
   });
-  if (initialPoint.kind === "valid-descendant-occlusion") {
+  if (initialPoints.kind === "valid-descendant-occlusion") {
     return {
       ...candidate,
       capabilityFamilies: [],
       behaviorFamilies: [],
       visible: false,
       probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
-      hitTest: initialPoint,
+      hitTest: initialPoints,
       selectionReset,
     };
   }
-  if (initialPoint.kind !== "exact") {
+  if (initialPoints.kind !== "exact") {
     return {
       ...candidate,
       capabilityFamilies: [],
       behaviorFamilies: [],
       visible: false,
       probeReason: "NO_EXACT_HIT_POINT",
-      hitTest: initialPoint,
+      hitTest: initialPoints,
       selectionReset,
     };
   }
   let point = null;
   let hostPointer = null;
   let iframeHitStillExact = false;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    point = await pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements });
-    if (point.kind !== "exact") break;
+  const hostHitKinds = [];
+  for (let pointIndex = 0; pointIndex < initialPoints.points.length; pointIndex += 1) {
+    const currentPoints = await pageSpaceAuthoredHitPoint({ frame, editor, target, sourceElements });
+    if (currentPoints.kind !== "exact") continue;
+    point = currentPoints.points[pointIndex] || null;
+    if (!point) continue;
     await page.mouse.move(point.pageX, point.pageY);
     await page.evaluate(() => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -1167,7 +1300,8 @@ export async function probeAuthoredCapability({
       mode,
       expectedOperationStableId,
     });
-    if (!hostPointer.accepted) break;
+    hostHitKinds.push(hostPointer.hitKind || "no-hit");
+    if (!hostPointer.accepted) continue;
     iframeHitStillExact = await target.evaluate((element, hitPoint) => (
       element.ownerDocument.elementFromPoint(hitPoint.clientX, hitPoint.clientY)
         ?.closest("[data-stemmio-id]") === element
@@ -1181,6 +1315,8 @@ export async function probeAuthoredCapability({
       stableId: candidate.stableId,
       hitKind: hostPointer?.hitKind || "no-exact-hit-point",
       hostPointer,
+      attemptedPointCount: hostHitKinds.length,
+      hostHitKinds: [...new Set(hostHitKinds)],
     };
     throw error;
   }
