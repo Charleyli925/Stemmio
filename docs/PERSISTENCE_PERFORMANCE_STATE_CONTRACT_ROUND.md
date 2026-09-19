@@ -31,6 +31,14 @@ Raw structured evidence is ignored by Git and remains under
 - M1: `2026-09-19T18-57-30-697Z.json`
 - O1: `2026-09-19T19-44-13-994Z.json`
 
+Before delivery the task branch was rebased onto `origin/main@6ce1c299` so it
+would retain the already-merged surface-navigation handoff fix. The measured
+harness commit `fedaa773` maps to `a57844ac` and the measured O1 commit
+`ebdfebc0` maps to `ba8c0458`; `scripts/benchmark-persistence.mjs` and both O1
+files are byte-identical across those respective pre-rebase and delivery
+commits. The rebase therefore changes ancestry and incorporates unrelated main
+work without changing the measured harness or O1 implementation.
+
 ## M1 baseline
 
 All three fixture sizes passed external-write conflict, restart recovery and
