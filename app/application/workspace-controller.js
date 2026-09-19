@@ -1707,8 +1707,20 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().open(input);
   }
 
-  retryProjectRules() {
-    return this.#requireProjectRulesWorkflow().retry();
+  prepareProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().prepareOpen(input);
+  }
+
+  commitPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().commitPreparedOpen(input);
+  }
+
+  discardPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().discardPreparedOpen(input);
+  }
+
+  retryProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().retry(input);
   }
 
   updateProjectRules(input) {
@@ -1723,16 +1735,16 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().finishComposition(input);
   }
 
-  leaveProjectRulesEditor() {
-    return this.#requireProjectRulesWorkflow().leaveEditor();
+  leaveProjectRulesEditor(input) {
+    return this.#requireProjectRulesWorkflow().leaveEditor(input);
   }
 
-  restoreProjectRules() {
-    return this.#requireProjectRulesWorkflow().restore();
+  restoreProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().restore(input);
   }
 
-  saveProjectRules() {
-    return this.#requireProjectRulesWorkflow().save();
+  saveProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().save(input);
   }
 
   closeProjectRules() {

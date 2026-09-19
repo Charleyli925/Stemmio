@@ -151,6 +151,8 @@ function fixture({
   confirm,
   cancel,
   acceptExternal,
+  prepareRules: onPrepareRules,
+  commitRules: onCommitRules,
   viewHistory: onViewHistory,
   returnToCurrent: onReturnToCurrent,
   surfaceHistoryCreation = null,
@@ -173,16 +175,38 @@ function fixture({
   let snapshot = projectSnapshot(A, 1);
   const listeners = new Set();
   const calls = [];
+  let rulesPreparationSequence = 0;
+  const preparedRules = new Map();
+  let rulesSessionContext = null;
   const controller = {
     getSnapshot: () => snapshot,
+    getRulesContext: () => rulesSessionContext,
     subscribe(listener) {
       listeners.add(listener);
       listener(snapshot);
       return () => listeners.delete(listener);
     },
-    openProjectRules({ context }) {
+    async prepareProjectRules({ context }) {
       calls.push(`rules:${context.projectId}`);
-      return Promise.resolve({ status: "succeeded", value: { opened: true } });
+      if (onPrepareRules) return onPrepareRules({ context, preparedRules });
+      rulesPreparationSequence += 1;
+      const preparationId = `rules-preparation-${rulesPreparationSequence}`;
+      preparedRules.set(preparationId, context);
+      return { status: "succeeded", value: { prepared: true, preparationId } };
+    },
+    commitPreparedProjectRules({ preparationId }) {
+      calls.push(`rules-commit:${preparationId}`);
+      if (onCommitRules) return onCommitRules({ preparationId, preparedRules });
+      const preparedContext = preparedRules.get(preparationId) || null;
+      if (!preparedContext || !preparedRules.delete(preparationId)) {
+        return { status: "blocked", code: "PROJECT_RULES_PREPARATION_STALE", reason: "stale" };
+      }
+      rulesSessionContext = preparedContext;
+      return { status: "succeeded", value: { opened: true } };
+    },
+    discardPreparedProjectRules({ preparationId }) {
+      calls.push(`rules-discard:${preparationId}`);
+      return preparedRules.delete(preparationId);
     },
     viewHistory({ version, context }) {
       calls.push(`history:${context.projectId}:${version.id}`);
@@ -810,6 +834,42 @@ test("跨项目规则和历史只在目标页面就绪后提交标签", async ()
   assert.deepEqual(harness.calls.filter((call) => call === `current:${A.projectId}`), [
     `current:${A.projectId}`,
   ]);
+});
+
+test("目标规则读取失败时同时保留原标签和原规则会话", async () => {
+  const harness = fixture({
+    prepareRules: async ({ context, preparedRules }) => {
+      if (context.projectId === B.projectId) {
+        return {
+          status: "rejected",
+          code: "PROJECT_RULES_READ_FAILED",
+          reason: "Beta rules unavailable",
+        };
+      }
+      const preparationId = "rules-preparation-alpha";
+      preparedRules.set(preparationId, context);
+      return { status: "succeeded", value: { prepared: true, preparationId } };
+    },
+  });
+  assert.equal((await harness.workflow.createProjectRules({
+    ...A,
+    title: A.name,
+  })).status, "succeeded");
+  const alphaTabId = `project-rules:${A.projectId}:${A.documentId}`;
+  assert.equal(harness.tabs.snapshot.activeTabId, alphaTabId);
+  assert.equal(harness.controller.getRulesContext().projectId, A.projectId);
+
+  const failed = await harness.workflow.createProjectRules({
+    ...B,
+    title: B.name,
+  });
+  assert.equal(failed.status, "rejected");
+  assert.equal(failed.code, "PROJECT_RULES_READ_FAILED");
+  assert.equal(harness.tabs.snapshot.activeTabId, alphaTabId);
+  assert.equal(harness.controller.getRulesContext().projectId, A.projectId);
+  assert.equal(harness.tabs.snapshot.tabs.some((tab) => (
+    tab.kind === "project-rules" && tab.projectId === B.projectId
+  )), false);
 });
 
 test("未确认的历史创建结果会在独立历史页就绪后恢复对应当前稿", async () => {

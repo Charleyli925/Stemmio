@@ -978,6 +978,86 @@ test("Electron sidebar opens an imported historical version in the existing proj
   }
 });
 
+test("Electron history mounts and restores without any current-draft Runtime", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-version-display"],
+}, async () => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("history-without-current-runtime.html");
+  let app = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const userData = app.isolatedUserData;
+  let firstClosed = false;
+  try {
+    await loadedDiskFrame(app.page, fixture.sourcePath, "list-item");
+    await waitForProjectReady(app.page);
+    const managedPath = await managedWorkingCopyPath(app.page, fixture.sourcePath);
+    const repository = new ProjectFileRepository({
+      projectsRoot: path.dirname(path.dirname(managedPath)),
+    });
+    const workspace = await repository.workspace({ sourcePath: managedPath });
+
+    await app.page.getByRole("button", { name: "展开左侧边栏" }).click();
+    const tablist = app.page.getByRole("tablist", { name: "已打开的页面" });
+    const documentTabContainer = app.page.locator('.workbench-tab[data-kind="document"]');
+    await documentTabContainer.getByRole("button", { name: /关闭/u }).click();
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.locator('.workbench-tab[data-kind="start"]')
+      .getByRole("tab")).toHaveAttribute("aria-selected", "true");
+
+    const project = app.page.locator(".sidebar-project-item")
+      .filter({ hasText: "history-without-current-runtime" }).first();
+    const projectRow = project.locator(".sidebar-project-row");
+    if (await projectRow.getAttribute("aria-expanded") !== "true") {
+      await projectRow.click();
+    }
+    const historyToggle = project.locator(".sidebar-project-history-toggle");
+    if (await historyToggle.getAttribute("aria-expanded") !== "true") {
+      await historyToggle.click();
+    }
+    await project.getByRole("button", { name: "V1，历史版本", exact: true }).click();
+    const historyTab = app.page.locator('.workbench-tab[data-kind="history"]')
+      .getByRole("tab");
+    await expect(historyTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.getByTestId("workbench-active-document-canvas"))
+      .toHaveAttribute("data-runtime-hot-count", "0");
+    const preview = app.page.frameLocator('iframe[title="HTML 交互预览"]');
+    await expect(preview.locator(caseSelector("list-item"))).toBeVisible();
+
+    const startContainer = app.page.locator('.workbench-tab[data-kind="start"]');
+    await startContainer.getByRole("button", { name: /关闭/u }).click();
+    await expect(tablist.getByRole("tab")).toHaveCount(1);
+    await expect(historyTab).toHaveAttribute("aria-selected", "true");
+    const tabsStatePath = path.join(userData, "workbench-tabs.json");
+    await expect.poll(() => {
+      try {
+        return JSON.parse(readFileSync(tabsStatePath, "utf8"));
+      } catch {
+        return null;
+      }
+    }).toMatchObject({
+      activeTabId: `history:${workspace.project.projectId}:${workspace.project.documentId}`,
+    });
+
+    await closeStemmioGracefully(app.electronApp, app.page);
+    firstClosed = true;
+    app = await launchStemmio({ isolatedUserData: userData });
+    await expect(app.page.locator('.workbench-tab[data-kind="history"]')
+      .getByRole("tab")).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.getByTestId("workbench-active-document-canvas"))
+      .toHaveAttribute("data-runtime-hot-count", "0");
+    await expect(app.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .locator(caseSelector("list-item"))).toBeVisible();
+  } finally {
+    if (firstClosed) {
+      await stopStemmio(app.electronApp, app.isolatedUserData);
+    } else {
+      await stopStemmio(app.electronApp, userData);
+    }
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron history creation recreates a closed current-draft tab", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-version-display"],
 }, async () => {

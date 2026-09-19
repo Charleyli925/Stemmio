@@ -662,6 +662,12 @@ export default function Workbench() {
     || activeWorkbenchTab?.kind === "history"
     ? activeWorkbenchTab.documentId
     : documentId;
+  const activeProjectRulesScope = activeWorkbenchTab?.kind === "project-rules"
+    ? Object.freeze({
+      projectId: activeWorkbenchTab.projectId || "",
+      documentId: activeWorkbenchTab.documentId || "",
+    })
+    : null;
   const activeDocumentPresentation = documentSurfaceCacheSnapshot.presentations.find((entry) => (
     activeWorkbenchTab?.kind === "document"
     && entry.tabId === activeWorkbenchTab.tabId
@@ -3392,33 +3398,45 @@ export default function Workbench() {
   }, [navigationCapability, presentWorkbenchTabOutcome]);
 
   const updateProjectRules = useCallback((content: string) => {
-    workspaceController?.updateProjectRules({ content });
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.updateProjectRules({ content, scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const beginProjectRulesComposition = useCallback((input: {
     target: HTMLTextAreaElement;
     baselineValue: string;
   }) => {
-    workspaceController?.beginProjectRulesComposition(input);
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.beginProjectRulesComposition({
+      ...input,
+      scope: activeProjectRulesScope,
+    });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const finishProjectRulesComposition = useCallback((input: {
     target: HTMLTextAreaElement;
   }) => {
-    workspaceController?.finishProjectRulesComposition(input);
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.finishProjectRulesComposition({
+      ...input,
+      scope: activeProjectRulesScope,
+    });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const saveProjectRules = useCallback(() => {
-    void workspaceController?.saveProjectRules();
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    void workspaceController?.saveProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const restoreProjectRules = useCallback(() => {
-    workspaceController?.restoreProjectRules();
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.restoreProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const retryProjectRules = useCallback(() => {
-    void workspaceController?.retryProjectRules();
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    void workspaceController?.retryProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   useEffect(() => {
     workspaceController?.reconcileProjectTransitions();
@@ -6477,7 +6495,7 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {displayedCanvasMode === "preview" && documentRuntimeTabId ? (
+          {displayedCanvasMode === "preview" && (historyPreview || documentRuntimeTabId) ? (
             <HtmlInteractionPreview
               key={`preview-authority-${canvasGeneration}-${historyPreview?.versionId || "current"}`}
               ref={interactionPreviewRef}

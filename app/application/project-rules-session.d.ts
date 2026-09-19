@@ -29,6 +29,10 @@ export type ProjectRulesOperation = Readonly<{
 export class ProjectRulesSession {
   subscribe(listener: (snapshot: ProjectRulesSnapshot) => void): () => void;
   beginOpen(context: ProjectRulesContext): ProjectRulesOperation | null;
+  commitOpen(
+    context: ProjectRulesContext,
+    payload: { content?: unknown } | null | undefined,
+  ): boolean;
   completeOpen(
     token: ProjectRulesOperation,
     payload: { content?: unknown } | null | undefined,

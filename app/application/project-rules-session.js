@@ -125,6 +125,22 @@ export class ProjectRulesSession {
     return operationToken(nextContext, generation);
   }
 
+  commitOpen(context, payload) {
+    const nextContext = copyContext(context);
+    if (!nextContext) return false;
+    this.#generation += 1;
+    this.#context = nextContext;
+    this.#composition = null;
+    const content = String(payload?.content || "");
+    this.#emit({
+      ...emptySnapshot(this.#snapshot.editorGeneration),
+      open: true,
+      content,
+      savedContent: content,
+    });
+    return true;
+  }
+
   completeOpen(token, payload) {
     if (!this.isCurrent(token)) return false;
     const content = String(payload?.content || "");

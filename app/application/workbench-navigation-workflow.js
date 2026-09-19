@@ -772,7 +772,7 @@ export class WorkbenchNavigationWorkflow {
       }
       if (!skipCapture && current?.kind === "document") this.#captureCurrentSurface(current);
       const opened = target.kind === "project-rules"
-        ? await this.#controller.openProjectRules({ context })
+        ? await this.#controller.prepareProjectRules({ context })
         : await this.#controller.viewHistory({
           version: {
             id: surfaceTarget.versionId,
@@ -799,11 +799,30 @@ export class WorkbenchNavigationWorkflow {
         ? this.#tabs.commitHistory(target.tabId, surfaceTarget)
         : this.#tabs.commitProjectRules(target.tabId);
       if (!committed) {
+        if (target.kind === "project-rules") {
+          this.#controller.discardPreparedProjectRules({
+            preparationId: opened.value.preparationId,
+          });
+        }
         const outcome = rejected(
           "WORKBENCH_TAB_COMMIT_REJECTED",
           "标签页状态已变化，没有打开目标页面。",
         );
         return { outcome };
+      }
+      if (target.kind === "project-rules") {
+        const published = this.#controller.commitPreparedProjectRules({
+          preparationId: opened.value.preparationId,
+        });
+        if (published?.status !== "succeeded") {
+          this.#controller.discardPreparedProjectRules({
+            preparationId: opened.value.preparationId,
+          });
+          return { outcome: rejected(
+            published?.code || "PROJECT_RULES_PREPARATION_STALE",
+            String(published?.reason || "长期规则读取结果已经过期，没有切换编辑会话。"),
+          ) };
+        }
       }
       if (
         target.kind === "history"
