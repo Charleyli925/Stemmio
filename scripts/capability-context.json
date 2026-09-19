@@ -85,6 +85,7 @@
       ],
       "entryInterfaces": [
         "app/application/document-workflow.d.ts",
+        "app/application/document-session-contract.d.ts",
         "app/application/document-session.d.ts",
         "app/application/source-receipt-contract.d.ts",
         "app/application/document/save-plan.d.ts",

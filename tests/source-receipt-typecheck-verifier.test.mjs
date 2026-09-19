@@ -15,13 +15,26 @@ const documentSessionSourcePath = path.join(
   productRoot,
   "app/application/document-session.js",
 );
+const documentSessionContractPath = path.join(
+  productRoot,
+  "app/application/document-session-contract.d.ts",
+);
+const documentSessionFacadePath = path.join(
+  productRoot,
+  "app/application/document-session.d.ts",
+);
 
 test("the official SourceReceipt config rejects the implementation mutation", () => {
   const result = verifySourceReceiptTypecheck();
   assert.equal(result.sourcePath, sourcePath);
   assert.equal(result.documentSessionSourcePath, documentSessionSourcePath);
+  assert.equal(result.documentSessionContractPath, documentSessionContractPath);
+  assert.equal(result.documentSessionFacadePath, documentSessionFacadePath);
   assert.equal(result.diagnosticCode, 2322);
-  assert.deepEqual(result.documentSessionDiagnosticCodes, [2322, 2322, 2322]);
+  assert.deepEqual(
+    result.documentSessionDiagnosticCodes,
+    [2322, 2322, 2322, 2420, 2416, 2416],
+  );
 });
 
 test("the proof fails if the official config stops checking JavaScript", () => {
@@ -46,7 +59,7 @@ test("the proof fails if the implementation leaves the official compiler inputs"
         fileNames: parsedConfig.fileNames.filter((fileName) => path.resolve(fileName) !== sourcePath),
       },
     }),
-    /implementation is missing from the official compiler inputs/u,
+    /required input is missing from the official compiler inputs/u,
   );
 });
 
@@ -61,9 +74,29 @@ test("the proof fails if DocumentSession leaves the official compiler inputs", (
         ),
       },
     }),
-    /implementation is missing from the official compiler inputs.*document-session\.js/u,
+    /required input is missing from the official compiler inputs.*document-session\.js/u,
   );
 });
+
+for (const [name, requiredPath] of [
+  ["DocumentSession contract", documentSessionContractPath],
+  ["DocumentSession facade", documentSessionFacadePath],
+]) {
+  test(`the proof fails if the ${name} leaves the official compiler inputs`, () => {
+    const parsedConfig = loadSourceReceiptTypecheckConfig();
+    assert.throws(
+      () => verifySourceReceiptTypecheck({
+        parsedConfig: {
+          ...parsedConfig,
+          fileNames: parsedConfig.fileNames.filter(
+            (fileName) => path.resolve(fileName) !== requiredPath,
+          ),
+        },
+      }),
+      /required input is missing from the official compiler inputs/u,
+    );
+  });
+}
 
 test("the proof fails when the mutation location is absent or ambiguous", async () => {
   const sourceText = await readFile(sourcePath, "utf8");
@@ -92,5 +125,39 @@ test("the proof fails when a DocumentSession mutation location is absent or ambi
       documentSessionSourceText: `${sourceText}\n${anchor}\n`,
     }),
     /verified-rendered-hash mutation anchor must match exactly once; matched 2/u,
+  );
+});
+
+test("the proof fails if DocumentSession drops its complete instance contract", async () => {
+  const sourceText = await readFile(documentSessionSourcePath, "utf8");
+  const implementsContract = "/** @implements {DocumentSessionDeclaration} */";
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      documentSessionSourceText: sourceText.replace(implementsContract, ""),
+    }),
+    /DocumentSession @implements contract must match exactly once; matched 0/u,
+  );
+});
+
+test("the complete-instance mutation anchor must remain unique", async () => {
+  const sourceText = await readFile(documentSessionSourcePath, "utf8");
+  const start = sourceText.indexOf("  markPersistenceIdle() {");
+  const end = sourceText.indexOf(
+    "\n\n  /** @param {Partial<Parameters<DocumentSessionDeclaration[\"recordPersistenceFailure\"]",
+    start,
+  );
+  assert.ok(start >= 0 && end > start);
+  const anchor = sourceText.slice(start, end);
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      documentSessionSourceText: sourceText.replace(anchor, ""),
+    }),
+    /complete-instance-contract mutation anchor must match exactly once; matched 0/u,
+  );
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      documentSessionSourceText: `${sourceText}\n${anchor}\n`,
+    }),
+    /complete-instance-contract mutation anchor must match exactly once; matched 2/u,
   );
 });

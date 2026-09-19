@@ -11,16 +11,16 @@ export {
   sameSourceReceiptContext,
 };
 
-/** @typedef {import("./document-session.d.ts").DocumentCanvasAuthority} DocumentCanvasAuthority */
-/** @typedef {import("./document-session.d.ts").DocumentPersistState} DocumentPersistState */
-/** @typedef {import("./document-session.d.ts").DocumentSessionSnapshot} DocumentSessionSnapshot */
-/** @typedef {import("./document-session.d.ts").DocumentSessionOptions} DocumentSessionOptions */
-/** @typedef {import("./document-session.d.ts").DocumentWrite} DocumentWrite */
-/** @typedef {import("./document-session.d.ts").DocumentWriteConfirmation} DocumentWriteConfirmation */
-/** @typedef {import("./document-session.d.ts").DocumentSession<DocumentWrite & Record<string, unknown>>} DocumentSessionDeclaration */
-/** @typedef {import("./document-session.d.ts").PersistedBoundaryResult} PersistedBoundaryResult */
-/** @typedef {import("./source-receipt-contract.d.ts").DocumentSourceReceipt} DocumentSourceReceipt */
-/** @typedef {import("./project-session.js").ProjectContext} ProjectContext */
+/** @typedef {import("./document-session-contract.d.ts").DocumentCanvasAuthority} DocumentCanvasAuthority */
+/** @typedef {import("./document-session-contract.d.ts").DocumentPersistState} DocumentPersistState */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionSnapshot} DocumentSessionSnapshot */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionOptions} DocumentSessionOptions */
+/** @typedef {import("./document-session-contract.d.ts").DocumentWrite} DocumentWrite */
+/** @typedef {import("./document-session-contract.d.ts").DocumentWriteConfirmation} DocumentWriteConfirmation */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionInstance<DocumentWrite & Record<string, unknown>, unknown>} DocumentSessionDeclaration */
+/** @typedef {import("./document-session-contract.d.ts").PersistedBoundaryResult} PersistedBoundaryResult */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSourceReceipt} DocumentSourceReceipt */
+/** @typedef {import("./document-session-contract.d.ts").ProjectContext} ProjectContext */
 
 const PERSIST_STATES = new Set([
   "idle",
@@ -211,6 +211,7 @@ function initialSnapshot({
   });
 }
 
+/** @implements {DocumentSessionDeclaration} */
 export class DocumentSession {
   /** @type {((snapshot: DocumentSessionSnapshot) => void) | null} */
   #observer = null;
@@ -511,7 +512,7 @@ export class DocumentSession {
 
   /**
    * @param {Partial<Parameters<DocumentSessionDeclaration["acceptEdit"]>[0]>} [value]
-   * @returns {import("./document-session.d.ts").DocumentEditAcceptance<DocumentWrite & Record<string, unknown>>}
+   * @returns {import("./document-session-contract.d.ts").DocumentEditAcceptance<DocumentWrite & Record<string, unknown>>}
    */
   acceptEdit({
     html,
@@ -1031,7 +1032,7 @@ export class DocumentSession {
     return this.#snapshot.html;
   }
 
-  /** @param {import("./source-receipt-contract.d.ts").SourceReceiptInput} input */
+  /** @param {import("./document-session-contract.d.ts").SourceReceiptInput} input */
   #nextReceipt(input) {
     this.#receiptSequence += 1;
     return createSourceReceipt({

@@ -114,10 +114,12 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
   `conflict-force-unlock.spec.mjs` 的真实接纳接线。
 - `SourceReceipt` / `DocumentSession` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
-  `source-receipt.js` 、真实 `document-session.js` 与其调用者合约，并从
+  `source-receipt.js`、真实 `document-session.js`、单一实例合同 `document-session-contract.d.ts`、
+  runtime façade `document-session.d.ts` 与调用者合约，并从
   `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
   再以内存源码覆盖完成定向错误变异。`DocumentSession` 变异分别把 verified Hash 置空、
-  generation 改成字符串、以及把 accepted edit 结果改成错误形状，都必须在指定生产位置只产生预期类型错误；
+  generation 改成字符串、把 accepted edit 结果改成错误形状、删除实例方法，以及让
+  Canvas / flush getter 返回错误类型，都必须在指定生产位置只产生预期类型错误；
   若正式配置
   关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
   也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。
@@ -682,7 +684,7 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 | 非法 SourceReceipt 不能被放行 | 固定的非法值、缺失字段、超界数字和 context 投影与生产守卫结果对比；不调用守卫自己生成期望 | `tests/document-session.test.mjs` 的 `source receipt guard ...` 正反例 | `node --test tests/document-session.test.mjs` |
 | 原子写入异常不掩盖真实结果 | 故障注入后独立读取目标字节、目录项和主错误，区分 replace 前后的 cleanup | `tests/lifecycle-core.test.mjs` 的 255-byte、directory-sync 和 cleanup failure 用例 | `node --test tests/lifecycle-core.test.mjs` |
 | 禁止的架构依赖必须失败 | 独立临时源码中的合法/非法 AST 固定样例，再执行完整生产图检查 | `tests/architecture-boundaries.test.mjs` 与 `scripts/check-architecture.mjs` | `npm run architecture:check && node --test tests/architecture-boundaries.test.mjs` |
-| SourceReceipt / DocumentSession 核心实现真正受类型检查 | 编译输入列表核对加四个定向错误变异；任一变异未在指定生产位置报预期错误则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
+| SourceReceipt / DocumentSession 核心实现真正受类型检查 | contract / façade / 实现 root 核对加七个定向错误变异；任一变异未在指定生产位置报预期错误则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
 | 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
 | 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
 | 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |

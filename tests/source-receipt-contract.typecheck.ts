@@ -1,7 +1,9 @@
 import {
   DocumentSession,
   isSourceReceipt,
+  type DocumentCanvasAuthority,
   type DocumentSourceReceipt,
+  type DocumentWriteConfirmation,
 } from "../app/application/document-session.js";
 
 declare const candidate: unknown;
@@ -52,3 +54,20 @@ if (previewEdit.accepted) {
   const revision: number = previewEdit.revision;
   void revision;
 }
+
+// @ts-expect-error Rejected confirmation cannot claim current-document completion.
+const impossibleRejectedConfirmation: DocumentWriteConfirmation = {
+  accepted: false,
+  completesCurrentDocument: true,
+  authorityChanged: false,
+};
+void impossibleRejectedConfirmation;
+
+// @ts-expect-error Verified Canvas authority always carries a rendered Hash.
+const verifiedWithoutHash: DocumentCanvasAuthority = {
+  status: "verified",
+  generation: 1,
+  renderedSha256: null,
+  error: null,
+};
+void verifiedWithoutHash;
