@@ -498,6 +498,7 @@ async function registeredProjectOpen(projectId, workingCopyId = null) {
       content: resolved.html,
       lastModifiedAt: resolved.lastModifiedAt,
       openTarget: resolved.target,
+      historyCreation: resolved.historyCreation,
     };
   } catch (cause) {
     throw projectFileHttpError(cause);

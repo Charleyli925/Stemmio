@@ -96,7 +96,7 @@ export type WorkspaceShellCommentSnapshot<TComment = unknown, TEvent = unknown, 
 }>;
 export type WorkspaceShellSnapshot = Readonly<Pick<WorkspaceControllerSnapshot,
   "projectSession" | "document" | "hasDocumentHistoryAction" | "run" | "versionSession" | "version" | "project" |
-  "editRuntime" | "workbenchTabs" | "documentSurfaceCache"
+  "editRuntime" | "workbenchTabs" | "documentSurfaceCache" | "workbenchNavigation"
 > & {
   commentSession: WorkspaceShellCommentSnapshot | null;
   comment: Readonly<{ attachmentUploadCount: number; draftError: string }> | null;

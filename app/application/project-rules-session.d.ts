@@ -1,9 +1,11 @@
+import type { ProjectSurfaceContext } from "./project-surface-context.js";
+
 export type ProjectRulesContext = Readonly<{
   epoch: number;
   projectId: string;
   documentId: string;
   sourcePath: string;
-}>;
+}> | ProjectSurfaceContext;
 
 export type ProjectRulesSnapshot = Readonly<{
   open: boolean;
@@ -27,6 +29,10 @@ export type ProjectRulesOperation = Readonly<{
 export class ProjectRulesSession {
   subscribe(listener: (snapshot: ProjectRulesSnapshot) => void): () => void;
   beginOpen(context: ProjectRulesContext): ProjectRulesOperation | null;
+  commitOpen(
+    context: ProjectRulesContext,
+    payload: { content?: unknown } | null | undefined,
+  ): boolean;
   completeOpen(
     token: ProjectRulesOperation,
     payload: { content?: unknown } | null | undefined,
@@ -49,6 +55,7 @@ export class ProjectRulesSession {
   failSave(token: ProjectRulesOperation, error: string): boolean;
   abandonSave(token: ProjectRulesOperation): boolean;
   readonly compositionActive: boolean;
+  readonly context: ProjectRulesContext | null;
   inspect(options?: { locked?: boolean }):
     | { state: "resolved" }
     | { state: "pending" | "blocked"; reason: string };

@@ -304,6 +304,48 @@ test("history opens the exact selected version without current-draft input or pe
   }]);
 });
 
+test("detached history opens its exact version while another project owns the runtime", async () => {
+  const value = harness({ history: true });
+  const context = Object.freeze({
+    surfaceContextId: "surface:browser:project_B:document_B",
+    epoch: 8,
+    projectId: "project_B",
+    documentId: "document_B",
+    sourcePath: "/project/B.html",
+    projectRootPath: "/project/B",
+    targetKind: "working-copy",
+    workingCopyId: "work_B",
+    versionId: "ver_0003",
+    exactSourcePath: "/project/B.html",
+    sourceSha256: HASH_A,
+    sessionEpoch: 8,
+  });
+  value.versionSession.snapshot = {
+    viewMode: "history",
+    viewingVersionId: "ver_0002",
+    historyPreview: {
+      projectId: context.projectId,
+      documentId: context.documentId,
+      sourcePath: context.sourcePath,
+      versionId: "ver_0002",
+      content: "<!doctype html><p>history B</p>",
+      sha256: HASH_B,
+      context,
+    },
+  };
+
+  const outcome = await value.workflow.openSelectedDocument();
+
+  assert.equal(outcome.status, "succeeded");
+  assert.deepEqual(value.calls.open, [{
+    targetKind: "version",
+    sourcePath: "/project/B.html",
+    versionId: "ver_0002",
+    expectedSha256: HASH_B,
+  }]);
+  assert.equal(value.projectSession.context.projectId, "project_A");
+});
+
 test("new edits during the save boundary block launch instead of waiting forever or overstating persistence", async () => {
   const value = harness();
   value.documentWorkflow.flush = async (input) => {

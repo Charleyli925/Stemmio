@@ -3676,3 +3676,14 @@ private-corpus coverage remains outside this package.
 - 偏好边界：断开/重连的 disabled 偏好与同一 provider 凭据 intent 共用围栏；迟到写入在新连接或销毁后恢复原值，销毁后只允许已启动操作完成预定 rollback，不再发布 UI 或覆盖新 Catalog 归属。
 - 安全边界：实现只及时释放已经不再需要的 JS 引用，不宣称可以擦除 JavaScript 内存。Main 的 v2 receipt、recordId、CAS clear、tombstone、serialization 与 v1 读取兼容未改变。
 - Evidence boundary: 当前证据是纯解释器类型检查、合成 Node 顺序测试与 Settings 生产 action gate 可执行测试；没有改视觉样式，因此不需要截图。真实 provider、打包应用、已安装应用与私有语料验收均未执行。
+
+## 2026-09-19 — 独立规则与历史页面 P1 交接修复
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、颜色、间距或动效；保留现有规则编辑器与历史预览，只修正 P1 级页面/会话交接。
+- 规则失败边界：跨项目规则读取先形成一次性准备结果，目标标签提交后才发布同一项目的编辑会话。读取或标签提交失败时继续显示原标签、原内容和原保存目标；编辑、还原、保存与重试还会核对可见规则标签身份。
+- 历史独立性：历史预览由当前可见历史标签与自身快照挂载，不要求当前稿 Runtime；仅有历史标签的会话可重启恢复。
+- 范围停止：跨项目历史评论仍可能从当前 Runtime 的 Version 列表反查；按用户要求登记为 P2 后续项，本次不修改其数据源、标签投影或评论布局。
+- 实际证据：类型与架构检查通过；定向 Node 测试 127/127、编辑门禁 885/885 通过。完成门禁 `2026-09-19T16-01-17-781Z-task` 通过 Node 1525/1525、合同 27/27、Browser 70/70、Electron 102/102 与 AI canary 19/19，全部执行且零失败、零跳过。Electron 包含 A 规则到 B 规则读取失败后继续保存 A，以及关闭全部当前稿后打开历史并重启恢复。
+- Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是 Developer Preview、已安装应用或用户私有 HTML 语料验收；没有视觉样式变化，因此不制造截图差异结论。
+
+final result: passed for the scoped P1 page/session identity contract.

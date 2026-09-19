@@ -420,8 +420,14 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
       if (root) observer.observe(root, { childList: true, subtree: true });
       window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
     });
+    const workbench = first.page.locator("main.workbench");
+    const generationBeforeA = Number(await workbench.getAttribute(
+      "data-canvas-generation",
+    ));
     await firstTabs.filter({ hasText: "registry-restart-a" }).click();
     await loadedDiskFrame(first.page, projectA.sourcePath, "list-item");
+    expect(Number(await workbench.getAttribute("data-canvas-generation")))
+      .toBe(generationBeforeA + 1);
     await expect.poll(() => first.page.evaluate(() => (
       window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
     ))).toBeGreaterThanOrEqual(1);
@@ -430,8 +436,13 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     ))).toBeLessThanOrEqual(2);
     await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
     await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    const generationBeforeB = Number(await workbench.getAttribute(
+      "data-canvas-generation",
+    ));
     await firstTabs.filter({ hasText: "registry-restart-b" }).click();
     await loadedDiskFrame(first.page, projectB.sourcePath, "list-item");
+    expect(Number(await workbench.getAttribute("data-canvas-generation")))
+      .toBe(generationBeforeB + 1);
     await first.page.evaluate(() => {
       window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
       delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
@@ -692,13 +703,14 @@ test("Electron sidebar opens an imported historical version in the existing proj
       name: `V${historicalVersion.ordinal}，历史版本`,
       exact: true,
     }).click();
-    await expect(tabs).toHaveCount(3, { timeout: 60_000 });
+    await expect(tabs).toHaveCount(2, { timeout: 60_000 });
     const selectedB = launched.page.locator('.workbench-tab[data-kind="history"]')
       .filter({ hasText: "sidebar-history-b" })
       .getByRole("tab");
     const currentB = launched.page.locator('.workbench-tab[data-kind="document"]')
       .filter({ hasText: "sidebar-history-b" })
       .getByRole("tab");
+    await expect(currentB).toHaveCount(0);
     await expect(selectedB)
       .toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
     await expect.poll(() => sidebar.locator(".sidebar-version-tree").count())
@@ -766,6 +778,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V3");
 
     await importedProject.locator(".sidebar-project-current-row").click();
+    await expect(tabs).toHaveCount(3, { timeout: 60_000 });
     await expect(currentB).toHaveAttribute("aria-selected", "true");
     await expect(selectedB).toContainText("历史");
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
@@ -809,7 +822,10 @@ test("Electron sidebar opens an imported historical version in the existing proj
     };
     await launched.page.route("**/version-file?*", rejectCrossProjectHistory);
     await historyButton.click();
-    await expect(currentB).toHaveAttribute("aria-selected", "true");
+    await expect(launched.page.locator('.workbench-tab[data-kind="document"]')
+      .filter({ hasText: "sidebar-history-a" }).getByRole("tab"))
+      .toHaveAttribute("aria-selected", "true");
+    await expect(currentB).toHaveAttribute("aria-selected", "false");
     await expect.poll(() => rejectedCrossProjectReads).toBe(1);
     await expect(launched.page.getByText("测试历史快照校验失败", { exact: true })).toBeVisible();
     await launched.page.evaluate(() => new Promise((resolve) => {
@@ -831,7 +847,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     const dialog = launched.page.getByRole("dialog", { name: /基于.*创建新版本/ });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await launched.page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     expect((await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId })).versions).toHaveLength(8);
     await expect(mode.getByRole("button", { name: "预览", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -874,16 +890,27 @@ test("Electron sidebar opens an imported historical version in the existing proj
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(protectedWorkingBytes);
 
     let creates = 0;
-    let createdWorkspaceFailures = 0;
     const loseReceipt = async (route) => { creates += 1; await route.fetch(); await route.abort("failed"); };
-    const failCreatedOpen = async (route) => {
-      if (creates > 0) {
-        createdWorkspaceFailures += 1;
-        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "TEST_OPEN_FAILED", message: "测试新稿打开失败" } }) });
-      } else await route.continue();
-    };
     await launched.page.route("**/history-version/create", loseReceipt);
-    await launched.page.route("**/workspace?*", failCreatedOpen);
+    await launched.electronApp.evaluate(({ net }) => {
+      const originalFetch = net.fetch.bind(net);
+      globalThis.__STEMMIO_CREATED_OPEN_FAILURES__ = 0;
+      globalThis.__STEMMIO_RESTORE_CREATED_OPEN_FETCH__ = () => {
+        net.fetch = originalFetch;
+        delete globalThis.__STEMMIO_RESTORE_CREATED_OPEN_FETCH__;
+      };
+      net.fetch = async (input, options) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/registered-project/open") {
+          globalThis.__STEMMIO_CREATED_OPEN_FAILURES__ += 1;
+          return new Response(JSON.stringify({ error: {
+            code: "TEST_OPEN_FAILED",
+            message: "测试新稿打开失败",
+          } }), { status: 503, headers: { "Content-Type": "application/json" } });
+        }
+        return originalFetch(input, options);
+      };
+    });
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     await launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }).click();
     // This is the second use of the same native <dialog> in this journey. Wait
@@ -893,11 +920,13 @@ test("Electron sidebar opens an imported historical version in the existing proj
     const createdSummary = await repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
     expect(createdSummary.versions).toHaveLength(9);
     expect(creates).toBe(1);
-    expect(createdWorkspaceFailures).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => launched.electronApp.evaluate(() => (
+      globalThis.__STEMMIO_CREATED_OPEN_FAILURES__ || 0
+    ))).toBeGreaterThanOrEqual(1);
     expect((await repository.readVersionFile({ target, versionId: "ver_0008" })).content).toBe(protectedLatest.content);
     expect(readFileSync(target.exactSourcePath, "utf8")).toBe(historicalBytes.content);
     await expect(mode).toHaveAttribute("data-view-label", "历史");
-    await launched.page.unroute("**/workspace?*", failCreatedOpen);
+    await launched.electronApp.evaluate(() => globalThis.__STEMMIO_RESTORE_CREATED_OPEN_FETCH__?.());
     await currentProject.locator(".sidebar-project-current-row").click();
     await expect(tabs.filter({ hasText: "sidebar-history-a" })).toHaveAttribute("aria-selected", "true");
     await expect(launched.page.getByRole("button", { name: "打开已创建版本", exact: true })).toHaveCount(0);
@@ -946,6 +975,86 @@ test("Electron sidebar opens an imported historical version in the existing proj
     else removeIsolatedUserData(launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron history mounts and restores without any current-draft Runtime", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-version-display"],
+}, async () => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("history-without-current-runtime.html");
+  let app = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const userData = app.isolatedUserData;
+  let firstClosed = false;
+  try {
+    await loadedDiskFrame(app.page, fixture.sourcePath, "list-item");
+    await waitForProjectReady(app.page);
+    const managedPath = await managedWorkingCopyPath(app.page, fixture.sourcePath);
+    const repository = new ProjectFileRepository({
+      projectsRoot: path.dirname(path.dirname(managedPath)),
+    });
+    const workspace = await repository.workspace({ sourcePath: managedPath });
+
+    await app.page.getByRole("button", { name: "展开左侧边栏" }).click();
+    const tablist = app.page.getByRole("tablist", { name: "已打开的页面" });
+    const documentTabContainer = app.page.locator('.workbench-tab[data-kind="document"]');
+    await documentTabContainer.getByRole("button", { name: /关闭/u }).click();
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.locator('.workbench-tab[data-kind="start"]')
+      .getByRole("tab")).toHaveAttribute("aria-selected", "true");
+
+    const project = app.page.locator(".sidebar-project-item")
+      .filter({ hasText: "history-without-current-runtime" }).first();
+    const projectRow = project.locator(".sidebar-project-row");
+    if (await projectRow.getAttribute("aria-expanded") !== "true") {
+      await projectRow.click();
+    }
+    const historyToggle = project.locator(".sidebar-project-history-toggle");
+    if (await historyToggle.getAttribute("aria-expanded") !== "true") {
+      await historyToggle.click();
+    }
+    await project.getByRole("button", { name: "V1，历史版本", exact: true }).click();
+    const historyTab = app.page.locator('.workbench-tab[data-kind="history"]')
+      .getByRole("tab");
+    await expect(historyTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.getByTestId("workbench-active-document-canvas"))
+      .toHaveAttribute("data-runtime-hot-count", "0");
+    const preview = app.page.frameLocator('iframe[title="HTML 交互预览"]');
+    await expect(preview.locator(caseSelector("list-item"))).toBeVisible();
+
+    const startContainer = app.page.locator('.workbench-tab[data-kind="start"]');
+    await startContainer.getByRole("button", { name: /关闭/u }).click();
+    await expect(tablist.getByRole("tab")).toHaveCount(1);
+    await expect(historyTab).toHaveAttribute("aria-selected", "true");
+    const tabsStatePath = path.join(userData, "workbench-tabs.json");
+    await expect.poll(() => {
+      try {
+        return JSON.parse(readFileSync(tabsStatePath, "utf8"));
+      } catch {
+        return null;
+      }
+    }).toMatchObject({
+      activeTabId: `history:${workspace.project.projectId}:${workspace.project.documentId}`,
+    });
+
+    await closeStemmioGracefully(app.electronApp, app.page);
+    firstClosed = true;
+    app = await launchStemmio({ isolatedUserData: userData });
+    await expect(app.page.locator('.workbench-tab[data-kind="history"]')
+      .getByRole("tab")).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await expect(app.page.locator('.workbench-tab[data-kind="document"]')).toHaveCount(0);
+    await expect(app.page.getByTestId("workbench-active-document-canvas"))
+      .toHaveAttribute("data-runtime-hot-count", "0");
+    await expect(app.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .locator(caseSelector("list-item"))).toBeVisible();
+  } finally {
+    if (firstClosed) {
+      await stopStemmio(app.electronApp, app.isolatedUserData);
+    } else {
+      await stopStemmio(app.electronApp, userData);
+    }
+    removeSourceFixture(fixture.sourceDirectory);
   }
 });
 
@@ -1107,7 +1216,7 @@ for (const recoveryAction of ["current-row", "close-history"]) {
   });
 }
 
-test("Electron sidebar keeps multiple project lists expanded without switching identity", {
+test("Electron sidebar keeps project lists expanded and opens rules without switching draft identity", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
   test.setTimeout(180_000);
@@ -1207,6 +1316,32 @@ test("Electron sidebar keeps multiple project lists expanded without switching i
       (await window.stemmioProjects?.getActiveProject())?.projectId || null
     ))).toBe(currentProjectId);
 
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    await projectBRow.click();
+    await expect(projectBRow).toHaveAttribute("aria-expanded", "true");
+    const projectBRules = importedProject(projectB.sourcePath)
+      .locator(".sidebar-project-rules-row");
+    await projectBRules.click();
+    const projectBRulesTab = launched.page.locator('.workbench-tab[data-kind="project-rules"]')
+      .getByRole("tab", { name: "sidebar-expansion-b · 长期规则", exact: true });
+    await expect(projectBRulesTab).toHaveAttribute("aria-selected", "true", {
+      timeout: 60_000,
+    });
+    await expect(launched.page.getByRole("textbox", { name: "长期规则内容" }))
+      .toBeVisible();
+    await expect(projectBRules).toHaveAttribute("data-selected", "true");
+    await expect(launched.page.locator('.workbench-tab[data-kind="document"]'))
+      .toHaveCount(1);
+    expect(await launched.page.evaluate(async () => (
+      (await window.stemmioProjects?.getActiveProject())?.projectId || null
+    ))).toBe(currentProjectId);
+
+    await currentProject.locator(".sidebar-project-current-row").click();
+    await expect(launched.page.locator('.workbench-tab[data-kind="document"]')
+      .getByRole("tab", { name: "sidebar-expansion-a · 当前稿", exact: true }))
+      .toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+
     const versionVisualFacts = await projectCContainer.locator(".sidebar-version-tree")
       .evaluate((tree) => ({
         fileIcons: tree.querySelectorAll(".sidebar-version-file > svg").length,
@@ -1217,7 +1352,6 @@ test("Electron sidebar keeps multiple project lists expanded without switching i
     expect(versionVisualFacts.currentLabels).toBe(0);
     expect(versionVisualFacts.ordinals).toEqual(["V1", "V2", "V3"]);
 
-    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     await projectCContainer.locator(".sidebar-project-current-row").click();
     await expect(tabs.filter({ hasText: "sidebar-expansion-c-with-a-very-long-file-name-for-tooltip" }))
       .toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
@@ -1347,7 +1481,10 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
         expect(restored.recoveryState).toBe("superseded");
         await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toHaveCount(0);
       } else {
-        await expect.poll(async () => (await repository.queryHistoryCreation({ target, operationId })).openedAt).not.toBeNull();
+        await expect.poll(
+          async () => (await repository.queryHistoryCreation({ target, operationId })).openedAt,
+          { timeout: 60_000 },
+        ).not.toBeNull();
       }
       await app.page.getByRole("button", { name: "展开左侧边栏", exact: true }).click();
       await app.page.locator(".sidebar-project-history-toggle").click();

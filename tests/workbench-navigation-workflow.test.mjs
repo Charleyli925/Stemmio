@@ -127,13 +127,36 @@ function projectSnapshot(project, epoch, options = {}) {
   };
 }
 
+function surfaceContext(project, transactionId, epoch = 1) {
+  const sourcePath = `/managed/${project.projectId}.html`;
+  const sourceSha256 = `sha256:${"a".repeat(64)}`;
+  return Object.freeze({
+    surfaceContextId: `surface:${transactionId}:${project.projectId}:${project.documentId}`,
+    epoch,
+    projectId: project.projectId,
+    documentId: project.documentId,
+    sourcePath,
+    projectRootPath: `/managed/${project.projectId}`,
+    targetKind: "working-copy",
+    workingCopyId: `work_${project.projectId}`,
+    versionId: "ver_0001",
+    exactSourcePath: sourcePath,
+    sourceSha256,
+    sessionEpoch: epoch,
+  });
+}
+
 function fixture({
   open,
   confirm,
   cancel,
   acceptExternal,
+  prepareRules: onPrepareRules,
+  commitRules: onCommitRules,
   viewHistory: onViewHistory,
   returnToCurrent: onReturnToCurrent,
+  surfaceHistoryCreation = null,
+  queryHistoryCreation: onQueryHistoryCreation = null,
   tabsPersistence = null,
   surfaceCache = null,
   clock = { now: () => 1_000 },
@@ -152,16 +175,38 @@ function fixture({
   let snapshot = projectSnapshot(A, 1);
   const listeners = new Set();
   const calls = [];
+  let rulesPreparationSequence = 0;
+  const preparedRules = new Map();
+  let rulesSessionContext = null;
   const controller = {
     getSnapshot: () => snapshot,
+    getRulesContext: () => rulesSessionContext,
     subscribe(listener) {
       listeners.add(listener);
       listener(snapshot);
       return () => listeners.delete(listener);
     },
-    openProjectRules({ context }) {
+    async prepareProjectRules({ context }) {
       calls.push(`rules:${context.projectId}`);
-      return Promise.resolve({ status: "succeeded", value: { opened: true } });
+      if (onPrepareRules) return onPrepareRules({ context, preparedRules });
+      rulesPreparationSequence += 1;
+      const preparationId = `rules-preparation-${rulesPreparationSequence}`;
+      preparedRules.set(preparationId, context);
+      return { status: "succeeded", value: { prepared: true, preparationId } };
+    },
+    commitPreparedProjectRules({ preparationId }) {
+      calls.push(`rules-commit:${preparationId}`);
+      if (onCommitRules) return onCommitRules({ preparationId, preparedRules });
+      const preparedContext = preparedRules.get(preparationId) || null;
+      if (!preparedContext || !preparedRules.delete(preparationId)) {
+        return { status: "blocked", code: "PROJECT_RULES_PREPARATION_STALE", reason: "stale" };
+      }
+      rulesSessionContext = preparedContext;
+      return { status: "succeeded", value: { opened: true } };
+    },
+    discardPreparedProjectRules({ preparationId }) {
+      calls.push(`rules-discard:${preparationId}`);
+      return preparedRules.delete(preparationId);
     },
     viewHistory({ version, context }) {
       calls.push(`history:${context.projectId}:${version.id}`);
@@ -180,6 +225,20 @@ function fixture({
         versionSession: { viewMode: "history", viewingVersionId: version.id },
       };
       return Promise.resolve({ status: "succeeded", value: { versionId: version.id } });
+    },
+    queryHistoryCreation({ operationId, context }) {
+      calls.push(`query-history:${context.projectId}:${operationId}`);
+      return onQueryHistoryCreation
+        ? onQueryHistoryCreation({ operationId, context })
+        : Promise.resolve({
+          status: "succeeded",
+          value: {
+            status: "created",
+            operationId,
+            openedAt: null,
+            recoveryState: "pending",
+          },
+        });
     },
     returnToCurrent({ context, currentSurfaceCommitScope = null }) {
       calls.push(`current:${context.projectId}`);
@@ -234,6 +293,16 @@ function fixture({
     async prepareSwitch() {
       calls.push("prepare");
       return { status: "succeeded", value: {} };
+    },
+    async resolveRegisteredSurfaceTarget(input) {
+      const project = input.projectId === A.projectId ? A : B;
+      return {
+        status: "succeeded",
+        value: {
+          context: surfaceContext(project, input.transactionId, snapshot.projectSession.epoch),
+          ...(surfaceHistoryCreation ? { historyCreation: surfaceHistoryCreation } : {}),
+        },
+      };
     },
     async openProject(input) {
       calls.push(`open:${input.kind}:${input.projectId || input.sourcePath || ""}`);
@@ -744,7 +813,8 @@ test("跨项目规则和历史只在目标页面就绪后提交标签", async ()
   const rules = await harness.workflow.createProjectRules({ ...B, title: B.name });
   assert.equal(rules.status, "succeeded");
   assert.equal(harness.tabs.snapshot.activeTabId, `project-rules:${B.projectId}:${B.documentId}`);
-  assert.equal(harness.controller.getSnapshot().projectSession.projectId, B.projectId);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, A.projectId);
+  assert.equal(harness.calls.some((call) => call === `open:registered:${B.projectId}`), false);
   assert.deepEqual(harness.calls.filter((call) => call === `rules:${B.projectId}`), [`rules:${B.projectId}`]);
 
   const history = await harness.workflow.createHistory(
@@ -764,6 +834,100 @@ test("跨项目规则和历史只在目标页面就绪后提交标签", async ()
   assert.deepEqual(harness.calls.filter((call) => call === `current:${A.projectId}`), [
     `current:${A.projectId}`,
   ]);
+});
+
+test("目标规则读取失败时同时保留原标签和原规则会话", async () => {
+  const harness = fixture({
+    prepareRules: async ({ context, preparedRules }) => {
+      if (context.projectId === B.projectId) {
+        return {
+          status: "rejected",
+          code: "PROJECT_RULES_READ_FAILED",
+          reason: "Beta rules unavailable",
+        };
+      }
+      const preparationId = "rules-preparation-alpha";
+      preparedRules.set(preparationId, context);
+      return { status: "succeeded", value: { prepared: true, preparationId } };
+    },
+  });
+  assert.equal((await harness.workflow.createProjectRules({
+    ...A,
+    title: A.name,
+  })).status, "succeeded");
+  const alphaTabId = `project-rules:${A.projectId}:${A.documentId}`;
+  assert.equal(harness.tabs.snapshot.activeTabId, alphaTabId);
+  assert.equal(harness.controller.getRulesContext().projectId, A.projectId);
+
+  const failed = await harness.workflow.createProjectRules({
+    ...B,
+    title: B.name,
+  });
+  assert.equal(failed.status, "rejected");
+  assert.equal(failed.code, "PROJECT_RULES_READ_FAILED");
+  assert.equal(harness.tabs.snapshot.activeTabId, alphaTabId);
+  assert.equal(harness.controller.getRulesContext().projectId, A.projectId);
+  assert.equal(harness.tabs.snapshot.tabs.some((tab) => (
+    tab.kind === "project-rules" && tab.projectId === B.projectId
+  )), false);
+});
+
+test("未确认的历史创建结果不会把独立历史页重定向到当前稿", async () => {
+  const harness = fixture({
+    surfaceHistoryCreation: {
+      operationId: "history_restart_0001",
+      versionId: "ver_0009",
+    },
+  });
+
+  const history = await harness.workflow.createHistory(
+    { ...B, title: B.name },
+    { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
+  );
+
+  assert.equal(history.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `history:${B.projectId}:${B.documentId}`);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("query-history:")), []);
+  assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), false);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, A.projectId);
+});
+
+test("启动恢复会继续打开未确认历史创建的当前稿", async () => {
+  const timers = [];
+  const harness = fixture({
+    surfaceHistoryCreation: {
+      operationId: "history_restart_0001",
+      versionId: "ver_0009",
+    },
+    setTimer(callback, delayMs) {
+      const timer = { callback, delayMs, canceled: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer(timer) {
+      timer.canceled = true;
+    },
+  });
+  const historyTabId = `history:${B.projectId}:${B.documentId}`;
+  assert.equal((await harness.workflow.createHistory(
+    { ...B, title: B.name },
+    { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
+  )).status, "succeeded");
+
+  const restored = await harness.workflow.activateTab(historyTabId, {
+    intentKind: "startup-restore",
+    force: true,
+  });
+
+  assert.equal(restored.status, "succeeded");
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("query-history:")), [
+    `query-history:${B.projectId}:history_restart_0001`,
+  ]);
+  assert.equal(timers.length, 1);
+  timers[0].callback();
+  assert.equal(await harness.workflow.waitForIdle({ deadlineAt: 2_000 }), true);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${B.projectId}:${B.documentId}`);
+  assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), true);
 });
 
 test("同一项目切换另一个历史版本时复用标签并重新加载所选快照", async () => {

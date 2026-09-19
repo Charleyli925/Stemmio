@@ -468,7 +468,7 @@ export class WorkbenchNavigationWorkflow {
     return Object.freeze({ accepted: true, kind: "transaction" });
   }
 
-  applyProject({ transactionId: receivedTransactionId, applicationId, project, epoch, activeLocked }) {
+  applyProject({ transactionId: receivedTransactionId, applicationId, project, epoch, activeLocked, sourceReceipt = null }) {
     const active = this.#active;
     const received = String(receivedTransactionId || "");
     if (!received) {
@@ -486,6 +486,7 @@ export class WorkbenchNavigationWorkflow {
         epoch: Number(epoch) || 0,
         tabId: activeTab?.kind === "document" ? activeTab.tabId : null,
         kind: "authority-refresh",
+        sourceReceipt,
       });
     }
     const receivedApplication = String(applicationId || "");
@@ -505,6 +506,7 @@ export class WorkbenchNavigationWorkflow {
         epoch: Number(epoch) || 0,
         tabId: null,
         kind: "stale",
+        sourceReceipt,
       });
     }
     active.applicationId = receivedApplication;
@@ -552,6 +554,7 @@ export class WorkbenchNavigationWorkflow {
       epoch: Number(epoch) || 0,
       tabId,
       kind: String(this.#tabs.resolveTab(tabId)?.kind || active.intent.kind || "project"),
+      sourceReceipt,
     });
     active.receipt = receipt;
     active.applicationAuthorityOpen = false;
@@ -737,7 +740,28 @@ export class WorkbenchNavigationWorkflow {
       const surfaceTarget = target.kind === "history" && historyVersion
         ? Object.freeze({ ...target, ...historyVersion, tabId: target.tabId, kind: target.kind })
         : target;
-      const prepared = skipPrepare || current?.kind === "start" || current?.kind === "settings"
+      this.#session.transition(active.transactionId, "opening");
+      const resolved = await this.#projectWorkflow.resolveRegisteredSurfaceTarget({
+        projectId: target.projectId,
+        documentId: target.documentId,
+        transactionId: active.transactionId,
+      });
+      if (resolved?.status !== "succeeded" || !resolved.value?.context) {
+        return { outcome: rejected(
+          resolved?.code || "PROJECT_SURFACE_CONTEXT_REQUIRED",
+          String(resolved?.reason || "目标项目页面缺少可验证的文件身份。"),
+        ) };
+      }
+      const context = resolved.value.context;
+      const runtimeProject = this.#controller.getSnapshot()?.projectSession;
+      const ownsCurrentRuntime = Boolean(
+        runtimeProject?.projectId === target.projectId
+        && runtimeProject?.documentId === target.documentId
+      );
+      const prepared = skipPrepare
+        || current?.kind === "start"
+        || current?.kind === "settings"
+        || !ownsCurrentRuntime
         ? succeeded()
         : await this.#projectWorkflow.prepareSwitch();
       if (prepared?.status !== "succeeded") {
@@ -747,48 +771,8 @@ export class WorkbenchNavigationWorkflow {
         ) };
       }
       if (!skipCapture && current?.kind === "document") this.#captureCurrentSurface(current);
-      let project = this.#controller.getSnapshot()?.projectSession;
-      let context = projectContextFromSnapshot(project);
-      const sameProject = Boolean(
-        context
-        && context.projectId === target.projectId
-        && context.documentId === target.documentId
-      );
-      if (!sameProject) {
-        this.#session.transition(active.transactionId, "opening");
-        const projectOutcome = await this.#projectWorkflow.openProject({
-          kind: "registered",
-          projectId: target.projectId,
-          transactionId: active.transactionId,
-          switchPrepared: true,
-        });
-        const opened = await this.#finishOpened(active, projectOutcome, { deadlineMs });
-        if (opened.suspended || opened.outcome?.status !== "succeeded") return opened;
-        const settled = opened.receipt
-          ? await this.#waitForSettlement(null, opened.receipt, deadlineMs)
-          : { ok: false, code: "WORKBENCH_NAVIGATION_RECEIPT_MISSING", reason: "项目已打开，但缺少可核对的应用回执。" };
-        if (!settled.ok) {
-          return this.#surfaceFailureAfterProjectCommit(active, target, rejected(
-            settled.code || "WORKBENCH_NAVIGATION_HYDRATION_FAILED",
-            settled.reason || "目标项目尚未准备好，没有打开目标页面。",
-          ));
-        }
-        project = this.#controller.getSnapshot()?.projectSession;
-        context = projectContextFromSnapshot(project);
-      }
-      if (
-        !context
-        || context.projectId !== target.projectId
-        || context.documentId !== target.documentId
-      ) {
-        const outcome = rejected(
-          "PROJECT_SURFACE_CONTEXT_REQUIRED",
-          "目标项目尚未完成初始化，没有切换页面。",
-        );
-        return sameProject ? { outcome } : this.#surfaceFailureAfterProjectCommit(active, target, outcome);
-      }
       const opened = target.kind === "project-rules"
-        ? await this.#controller.openProjectRules({ context })
+        ? await this.#controller.prepareProjectRules({ context })
         : await this.#controller.viewHistory({
           version: {
             id: surfaceTarget.versionId,
@@ -798,6 +782,7 @@ export class WorkbenchNavigationWorkflow {
           },
           context,
           deadlineAt: this.#clock.now() + deadlineMs,
+          switchPrepared: true,
         });
       if (opened?.status !== "succeeded") {
         const outcome = rejected(
@@ -808,17 +793,72 @@ export class WorkbenchNavigationWorkflow {
             ? "历史版本暂时无法打开。"
             : "项目规则暂时无法读取。")),
         );
-        return sameProject ? { outcome } : this.#surfaceFailureAfterProjectCommit(active, target, outcome);
+        return { outcome };
       }
       const committed = target.kind === "history"
         ? this.#tabs.commitHistory(target.tabId, surfaceTarget)
         : this.#tabs.commitProjectRules(target.tabId);
       if (!committed) {
+        if (target.kind === "project-rules") {
+          this.#controller.discardPreparedProjectRules({
+            preparationId: opened.value.preparationId,
+          });
+        }
         const outcome = rejected(
           "WORKBENCH_TAB_COMMIT_REJECTED",
           "标签页状态已变化，没有打开目标页面。",
         );
-        return sameProject ? { outcome } : this.#surfaceFailureAfterProjectCommit(active, target, outcome);
+        return { outcome };
+      }
+      if (target.kind === "project-rules") {
+        const published = this.#controller.commitPreparedProjectRules({
+          preparationId: opened.value.preparationId,
+        });
+        if (published?.status !== "succeeded") {
+          this.#controller.discardPreparedProjectRules({
+            preparationId: opened.value.preparationId,
+          });
+          return { outcome: rejected(
+            published?.code || "PROJECT_RULES_PREPARATION_STALE",
+            String(published?.reason || "长期规则读取结果已经过期，没有切换编辑会话。"),
+          ) };
+        }
+      }
+      if (
+        target.kind === "history"
+        && active.intent.kind === "startup-restore"
+        && resolved.value.historyCreation?.operationId
+        && typeof this.#controller.queryHistoryCreation === "function"
+      ) {
+        try {
+          const recovery = await this.#controller.queryHistoryCreation({
+            operationId: resolved.value.historyCreation.operationId,
+            context,
+          });
+          const created = recovery?.status === "succeeded" ? recovery.value : null;
+          if (
+            created?.status === "created"
+            && created.openedAt === null
+            && created.recoveryState !== "superseded"
+          ) {
+            // Ordinary History navigation stays detached. Startup restore is
+            // the narrow exception: finish an interrupted create-and-open
+            // operation so the verified Canvas can durably acknowledge it.
+            this.#setTimer(() => {
+              if (this.#disposed) return;
+              void this.openRegisteredProject({
+                projectId: target.projectId,
+                documentId: target.documentId,
+                title: target.title,
+                force: true,
+              });
+            }, 0);
+          }
+        } catch {
+          // Recovery discovery is best-effort presentation coordination. The
+          // requested immutable History surface is already valid and remains
+          // usable when the receipt cannot be queried yet.
+        }
       }
       const receipt = Object.freeze({
         transactionId: active.transactionId,
@@ -829,9 +869,7 @@ export class WorkbenchNavigationWorkflow {
         tabId: target.tabId,
         kind: target.kind,
       });
-      if (sameProject) {
-        this.#session.transition(active.transactionId, "canvas-verified", { receipt });
-      }
+      this.#session.transition(active.transactionId, "canvas-verified", { receipt });
       return { outcome: succeeded({ tabId: target.tabId }), receipt };
     }
     if (!skipCapture && current?.kind === "document") this.#captureCurrentSurface(current);
@@ -1039,42 +1077,6 @@ export class WorkbenchNavigationWorkflow {
         String(outcome?.reason || "新版本已创建，但当前稿画布尚未准备好。可以重试打开。"),
         { committed: true, tabId: target.tabId },
       ),
-      receipt,
-    };
-  }
-
-  #surfaceFailureAfterProjectCommit(active, target, outcome) {
-    const project = this.#controller.getSnapshot()?.projectSession;
-    const documentTab = project?.projectId && project?.documentId
-      ? this.#tabs.resolveTab(`document:${project.projectId}:${project.documentId}`)
-      : null;
-    if (!documentTab || documentTab.kind !== "document") {
-      return { outcome, receipt: active.receipt || null };
-    }
-    this.#tabs.cancelSwitch(target.tabId);
-    this.#tabs.beginSwitch(documentTab.tabId, { force: true });
-    const committed = this.#tabs.commitDocument({
-      tabId: documentTab.tabId,
-      projectId: documentTab.projectId,
-      documentId: documentTab.documentId,
-      title: documentTab.title,
-    });
-    if (!committed) return { outcome, receipt: active.receipt || null };
-    const receipt = Object.freeze({
-      ...(active.receipt || {}),
-      transactionId: active.transactionId,
-      projectId: documentTab.projectId,
-      documentId: documentTab.documentId,
-      epoch: Number(project.epoch) || 0,
-      tabId: documentTab.tabId,
-      kind: "document",
-    });
-    active.receipt = receipt;
-    return {
-      outcome: rejected(outcome.code, outcome.reason, {
-        committed: true,
-        tabId: documentTab.tabId,
-      }),
       receipt,
     };
   }

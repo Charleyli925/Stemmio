@@ -317,3 +317,116 @@ test("a stale write cannot stall saving PROJECT.md in the next project", async (
   );
   assert.equal(harness.workflow.getSnapshot().savedContent, "# New project");
 });
+
+test("detached project rules keep their own identity and ignore another project's run lock", async () => {
+  const harness = createHarness();
+  harness.runSession.trackRun({
+    projectId: harness.context.projectId,
+    documentId: harness.context.documentId,
+    sourcePath: SOURCE_PATH,
+    requestId: "request_other_project",
+    attemptId: "attempt_001",
+    status: "processing",
+  }, { activate: "always" });
+  const detached = Object.freeze({
+    surfaceContextId: "surface:rules:project_b:document_b",
+    epoch: 7,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: "/tmp/project-b.html",
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_b",
+    versionId: "ver_0001",
+    exactSourcePath: "/tmp/project-b.html",
+    sourceSha256: `sha256:${"b".repeat(64)}`,
+    sessionEpoch: 7,
+  });
+
+  assert.equal((await harness.workflow.open({ context: detached })).status, "succeeded");
+  assert.equal(harness.workflow.updateContent({ content: "# Project B" }).status, "succeeded");
+  assert.equal((await harness.workflow.save()).status, "succeeded");
+  assert.equal(harness.calls.writes.at(-1).projectId, "project_b");
+  assert.equal(harness.projectSession.projectId, harness.context.projectId);
+});
+
+test("a failed detached rules preparation preserves the visible session and rejects mismatched commands", async () => {
+  const detached = Object.freeze({
+    surfaceContextId: "surface:rules:project_b:document_b",
+    epoch: 7,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: "/tmp/project-b.html",
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_b",
+    versionId: "ver_0001",
+    exactSourcePath: "/tmp/project-b.html",
+    sourceSha256: `sha256:${"b".repeat(64)}`,
+    sessionEpoch: 7,
+  });
+  const harness = createHarness({
+    read({ sourcePath, persisted }) {
+      if (sourcePath === detached.sourcePath) throw new Error("Beta rules unavailable");
+      return { content: persisted };
+    },
+  });
+  await harness.workflow.open({ context: harness.context });
+  harness.workflow.updateContent({ content: "# Saved Alpha" });
+
+  const failed = await harness.workflow.prepareOpen({ context: detached });
+  assert.equal(failed.status, "rejected");
+  assert.equal(harness.projectRulesSession.context.projectId, CONTEXT.projectId);
+  assert.equal(harness.workflow.getSnapshot().content, "# Saved Alpha");
+  assert.equal(harness.workflow.getSnapshot().savedContent, "# Saved Alpha");
+
+  const betaScope = { projectId: detached.projectId, documentId: detached.documentId };
+  assert.equal(
+    harness.workflow.updateContent({ content: "# Wrong target", scope: betaScope }).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.workflow.save({ scope: betaScope })).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.workflow.retry({ scope: betaScope })).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(harness.calls.writes.at(-1).projectId, CONTEXT.projectId);
+});
+
+test("prepared rules publish only when the navigation commits them", async () => {
+  const detached = Object.freeze({
+    surfaceContextId: "surface:rules:project_b:document_b",
+    epoch: 7,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: "/tmp/project-b.html",
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_b",
+    versionId: "ver_0001",
+    exactSourcePath: "/tmp/project-b.html",
+    sourceSha256: `sha256:${"b".repeat(64)}`,
+    sessionEpoch: 7,
+  });
+  const harness = createHarness({
+    read({ sourcePath, persisted }) {
+      return { content: sourcePath === detached.sourcePath ? "# Beta" : persisted };
+    },
+  });
+  await harness.workflow.open({ context: harness.context });
+
+  const prepared = await harness.workflow.prepareOpen({ context: detached });
+  assert.equal(prepared.status, "succeeded");
+  assert.equal(harness.projectRulesSession.context.projectId, CONTEXT.projectId);
+  assert.equal(harness.workflow.getSnapshot().content, "# Original");
+
+  const committed = harness.workflow.commitPreparedOpen({
+    preparationId: prepared.value.preparationId,
+  });
+  assert.equal(committed.status, "succeeded");
+  assert.equal(harness.projectRulesSession.context.projectId, detached.projectId);
+  assert.equal(harness.workflow.getSnapshot().content, "# Beta");
+});

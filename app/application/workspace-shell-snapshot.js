@@ -60,5 +60,6 @@ export function workspaceShellSnapshot(source, previous = null) {
     editRuntime: source.editRuntime,
     workbenchTabs: source.workbenchTabs,
     documentSurfaceCache: source.documentSurfaceCache,
+    workbenchNavigation: source.workbenchNavigation,
   });
 }
