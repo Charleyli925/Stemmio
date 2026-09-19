@@ -621,22 +621,16 @@ async function launchElectron(userData, activePath = null, recentPaths = []) {
   const page = await electronApp.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   const rendererUrl = page.url();
-  await electronApp.evaluate(({ BrowserWindow }, url) => {
+  const rendererProcessId = await electronApp.evaluate(({ BrowserWindow }, url) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL() === url);
     if (!window) throw new Error("Stemmio main BrowserWindow is unavailable.");
     window.webContents.setBackgroundThrottling(false);
-  }, rendererUrl);
-  await page.waitForFunction(() => document.visibilityState === "visible");
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  return { electronApp, page, rendererUrl };
-}
-
-async function rendererPid(electronApp, rendererUrl) {
-  return electronApp.evaluate(({ BrowserWindow }, url) => {
-    const window = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL() === url);
-    if (!window) throw new Error("Stemmio renderer is unavailable for RSS sampling.");
     return window.webContents.getOSProcessId();
   }, rendererUrl);
+  assert(Number.isSafeInteger(rendererProcessId) && rendererProcessId > 0, "Stemmio renderer PID is unavailable for RSS sampling.");
+  await page.waitForFunction(() => document.visibilityState === "visible");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  return { electronApp, page, rendererUrl, rendererProcessId };
 }
 
 async function waitForLiveSourcePath(page, expectedProjectId = null) {
@@ -859,7 +853,7 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
       await launched.page.waitForFunction((minimum) => Number(document.querySelector("[data-persist-state]")?.getAttribute("data-edit-revision")) > minimum, initialRevision, { timeout: 10_000 });
       const [gap, memory] = await Promise.all([
         startRendererGapMonitor(launched.page),
-        rendererPid(electronApp, launched.rendererUrl).then(observeRss),
+        observeRss(launched.rendererProcessId),
       ]);
       const startedAt = performance.now();
       await closeElectronGracefully(electronApp, launched.rendererUrl);
@@ -885,7 +879,7 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
     const autosaveToken = token(1_000 + sampleIndex);
     const [autosaveGap, autosaveMemory] = await Promise.all([
       startRendererGapMonitor(launched.page),
-      rendererPid(electronApp, launched.rendererUrl).then(observeRss),
+      observeRss(launched.rendererProcessId),
     ]);
     const autosaveStartedAt = performance.now();
     await activateAndReplace(launched.page, frame, autosaveToken);
@@ -899,7 +893,7 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
     await activateAndReplace(launched.page, frame, switchToken);
     const [switchGap, switchMemory] = await Promise.all([
       startRendererGapMonitor(launched.page),
-      rendererPid(electronApp, launched.rendererUrl).then(observeRss),
+      observeRss(launched.rendererProcessId),
     ]);
     const sidebar = launched.page.locator(".workbench-global-sidebar");
     if (await sidebar.getAttribute("data-open") !== "true") {
@@ -922,7 +916,7 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
 
     const [closeGap, closeMemory] = await Promise.all([
       startRendererGapMonitor(launched.page),
-      rendererPid(electronApp, launched.rendererUrl).then(observeRss),
+      observeRss(launched.rendererProcessId),
     ]);
     const closeStartedAt = performance.now();
     await closeElectronGracefully(electronApp, launched.rendererUrl);
