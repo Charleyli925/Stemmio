@@ -1893,7 +1893,7 @@ export class AgentCatalogState {
       reasoning: provider.selection.reasoning.requested,
     }]));
     const write = this.#configurationWrite.catch(() => {}).then(async () => {
-      if (intent && !intent.isCurrent()) return Object.freeze({ status: "superseded" });
+      if (intent && !intent.isCurrent()) return null;
       return this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations, intent);
     });
     this.#configurationWrite = write;
@@ -1903,13 +1903,20 @@ export class AgentCatalogState {
         code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
       });
     }
-    const status = result?.status || (result === false ? "failed" : "committed");
+    const status = intent
+      ? result?.status
+      : result === true || result?.status === "committed" ? "committed" : "failed";
     if (status === "superseded") {
       throw Object.assign(new Error("Agent configuration operation was superseded."), {
         code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
       });
     }
-    if (status === "failed") {
+    if (status === "unknown") {
+      throw Object.assign(new Error("Agent configuration persistence is unconfirmed."), {
+        code: "AGENT_PREFERENCES_SAVE_UNKNOWN",
+      });
+    }
+    if (status === "failed" || !status) {
       throw Object.assign(new Error("Agent configuration was not persisted."), {
         code: "AGENT_PREFERENCES_SAVE_FAILED",
       });

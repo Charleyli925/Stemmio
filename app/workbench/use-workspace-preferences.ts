@@ -12,6 +12,7 @@ import type { DesktopUiPreferencesApi } from "../components/desktop-ui-preferenc
 import {
   WorkspacePreferencesSession,
   type WorkspacePreferenceAgentId,
+  type WorkspacePreferenceMutationResult,
   type WorkspacePreferences,
   type WorkspacePreferencesSnapshot,
 } from "../application/workspace-preferences-session.js";
@@ -50,20 +51,21 @@ export function useWorkspacePreferences(
     load(): Promise<WorkspacePreferencesSnapshot>;
     update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
     commitDefaultAgent(input: Readonly<{
+      intentId: string;
       providerId: WorkspacePreferenceAgentId;
       isCurrent(): boolean;
-    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    }>): Promise<WorkspacePreferenceMutationResult>;
     commitAgentConfigurations(input: Readonly<{
       intentId: string;
       agentConfigurations: WorkspacePreferences["agentConfigurations"];
       isCurrent(): boolean;
-    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    }>): Promise<WorkspacePreferenceMutationResult>;
     setProviderDisabled(input: Readonly<{
       intentId: string;
       providerId: WorkspacePreferenceAgentId;
       disabled: boolean;
       isCurrent(): boolean;
-    }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+    }>): Promise<WorkspacePreferenceMutationResult>;
     snapshot(): WorkspacePreferencesSnapshot;
   }>;
   update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
@@ -86,6 +88,7 @@ export function useWorkspacePreferences(
     load: () => session.load(),
     update: (patch: Partial<WorkspacePreferences>) => session.update(patch),
     commitDefaultAgent: (input: Readonly<{
+      intentId: string;
       providerId: WorkspacePreferenceAgentId;
       isCurrent(): boolean;
     }>) => session.commitDefaultAgent(input),

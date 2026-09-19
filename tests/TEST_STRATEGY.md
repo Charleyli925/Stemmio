@@ -742,6 +742,12 @@ reference retirement, replacement-save/old-clear ordering, Settings clear-action
 gating, provider-disabled preference rollback, retry without reconnect/default
 commit, receipt precedence, and slow-A/fast-B projection fencing. The checked production interpreter and
 the test stubs share the union in `agent-credential-operation-contract.d.ts`.
+`tests/workspace-preferences-session.test.mjs` separately owns the single
+renderer preference pump, lost-response reconciliation, field-owned
+superseded rollback, disposal fencing and a Main-backed reopen oracle. The
+actual production Session and its precise mutation receipt are checked by
+`typecheck:workspace-preferences`; the verifier rejects directed mutations and
+fails if the JavaScript implementation leaves the official compiler inputs.
 `tests/desktop-preload-ipc.test.mjs` proves
 missing capabilities fail explicitly and forwards operation/model identity.
 Electron may restore a synthetic Key only for an isolated profile with explicit

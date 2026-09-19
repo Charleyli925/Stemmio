@@ -1693,6 +1693,22 @@
       ]
     },
     {
+      "id": "workspace-preferences-contract",
+      "patterns": [
+        "^app/application/workspace-preferences-session\\.(?:js|d\\.ts)$",
+        "^shared/agent-configuration-preferences\\.d\\.mts$",
+        "^scripts/verify-workspace-preferences-typecheck\\.mjs$",
+        "^tests/workspace-preferences-(?:contract\\.typecheck|typecheck-verifier\\.test)\\.(?:mjs|ts)$",
+        "^tsconfig\\.workspace-preferences\\.json$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/workspace-preferences-typecheck-verifier.test.mjs"
+      ]
+    },
+    {
       "id": "desktop-update",
       "patterns": [
         "^desktop/application-update\\.mjs$",

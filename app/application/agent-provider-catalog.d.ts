@@ -4,6 +4,7 @@ import type {
   AgentSelection,
 } from "../domain/agent-provider-state.js";
 import type { BridgeClient } from "./bridge-client.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 
 export type AgentProviderPresentation = Readonly<{
   displayName: string;
@@ -157,7 +158,7 @@ export class AgentCatalogState {
       saveAgentConfigurations(
         value: Record<string, { modelId: string | null; reasoning: string | null }>,
         intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
-      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      ): Promise<boolean | WorkspacePreferenceMutationResult>;
     }> | null;
   });
   getSnapshot(): AgentCatalogSnapshot;

@@ -129,6 +129,56 @@
       ]
     },
     {
+      "id": "agent-preferences",
+      "patterns": [
+        "^app/application/workspace-preferences-session",
+        "^app/application/(?:run-workflow|agent-provider-catalog)(?:\\.js|\\.d\\.ts)$",
+        "^app/application/workspace-controller\\.d\\.ts$",
+        "^app/workbench/use-workspace-preferences",
+        "^shared/agent-configuration-preferences",
+        "^scripts/verify-workspace-preferences-typecheck",
+        "^tests/(?:workspace-preferences|run-workflow|agent-provider-catalog)",
+        "^tsconfig\\.workspace-preferences"
+      ],
+      "entryInterfaces": [
+        "app/application/workspace-preferences-session.d.ts",
+        "app/application/run-workflow.d.ts",
+        "app/application/agent-provider-catalog.d.ts"
+      ],
+      "owners": [
+        "WorkspacePreferencesSession",
+        "RunWorkflow",
+        "AgentCatalogState"
+      ],
+      "implementationFiles": [
+        "app/application/workspace-preferences-session.js",
+        "app/application/run-workflow.js",
+        "app/application/agent-provider-catalog.js",
+        "app/workbench/use-workspace-preferences.ts"
+      ],
+      "focusedTests": [
+        "tests/workspace-preferences-session.test.mjs",
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/workspace-preferences-contract.typecheck.ts",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
+      ],
+      "requiredDocs": [
+        "docs/ARCHITECTURE_MAP.md",
+        "docs/STATE_OWNERSHIP.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/INTERACTION_FLOW.md"
+      ],
+      "requiredDocSections": [
+        {
+          "path": "docs/INTERACTION_FLOW.md",
+          "headings": [
+            "### AI 服务设置与任务区（2026-09-09）"
+          ]
+        }
+      ]
+    },
+    {
       "id": "project-lifecycle",
       "patterns": [
         "^app/application/project-workflow",

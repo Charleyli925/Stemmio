@@ -22,6 +22,7 @@ import type {
   AgentProviderPresentation,
 } from "./agent-provider-catalog.js";
 import type { RunSubmitPlan } from "./run/submit-plan.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 
 export type RunWorkflowOutcome<T = unknown> =
   | Readonly<{ status: "succeeded"; value: T }>
@@ -127,18 +128,18 @@ export type RunWorkflowConstruction = Readonly<{
       saveAgentConfigurations(
         value: Record<string, { modelId: string | null; reasoning: string | null }>,
         intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
-      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      ): Promise<boolean | WorkspacePreferenceMutationResult>;
       commitDefaultAgent(input: {
         intentId: string;
         providerId: string;
         isCurrent(): boolean;
-      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      }): Promise<WorkspacePreferenceMutationResult>;
       setProviderDisabled(input: {
         intentId: string;
         providerId: string;
         disabled: boolean;
         isCurrent(): boolean;
-      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      }): Promise<WorkspacePreferenceMutationResult>;
     }> | null;
     agentCredential?: AgentCredentialOperationPort & Readonly<{
       restore(): Promise<Record<string, unknown>>;

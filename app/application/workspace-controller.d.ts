@@ -1,5 +1,6 @@
 import type { BridgeClient } from "./bridge-client.js";
 import type { AgentCredentialOperationPort } from "./agent-credential-operation-contract.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 import type {
   BrowserOpenRequest,
   BrowserOpenResult,
@@ -271,18 +272,18 @@ export type WorkspaceControllerConstruction = Readonly<{
       saveAgentConfigurations(
         value: Record<string, { modelId: string | null; reasoning: string | null }>,
         intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null,
-      ): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      ): Promise<boolean | WorkspacePreferenceMutationResult>;
       commitDefaultAgent(input: {
         intentId: string;
         providerId: string;
         isCurrent(): boolean;
-      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      }): Promise<WorkspacePreferenceMutationResult>;
       setProviderDisabled(input: {
         intentId: string;
         providerId: string;
         disabled: boolean;
         isCurrent(): boolean;
-      }): Promise<boolean | Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+      }): Promise<WorkspacePreferenceMutationResult>;
     }>;
     agentCredential?: AgentCredentialOperationPort & Readonly<{
       restore(): Promise<Record<string, unknown>>;

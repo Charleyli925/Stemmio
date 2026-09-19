@@ -997,8 +997,9 @@ export default function Workbench() {
               })
               : workspacePreferencesSessionPort.update({ agentConfigurations })
           ),
-          commitDefaultAgent: async ({ providerId, isCurrent }) => (
+          commitDefaultAgent: async ({ intentId, providerId, isCurrent }) => (
             workspacePreferencesSessionPort.commitDefaultAgent({
+              intentId,
               providerId: providerId as WorkspacePreferences["defaultAgentProviderId"],
               isCurrent,
             })

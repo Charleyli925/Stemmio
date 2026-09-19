@@ -2585,7 +2585,10 @@ export class RunWorkflow {
       providerId: ready.providerId,
       isCurrent,
     });
-    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
+    const saveStatus = saved.status;
+    if (saveStatus === "unknown") {
+      return rejected("AGENT_PREFERENCES_SAVE_UNKNOWN", "默认 Agent 暂时无法保存。");
+    }
     if (saveStatus === "failed") {
       return rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。");
     }
@@ -2615,8 +2618,10 @@ export class RunWorkflow {
       providerId: selected.providerId,
       isCurrent,
     });
-    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
-    return saveStatus === "failed"
+    const saveStatus = saved.status;
+    return saveStatus === "unknown"
+      ? rejected("AGENT_PREFERENCES_SAVE_UNKNOWN", "默认 Agent 暂时无法保存。")
+      : saveStatus === "failed"
       ? rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。")
       : succeeded({
         committed: saveStatus === "committed",
@@ -3220,10 +3225,12 @@ export class RunWorkflow {
           disabled,
           isCurrent: () => this.#credentialIntentCurrent(intent),
         });
-        if (!this.#credentialIntentCurrent(intent) || receipt?.status === "superseded") {
+        if (!this.#credentialIntentCurrent(intent) || receipt.status === "superseded") {
           return "superseded";
         }
-        return receipt === true || receipt?.status === "committed" ? "committed" : "failed";
+        return receipt.status === "committed"
+          ? "committed"
+          : receipt.status === "unknown" ? "unknown" : "failed";
       } catch {
         return this.#credentialIntentCurrent(intent) ? "failed" : "superseded";
       }
@@ -3248,6 +3255,13 @@ export class RunWorkflow {
       const enabled = await setProviderDisabled(false);
       if (enabled === "superseded") {
         return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (enabled === "unknown") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接状态没有保存，请重试。",
+          { stage: "enable-provider" },
+        );
       }
       if (enabled === "failed") {
         return rejected(
@@ -3314,6 +3328,13 @@ export class RunWorkflow {
       const disabled = await setProviderDisabled(true);
       if (disabled === "superseded") {
         return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (disabled === "unknown") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接已断开，但停用状态没有保存，请重试。",
+          { stage: "disable-provider" },
+        );
       }
       if (disabled === "failed") {
         return rejected(

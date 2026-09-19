@@ -648,7 +648,11 @@ in that map. Main strictly validates field types, provider identifiers and the
 read and unsafe patches are rejected. The renderer receives only trusted
 `get`/`record` for a narrow workspace patch. A queued read-modify-write and
 atomic replacement prevents Settings and Agent updates from clobbering one
-another. The file must not contain HTML, paths, comments, credentials or
+another. Renderer Agent mutations carry an `intentId` and an explicit durable
+receipt. Superseded rollback first rereads Main authority and restores only a
+field still equal to that intent's owned value; lost responses remain pending
+and `unknown` unless an authoritative read proves the commit or restore. The
+file must not contain HTML, paths, comments, credentials or
 localStorage state.
 Preference errors remain a Settings-page retry state; bounded close flushing
 is best effort and cannot block a source HTML close that already completed its
