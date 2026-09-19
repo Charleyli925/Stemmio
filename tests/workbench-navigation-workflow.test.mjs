@@ -872,7 +872,27 @@ test("目标规则读取失败时同时保留原标签和原规则会话", async
   )), false);
 });
 
-test("未确认的历史创建结果会在独立历史页就绪后恢复对应当前稿", async () => {
+test("未确认的历史创建结果不会把独立历史页重定向到当前稿", async () => {
+  const harness = fixture({
+    surfaceHistoryCreation: {
+      operationId: "history_restart_0001",
+      versionId: "ver_0009",
+    },
+  });
+
+  const history = await harness.workflow.createHistory(
+    { ...B, title: B.name },
+    { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
+  );
+
+  assert.equal(history.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `history:${B.projectId}:${B.documentId}`);
+  assert.deepEqual(harness.calls.filter((call) => call.startsWith("query-history:")), []);
+  assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), false);
+  assert.equal(harness.controller.getSnapshot().projectSession.projectId, A.projectId);
+});
+
+test("启动恢复会继续打开未确认历史创建的当前稿", async () => {
   const timers = [];
   const harness = fixture({
     surfaceHistoryCreation: {
@@ -888,14 +908,18 @@ test("未确认的历史创建结果会在独立历史页就绪后恢复对应�
       timer.canceled = true;
     },
   });
-
-  const history = await harness.workflow.createHistory(
+  const historyTabId = `history:${B.projectId}:${B.documentId}`;
+  assert.equal((await harness.workflow.createHistory(
     { ...B, title: B.name },
     { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
-  );
+  )).status, "succeeded");
 
-  assert.equal(history.status, "succeeded");
-  assert.equal(harness.tabs.snapshot.activeTabId, `history:${B.projectId}:${B.documentId}`);
+  const restored = await harness.workflow.activateTab(historyTabId, {
+    intentKind: "startup-restore",
+    force: true,
+  });
+
+  assert.equal(restored.status, "succeeded");
   assert.deepEqual(harness.calls.filter((call) => call.startsWith("query-history:")), [
     `query-history:${B.projectId}:history_restart_0001`,
   ]);

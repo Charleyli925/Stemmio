@@ -2748,9 +2748,22 @@ export class WorkspaceController {
       const navigationWorkflow = this.#workbenchNavigationWorkflow;
       const restoreOpenedReceipt = async (context) => {
         if (!versionWorkflow || !navigationWorkflow) return;
+        // Hydration publishes its supplemental event before the enclosing
+        // Workbench navigation transaction has released ownership. Waiting
+        // first prevents restoreHistoryCreation() from observing a transient
+        // busy phase and silently dropping the only opened-at repair attempt.
+        const navigationIdle = await navigationWorkflow.waitForIdle({
+          deadlineAt: Date.now() + 15_000,
+        });
+        if (!navigationIdle || this.#disposed) return;
+        let liveContext = this.#projectSession.context;
+        if (
+          liveContext?.projectId !== context?.projectId
+          || liveContext?.documentId !== context?.documentId
+        ) return;
         await versionWorkflow.restoreHistoryCreation({
           operationId: event.historyCreation.operationId,
-          context,
+          context: liveContext,
         });
         const creation = versionWorkflow.getSnapshot().creation;
         const needsSettledCanvasRetry = Boolean(
@@ -2760,11 +2773,7 @@ export class WorkspaceController {
           && ["created", "open-failed"].includes(creation.phase)
         );
         if (!needsSettledCanvasRetry) return;
-        const navigationIdle = await navigationWorkflow.waitForIdle({
-          deadlineAt: Date.now() + 15_000,
-        });
-        if (!navigationIdle || this.#disposed) return;
-        const liveContext = this.#projectSession.context;
+        liveContext = this.#projectSession.context;
         if (
           liveContext?.projectId !== context?.projectId
           || liveContext?.documentId !== context?.documentId

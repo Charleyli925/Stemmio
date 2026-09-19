@@ -826,6 +826,7 @@ export class WorkbenchNavigationWorkflow {
       }
       if (
         target.kind === "history"
+        && active.intent.kind === "startup-restore"
         && resolved.value.historyCreation?.operationId
         && typeof this.#controller.queryHistoryCreation === "function"
       ) {
@@ -840,10 +841,9 @@ export class WorkbenchNavigationWorkflow {
             && created.openedAt === null
             && created.recoveryState !== "superseded"
           ) {
-            // A persisted History tab normally stays detached. The one
-            // exception is an unacknowledged "create from history" result:
-            // schedule its current draft after this navigation settles so the
-            // verified Canvas can finish the durable opened acknowledgement.
+            // Ordinary History navigation stays detached. Startup restore is
+            // the narrow exception: finish an interrupted create-and-open
+            // operation so the verified Canvas can durably acknowledge it.
             this.#setTimer(() => {
               if (this.#disposed) return;
               void this.openRegisteredProject({
