@@ -615,10 +615,15 @@ export class WorkbenchNavigationWorkflow {
     return this.waitForIdle({ deadlineAt });
   }
 
-  waitForIdle({ deadlineAt }) {
+  waitForIdle({ deadlineAt } = {}) {
     if (!this.#active) return Promise.resolve(true);
-    const remaining = Math.max(0, Number(deadlineAt) - Number(this.#clock.now()));
-    if (remaining <= 0) return Promise.resolve(false);
+    const hasDeadline = deadlineAt !== undefined
+      && deadlineAt !== null
+      && Number.isFinite(Number(deadlineAt));
+    const remaining = hasDeadline
+      ? Math.max(0, Number(deadlineAt) - Number(this.#clock.now()))
+      : null;
+    if (hasDeadline && remaining <= 0) return Promise.resolve(false);
     return new Promise((resolve) => {
       const waiter = { timer: null, unsubscribe: () => {}, resolve: null };
       const settle = (value) => {
@@ -633,7 +638,7 @@ export class WorkbenchNavigationWorkflow {
         settle(true);
       });
       waiter.unsubscribe = unsubscribe;
-      waiter.timer = this.#setTimer(() => settle(false), remaining);
+      if (hasDeadline) waiter.timer = this.#setTimer(() => settle(false), remaining);
       this.#idleWaiters.add(waiter);
     });
   }

@@ -461,6 +461,32 @@ for (const failure of [false, true]) {
   });
 }
 
+test("idle wait without a deadline survives slow navigation and settles on release", async () => {
+  let release;
+  const harness = fixture({
+    open: async ({ apply }) => {
+      await new Promise((resolve) => { release = resolve; });
+      const applied = apply(B);
+      return { status: "succeeded", value: { opened: true, applicationId: applied.applicationId } };
+    },
+    setTimer() {
+      throw new Error("deadline-free idle wait must not schedule a timeout");
+    },
+  });
+  const opening = harness.workflow.openProject({ kind: "registered", projectId: B.projectId });
+  await nextTurn();
+  let settled = false;
+  const idle = harness.workflow.waitForIdle().then((value) => {
+    settled = true;
+    return value;
+  });
+  await nextTurn();
+  assert.equal(settled, false);
+  release();
+  assert.equal((await opening).status, "succeeded");
+  assert.equal(await idle, true);
+});
+
 test("tab activation touches the target cache and captures only the prior document projection", async () => {
   const cacheCalls = [];
   const surfaceCache = {

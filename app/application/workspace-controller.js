@@ -2752,9 +2752,7 @@ export class WorkspaceController {
         // Workbench navigation transaction has released ownership. Waiting
         // first prevents restoreHistoryCreation() from observing a transient
         // busy phase and silently dropping the only opened-at repair attempt.
-        const navigationIdle = await navigationWorkflow.waitForIdle({
-          deadlineAt: Date.now() + 15_000,
-        });
+        const navigationIdle = await navigationWorkflow.waitForIdle();
         if (!navigationIdle || this.#disposed) return;
         let liveContext = this.#projectSession.context;
         if (
