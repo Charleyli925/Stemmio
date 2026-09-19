@@ -1670,7 +1670,6 @@
       "id": "workspace-preferences",
       "patterns": [
         "^app/application/workspace-preferences-session\\.(?:js|d\\.ts)$",
-        "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
         "^app/application/workspace-agent-preference\\.(?:js|d\\.ts)$",
         "^app/components/desktop-ui-preferences-api\\.ts$",
         "^app/components/SettingsPage\\.tsx$",
