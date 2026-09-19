@@ -451,9 +451,11 @@ updates and presentation immediately, while an already-started fenced Agent
 write may perform only its predetermined durable reconciliation and rollback.
 That rollback shares the ordinary durable-write turn and checks its field
 generation after the authoritative read, so it cannot overwrite a newer
-same-field intent. Only a complete validated workspace envelope can confirm an
-Agent preference commit or rollback; a missing, partial or default-normalized
-response remains unconfirmed. It may retain one short-lived Key only while the same
+same-field intent. An Agent preference mutation also requires a complete
+validated authority baseline before its first write; that same envelope is the
+only source of rollback values. Only a complete validated workspace envelope
+can confirm an Agent preference commit or rollback; a missing, partial or
+default-normalized response remains unconfirmed. It may retain one short-lived Key only while the same
 save/reconciliation intent can still use it; replacement, disconnect, remove,
 disposal and terminal receipts retire that reference (without claiming that JS
 memory can be wiped). `AgentCatalogState` receives only status, reason,

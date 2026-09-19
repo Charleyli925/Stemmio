@@ -756,13 +756,13 @@ official compiler inputs.
 | Preference ordering proof | Deterministic test evidence |
 | --- | --- |
 | P01 hydration versus first update | `the first preference change waits for hydration without losing the optimistic patch` |
-| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a same-field update accepted after rollback record invocation writes last` |
+| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a same-field update accepted after rollback record invocation writes last`; `an update queued from the closing pump publication gets a fresh durable turn` |
 | P03 stale durable A owns only its field | `a same-field update accepted during rollback authority read fences the restore` |
 | P04 unrelated field during rollback | `an unrelated update during rollback authority read does not block the narrow restore` |
 | P05 failed patch followed by newer value | `a newer ordinary preference beats the failed patch retained for one retry` |
 | P06 queued operation disposed before write | `dispose prevents a queued Agent mutation from starting a write`; `a same-field intent that replaces an Agent patch before record leaves it not-started` |
 | P07 dispose after durable write starts | `dispose reconciles a durable Agent write whose response was lost`; `dispose lets started Agent mutations finish only their predetermined rollback` |
-| P08 rollback failure or lost response | `a lost rollback response is confirmed only when authority shows the restore`; `an unconfirmed rollback remains unknown and does not claim restoration` |
+| P08 rollback failure or lost response | `Agent mutations require a strict durable rollback baseline before writing`; `terminal supersession retires only its failed pending Agent patch`; `a lost rollback response is confirmed only when authority shows the restore`; `an unconfirmed rollback remains unknown and does not claim restoration` |
 | P09 Agent preference operations stay distinct | `a credential intent reaches the single preferences session and restores superseded configuration`; `concurrent provider access changes preserve both disabled providers`; `a later unrelated terminal failure cannot downgrade confirmed Agent persistence` |
 | P10 reopen matches the promise | `a confirmed Agent preference survives a real Main persistence reopen` |
 
