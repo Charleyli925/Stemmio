@@ -197,20 +197,11 @@ manifest mappings agree. The root must be a direct child of the configured
 projects directory, and every managed control path is real-path checked with no
 symlink traversal.
 
-The only mutable Registry compatibility path is the exact pre-hardening V4
-shape with `schemaVersion: "4.0.0"`, no `pendingImports`, and no project-record
-fields beyond `projectRootPath` and `updatedAt`. The migration reader validates
-a current Registry read-only. Before completing that legacy shape, every record must
-prove its valid key, direct-child real non-symlink root and matching
-`.stemmio/project.json`; the new root identity comes only from the live
-directory stat. A short-lived exclusive migration lock serializes the one
-replacement across Bridge processes; dead-owner reclamation atomically claims
-the exact sealed token marker, and every waiter re-reads under that lock
-before it may publish. Validation finishes before the old Registry bytes are
-copied to a Hash-named backup and one atomic current Registry is published. The
-backup is not runtime authority. Any validation or publication failure leaves the old
-Registry bytes in place and never resets, drops, scans, imports or reassociates
-a Project. HTML Hashes and equal bytes never participate in this migration.
+The Registry accepts only the current V4 record shape, including its required
+`pendingImports` and project-record identity fields. A missing or older shape is
+rejected before any project-root lookup; the bytes are not rewritten, backed up,
+scanned or reassociated. The exclusive Registry write lock only serializes
+current mutations and crash-residue cleanup; it is never a data migration path.
 
 A registered project may relocate within the configured Projects root only when
 one direct-child project has its stable project identity and a complete valid
@@ -268,7 +259,7 @@ stale targets remain retained without consuming that expensive-work budget.
 
 After pending transaction recovery, valid registered members gain anchors
 without changing HTML or Version records. Atomic anchor publication is the
-per-member migration checkpoint. Missing/unsupported anchors do not invalidate
+per-member identity-materialization checkpoint. Missing/unsupported anchors do not invalidate
 a verified registered path. A missing file remains missing until the user
 requests restoration; the Repository rechecks the state Hash and publishes
 only at its registered path without replacement. Metadata/version browsing is
@@ -281,15 +272,15 @@ project/member and expected Hash, atomically publishes, then switches the live
 anchor. Recovery accepts only the transaction's old/new Hashes and retains
 external changes as conflicts. Filesystem operations are not a lock against an
 uncooperative external writer; displaced old bytes remain available for conflict
-recovery. Promotion continues to derive IDs, lineage, paths and Hashes from the
+recovery. Current Version transactions derive IDs, lineage, paths and Hashes from the
 runtime-sealed Candidate; its preparation file supplies live publication
 identity, never the previous process's stat values. Collision publication stays
 no-replace. An invalid prepared Hash or changed visible content is never deleted.
 
-Source-element identity migration is narrower than path identity recovery. A
+Source-element identity materialization is narrower than path identity recovery. A
 new import materializes IDs only in its managed Working Copy; the external file
-and immutable V1 remain exact evidence. A legacy Working Copy may migrate only
-under its valid Registry/project/manifest/state tuple. The transaction records
+and immutable V1 remain exact evidence. A current Working Copy may materialize
+missing element IDs only under its valid Registry/project/manifest/state tuple. The transaction records
 its exact old and new Hashes and stages complete byte sequences before the
 same-directory CAS. Restart accepts only those two sides. Malformed or duplicated
 IDs, a missing identity previously claimed by the current source, a mismatch
@@ -298,7 +289,7 @@ fail closed without first recording the external bytes. Existing direct editing 
 allocate an ID for a newly authored inline source element, and the Repository may
 fill only otherwise-valid new-element omissions after proving every prior claim
 survives. Explicit force-unlock clears both the marker and binding seal before
-adopting disk bytes and re-entering migration, including recovery from a prior
+adopting disk bytes and re-entering identity materialization, including recovery from a prior
 build that already recorded the disk Hash. Runtime DOM never participates.
 The repository records the exact force-unlock operation and preview Hash before
 its first adoption side effect. A lost response is reconciled through that
@@ -315,14 +306,13 @@ external content.
 The external AI Agent can write within the Request / Attempt workspace, so
 those files are evidence to validate rather than runtime authority. Reopen and
 crash recovery may follow only an already-sealed `runtime-state.json` Request /
-Attempt / Working Copy anchor, or a registered Promotion transaction. A cleared
+Attempt / Working Copy anchor, or a current Version transaction. A cleared
 or missing runtime state never scans Request directories to revive an active
 Request or to adopt a replacement input-manifest digest.
 
 The packaged Qoder ACP provider/runtime path narrows the protocol surface but
 does not change that trust statement. Current execution binds by canonical
-provider/runtime selection; historical `mode: "qoder-acp"` remains readable at
-the delivery codec. Unknown identifiers fail
+provider/runtime selection; removed delivery aliases are rejected. Unknown identifiers fail
 closed. Provider/runtime IDs, the opaque installation digest and capabilities
 remain inside the Bridge ticket, and preload exposes no executable, spawn,
 command or path capability. One restricted driver serves execution policy
@@ -418,12 +408,12 @@ keeps the secret in coordinator process memory and injects only
 provider's preflight and HTTP launch. Empty `apiKey` clears it. The secret is
 never written to `ui-preferences.json`, logs, GET responses or renderer
 snapshots. If the user explicitly checks “在此 Mac 上记住 API Key”, Main encrypts
-it with Electron `safeStorage` into `agent-session-credential.v1.json` and never
+it with Electron `safeStorage` into the current `agent-session-credential.v1.json` record and never
 returns the plaintext. Custom vendors may also persist the non-secret Model ID
-in that same file. The version-2 record at this compatibility path adds only a
+in that same file. The current record adds only a
 non-secret operation ID, random record ID and a bounded receipt/tombstone
-ledger; legacy version-1 ciphertext remains readable and is replaced only by
-an explicit save or clear. Main serializes every save and clear for this
+ledger. Records that do not use the current schema are rejected without rewrite.
+Main serializes every save and clear for this
 provider in accepted order. Operation replay returns the authoritative receipt,
 clear may use the record ID as a strict CAS, and a clear without one writes a
 tombstone after every mutation accepted before it so an older save cannot
@@ -438,7 +428,7 @@ remembered-credential persistence/reconciliation, clear/restore and default
 preference adoption. One provider-scoped intent fences startup status and the
 live connect, configuration, credential-persist and default-preference effects.
 The shared pure interpreter gives `unreadable`, `unavailable`, `rejected` and
-`unknown` precedence over compatibility `remembered`; `saved` additionally
+`unknown` precedence over `remembered`; `saved` additionally
 requires the exact queried operation ID and a legal credential record ID. The
 public projection distinguishes persist from clear reconciliation so an
 unconfirmed clear stays actionable without claiming that an unknown persist was
@@ -586,8 +576,8 @@ direct Canvas edit. Whole-page comments use the body's Stable ID.
 Selected-text locators contain source-backed decoded text offsets and
 never authorize persistence from preview DOM. Decoded comments carry only one
 writable `sourceAnchor`; `visualHint` and derived Canvas/card targets never replace
-it. The existing comment codec accepts legacy `target` only on record ingress
-and regenerates that compatibility field on egress. Preserved unknown record
+it. The current comment codec writes the canonical `target` and `sourceAnchor`
+records together; both are validated against the same current identity. Preserved unknown record
 extensions cannot override current identity fields or revive a removed locator;
 known visual hints retain their bounded, DOM-free normalization.
 
@@ -635,18 +625,12 @@ Public macOS candidates fail closed unless they are signed by the expected Devel
 
 The main-process update controller accepts only the stable GitHub Release channel, owns both the startup-plus-four-hour schedule and coalesced manual checks, downloads the hash-described ZIP only after an explicit renderer intent, keeps differential transfer enabled, and disables install-on-ordinary-quit. The renderer receives only a bounded immutable status snapshot and narrow check/download/install intents. The About entry opens only the main-process constant for the project repository; renderer input can never choose an external URL. The same surface opens the user statement and disclaimer only from its fixed signed-app resource path and accepts neither renderer paths nor URLs. A downloaded update can install only after a second explicit restart confirmation and the normal renderer/Bridge drain succeeds; update metadata never gains filesystem or editor authority.
 
-The current application contains no legacy manifest parser, fetch client, or
-version decision path. Clients from the earlier ad-hoc update era cannot
-securely self-bootstrap into this trust chain; they must manually install a
-signed and notarized migration release once. Formal 0.9.8 also lacks the
-embedded provider configuration and therefore requires one manual install of a
-patched signed release before automatic updates can resume. The legacy
-`update-manifest.json` remains a Release-produced compatibility artifact only,
-so already-published clients can find that migration release without restoring
-the retired client code to the current application.
+The current application contains no legacy manifest parser, fetch client or
+version decision path. The signed updater metadata is the only update authority;
+retired `update-manifest.json` output is not generated or required.
 
 Install-level UI preferences (`ui-preferences.json`) are Main-owned, bounded
-and atomically replaced. Schema v1 is migrated to schema v2, whose allowlisted
+and atomically replaced. The current schema's allowlisted
 `workspace` fields are `rememberPanelWidths`, `sidebarWidth`, `inspectorWidth`,
 `motion`, `restoreTabsOnLaunch`, `defaultAgentProviderId` and
 `disabledAgentProviderIds`, plus `agentConfigurations` (only the three known
@@ -683,21 +667,18 @@ replace Repository attachment, path or complete-HTML verification. Unknown
 custom-model capacity grants no invented token limits; it still obeys the byte
 cap. Qoder/Codex and clipboard retain their separate existing capabilities.
 
-### Legacy historical activation receipts
+### Historical preview and current Version creation
 
-Retiring the old activation command does not retire persisted v4 receipts.
-The compatibility continuation and confirmation routes validate registered
-project/document identity and the complete receipt before any Workspace recovery,
-registered-root repair or external-source coordination. Missing or mismatched
-receipts grant no write authority. Continuation only replays the existing original
-operation; confirmation changes its pending state once. Neither route may author
-another activation receipt or select a different active Working Copy. Existing
-state/snapshot/source integrity checks and Desktop managed-source fencing remain.
+The retired activation commands and receipts are unsupported input. History
+preview reads immutable Version snapshots only. Creating a Version from history
+uses the current single-draft Version transaction; identity, Hash, crash-recovery
+and idempotent query checks remain in force, but no old receipt is replayed and no
+second editable Working Copy is created.
 
 ### Current draft, manual Versions and protected export
 
 The Registry-authorized Repository serializes local save, history creation,
-preserved-draft recovery, migration and AI publication with its shared lock.
+preserved-draft recovery and AI publication with its shared lock.
 Renderer paths alone grant no authority: project/document/current Working Copy,
 expected hash, immutable source hash, ordinal and operation provenance must agree.
 Manual operations cannot displace an active Request or unresolved Candidate.
@@ -706,9 +687,9 @@ Versions are immutable. Current-source replacement preserves displaced HTML,
 comments and attachment bytes before publication; recoverable transactions
 validate old/new file bindings and hashes. Replays return the same committed
 facts and never allocate another Version after a lost receipt or render failure.
-Migration selects the real active legacy draft, retains its ID/path, preserves
-inactive draft data and retires their write membership. Unknown markers and
-invalid single-current membership fail closed. Downgrade writers are unsupported.
+Only the current single editable draft is accepted. Retired multi-draft markers,
+unknown current markers and invalid single-current membership fail closed.
+Downgrade writers are unsupported.
 
 Retiring a superseded renderer recovery journal requires a Repository proof that
 joins registered current identity, an officially committed replacement Version,

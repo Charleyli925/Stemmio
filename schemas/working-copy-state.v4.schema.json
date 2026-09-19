@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stemmio.local/schemas/working-copy-state.v4.schema.json",
-  "$comment": "Forward compatible. Every write spreads the record it read before overriding its authoritative members, so a member added by a newer Stemmio is preserved. Legacy records omit both sourceElementIdentitySchemaVersion and sourceElementIdentityBindingSha256; once value 1 is recorded the current Working Copy must retain the sealed complete identity binding.",
+  "$comment": "Forward compatible. Every write spreads the record it read before overriding its authoritative members, so a member added by a newer Stemmio is preserved. A newly imported external HTML may be unbound until the current identity-materialization transaction completes; once value 1 is recorded the current Working Copy must retain the sealed complete identity binding.",
   "type": "object",
   "required": [
     "schemaVersion",

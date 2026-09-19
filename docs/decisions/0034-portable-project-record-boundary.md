@@ -21,12 +21,12 @@ outside the project directory at the projects root and is not affected.
 
 `fileIdentity` looked like a disposable cache that could move to a device-local
 sidecar and be recomputed by `stat`. It is not. It is a fail-closed witness in
-the promotion protocol:
+the current Version publication protocol:
 
-- `PROMOTION_PATH_REPLACED` compares the recorded identity against a fresh
+- The current Version transaction compares the recorded identity against a fresh
   `stat` of the allocated Version Working Copy to detect that the file was
   replaced before manifest publication.
-- `PROMOTION_COMMIT_MISMATCH` compares the committed manifest facts, identity
+- The commit check compares the committed manifest facts, identity
   included, against the sealed transaction authority.
 - Same-parent rename recovery uses it to find a Working Copy after the user
   renames its HTML.

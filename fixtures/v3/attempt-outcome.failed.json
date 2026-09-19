@@ -20,7 +20,7 @@
   },
   "error": {
     "code": "SEALED_OUTPUT_MODIFIED",
-    "message": "output/index.html changed after completion was sealed."
+    "message": "output/仪表盘-V1.8.html changed after completion was sealed."
   },
   "failedAt": "2026-07-17T09:20:00Z"
 }

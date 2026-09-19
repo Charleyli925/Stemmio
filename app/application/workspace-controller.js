@@ -2783,9 +2783,30 @@ export class WorkspaceController {
           && ["created", "opened", "open-failed"].includes(creation.phase)
         );
         if (!unresolvedCreateAndEdit) return;
-        const tabs = tabsSession.snapshot;
-        const requested = tabsSession.resolveTab(tabs.pendingTabId)
-          || tabsSession.resolveTab(tabs.activeTabId);
+        const readRequestedTab = (snapshot) => {
+          const requestedTab = tabsSession.resolveTab(snapshot.pendingTabId)
+            || tabsSession.resolveTab(snapshot.activeTabId);
+          return [snapshot, requestedTab];
+        };
+        let [tabs, requested] = readRequestedTab(tabsSession.snapshot);
+        if (!["document", "history"].includes(requested?.kind)) {
+          [tabs, requested] = await new Promise((resolve) => {
+            let unsubscribe = () => {};
+            let timeoutId = null;
+            const finish = (value) => {
+              if (timeoutId !== null) clearTimeout(timeoutId);
+              unsubscribe();
+              resolve(value);
+            };
+            const check = (snapshot) => {
+              const value = readRequestedTab(snapshot);
+              if (["document", "history"].includes(value[1]?.kind)) finish(value);
+            };
+            unsubscribe = tabsSession.subscribe(check);
+            timeoutId = setTimeout(() => finish(readRequestedTab(tabsSession.snapshot)), 15_000);
+            check(tabsSession.snapshot);
+          });
+        }
         if (
           !["document", "history"].includes(requested?.kind)
           || requested?.projectId !== event.context?.projectId
@@ -2822,6 +2843,14 @@ export class WorkspaceController {
         ));
         if (!currentTab) return;
         await navigationWorkflow.activateTab(currentTab.tabId);
+        // A persisted restart may have selected the immutable history tab
+        // while the current document tab is being restored.  Once that tab is
+        // active, re-run the current Canvas verification so a durable history
+        // creation acknowledgement is not stranded behind tab activation.
+        await versionWorkflow.restoreHistoryCreation({
+          operationId: event.historyCreation.operationId,
+          context: this.#projectSession.context,
+        });
       })();
     }
     if (["project-hydrated", "project-source-renamed", "project-source-relocated"].includes(event.type)) this.#captureCurrentVersionSummary();
@@ -2895,7 +2924,25 @@ export class WorkspaceController {
     });
     this.#documentSession.setObserver((snapshot) => {
       if (this.#disposed) return;
+      const previous = this.#documentSessionSnapshot;
       this.#documentSessionSnapshot = snapshot;
+      if (
+        snapshot.canvasAuthority?.status === "verified"
+        && previous?.canvasAuthority?.status !== "verified"
+      ) {
+        const creation = this.#versionWorkflow?.getSnapshot?.().creation;
+        if (
+          creation?.phase === "created"
+          && creation.result?.openedAt === null
+          && creation.operationId
+          && this.#projectSession.matches(creation.context)
+        ) {
+          void this.#versionWorkflow.restoreHistoryCreation({
+            operationId: creation.operationId,
+            context: this.#projectSession.context,
+          });
+        }
+      }
       if (this.#sessionPublicationDepth > 0) return;
       this.#refreshEditAuthorRuntime();
       this.#refreshDocumentSurfaceCache();

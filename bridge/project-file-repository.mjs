@@ -1,5 +1,5 @@
 import { commentsRemainingAfterAdoption } from "../shared/draft-aggregate.mjs";
-import { CURRENT_DRAFT_SCHEMA_VERSION, currentDraftEvidence, migrateCurrentDraft, retireLegacyDraftFiles,
+import { CURRENT_DRAFT_SCHEMA_VERSION, currentDraftEvidence,
   listPreservedDrafts, readPreservedDraft, restorePreservedAttachments,
   verifyReplacedCurrentDraft as verifyReplacedCurrentDraftEvidence,
   prepareCurrentVersion, commitCurrentVersion, currentVersionTransactionPath, assertCurrentVersionTransaction, currentVersionNoopResult,
@@ -73,12 +73,10 @@ import {
   assertRuntime,
   emptyRegistry,
   lastAiTaskAnchorFor,
-  normalizeRuntimeDisplayAnchors,
   writeRuntimeState,
 } from "./project-file-repository/registry.mjs";
 import {
   DOCUMENT_ID,
-  HTML_EXTENSIONS,
   MAX_REQUEST_ATTACHMENT_BYTES,
   PROJECT_FILE_SCHEMA_VERSION,
   PROJECT_ID,
@@ -194,15 +192,10 @@ import {
 export { PROJECT_FILE_SCHEMA_VERSION } from "./project-file-repository/constants.mjs";
 export { ProjectFileRepositoryError } from "./project-file-repository/errors.mjs";
 
-export function projectVersionDisplayFileName({ manifest, version, currentSourcePath, versionSourcePath }) {
-  return path.basename(manifest.currentDraftSchemaVersion === CURRENT_DRAFT_SCHEMA_VERSION
-    ? currentSourcePath
-    : versionSourcePath || `版本-${version.ordinal}.html`);
+export function projectVersionDisplayFileName({ version, currentSourcePath, versionSourcePath }) {
+  return path.basename(versionSourcePath || currentSourcePath || `版本-${version.ordinal}.html`);
 }
 
-const LEGACY_PROMOTION_WORKING_COPY_HASH = Symbol(
-  "legacy-promotion-working-copy-hash",
-);
 const SAVE_RETIREMENT_ATTEMPT_LIMIT = 16;
 
 async function retireOlderIdentityTransactions(paths, workingCopyId, keepPath) {
@@ -636,13 +629,19 @@ export class ProjectFileRepository {
 
   async #ensureCurrentDraft(loaded) {
     return this.#withRegistryWriteLock(async () => {
-      const current = await this.#loadRegisteredProject({ projectId: loaded.project.projectId, documentId: loaded.project.documentId });
-      if (current.manifest.currentDraftSchemaVersion === CURRENT_DRAFT_SCHEMA_VERSION) {
-        await retireLegacyDraftFiles(current);
-        return current;
+      const current = await this.#loadRegisteredProject({
+        projectId: loaded.project.projectId,
+        documentId: loaded.project.documentId,
+      });
+      if (current.manifest.currentDraftSchemaVersion !== CURRENT_DRAFT_SCHEMA_VERSION
+        || current.manifest.workingCopies.length !== 1
+        || Object.hasOwn(current.manifest, "retiredWorkingCopies")) {
+        throw new ProjectFileRepositoryError(
+          "CURRENT_DRAFT_UNSUPPORTED",
+          "The project does not use the current single-draft format.",
+        );
       }
-      return migrateCurrentDraft(current, { resolveSource: (project, member) => this.#resolveWorkingCopySource(project, member),
-        clock: () => nowIso(this.#clock), hit: (name) => this.#hit(name) });
+      return current;
     });
   }
 
@@ -694,7 +693,6 @@ export class ProjectFileRepository {
     const result = await commitCurrentVersion(loaded, transaction, { hit: (name) => this.#hit(name) });
     if (sourceType === "history-copy" && result.status === "created") {
       loaded.runtime.historyCreation = { operationId, versionId: result.versionId };
-      loaded.runtime.historyActivation = null;
       await this.#writeRuntime(loaded);
     }
     return result;
@@ -757,7 +755,7 @@ export class ProjectFileRepository {
       || candidate.proposedVersionId !== transaction.version.versionId || candidate.previousVersionId !== transaction.version.previousVersionId
       || candidate.basedOnVersionId !== transaction.version.basedOnVersionId
       || candidate.sourceWorkingCopyId !== transaction.beforeMember.workingCopyId) {
-      throw new ProjectFileRepositoryError("PROMOTION_TRANSACTION_MISMATCH", "The adoption no longer matches its sealed Candidate.");
+      throw new ProjectFileRepositoryError("CURRENT_VERSION_TRANSACTION_MISMATCH", "The adoption no longer matches its sealed Candidate.");
     }
     const committed = await commitCurrentVersion(loaded, transaction, { hit: (name) => this.#hit(name) });
     if (committed.status !== "created") throw new ProjectFileRepositoryError("WORKING_COPY_CONFLICT", "The adoption was interrupted by a changed current draft.");
@@ -766,7 +764,7 @@ export class ProjectFileRepository {
       && loaded.runtime.activeRequest?.candidateId === candidate.candidateId
       && loaded.runtime.activeRequest?.attemptId === candidate.attemptId;
     if (!ownsActiveDecision && candidate.status !== "promoted") {
-      throw new ProjectFileRepositoryError("PROMOTION_TRANSACTION_MISMATCH", "The unfinished adoption no longer owns the active decision.");
+      throw new ProjectFileRepositoryError("CURRENT_VERSION_TRANSACTION_MISMATCH", "The unfinished adoption no longer owns the active decision.");
     }
     const requestPath = path.join(requestRootPath(loaded.paths, candidate.requestId), "request.json");
     const request = await readJsonFile(requestPath, "request.json", { projectRootPath: loaded.paths.projectRootPath });
@@ -782,7 +780,7 @@ export class ProjectFileRepository {
       }
       // A completed decision may be replayed after a newer Request starts.
       // Only the exact owning Request/Candidate can release this write fence.
-      loaded.runtime.activeRequest = null; loaded.runtime.activeCandidateId = null; loaded.runtime.historyActivation = null;
+      loaded.runtime.activeRequest = null; loaded.runtime.activeCandidateId = null;
       await this.#writeRuntime(loaded);
     }
     const current = loaded.manifest.workingCopies[0];
@@ -798,36 +796,6 @@ export class ProjectFileRepository {
       target: publicOpenTarget({ project: loaded.project, projectRootPath: loaded.paths.projectRootPath,
         targetKind: "working-copy", workingCopy: current, version: loaded.manifest.versions.find((version) => version.versionId === current.versionId),
         exactSourcePath: sourcePath, sourceSha256: source.sha256 }) };
-  }
-
-  async replayHistoryVersionActivation({
-    target,
-    versionId: requestedVersionId,
-    operationId,
-    expectedActiveWorkingCopyId,
-  } = {}) {
-    return this.#writeSerial(() => this.#replayHistoryVersionActivation({
-      target,
-      requestedVersionId,
-      operationId,
-      expectedActiveWorkingCopyId,
-    }));
-  }
-
-  async confirmVersionWorkingCopyActivation({
-    target,
-    operationId,
-    previousWorkingCopyId,
-    activatedWorkingCopyId,
-    versionId,
-  } = {}) {
-    return this.#writeSerial(() => this.#confirmVersionWorkingCopyActivation({
-      target,
-      operationId,
-      previousWorkingCopyId,
-      activatedWorkingCopyId,
-      versionId,
-    }));
   }
 
   async recordSubmission({ target, operationId, input }) {
@@ -905,15 +873,6 @@ export class ProjectFileRepository {
             assertCurrentVersionTransaction(loaded, currentTransaction, currentOperation);
             if (currentTransaction.version.sourceRequestId !== record.requestId || currentTransaction.version.sourceCandidateId !== record.candidateId) throw new ProjectFileRepositoryError("SUBMISSION_IDENTITY_MISMATCH", "The adoption belongs to a different Request.");
             await appendSubmissionExecutionFact(bound, operationId, { eventId: `event_${currentOperation}_completed`, kind: "promoted", timestamp: record.promotedAt, candidateId: record.candidateId });
-          }
-          const transaction = await readJsonFile(path.join(loaded.paths.transactionsRoot, `promote_${record.candidateId}`, "transaction.json"), "promotion transaction", { projectRootPath: loaded.paths.projectRootPath });
-          if (transaction?.state === "completed" && transaction.requestId === record.requestId
-            && transaction.candidateId === record.candidateId && transaction.projectId === receipt.projectId
-            && transaction.documentId === receipt.documentId) {
-            const candidateState = await this.#readCandidateForLoaded(bound, record.candidateId);
-            this.#assertPromotionTransactionAuthority(bound, candidateState, transaction);
-            await appendSubmissionExecutionFact(bound, operationId, { eventId: `event_${transaction.transactionId}_completed`,
-              kind: "promoted", timestamp: transaction.completedAt, candidateId: record.candidateId });
           }
         }
         if (restart && record.status === "processing") {
@@ -1221,9 +1180,8 @@ export class ProjectFileRepository {
     performanceTiming.checkpoint("registryResolveMs");
     if (!target) return null;
     assertExpectedIdentity(target);
-    // A Promotion transaction means the user already chose adoption.  Resume
-    // it before exposing any workspace facts, so a crash cannot leave a
-    // half-Version between Candidate review and a formal Version.
+    // Recover any current-version transaction before exposing workspace facts,
+    // so a crash cannot leave a half-Version between review and publication.
     // Resolution may refresh locators/bindings, but creates no recovery task.
     // Reuse only the completed recovery for this exact business identity/root;
     // target resolution and the following load still validate disk afresh.
@@ -4441,214 +4399,6 @@ export class ProjectFileRepository {
     };
   }
 
-  async #replayHistoryVersionActivation({
-    target,
-    requestedVersionId,
-    operationId: requestedOperationId,
-    expectedActiveWorkingCopyId: requestedExpectedActiveWorkingCopyId,
-  }) {
-    // This legacy boundary may only replay a receipt already on disk. A
-    // read-only Registry lookup must precede rename/external-source coordination:
-    // a retired command without a matching receipt has no mutation authority.
-    if (!isObject(target)) {
-      throw new ProjectFileRepositoryError("OPEN_TARGET_REQUIRED", "A managed OpenTarget is required.");
-    }
-    let loaded = await this.#loadRegisteredProject({
-      projectId: assertId(target.projectId, PROJECT_ID, "projectId"),
-      documentId: assertId(target.documentId, DOCUMENT_ID, "documentId"),
-      declaredProjectRootPath: target.projectRootPath ? normalizedPath(target.projectRootPath) : null,
-      readOnly: true,
-    });
-    const requested = assertId(requestedVersionId, VERSION_ID, "versionId");
-    const operationId = String(requestedOperationId || "");
-    if (!SAFE_OPERATION_ID.test(operationId)) {
-      throw new ProjectFileRepositoryError(
-        "INVALID_HISTORY_ACTIVATION_OPERATION",
-        "The history Working Copy activation operationId is invalid.",
-      );
-    }
-    const sourceWorkingCopy = loaded.manifest.workingCopies.find((entry) => (
-      (!target.workingCopyId || target.workingCopyId === entry.workingCopyId)
-      && (target.exactSourcePath
-        ? samePath(workingCopySourcePath(loaded.paths, entry), target.exactSourcePath)
-        : target.workingCopyId === entry.workingCopyId)
-    ));
-    const expectedActiveWorkingCopyId = assertId(
-      requestedExpectedActiveWorkingCopyId || sourceWorkingCopy?.workingCopyId,
-      WORKING_COPY_ID,
-      "expectedActiveWorkingCopyId",
-    );
-    const matchesReceipt = (current) => {
-      const receipt = current.runtime.historyActivation;
-      const source = current.manifest.workingCopies.find(
-        (entry) => entry.workingCopyId === sourceWorkingCopy?.workingCopyId,
-      );
-      return Boolean(receipt && source
-        && receipt.projectId === current.project.projectId
-        && receipt.documentId === current.project.documentId
-        && receipt.versionId === requested
-        && receipt.previousWorkingCopyId === expectedActiveWorkingCopyId
-        && receipt.activatedWorkingCopyId === current.runtime.activeWorkingCopyId
-        && [receipt.previousWorkingCopyId, receipt.activatedWorkingCopyId].includes(source.workingCopyId)
-        && (!target.exactSourcePath || samePath(workingCopySourcePath(current.paths, source), target.exactSourcePath)));
-    };
-    if (!matchesReceipt(loaded)) {
-      throw new ProjectFileRepositoryError(
-        "HISTORY_ACTIVATION_RECEIPT_MISMATCH",
-        "The retired history command can only replay an existing matching activation receipt.",
-      );
-    }
-    const receiptOperationId = loaded.runtime.historyActivation.operationId;
-    await this.#resolveWorkingCopyPath(
-      loaded,
-      sourceWorkingCopy,
-      "Version Working Copy",
-      { readOnly: true, persistLocator: false },
-    );
-    if (!matchesReceipt(loaded) || loaded.runtime.historyActivation.operationId !== receiptOperationId) {
-      throw new ProjectFileRepositoryError(
-        "HISTORY_ACTIVATION_RECEIPT_MISMATCH",
-        "The history activation receipt changed before replay.",
-      );
-    }
-    const version = loaded.manifest.versions.find((entry) => entry.versionId === requested);
-    const matches = loaded.manifest.workingCopies.filter((entry) => (
-      entry.versionId === requested && entry.basedOnVersionId === requested
-    ));
-    if (!version || matches.length !== 1
-      || matches[0].workingCopyId !== loaded.runtime.historyActivation.activatedWorkingCopyId) {
-      throw new ProjectFileRepositoryError(
-        "WORKING_COPY_VERSION_MISMATCH",
-        "The historical receipt no longer has one unambiguous Version Working Copy.",
-      );
-    }
-    const workingCopy = matches[0];
-    const state = await readJsonFile(
-      workingCopyStatePath(loaded.paths, workingCopy),
-      "Working Copy state",
-      { projectRootPath: loaded.paths.projectRootPath },
-    );
-    assertWorkingCopyState(state, loaded, workingCopy);
-    const snapshot = await readHtmlFile(
-      versionSnapshotPath(loaded.paths, version),
-      "Version snapshot",
-      { projectRootPath: loaded.paths.projectRootPath },
-    );
-    if (snapshot.sha256 !== version.contentSha256) {
-      throw new ProjectFileRepositoryError(
-        "VERSION_SNAPSHOT_HASH_MISMATCH",
-        "The immutable Version snapshot changed and cannot be activated.",
-      );
-    }
-    const exactSourcePath = workingCopySourcePath(loaded.paths, workingCopy);
-    const source = await readHtmlFile(exactSourcePath, "Version Working Copy", {
-      projectRootPath: loaded.paths.projectRootPath,
-    });
-    const reconciled = await this.#reconcileExternalWorkingCopyState({
-      loaded,
-      workingCopy,
-      state,
-      source,
-    });
-    const historyActivation = loaded.runtime.historyActivation;
-    return {
-      target: publicOpenTarget({
-        project: loaded.project,
-        projectRootPath: loaded.paths.projectRootPath,
-        targetKind: "working-copy",
-        workingCopy,
-        version,
-        exactSourcePath,
-        sourceSha256: source.sha256,
-      }),
-      workingCopyState: structuredClone(reconciled.state),
-      activated: false,
-      replayed: true,
-      previousWorkingCopyId: historyActivation.previousWorkingCopyId,
-      historyActivation: structuredClone(historyActivation),
-    };
-  }
-
-  async #confirmVersionWorkingCopyActivation({
-    target,
-    operationId: requestedOperationId,
-    previousWorkingCopyId: requestedPreviousWorkingCopyId,
-    activatedWorkingCopyId: requestedActivatedWorkingCopyId,
-    versionId: requestedVersionId,
-  }) {
-    if (!isObject(target)) {
-      throw new ProjectFileRepositoryError("OPEN_TARGET_REQUIRED", "A managed OpenTarget is required.");
-    }
-    let loaded = await this.#loadRegisteredProject({
-      projectId: assertId(target.projectId, PROJECT_ID, "projectId"),
-      documentId: assertId(target.documentId, DOCUMENT_ID, "documentId"),
-      declaredProjectRootPath: target.projectRootPath ? normalizedPath(target.projectRootPath) : null,
-      readOnly: true,
-    });
-    const operationId = String(requestedOperationId || "");
-    if (!SAFE_OPERATION_ID.test(operationId)) {
-      throw new ProjectFileRepositoryError(
-        "INVALID_HISTORY_ACTIVATION_OPERATION",
-        "The history Working Copy activation operationId is invalid.",
-      );
-    }
-    const previousWorkingCopyId = requestedPreviousWorkingCopyId === null
-      ? null
-      : assertId(requestedPreviousWorkingCopyId, WORKING_COPY_ID, "previousWorkingCopyId");
-    const activatedWorkingCopyId = assertId(
-      requestedActivatedWorkingCopyId,
-      WORKING_COPY_ID,
-      "activatedWorkingCopyId",
-    );
-    const versionId = assertId(requestedVersionId, VERSION_ID, "versionId");
-    const sourceWorkingCopy = loaded.manifest.workingCopies.find((entry) => (
-      (!target.workingCopyId || target.workingCopyId === entry.workingCopyId)
-      && (target.exactSourcePath
-        ? samePath(workingCopySourcePath(loaded.paths, entry), target.exactSourcePath)
-        : target.workingCopyId === entry.workingCopyId)
-    ));
-    const matchesReceipt = (current) => {
-      const receipt = current.runtime.historyActivation;
-      return Boolean(sourceWorkingCopy && receipt
-        && receipt.operationId === operationId
-        && receipt.projectId === current.project.projectId
-        && receipt.documentId === current.project.documentId
-        && receipt.previousWorkingCopyId === previousWorkingCopyId
-        && receipt.activatedWorkingCopyId === activatedWorkingCopyId
-        && receipt.versionId === versionId
-        && current.runtime.activeWorkingCopyId === activatedWorkingCopyId);
-    };
-    if (!matchesReceipt(loaded)) {
-      throw new ProjectFileRepositoryError(
-        "HISTORY_ACTIVATION_RECEIPT_MISMATCH",
-        "The history activation confirmation does not match the durable activation receipt.",
-      );
-    }
-    await this.#resolveWorkingCopyPath(
-      loaded,
-      sourceWorkingCopy,
-      "Version Working Copy",
-      { readOnly: true, persistLocator: false },
-    );
-    if (!matchesReceipt(loaded)) {
-      throw new ProjectFileRepositoryError(
-        "HISTORY_ACTIVATION_RECEIPT_MISMATCH",
-        "The history activation receipt changed before confirmation.",
-      );
-    }
-    const historyActivation = loaded.runtime.historyActivation;
-    if (historyActivation.state === "desktop-confirmed") {
-      return { historyActivation: structuredClone(historyActivation), confirmed: false };
-    }
-    historyActivation.state = "desktop-confirmed";
-    loaded.runtime.historyActivation = historyActivation;
-    await this.#writeRuntime(loaded);
-    return {
-      historyActivation: structuredClone(historyActivation),
-      confirmed: true,
-    };
-  }
-
   async #completeRequest({ target, requestId, attemptId, html }) {
     const loaded = await this.#resolveMutationTarget(target);
     const requestRoot = requestRootPath(loaded.paths, requestId);
@@ -5403,7 +5153,6 @@ export class ProjectFileRepository {
         activeWorkingCopyId: firstWorkingCopyId,
         activeRequest: null,
         activeCandidateId: null,
-        historyActivation: null,
         lastAiTask: null,
       };
       await atomicWriteProjectJson(stagingRoot, paths.projectPath, project, "project.json");
@@ -5555,9 +5304,9 @@ export class ProjectFileRepository {
       project,
     );
     const runtime = assertRuntime(
-      normalizeRuntimeDisplayAnchors(await readJsonFile(paths.runtimePath, "runtime-state.json", {
+      await readJsonFile(paths.runtimePath, "runtime-state.json", {
         projectRootPath: root,
-      })),
+      }),
       project,
       manifest,
     );
@@ -5908,7 +5657,7 @@ export class ProjectFileRepository {
       );
       const isActiveWorkingCopy = workingCopy?.workingCopyId === activeWorkingCopy.workingCopyId;
       const displayFileName = projectVersionDisplayFileName({
-        manifest: loaded.manifest, version, currentSourcePath: activeDisplayPath,
+        version, currentSourcePath: activeDisplayPath,
         versionSourcePath: isActiveWorkingCopy ? activeDisplayPath : workingCopy?.sourceRelativePath,
       });
       return {
@@ -6974,7 +6723,7 @@ export class ProjectFileRepository {
     };
   }
 
-  async #allocatePromotionWorkingCopy(loaded, {
+  async #allocateVersionWorkingCopy(loaded, {
     preferredFileStem,
     preferredExtension,
     versionOrdinal,
@@ -6990,7 +6739,7 @@ export class ProjectFileRepository {
       const candidatePath = resolveRelative(
         loaded.paths.projectRootPath,
         sourceRelativePath,
-        "Promotion Working Copy path",
+        "Version Working Copy path",
       );
       const information = await lstat(candidatePath).catch((cause) => {
         if (cause?.code === "ENOENT") return null;
@@ -7001,86 +6750,9 @@ export class ProjectFileRepository {
       if (!information) return { sourceRelativePath, allocationOrdinal };
     }
     throw new ProjectFileRepositoryError(
-      "PROMOTION_PATH_ALLOCATION_EXHAUSTED",
+      "VERSION_PATH_ALLOCATION_EXHAUSTED",
       "Stemmio could not allocate a collision-free Version Working Copy path.",
     );
-  }
-
-  #preparedPromotionWorkingCopyPath(loaded, transaction) {
-    const relative = ensureRelativePath(
-      transaction.preparedWorkingCopyRelativePath,
-      "preparedWorkingCopyRelativePath",
-    );
-    const expectedPrefix = "transactions/" + transaction.transactionId + "/";
-    if (
-      !relative.startsWith(expectedPrefix)
-      || !relative.endsWith(transaction.preferredExtension)
-    ) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_TRANSACTION_INVALID",
-        "The Promotion prepared Working Copy path is invalid.",
-      );
-    }
-    const resolved = resolveRelative(
-      loaded.paths.controlRoot,
-      relative,
-      "preparedWorkingCopyRelativePath",
-    );
-    if (!pathInside(loaded.paths.transactionsRoot, resolved)) {
-      throw new ProjectFileRepositoryError(
-        "PATH_ESCAPES_PROJECT",
-        "The Promotion prepared Working Copy must stay inside transactions/.",
-      );
-    }
-    return resolved;
-  }
-
-  async #writePromotionTransaction(loaded, transactionRoot, transaction) {
-    await atomicWriteProjectJson(
-      loaded.paths.projectRootPath,
-      path.join(transactionRoot, "transaction.json"),
-      transaction,
-      "promotion transaction",
-    );
-  }
-
-  async #reallocateUnstartedPromotion(loaded, transactionRoot, transaction) {
-    if (!["prepared", "snapshot-created"].includes(transaction.state)) return false;
-    const finalPath = path.join(
-      loaded.paths.projectRootPath,
-      topLevelHtmlRelativePath(transaction.finalWorkingCopyRelativePath),
-    );
-    const information = await lstat(finalPath).catch((cause) => {
-      if (cause?.code === "ENOENT") return null;
-      throw cause;
-    });
-    if (!information) return false;
-    const next = await this.#allocatePromotionWorkingCopy(loaded, {
-      preferredFileStem: transaction.preferredFileStem,
-      preferredExtension: transaction.preferredExtension,
-      versionOrdinal: transaction.versionOrdinal,
-      startAt: transaction.pathAllocationOrdinal + 1,
-    });
-    transaction.finalWorkingCopyRelativePath = next.sourceRelativePath;
-    transaction.pathAllocationOrdinal = next.allocationOrdinal;
-    transaction.reallocatedAt = nowIso(this.#clock);
-    await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-    return true;
-  }
-
-  async #reallocatePreparedPromotion(loaded, transactionRoot, transaction) {
-    if (transaction.state !== "working-copy-prepared") return false;
-    const next = await this.#allocatePromotionWorkingCopy(loaded, {
-      preferredFileStem: transaction.preferredFileStem,
-      preferredExtension: transaction.preferredExtension,
-      versionOrdinal: transaction.versionOrdinal,
-      startAt: transaction.pathAllocationOrdinal + 1,
-    });
-    transaction.finalWorkingCopyRelativePath = next.sourceRelativePath;
-    transaction.pathAllocationOrdinal = next.allocationOrdinal;
-    transaction.reallocatedAt = nowIso(this.#clock);
-    await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-    return true;
   }
 
   async #historyCreationLoaded(target) {
@@ -7184,7 +6856,7 @@ export class ProjectFileRepository {
       if (loaded.manifest.versions.some((v) => v.ordinal >= ordinal)) throw new ProjectFileRepositoryError("INVALID_MANIFEST", "The latest Version pointer is inconsistent.");
       const preferredFileStem = assertPreferredFileStem(loaded.workingCopy.preferredFileStem);
       const preferredExtension = htmlExtension(`x${loaded.workingCopy.preferredExtension}`);
-      const allocation = await this.#allocatePromotionWorkingCopy(loaded, { preferredFileStem, preferredExtension, versionOrdinal: ordinal });
+      const allocation = await this.#allocateVersionWorkingCopy(loaded, { preferredFileStem, preferredExtension, versionOrdinal: ordinal });
       transaction = { schemaVersion: PROJECT_FILE_SCHEMA_VERSION, kind: "history-creation", state: "prepared",
         operationId, projectId: loaded.project.projectId, documentId: loaded.project.documentId,
         versionId: versionId(ordinal), versionOrdinal: ordinal, basedOnVersionId: requested,
@@ -7287,13 +6959,7 @@ export class ProjectFileRepository {
       const anchorPath = path.join(path.dirname(transactionPath), "working-copy.anchor");
       let anchor = await regularInformation(anchorPath, "history creation anchor", { projectRootPath: loaded.paths.projectRootPath });
       if (!anchor && transaction.state !== "prepared") {
-        // Older journals have no private anchor. A live prepared/visible link
-        // is equivalent evidence; a remembered inode or equal bytes are not.
-        const legacyVisible = await regularInformation(path.join(loaded.paths.projectRootPath, topLevelHtmlRelativePath(transaction.finalWorkingCopyRelativePath)),
-          "history Working Copy", { projectRootPath: loaded.paths.projectRootPath });
-        if (!legacyVisible || !sameFileIdentity(preparedIdentity, copyFileIdentity(legacyVisible))) {
-          throw new ProjectFileRepositoryError("HISTORY_CREATION_FILE_CHANGED", "The preparation has no surviving object evidence.");
-        }
+        throw new ProjectFileRepositoryError("HISTORY_CREATION_FILE_CHANGED", "The preparation has no surviving private anchor.");
       }
       if (!anchor) {
         await link(preparedPath, anchorPath);
@@ -7318,7 +6984,7 @@ export class ProjectFileRepository {
           throw new ProjectFileRepositoryError("HISTORY_CREATION_FILE_CHANGED", "The published Working Copy was removed or replaced.");
         }
         if (info) {
-          const allocation = await this.#allocatePromotionWorkingCopy(loaded, { preferredFileStem: transaction.preferredFileStem,
+          const allocation = await this.#allocateVersionWorkingCopy(loaded, { preferredFileStem: transaction.preferredFileStem,
             preferredExtension: transaction.preferredExtension, versionOrdinal: transaction.versionOrdinal, startAt: transaction.pathAllocationOrdinal + 1 });
           transaction.finalWorkingCopyRelativePath = allocation.sourceRelativePath;
           transaction.pathAllocationOrdinal = allocation.allocationOrdinal;
@@ -7368,7 +7034,6 @@ export class ProjectFileRepository {
     }
     const result = await this.#historyCreationResult(loaded, transaction);
     loaded.runtime.activeWorkingCopyId = result.workingCopyId;
-    loaded.runtime.historyActivation = null;
     loaded.runtime.historyCreation = { operationId: transaction.operationId, versionId: transaction.versionId };
     await this.#writeRuntime(loaded);
     transaction.state = "completed";
@@ -7402,89 +7067,13 @@ export class ProjectFileRepository {
         "Adoption identity does not match this Candidate.",
       );
     }
-    const currentProject = await this.#historyCreationLoaded(target);
-    if (currentProject.manifest.currentDraftSchemaVersion === CURRENT_DRAFT_SCHEMA_VERSION) {
-      return this.#promoteCurrentCandidate(currentProject, {
+    const loaded = await this.#historyCreationLoaded(target);
+    return this.#promoteCurrentCandidate(loaded, {
         target,
         candidateId: requestedCandidateId,
         expectedSourceSha256,
         decisionOperationId,
       });
-    }
-    const loaded = await this.#resolveMutationTarget(target);
-    const candidateState = await this.#readCandidateForLoaded(loaded, requestedCandidateId, {
-      requireExplicitCandidateId: true,
-    });
-    await this.#assertCandidateSourceCurrent(loaded, candidateState.candidate);
-    const transactionId = "promote_" + candidateState.candidate.candidateId;
-    if (decisionOperationId !== transactionId) {
-      throw new ProjectFileRepositoryError("DECISION_IDENTITY_MISMATCH", "Adoption identity does not match this Candidate.");
-    }
-    if (expectedSourceSha256 !== undefined && expectedSourceSha256 !== candidateState.candidate.expectedSourceSha256) {
-      throw new ProjectFileRepositoryError("SOURCE_HASH_CONFLICT", "Adoption does not match the reviewed source.");
-    }
-    const transactionRoot = path.join(loaded.paths.transactionsRoot, transactionId);
-    const transactionPath = path.join(transactionRoot, "transaction.json");
-    let transaction = await readJsonFile(transactionPath, "promotion transaction", {
-      projectRootPath: loaded.paths.projectRootPath,
-    });
-    if (!transaction) {
-      await ensureProjectDirectory(
-        loaded.paths.projectRootPath,
-        transactionRoot,
-        "Promotion transaction directory",
-      );
-      const preferredFileStem = assertPreferredFileStem(
-        loaded.workingCopy.preferredFileStem,
-      );
-      const preferredExtension = htmlExtension(
-        "x" + String(loaded.workingCopy.preferredExtension || ""),
-      );
-      const allocation = await this.#allocatePromotionWorkingCopy(loaded, {
-        preferredFileStem,
-        preferredExtension,
-        versionOrdinal: candidateState.candidate.proposedVersionOrdinal,
-      });
-      const sourceState = await readJsonFile(workingCopyStatePath(loaded.paths, loaded.workingCopy), "Working Copy state", { projectRootPath: loaded.paths.projectRootPath });
-      assertWorkingCopyState(sourceState, loaded, loaded.workingCopy);
-      const draftFile = await readJsonFileWithSha256(draftPathForState(loaded.paths, loaded.workingCopy, sourceState), "Working Copy draft", { projectRootPath: loaded.paths.projectRootPath });
-      if (sourceState.draftSha256 && draftFile?.sha256 !== sourceState.draftSha256) {
-        throw new ProjectFileRepositoryError("DRAFT_HASH_CONFLICT", "The latest comments could not be verified before adoption.");
-      }
-      const requestRecord = await readJsonFile(path.join(requestRootPath(loaded.paths, candidateState.candidate.requestId), "request.json"), "request.json", { projectRootPath: loaded.paths.projectRootPath });
-      const submission = requestRecord?.request?.submissionOperationId
-        ? await readSubmissionReceipt(loaded, requestRecord.request.submissionOperationId) : null;
-      const retainedComments = commentsRemainingAfterAdoption(draftFile?.value?.comments || [], submission?.snapshot.comments || requestRecord?.request?.comments || []);
-      transaction = {
-        retainedComments,
-        schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
-        kind: "promotion",
-        state: "prepared",
-        transactionId,
-        projectId: loaded.project.projectId,
-        documentId: loaded.project.documentId,
-        candidateId: candidateState.candidate.candidateId,
-        requestId: candidateState.candidate.requestId,
-        versionId: candidateState.candidate.proposedVersionId,
-        versionOrdinal: candidateState.candidate.proposedVersionOrdinal,
-        candidateOutputSha256: candidateState.candidate.outputSha256,
-        workingCopySourceSha256: null,
-        basedOnVersionId: candidateState.candidate.basedOnVersionId,
-        previousVersionId: candidateState.candidate.previousVersionId,
-        finalWorkingCopyRelativePath: allocation.sourceRelativePath,
-        preparedWorkingCopyRelativePath: "transactions/" + transactionId
-          + "/prepared-working-copy" + preferredExtension,
-        preferredFileStem,
-        preferredExtension,
-        pathAllocationOrdinal: allocation.allocationOrdinal,
-        preparedWorkingCopyFileIdentity: null,
-        workingCopy: null,
-        createdAt: nowIso(this.#clock),
-      };
-      await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-      await this.#hit("promotion-prepared", { transactionPath });
-    }
-    return this.#continuePromotion(loaded, candidateState, transactionRoot, transaction);
   }
 
   async #assertCandidateSourceCurrent(loaded, candidate) {
@@ -7527,686 +7116,13 @@ export class ProjectFileRepository {
     return source;
   }
 
-  #assertPromotionTransactionAuthority(loaded, candidateState, transaction) {
-    const candidate = candidateState.candidate;
-    const candidateOrdinal = candidate.proposedVersionOrdinal;
-    const sourceWorkingCopy = loaded.manifest.workingCopies.find(
-      (workingCopy) => workingCopy.workingCopyId === candidate.sourceWorkingCopyId,
-    );
-    if (!sourceWorkingCopy) {
-      throw new ProjectFileRepositoryError(
-        "CANDIDATE_WORKING_COPY_MISSING",
-        "The Candidate source Working Copy is no longer available.",
-        { candidateId: candidate.candidateId, sourceWorkingCopyId: candidate.sourceWorkingCopyId },
-      );
-    }
-    const preferredFileStem = assertPreferredFileStem(sourceWorkingCopy.preferredFileStem);
-    const preferredExtension = htmlExtension(
-      "x" + String(sourceWorkingCopy.preferredExtension || ""),
-    );
-    const transactionId = "promote_" + candidate.candidateId;
-    const hasValidOrdinal = Number.isSafeInteger(candidateOrdinal) && candidateOrdinal >= 2;
-    const hasValidAllocation = (
-      Number.isSafeInteger(transaction.pathAllocationOrdinal)
-      && transaction.pathAllocationOrdinal >= 0
-    );
-    const expectedVersionId = hasValidOrdinal ? versionId(candidateOrdinal) : null;
-    const expectedFinalWorkingCopyRelativePath = (
-      hasValidOrdinal && hasValidAllocation
-        ? visibleFileName(
-          preferredFileStem,
-          candidateOrdinal,
-          preferredExtension,
-          transaction.pathAllocationOrdinal,
-        )
-        : null
-    );
-    const expectedPreparedWorkingCopyRelativePath = "transactions/" + transactionId
-      + "/prepared-working-copy" + preferredExtension;
-    const mismatch = () => {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_TRANSACTION_MISMATCH",
-        "The Promotion transaction does not match the runtime-sealed Candidate authority.",
-      );
-    };
-
-    if (
-      !hasValidOrdinal
-      || candidate.proposedVersionId !== expectedVersionId
-      || transaction.transactionId !== transactionId
-      || transaction.projectId !== loaded.project.projectId
-      || transaction.documentId !== loaded.project.documentId
-      || transaction.candidateId !== candidate.candidateId
-      || transaction.requestId !== candidate.requestId
-      || transaction.versionId !== expectedVersionId
-      || transaction.versionOrdinal !== candidateOrdinal
-      || transaction.candidateOutputSha256 !== candidate.outputSha256
-      || transaction.basedOnVersionId !== candidate.basedOnVersionId
-      || transaction.previousVersionId !== candidate.previousVersionId
-      || transaction.preferredFileStem !== preferredFileStem
-      || transaction.preferredExtension !== preferredExtension
-      || !hasValidAllocation
-      || transaction.finalWorkingCopyRelativePath !== expectedFinalWorkingCopyRelativePath
-      || transaction.preparedWorkingCopyRelativePath !== expectedPreparedWorkingCopyRelativePath
-    ) {
-      mismatch();
-    }
-
-    const hasPreparedWorkingCopy = [
-      "working-copy-prepared",
-      "working-copy-created",
-      "manifest-committed",
-      "completed",
-    ].includes(transaction.state);
-
-    if (hasPreparedWorkingCopy) {
-      try {
-        assertSha256(
-          transaction.workingCopySourceSha256,
-          "Promotion Working Copy sourceSha256",
-        );
-        assertFileIdentity(
-          transaction.preparedWorkingCopyFileIdentity,
-          "Promotion prepared Working Copy fileIdentity",
-        );
-      } catch {
-        mismatch();
-      }
-    } else if (
-      transaction.preparedWorkingCopyFileIdentity !== null
-      || (transaction.workingCopySourceSha256 !== null && transaction.state !== "snapshot-created")
-    ) {
-      mismatch();
-    }
-
-    const hasCreatedWorkingCopy = [
-      "working-copy-created",
-      "manifest-committed",
-      "completed",
-    ].includes(transaction.state);
-    if (!hasCreatedWorkingCopy) {
-      if (transaction.workingCopy !== null) mismatch();
-      return;
-    }
-
-    const expectedWorkingCopyId = workingCopyId(candidateOrdinal);
-    const workingCopy = transaction.workingCopy;
-
-    try {
-      assertFileIdentity(
-        workingCopy?.fileIdentity,
-        "Promotion Working Copy fileIdentity",
-      );
-    } catch {
-      mismatch();
-    }
-    if (
-      !isObject(workingCopy)
-      || workingCopy.workingCopyId !== expectedWorkingCopyId
-      || workingCopy.versionId !== expectedVersionId
-      || workingCopy.basedOnVersionId !== expectedVersionId
-      || workingCopy.sourceRelativePath !== expectedFinalWorkingCopyRelativePath
-      || workingCopy.preferredFileStem !== preferredFileStem
-      || workingCopy.preferredExtension !== preferredExtension
-      || workingCopy.stateRelativePath !== "working-copies/" + expectedWorkingCopyId + ".json"
-    ) {
-      mismatch();
-    }
-  }
-
-  #normalizeLegacyPromotionWorkingCopyHash(transaction) {
-    if (Object.hasOwn(transaction, "workingCopySourceSha256")) return;
-    const hasPreparedWorkingCopy = [
-      "working-copy-prepared",
-      "working-copy-created",
-      "manifest-committed",
-      "completed",
-    ].includes(transaction.state);
-    transaction.workingCopySourceSha256 = hasPreparedWorkingCopy
-      ? transaction.candidateOutputSha256
-      : null;
-    if (hasPreparedWorkingCopy) {
-      Object.defineProperty(transaction, LEGACY_PROMOTION_WORKING_COPY_HASH, {
-        configurable: false,
-        enumerable: false,
-        value: true,
-        writable: false,
-      });
-    }
-  }
-
-  async #readCommittedPromotion(loaded, transaction) {
-    const committedVersion = loaded.manifest.versions.find(
-      (version) => version.versionId === transaction.versionId,
-    );
-    const committedWorkingCopy = loaded.manifest.workingCopies.find(
-      (workingCopy) => workingCopy.workingCopyId === transaction.workingCopy?.workingCopyId,
-    );
-    if (
-      !committedVersion
-      || !committedWorkingCopy
-      || loaded.manifest.latestOfficialVersionId !== transaction.versionId
-      || committedVersion.ordinal !== transaction.versionOrdinal
-      || committedVersion.basedOnVersionId !== transaction.basedOnVersionId
-      || committedVersion.previousVersionId !== transaction.previousVersionId
-      || committedVersion.contentSha256 !== transaction.candidateOutputSha256
-      || committedVersion.snapshotRelativePath !== "versions/" + transaction.versionId + "/index.html"
-      || committedVersion.sourceRequestId !== transaction.requestId
-      || committedVersion.sourceCandidateId !== transaction.candidateId
-      || committedWorkingCopy.workingCopyId !== transaction.workingCopy.workingCopyId
-      || committedWorkingCopy.versionId !== transaction.workingCopy.versionId
-      || committedWorkingCopy.basedOnVersionId !== transaction.workingCopy.basedOnVersionId
-      || committedWorkingCopy.sourceRelativePath !== transaction.workingCopy.sourceRelativePath
-      || committedWorkingCopy.preferredFileStem !== transaction.workingCopy.preferredFileStem
-      || committedWorkingCopy.preferredExtension !== transaction.workingCopy.preferredExtension
-      || committedWorkingCopy.stateRelativePath !== transaction.workingCopy.stateRelativePath
-    ) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_COMMIT_MISMATCH",
-        "The committed Promotion facts do not match the sealed transaction authority.",
-      );
-    }
-    const snapshot = await readHtmlFile(
-      versionSnapshotPath(loaded.paths, committedVersion),
-      "Version snapshot",
-      { projectRootPath: loaded.paths.projectRootPath },
-    );
-    if (snapshot.sha256 !== transaction.candidateOutputSha256) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_COMMIT_MISMATCH",
-        "The committed Promotion snapshot no longer matches the sealed Candidate bytes.",
-      );
-    }
-    return { committedVersion, committedWorkingCopy };
-  }
-
-  async #continuePromotion(loaded, candidateState, transactionRoot, transaction) {
-    if (
-      !isObject(transaction)
-      || transaction.schemaVersion !== PROJECT_FILE_SCHEMA_VERSION
-      || transaction.kind !== "promotion"
-      || ![
-        "prepared",
-        "snapshot-created",
-        "working-copy-prepared",
-        "working-copy-created",
-        "manifest-committed",
-        "completed",
-      ].includes(transaction.state)
-      || transaction.projectId !== loaded.project.projectId
-      || transaction.documentId !== loaded.project.documentId
-      || transaction.candidateId !== candidateState.candidate.candidateId
-      || transaction.candidateOutputSha256 !== candidateState.candidate.outputSha256
-    ) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_TRANSACTION_MISMATCH",
-        "The Promotion transaction belongs to another Candidate.",
-      );
-    }
-    // Schema v4 Promotion journals created before Working Copy identity
-    // materialization did not record a separate Working Copy hash. Their
-    // prepared/published bytes were exactly the Candidate bytes. Normalize
-    // only the absent legacy member; present null/invalid values still fail
-    // closed in the authority check below.
-    this.#normalizeLegacyPromotionWorkingCopyHash(transaction);
-    // Promotion and crash recovery both start from the runtime-sealed
-    // Candidate.  A raw candidate.json/candidate.html pair is never enough to
-    // resume an adoption after review has begun.
-    candidateState = await this.#readCandidateForLoaded(
-      loaded,
-      transaction.candidateId,
-    );
-    if (
-      candidateState.candidate.candidateId !== transaction.candidateId
-      || candidateState.candidate.outputSha256 !== transaction.candidateOutputSha256
-    ) {
-      throw new ProjectFileRepositoryError(
-        "CANDIDATE_AUTHORITY_MISMATCH",
-        "The Promotion Candidate no longer matches its sealed transaction authority.",
-      );
-    }
-    this.#assertPromotionTransactionAuthority(loaded, candidateState, transaction);
-    topLevelHtmlRelativePath(transaction.finalWorkingCopyRelativePath);
-    assertPreferredFileStem(transaction.preferredFileStem);
-    if (!HTML_EXTENSIONS.has(String(transaction.preferredExtension || "").toLowerCase())) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_TRANSACTION_INVALID",
-        "The Promotion preferred extension is invalid.",
-      );
-    }
-    if (
-      !Number.isSafeInteger(transaction.pathAllocationOrdinal)
-      || transaction.pathAllocationOrdinal < 0
-    ) {
-      throw new ProjectFileRepositoryError(
-        "PROMOTION_TRANSACTION_INVALID",
-        "The Promotion path allocation is invalid.",
-      );
-    }
-    const latest = loaded.manifest.versions.find(
-      (version) => version.versionId === loaded.manifest.latestOfficialVersionId,
-    );
-    if (
-      latest.versionId !== transaction.previousVersionId
-      || transaction.versionId !== versionId(latest.ordinal + 1)
-    ) {
-      if (loaded.manifest.versions.some((version) => version.versionId === transaction.versionId)) {
-        return this.#finishPromotedCandidate(loaded, candidateState, transactionRoot, transaction);
-      }
-      throw new ProjectFileRepositoryError(
-        "STALE_CANDIDATE",
-        "The latest formal Version changed before this Candidate was adopted.",
-      );
-    }
-    if (candidateState.candidate.status !== "pending-review") {
-      throw new ProjectFileRepositoryError(
-        "CANDIDATE_NOT_PENDING_REVIEW",
-        "Only a pending-review Candidate can be adopted.",
-      );
-    }
-    const version = {
-      versionId: transaction.versionId,
-      ordinal: transaction.versionOrdinal,
-      basedOnVersionId: transaction.basedOnVersionId,
-      previousVersionId: transaction.previousVersionId,
-      contentSha256: transaction.candidateOutputSha256,
-      snapshotRelativePath: "versions/" + transaction.versionId + "/index.html",
-      sourceRequestId: transaction.requestId,
-      sourceCandidateId: transaction.candidateId,
-      createdAt: transaction.createdAt,
-    };
-    const snapshotPath = versionSnapshotPath(loaded.paths, version);
-    if (transaction.state === "prepared") {
-      await ensureProjectDirectory(
-        loaded.paths.projectRootPath,
-        path.dirname(snapshotPath),
-        "Version snapshot directory",
-      );
-      await writeFileNoReplace(
-        snapshotPath,
-        candidateState.output.buffer,
-        transaction.candidateOutputSha256,
-        "Version snapshot",
-        { projectRootPath: loaded.paths.projectRootPath },
-      );
-      transaction.state = "snapshot-created";
-      transaction.snapshotCreatedAt = nowIso(this.#clock);
-      await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-      await this.#hit("promotion-snapshot-created", { transactionRoot });
-    }
-    await this.#reallocateUnstartedPromotion(loaded, transactionRoot, transaction);
-    const preparedPath = this.#preparedPromotionWorkingCopyPath(loaded, transaction);
-    if (transaction.state === "snapshot-created") {
-      let preparedInformation = await regularInformation(
-        preparedPath,
-        "prepared Version Working Copy",
-        { projectRootPath: loaded.paths.projectRootPath },
-      );
-      if (preparedInformation) {
-        const prepared = await readHtmlFile(preparedPath, "prepared Version Working Copy", {
-          projectRootPath: loaded.paths.projectRootPath,
-        });
-        if (!transaction.workingCopySourceSha256 || prepared.sha256 !== transaction.workingCopySourceSha256) {
-          throw new ProjectFileRepositoryError("PROMOTION_PREPARED_PATH_CONFLICT", "The Promotion preparation path is already occupied.");
-        }
-      } else {
-        const identifiedWorkingCopy = materializeSourceElementIdentity(
-          candidateState.output.html,
-        );
-        const workingCopySourceSha256 = sha256(identifiedWorkingCopy.buffer);
-        transaction.workingCopySourceSha256 = workingCopySourceSha256;
-        await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-        const prepared = await writeFileNoReplace(
-          preparedPath,
-          identifiedWorkingCopy.buffer,
-          workingCopySourceSha256,
-          "prepared Version Working Copy",
-          { projectRootPath: loaded.paths.projectRootPath },
-        );
-        if (!prepared.created) {
-          throw new ProjectFileRepositoryError(
-            "PROMOTION_PREPARED_PATH_CONFLICT",
-            "The Promotion preparation path is already occupied.",
-          );
-        }
-        preparedInformation = prepared.information;
-        transaction.workingCopySourceSha256 = workingCopySourceSha256;
-      }
-      transaction.preparedWorkingCopyFileIdentity = copyFileIdentity(preparedInformation);
-      transaction.state = "working-copy-prepared";
-      transaction.workingCopyPreparedAt = nowIso(this.#clock);
-      await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-      await this.#hit("promotion-working-copy-prepared", { transactionRoot });
-    }
-    if (transaction.state === "working-copy-prepared") {
-      const preparedInformation = await regularInformation(
-        preparedPath,
-        "prepared Version Working Copy",
-        { projectRootPath: loaded.paths.projectRootPath },
-      );
-      if (
-        !preparedInformation
-      ) {
-        throw new ProjectFileRepositoryError(
-          "PROMOTION_PREPARED_FILE_CHANGED",
-          "The Promotion preparation file changed before publication.",
-        );
-      }
-      const prepared = await readHtmlFile(preparedPath, "prepared Version Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (prepared.sha256 !== transaction.workingCopySourceSha256) {
-        throw new ProjectFileRepositoryError(
-          "PROMOTION_PREPARED_FILE_CHANGED",
-          "The Promotion preparation file no longer matches its sealed Working Copy bytes.",
-        );
-      }
-      let visibleInformation;
-      while (true) {
-        const visiblePath = path.join(
-          loaded.paths.projectRootPath,
-          topLevelHtmlRelativePath(transaction.finalWorkingCopyRelativePath),
-        );
-        visibleInformation = await lstat(visiblePath).catch((cause) => {
-          if (cause?.code === "ENOENT") return null;
-          throw cause;
-        });
-        const visibleIsPrepared = Boolean(
-          visibleInformation
-          && !visibleInformation.isSymbolicLink()
-          && visibleInformation.isFile()
-          && sameFileIdentity(
-            copyFileIdentity(prepared.information),
-            copyFileIdentity(visibleInformation),
-          ),
-        );
-        if (visibleIsPrepared) {
-          const visible = await readHtmlFile(visiblePath, "Version Working Copy", {
-            projectRootPath: loaded.paths.projectRootPath,
-          });
-          if (visible.sha256 !== transaction.workingCopySourceSha256) {
-            throw new ProjectFileRepositoryError(
-              "PROMOTION_PATH_REPLACED",
-              "The allocated Version Working Copy changed after publication.",
-              { sourceRelativePath: transaction.finalWorkingCopyRelativePath },
-            );
-          }
-          break;
-        }
-        if (visibleInformation) {
-          await this.#reallocatePreparedPromotion(loaded, transactionRoot, transaction);
-          continue;
-        }
-        // The publication syscall, rather than this observation, owns the
-        // no-replace guarantee.  Keeping this test hook between them proves
-        // that a concurrent user file cannot be overwritten after a clean
-        // lstat result.
-        await this.#hit("promotion-visible-publication-before-link", {
-          transactionRoot,
-          sourceRelativePath: transaction.finalWorkingCopyRelativePath,
-          visiblePath,
-        });
-        try {
-          await link(preparedPath, visiblePath);
-          await syncDirectory(loaded.paths.projectRootPath);
-        } catch (cause) {
-          if (cause?.code !== "EEXIST") throw cause;
-          await this.#reallocatePreparedPromotion(loaded, transactionRoot, transaction);
-          continue;
-        }
-        visibleInformation = await lstat(visiblePath).catch((cause) => {
-          if (cause?.code === "ENOENT") return null;
-          throw cause;
-        });
-        if (
-          !visibleInformation
-          || visibleInformation.isSymbolicLink()
-          || !visibleInformation.isFile()
-          || !sameFileIdentity(
-            copyFileIdentity(prepared.information),
-            copyFileIdentity(visibleInformation),
-          )
-        ) {
-          throw new ProjectFileRepositoryError(
-            "PROMOTION_PATH_REPLACED",
-            "The allocated Version Working Copy path is no longer owned by this Promotion.",
-            { sourceRelativePath: transaction.finalWorkingCopyRelativePath },
-          );
-        }
-        const visible = await readHtmlFile(visiblePath, "Version Working Copy", {
-          projectRootPath: loaded.paths.projectRootPath,
-        });
-        if (visible.sha256 !== transaction.workingCopySourceSha256) {
-          throw new ProjectFileRepositoryError(
-            "PROMOTION_PATH_REPLACED",
-            "The allocated Version Working Copy changed after publication.",
-            { sourceRelativePath: transaction.finalWorkingCopyRelativePath },
-          );
-        }
-        break;
-      }
-      const nextWorkingCopy = {
-        workingCopyId: workingCopyId(version.ordinal),
-        versionId: version.versionId,
-        basedOnVersionId: version.versionId,
-        sourceRelativePath: transaction.finalWorkingCopyRelativePath,
-        preferredFileStem: transaction.preferredFileStem,
-        preferredExtension: transaction.preferredExtension,
-        stateRelativePath: "working-copies/" + workingCopyId(version.ordinal) + ".json",
-        fileIdentity: copyFileIdentity(visibleInformation),
-      };
-      const retainedDraft = transaction.retainedComments?.length ? {
-        schemaVersion: PROJECT_FILE_SCHEMA_VERSION, projectId: loaded.project.projectId,
-        documentId: loaded.project.documentId, workingCopyId: nextWorkingCopy.workingCopyId,
-        basedOnVersionId: version.versionId, draftRevision: 1, comments: transaction.retainedComments,
-        changeEvents: [], deletedCommentIds: [], appliedOperationIds: [], updatedAt: transaction.createdAt,
-      } : null;
-      if (retainedDraft) await atomicWriteProjectJson(loaded.paths.projectRootPath,
-        projectControlPath(loaded.paths.projectRootPath, draftRelativePathFor(nextWorkingCopy)), retainedDraft, "retained Working Copy draft");
-      const statePath = workingCopyStatePath(loaded.paths, nextWorkingCopy);
-      await atomicWriteProjectJson(loaded.paths.projectRootPath, statePath, {
-        schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
-        projectId: loaded.project.projectId,
-        documentId: loaded.project.documentId,
-        workingCopyId: nextWorkingCopy.workingCopyId,
-        basedOnVersionId: version.versionId,
-        baseSha256: transaction.candidateOutputSha256,
-        currentSha256: transaction.workingCopySourceSha256,
-        differsFromBase:
-          transaction.workingCopySourceSha256 !== transaction.candidateOutputSha256,
-        draftId: "draft_" + nextWorkingCopy.workingCopyId,
-        draftRelativePath: draftRelativePathFor(nextWorkingCopy),
-        draftSha256: retainedDraft ? sha256(Buffer.from(jsonText(retainedDraft), "utf8")) : null,
-        draftRevision: retainedDraft ? 1 : 0,
-        saveState: "saved",
-        lastPersistedRevision: 0,
-        lastSavedAt: nowIso(this.#clock),
-        lastOpenedAt: nowIso(this.#clock),
-        ...(transaction[LEGACY_PROMOTION_WORKING_COPY_HASH]
-          ? {}
-          : {
-              sourceElementIdentitySchemaVersion:
-                STEMMIO_ELEMENT_ID_SCHEMA_VERSION,
-              sourceElementIdentityBindingSha256:
-                sourceElementIdentityBindingSha256(prepared.html),
-            }),
-      }, "Version Working Copy state");
-      transaction.state = "working-copy-created";
-      transaction.workingCopyCreatedAt = nowIso(this.#clock);
-      transaction.workingCopy = nextWorkingCopy;
-      await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-      await this.#hit("promotion-working-copy-created", { transactionRoot });
-    }
-    if (transaction.state === "working-copy-created") {
-      const committedWorkingCopy = transaction.workingCopy;
-      if (!committedWorkingCopy) {
-        throw new ProjectFileRepositoryError(
-          "PROMOTION_WORKING_COPY_MISSING",
-          "The Promotion did not record its Working Copy.",
-        );
-      }
-      const visiblePath = path.join(
-        loaded.paths.projectRootPath,
-        topLevelHtmlRelativePath(committedWorkingCopy.sourceRelativePath),
-      );
-      const information = await regularInformation(visiblePath, "Version Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (!information) {
-        throw new ProjectFileRepositoryError(
-          "PROMOTION_PATH_REPLACED",
-          "The allocated Version Working Copy was replaced before manifest publication.",
-        );
-      }
-      const visible = await readHtmlFile(visiblePath, "Version Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (visible.sha256 !== transaction.workingCopySourceSha256) {
-        throw new ProjectFileRepositoryError(
-          "PROMOTION_PATH_REPLACED",
-          "The allocated Version Working Copy bytes changed before manifest publication.",
-        );
-      }
-      // Recovery enters #continuePromotion directly, so this must be the
-      // shared commit boundary rather than a check only at adoption start.
-      await this.#assertCandidateSourceCurrent(loaded, candidateState.candidate);
-      loaded.manifest.versions.push(version);
-      const prepared = await readHtmlFile(preparedPath, "prepared Version Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (prepared.sha256 !== transaction.workingCopySourceSha256) {
-        throw new ProjectFileRepositoryError("PROMOTION_PREPARED_FILE_CHANGED", "Promotion preparation bytes changed.");
-      }
-      if (!sameFileIdentity(copyFileIdentity(prepared.information), copyFileIdentity(visible.information))) {
-        throw new ProjectFileRepositoryError("PROMOTION_PATH_REPLACED", "The published Working Copy no longer matches the prepared file.");
-      }
-      await refreshSourceBinding(loaded.paths.projectRootPath, committedWorkingCopy.workingCopyId,
-        visiblePath, transaction.workingCopySourceSha256, { expectedInformation: prepared.information });
-      committedWorkingCopy.fileIdentity = copyFileIdentity(visible.information);
-      loaded.manifest.workingCopies.push(committedWorkingCopy);
-      loaded.manifest.latestOfficialVersionId = version.versionId;
-      // Binding publication awaits filesystem work. Revalidate the published
-      // object at the manifest boundary, including when resuming a Promotion.
-      const commitInformation = await regularInformation(visiblePath, "Version Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (!commitInformation || !sameFileIdentity(
-        copyFileIdentity(prepared.information), copyFileIdentity(commitInformation),
-      )) {
-        throw new ProjectFileRepositoryError("PROMOTION_PATH_REPLACED", "The published Working Copy changed before manifest commit.");
-      }
-      await atomicWriteProjectJson(
-        loaded.paths.projectRootPath,
-        loaded.paths.manifestPath,
-        loaded.manifest,
-        "manifest.json",
-      );
-      transaction.state = "manifest-committed";
-      transaction.manifestCommittedAt = nowIso(this.#clock);
-      await this.#writePromotionTransaction(loaded, transactionRoot, transaction);
-      await this.#hit("promotion-manifest-committed", { transactionRoot });
-    }
-    return this.#finishPromotedCandidate(loaded, candidateState, transactionRoot, transaction);
-  }
-
-  async #finishPromotedCandidate(loaded, candidateState, transactionRoot, transaction) {
-    const { committedVersion, committedWorkingCopy } = await this.#readCommittedPromotion(
-      loaded,
-      transaction,
-    );
-    if (transaction.state !== "completed") {
-      candidateState.candidate.status = "promoted";
-      candidateState.candidate.promotedAt = nowIso(this.#clock);
-      candidateState.candidate.promotedVersionId = committedVersion.versionId;
-      await atomicWriteProjectJson(
-        loaded.paths.projectRootPath,
-        candidateState.candidatePath,
-        candidateState.candidate,
-        "candidate.json",
-      );
-      // Candidate and Request are separate durable facts. Preserve an
-      // explicit recovery boundary here: on restart, #recoverProject resumes
-      // the Promotion before it validates Request/runtime consistency.
-      await this.#hit("promotion-candidate-promoted", { transactionRoot });
-      const requestPath = path.join(
-        requestRootPath(loaded.paths, candidateState.candidate.requestId),
-        "request.json",
-      );
-      const request = await readJsonFile(requestPath, "request.json", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (request?.candidateId === candidateState.candidate.candidateId) {
-        request.status = "promoted";
-        request.promotedVersionId = committedVersion.versionId;
-        request.promotedAt = nowIso(this.#clock);
-        await this.#writeRequestWithHistory(loaded, requestPath, request);
-      }
-      loaded.runtime.activeWorkingCopyId = committedWorkingCopy.workingCopyId;
-      loaded.runtime.activeRequest = null;
-      loaded.runtime.activeCandidateId = null;
-      loaded.runtime.historyActivation = null;
-      await this.#writeRuntime(loaded);
-      transaction.state = "completed";
-      transaction.completedAt = nowIso(this.#clock);
-      await atomicWriteProjectJson(
-        loaded.paths.projectRootPath,
-        path.join(transactionRoot, "transaction.json"),
-        transaction,
-        "promotion transaction",
-      );
-      await this.#hit("promotion-completed", { transactionRoot });
-    }
-    if (transaction.state === "completed") {
-      const request = await readJsonFile(path.join(requestRootPath(loaded.paths, transaction.requestId), "request.json"), "request.json", { projectRootPath: loaded.paths.projectRootPath });
-      if (request?.request?.submissionOperationId) {
-        const sourceWorkingCopy = loaded.manifest.workingCopies.find((value) => value.workingCopyId === candidateState.candidate.sourceWorkingCopyId);
-        await appendSubmissionExecutionFact({ ...loaded, workingCopy: sourceWorkingCopy }, request.request.submissionOperationId, {
-          eventId: `event_${transaction.transactionId}_completed`, kind: "promoted",
-          timestamp: transaction.completedAt, candidateId: transaction.candidateId,
-        }).catch(() => {}); // Completed transaction remains the replay authority.
-      }
-    }
-    const sourcePath = workingCopySourcePath(loaded.paths, committedWorkingCopy);
-    const source = await readHtmlFile(sourcePath, "Version Working Copy", {
-      projectRootPath: loaded.paths.projectRootPath,
-    });
-    return {
-      promoted: true,
-      version: committedVersion,
-      target: publicOpenTarget({
-        project: loaded.project,
-        projectRootPath: loaded.paths.projectRootPath,
-        targetKind: "working-copy",
-        workingCopy: committedWorkingCopy,
-        version: committedVersion,
-        exactSourcePath: sourcePath,
-        sourceSha256: source.sha256,
-      }),
-    };
-  }
-
   async #recoverSaveTransaction(loaded, transactionPath, transaction) {
-    const usesRecoveryDirectory = isObject(transaction)
-      && Object.hasOwn(transaction, "recoveryId");
-    const allowedStates = usesRecoveryDirectory
-      ? new Set([
-        "prepared",
-        "committed",
-        // Legacy eight-state park journals remain readable so a crash in an
-        // older Stemmio can still recover complete old or complete new bytes.
-        "next-staged",
-        "parking",
-        "source-parked",
-        "source-publishing",
-        "source-published",
-        "conflict",
-      ])
-      : new Set(["prepared", "committed"]);
     if (
       !isObject(transaction)
       || transaction.schemaVersion !== PROJECT_FILE_SCHEMA_VERSION
       || transaction.kind !== "save"
-      || !allowedStates.has(transaction.state)
+      || !["prepared", "committed", "conflict"].includes(transaction.state)
+      || !transaction.recoveryId
       || transaction.projectId !== loaded.project.projectId
       || transaction.documentId !== loaded.project.documentId
     ) {
@@ -8308,29 +7224,6 @@ export class ProjectFileRepository {
         state: "rolled-back",
       };
     };
-
-    // Existing v4 save records did not have a private recovery directory.
-    // Retain their previous recovery behavior so a newer Stemmio can safely
-    // reopen a project that was saved by the earlier PR head.
-    if (!usesRecoveryDirectory) {
-      const source = await readHtmlFile(sourcePath, "Working Copy", {
-        projectRootPath: loaded.paths.projectRootPath,
-      });
-      if (source.sha256 === target) return commitSavedSource(source);
-      if (source.sha256 === expected && transaction.state === "prepared") {
-        return commitRolledBack("source-unchanged");
-      }
-      throw new ProjectFileRepositoryError(
-        "SAVE_RECOVERY_CONFLICT",
-        "The Working Copy changed during an interrupted save and was not overwritten.",
-        {
-          workingCopyId: workingCopy.workingCopyId,
-          expectedSourceSha256: expected,
-          targetSourceSha256: target,
-          actualSourceSha256: source.sha256,
-        },
-      );
-    }
 
     const recoveryPaths = saveRecoveryPaths(
       loaded.paths,
@@ -8465,11 +7358,7 @@ export class ProjectFileRepository {
     if (source?.sha256 === expected) {
       return commitRolledBack("source-unchanged");
     }
-    if (
-      source
-      && !previous
-      && ["prepared", "next-staged", "parking"].includes(transaction.state)
-    ) {
+    if (source && !previous && transaction.state === "prepared") {
       // Visible bytes are neither the expected old source nor the prepared
       // replacement. Stemmio never mixes those histories: keep both complete
       // sequences and fail closed.
@@ -8662,24 +7551,14 @@ export class ProjectFileRepository {
         }
         continue;
       }
-      if (!entry.isDirectory() || !entry.name.startsWith("promote_")) continue;
-      const transactionRoot = path.join(loaded.paths.transactionsRoot, entry.name);
-      const transaction = await readJsonFile(
-        path.join(transactionRoot, "transaction.json"),
-        "promotion transaction",
-        { projectRootPath: loaded.paths.projectRootPath },
-      );
-      if (!transaction || transaction.kind !== "promotion" || transaction.state === "completed") continue;
-      const candidateState = await this.#readCandidateForLoaded(
-        loaded,
-        transaction.candidateId,
-      );
-      recovered.push(await this.#continuePromotion(
-        loaded,
-        candidateState,
-        transactionRoot,
-        transaction,
-      ));
+      if (entry.isDirectory() && entry.name.startsWith("promote_")) {
+        // Candidate adoption uses the current-version transaction. A retired
+        // promotion journal is an unsupported format, never a recovery input.
+        throw new ProjectFileRepositoryError(
+          "UNSUPPORTED_TRANSACTION_FORMAT",
+          "Legacy promotion transactions are not supported.",
+        );
+      }
     }
     // Scan every cheap journal record so stale entries cannot permanently hide
     // a later eligible one, then cap the identity/Hash/durability work itself.
@@ -8687,8 +7566,8 @@ export class ProjectFileRepository {
     const requestFreezes = await this.#recoverRequestFreezes(loaded);
     recovered.push(...requestFreezes);
     // A crash after candidate.json becomes promoted but before request.json
-    // follows leaves an intentional intermediate state. Finish every pending
-    // Promotion first, then use Request facts to restore runtime state.
+    // follows leaves an intentional intermediate state. Restore Request facts
+    // only after current-version recovery has completed.
     const requestRuntime = await this.#recoverRequestRuntime(loaded);
     if (requestRuntime) recovered.push(requestRuntime);
     await this.#recoverSubmissionHistory(loaded);

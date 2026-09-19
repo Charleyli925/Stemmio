@@ -26,7 +26,6 @@ export function isManagedProjectStorageDirectory(
     || path.basename(storageDirectoryName) !== storageDirectoryName
     || !PROJECT_ID_PATTERN.test(projectId)
   ) return false;
-  if (storageDirectoryName === projectId) return true;
   const match = storageDirectoryName.match(READABLE_STORAGE_SUFFIX_PATTERN);
   return Boolean(
     match

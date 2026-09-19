@@ -224,8 +224,8 @@ The workflow:
   final DMG to Apple in that job, then verifies Team ID, tickets, Gatekeeper,
   DMG integrity, embedded provider configuration, updater metadata and read-only
   mounted/extracted contents;
-- creates checksums for every public payload and metadata file, retains the
-  legacy `update-manifest.json`, and copies `build-info.json`;
+- creates checksums for every public payload and metadata file, and copies
+  `build-info.json`;
 - freezes those files with `release-candidate.json` in an artifact named for the exact Tree Hash, version, architecture and workflow run attempt.
 - generates the separate live package delivery report for the exact DMG and
   appends its PR inventory to the workflow summary before handoff.
@@ -266,8 +266,7 @@ The workflow:
 6. checks that no published Release already exists;
 7. creates an annotated `v<version>` tag at that exact commit;
 8. publishes the candidate DMG, ZIP, ZIP blockmap, `latest-mac.yml`, checksum,
-   legacy update manifest, build provenance and candidate attestation without
-   rebuilding.
+   build provenance and candidate attestation without rebuilding.
 
 Release notes are the curated CHANGELOG section for that version, never an
 automatically generated commit or Pull Request list: the in-app “查看更新内容”
@@ -290,18 +289,10 @@ states without mutating the frozen candidate or its checksums.
 The public build is signed with a Developer ID Application certificate,
 notarized and stapled before it is frozen. If electron-builder lists the DMG in
 `latest-mac.yml`, its digest and size are refreshed after stapling so every
-listed artifact describes final bytes. The compatibility path continues to
-describe the signed ZIP and its blockmap; electron-updater validates the release
+listed artifact describes final bytes. electron-updater validates the release
 metadata and application signature, uses a cached prior ZIP for differential
-transfer when available, and falls back to a full ZIP on the first migration or
-if a differential request cannot be completed.
-
-The first signed release is a trust-boundary migration. Existing ad-hoc clients
-show the legacy manual update entry and require one manual DMG install. Formal
-0.9.8 also omitted its embedded provider configuration, so those installations
-require one manual patched-release install. Once a signed build carrying the
-validated `app-update.yml` is installed, later stable releases download
-automatically and prompt for an explicit safe restart.
+transfer when available, and falls back to a full ZIP when a differential
+request cannot be completed.
 
 ## Failures
 

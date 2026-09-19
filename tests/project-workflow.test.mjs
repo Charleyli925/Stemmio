@@ -57,6 +57,9 @@ function workspacePayload(sourcePath, html) {
     documentId: `document_${id}`,
     sourcePath,
     currentHtmlSha256: sha256(html),
+    sourceSha256: sha256(html),
+    content: html,
+    lastModifiedAt: "2026-08-11T00:00:00.000Z",
     project: { displayName: id },
     paths: { projectRecords: `/tmp/Stemmio/${id}` },
     versions: [{ id: `version_${id}` }],
@@ -217,6 +220,33 @@ function createHarness({
         : sourcePath === B_PATH ? B_HTML
           : OLD_HTML;
       return workspacePayload(sourcePath, html);
+    },
+    async workspaceEnvelope(sourcePath, options = {}) {
+      const state = await this.workspace(sourcePath, options);
+      const operationId = String(options.operationId || "");
+      const snapshotRevision = `${operationId}:${state.projectId}:${state.documentId}:${state.sourceSha256}`;
+      const {
+        paths = null,
+        project = null,
+        versions = [],
+        performanceTiming = null,
+        ...core
+      } = state;
+      return {
+        ok: true,
+        workspaceEnvelopeVersion: 1,
+        operationId,
+        snapshotRevision,
+        core,
+        supplemental: {
+          operationId,
+          snapshotRevision,
+          paths,
+          project,
+          versions,
+        },
+        performanceTiming,
+      };
     },
     async source(sourcePath) {
       calls.push(["source", sourcePath]);
@@ -969,6 +999,11 @@ test("a failed source write can close after recovery evidence without claiming s
       canProtectForDetach() { return true; },
       hasVerifiedProtectionEvidence({ revision } = {}) {
         return checkpointVerified && revision === 1;
+      },
+      verifiedProtectionEvidence({ revision } = {}) {
+        return checkpointVerified && revision === 1
+          ? { kind: "recoveryVerified", revision, htmlSha256: sha256(OLD_HTML) }
+          : null;
       },
       async protectForDetach() {
         checkpointVerified = true;

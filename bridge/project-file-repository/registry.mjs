@@ -578,22 +578,15 @@ export function assertManifest(manifest, project) {
     }
     historyOperations.add(version.sourceOperationId);
   }
-  if (manifest.currentDraftSchemaVersion !== undefined && (manifest.currentDraftSchemaVersion !== "1.0.0" || manifest.workingCopies.length !== 1)) {
+  if (manifest.currentDraftSchemaVersion !== "1.0.0" || manifest.workingCopies.length !== 1) {
     throw new ProjectFileRepositoryError("INVALID_MANIFEST", "A current-draft project has exactly one editable member.");
   }
-  const retiredWorkingCopies = manifest.retiredWorkingCopies === undefined ? [] : manifest.retiredWorkingCopies;
-  if (!Array.isArray(retiredWorkingCopies) || (manifest.retiredWorkingCopies !== undefined && manifest.currentDraftSchemaVersion !== "1.0.0")) {
-    throw new ProjectFileRepositoryError("INVALID_MANIFEST", "Retired Working Copies require the current-draft contract.");
+  if (Object.hasOwn(manifest, "retiredWorkingCopies")) {
+    throw new ProjectFileRepositoryError("INVALID_MANIFEST", "Retired Working Copies are not supported.");
   }
   const workingCopyIds = new Set();
-  const recoveryIds = new Set();
-  for (const { members, retired } of [
-    { members: manifest.workingCopies, retired: false },
-    { members: retiredWorkingCopies, retired: true },
-  ]) {
-    // Retired names are historical metadata; Finder may reuse one for current.
-    const workingCopyPaths = new Set();
-    for (const workingCopy of members) {
+  const workingCopyPaths = new Set();
+  for (const workingCopy of manifest.workingCopies) {
       if (!isObject(workingCopy)) {
         throw new ProjectFileRepositoryError("INVALID_MANIFEST", "A Working Copy entry is invalid.");
       }
@@ -625,68 +618,9 @@ export function assertManifest(manifest, project) {
       }
       ensureRelativePath(workingCopy.stateRelativePath, "stateRelativePath");
       assertFileIdentity(workingCopy.fileIdentity, "Working Copy fileIdentity");
-      if (retired) {
-        if (!SAFE_OPERATION_ID.test(String(workingCopy.recoveryId || "")) || recoveryIds.has(workingCopy.recoveryId)) {
-          throw new ProjectFileRepositoryError("INVALID_MANIFEST", "A retired Working Copy recovery identity is invalid.");
-        }
-        recoveryIds.add(workingCopy.recoveryId);
-      }
       workingCopyIds.add(workingCopy.workingCopyId);
-    }
   }
   return manifest;
-}
-
-export function assertHistoryActivation(runtime, project, manifest) {
-  const activation = runtime.historyActivation;
-  if (activation === undefined || activation === null) return null;
-  // Forward compatibility. The desktop confirmation mutates this receipt in
-  // place and writes it back, so it is a preserved sub-record. Every required
-  // member below is still validated, including its absence, while a member a
-  // newer Stemmio added is carried through untouched. Refusing the whole
-  // Runtime over one added member would lock the project out of an older build
-  // for a receipt that build can otherwise read in full.
-  if (
-    !isObject(activation)
-    || activation.projectId !== project.projectId
-    || activation.documentId !== project.documentId
-    || !SAFE_OPERATION_ID.test(String(activation.operationId || ""))
-    || !VERSION_ID.test(String(activation.versionId || ""))
-    || !WORKING_COPY_ID.test(String(activation.activatedWorkingCopyId || ""))
-    || (
-      activation.previousWorkingCopyId !== null
-      && !WORKING_COPY_ID.test(String(activation.previousWorkingCopyId || ""))
-    )
-    || !["desktop-pending", "desktop-confirmed"].includes(activation.state)
-    || !activation.createdAt
-    || Number.isNaN(Date.parse(activation.createdAt))
-  ) {
-    throw new ProjectFileRepositoryError(
-      "INVALID_RUNTIME",
-      "historyActivation is inconsistent.",
-    );
-  }
-  const activated = manifest.workingCopies.find(
-    (workingCopy) => workingCopy.workingCopyId === activation.activatedWorkingCopyId,
-  );
-  if (
-    !activated
-    || activated.versionId !== activation.versionId
-    || activated.basedOnVersionId !== activation.versionId
-    || runtime.activeWorkingCopyId !== activation.activatedWorkingCopyId
-    || (
-      activation.previousWorkingCopyId !== null
-      && !manifest.workingCopies.some(
-        (workingCopy) => workingCopy.workingCopyId === activation.previousWorkingCopyId,
-      )
-    )
-  ) {
-    throw new ProjectFileRepositoryError(
-      "INVALID_RUNTIME",
-      "historyActivation no longer matches the active Working Copy.",
-    );
-  }
-  return activation;
 }
 
 export function assertLastAiTask(runtime, project, manifest) {
@@ -742,37 +676,14 @@ export function lastAiTaskAnchorFor(record) {
   };
 }
 
-// historyActivation and lastAiTask were added after the first published v4
-// Runtime files. Treat either absence as its explicit null state while
-// preserving every other Runtime validation. Writes converge old valid files
-// without a schema-version bump or a standalone migration pass.
-
-// historyActivation and lastAiTask were added after the first published v4
-// Runtime files. Treat either absence as its explicit null state while
-// preserving every other Runtime validation. Writes converge old valid files
-// without a schema-version bump or a standalone migration pass.
-export function normalizeRuntimeDisplayAnchors(runtime) {
-  if (!isObject(runtime)) return runtime;
-  if (
-    Object.hasOwn(runtime, "historyActivation")
-    && Object.hasOwn(runtime, "lastAiTask")
-  ) return runtime;
-  return {
-    ...runtime,
-    ...(!Object.hasOwn(runtime, "historyActivation") ? { historyActivation: null } : {}),
-    ...(!Object.hasOwn(runtime, "lastAiTask") ? { lastAiTask: null } : {}),
-  };
-}
-
 export async function writeRuntimeState(projectRootPath, runtimePath, runtime) {
-  const normalized = normalizeRuntimeDisplayAnchors(runtime);
   await atomicWriteProjectJson(
     projectRootPath,
     runtimePath,
-    normalized,
+    runtime,
     "runtime-state.json",
   );
-  return normalized;
+  return runtime;
 }
 
 export function assertRuntime(runtime, project, manifest) {
@@ -780,6 +691,12 @@ export function assertRuntime(runtime, project, manifest) {
     throw new ProjectFileRepositoryError(
       "UNSUPPORTED_RUNTIME_SCHEMA",
       "runtime-state.json is not a supported Stemmio runtime state.",
+    );
+  }
+  if (Object.hasOwn(runtime, "historyActivation")) {
+    throw new ProjectFileRepositoryError(
+      "UNSUPPORTED_RUNTIME_FORMAT",
+      "runtime-state.json contains an unsupported history activation receipt.",
     );
   }
   if (runtime.projectId !== project.projectId || runtime.documentId !== project.documentId) {
@@ -861,6 +778,5 @@ export function assertRuntime(runtime, project, manifest) {
       "An active Request cannot retain a terminal AI task anchor.",
     );
   }
-  assertHistoryActivation(runtime, project, manifest);
   return runtime;
 }

@@ -42,6 +42,9 @@ const DOCUMENT_ID_PATTERN = /^doc_[a-f0-9]{16,64}$/;
 const REQUEST_ID_PATTERN = /^req_\d{4,}$/;
 const ATTEMPT_ID_PATTERN = /^attempt_\d{3}$/;
 const VERSION_ID_PATTERN = /^ver_\d{4,}$/;
+// Current projects use a readable user-name-plus-version filename with a
+// timestamped project identity suffix; no legacy projectId-only directory is
+// accepted.
 const PROJECT_STORAGE_DIRECTORY_PATTERN =
   /__(\d{8}-\d{6})__([a-f0-9]{8,32})$/;
 const PROJECT_STORAGE_DIRECTORY_MAX_BYTES = 240;
@@ -459,10 +462,6 @@ export function assertProjectStorageDirectoryName(value, projectId) {
       409,
     );
   }
-  // Projects created before readable storage names were introduced used the
-  // exact projectId as their directory. Keep that one legacy shape valid so
-  // existing immutable Request, Attempt and Version paths never have to move.
-  if (value === projectId) return value;
   const match = value.match(PROJECT_STORAGE_DIRECTORY_PATTERN);
   if (
     !match
@@ -1453,10 +1452,6 @@ function outputRelativePathForAttempt(project, activeRun, changeRequest) {
       },
     );
   }
-  // Older frozen Attempts keep their fixed staging name so a newly installed
-  // Stemmio never strands an in-flight task. New Requests must use the exact
-  // user-name-plus-version filename computed by Stemmio itself.
-  if (outputRelativePath === "output/index.html") return outputRelativePath;
   const expectedOutputRelativePath = `output/${workingCopyFileName(
     project.displayName,
     semanticVersionLabel(activeRun.candidateVersionOrdinal),

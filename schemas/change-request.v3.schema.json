@@ -162,16 +162,30 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "summary",
+        "taskSchemaVersion",
+        "objective",
+        "scopePolicy",
         "instructions",
+        "globalAcceptanceCriteria",
+        "nonGoals",
         "targets",
-        "preserveOutsideTargets"
+        "attachments"
       ],
       "properties": {
-        "summary": {
+        "taskSchemaVersion": {
+          "const": "1.0.0"
+        },
+        "objective": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 5000
+        },
+        "scopePolicy": {
+          "enum": [
+            "targets-only",
+            "targets-plus-required-dependencies",
+            "whole-page"
+          ]
         },
         "instructions": {
           "type": "array",
@@ -181,13 +195,18 @@
             "additionalProperties": false,
             "required": [
               "instructionId",
+              "priority",
               "text",
-              "targetRefs"
+              "targetRefs",
+              "acceptanceCriteria"
             ],
             "properties": {
               "instructionId": {
                 "type": "string",
                 "pattern": "^instruction_[A-Za-z0-9_-]+$"
+              },
+              "priority": {
+                "const": "required"
               },
               "text": {
                 "type": "string",
@@ -203,6 +222,16 @@
                   "pattern": "^target_[A-Za-z0-9_-]+$"
                 }
               },
+              "acceptanceCriteria": {
+                "type": "array",
+                "maxItems": 50,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                }
+              },
               "attachmentRefs": {
                 "type": "array",
                 "uniqueItems": true,
@@ -212,6 +241,26 @@
                 }
               }
             }
+          }
+        },
+        "globalAcceptanceCriteria": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          }
+        },
+        "nonGoals": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
           }
         },
         "attachments": {
@@ -226,9 +275,6 @@
           "items": {
             "$ref": "#/$defs/target"
           }
-        },
-        "preserveOutsideTargets": {
-          "const": true
         }
       }
     },
@@ -537,17 +583,9 @@
       ],
       "properties": {
         "outputRelativePath": {
-          "oneOf": [
-            {
-              "const": "output/index.html",
-              "description": "Legacy frozen Attempt output path."
-            },
-            {
-              "type": "string",
-              "pattern": "^output/(?:V1\\.[0-9]+|[^/\\\\]+-V1\\.[0-9]+)\\.html$",
-              "description": "Stemmio-generated original-name plus semantic Version output path."
-            }
-          ]
+          "type": "string",
+          "pattern": "^output/(?:V1\\.[0-9]+|[^/\\\\]+-V1\\.[0-9]+)\\.html$",
+          "description": "Stemmio-generated original-name plus semantic Version output path."
         },
         "completionRelativePath": {
           "const": "completion.json"

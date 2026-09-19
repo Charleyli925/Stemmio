@@ -29,16 +29,22 @@
     "inputManifestRelativePath": "requests/req_metrics_cards/input-manifest.json"
   },
   "requirements": {
-    "summary": "优化指标卡片层级与标题间距",
+    "taskSchemaVersion": "1.0.0",
+    "objective": "优化指标卡片层级与标题间距",
+    "scopePolicy": "targets-plus-required-dependencies",
     "instructions": [
       {
         "instructionId": "instruction_card_hierarchy",
+        "priority": "required",
         "text": "突出核心指标，并将标题与数值间距收紧。",
         "targetRefs": [
           "target_metrics_grid"
-        ]
+        ],
+        "acceptanceCriteria": []
       }
     ],
+    "globalAcceptanceCriteria": [],
+    "nonGoals": [],
     "targets": [
       {
         "targetId": "target_metrics_grid",
@@ -67,7 +73,7 @@
         "resolution": "exact"
       }
     ],
-    "preserveOutsideTargets": true
+    "attachments": []
   },
   "annotations": {
     "relativePath": "input/annotations/records.json",

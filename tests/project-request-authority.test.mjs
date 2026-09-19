@@ -928,7 +928,7 @@ test("injected provider authority can normalize a new selection without a legacy
   const repository = new ProjectFileRepository({
     projectsRoot: value.projects,
     agentDeliveryNormalizer: (input) => {
-      const delivery = normalizeAgentDelivery(input, { allowLegacy: false });
+      const delivery = normalizeAgentDelivery(input);
       if (delivery.mode === "managed-agent"
         && (delivery.selection.providerId !== "synthetic-provider"
           || delivery.selection.runtimeId !== "synthetic-runtime")) {

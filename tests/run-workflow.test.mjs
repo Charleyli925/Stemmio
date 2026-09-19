@@ -26,6 +26,20 @@ const ACTIVATED_SOURCE = "/tmp/run-workflow-a-activated.html";
 const HTML_A = "<main>source A</main>";
 const HTML_B = "<main>source B</main>";
 
+function qoderDelivery() {
+  return {
+    mode: "managed-agent",
+    selection: {
+      providerId: "qoder",
+      runtimeId: "acp",
+      requestedModelId: null,
+      resolvedModelId: null,
+      reasoning: { requested: null, applied: null, resolution: "provider-default" },
+    },
+    trustPolicyVersion: "trusted-local-agent-v1",
+  };
+}
+
 function sha256(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -966,7 +980,7 @@ test("a reconciled Qoder Request reserves Agent start before polling becomes vis
     },
   });
 
-  const submitted = harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  const submitted = harness.workflow.submit({ deliveryMode: "managed-agent" });
   for (let index = 0; index < 10 && harness.calls.startAgent.length === 0; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
@@ -1188,7 +1202,7 @@ test("clipboard failure retains the durable Request and a retry copies without a
 
 test("Qoder ACP preflights before one durable Request and never touches the clipboard", async () => {
   const harness = createHarness();
-  const outcome = await harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  const outcome = await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
   assert.equal(outcome.status, "succeeded");
   assert.equal(harness.calls.preflight.length, 1);
@@ -1346,7 +1360,7 @@ test("a Settings usability check does not authorize a later Qoder submission", a
   assert.equal(harness.calls.freeze, 0);
   assert.equal(harness.calls.unlock, 0);
 
-  const submitted = await harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  const submitted = await harness.workflow.submit({ deliveryMode: "managed-agent" });
   assert.equal(submitted.status, "succeeded");
   assert.equal(harness.calls.preflight.length, 1);
   assert.equal(harness.calls.startAgent[0].preflightId, "preflight_test");
@@ -1562,7 +1576,7 @@ test("Qoder polling waits until the managed Agent start is registered", async ()
     },
   });
 
-  const submitted = harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  const submitted = harness.workflow.submit({ deliveryMode: "managed-agent" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(harness.calls.createRequest.length, 1);
   assert.equal(harness.calls.startAgent.length, 1);
@@ -1593,7 +1607,7 @@ test("a failed Qoder preflight creates no Request and leaves editing recoverable
       },
     },
   });
-  const outcome = await harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  const outcome = await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
   assert.equal(outcome.status, "rejected");
   assert.equal(outcome.code, "QODER_CAPACITY_UNAVAILABLE");
@@ -1685,11 +1699,11 @@ test("concurrent automatic Qoder checks share one diagnosis promise", async () =
 
 test("a recovery-required Qoder Request cannot restart or fall back to clipboard", async () => {
   const harness = createHarness();
-  const run = runRecord({ agentDelivery: { mode: "qoder-acp" } });
+  const run = runRecord({ agentDelivery: qoderDelivery() });
   harness.runSession.trackRun(run, { activate: "always", recovered: true });
   harness.runSession.publishHandoff({
     ...run,
-    mode: "qoder-acp",
+    mode: "managed-agent",
     status: "interrupted",
     retryable: false,
     errorCode: "AGENT_RESTART_RECOVERY_REQUIRED",
@@ -1752,7 +1766,7 @@ test("Qoder output residue is projected as non-retryable", async () => {
     },
   });
 
-  await harness.workflow.submit({ deliveryMode: "qoder-acp" });
+  await harness.workflow.submit({ deliveryMode: "managed-agent" });
 
   assert.equal(harness.runSession.activeHandoff?.status, "failed");
   assert.equal(harness.runSession.activeHandoff?.retryable, false);

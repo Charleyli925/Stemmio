@@ -10,9 +10,6 @@ rewritten in place, or used as a new producer format.
   readable.
 - `version-edit-event.legacy-aliases.json` proves that `baseVersionId` /
   `capturedRevision` fail closed.
-- `legacy-update-manifest.json` is a release artifact for already shipped
-  manual-update clients. It is not read by the current signed updater.
-
 Candidate assessment fixtures stay beside their sealed HTML evidence in
 `../candidate-assessment-compat/`. Current assessments remain readable;
 retired executable-surface shapes fail closed.

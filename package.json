@@ -769,7 +769,6 @@
           "project-registry.v4.schema.json",
           "project-manifest.v4.schema.json",
           "project-runtime-state.v4.schema.json",
-          "promotion-transaction.v4.schema.json",
           "runtime-state.v3.schema.json",
           "scope-report.v1.schema.json",
           "submission-receipt.v1.schema.json",
@@ -777,7 +776,6 @@
           "task-spec.v1.schema.json",
           "user-supplement.v1.schema.json",
           "version-manifest.v3.schema.json",
-          "version-transaction.v1.schema.json",
           "working-copy-state.v4.schema.json"
         ]
       },

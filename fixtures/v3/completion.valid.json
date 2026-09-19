@@ -13,7 +13,7 @@
   "candidateVersionLabel": "V9",
   "baseSnapshotSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "inputManifestSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-  "outputRelativePath": "output/index.html",
+  "outputRelativePath": "output/仪表盘-V1.8.html",
   "outputSha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "baseComparisonSha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "outputComparisonSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",

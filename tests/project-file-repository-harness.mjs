@@ -55,16 +55,6 @@ export async function importSource(fixtureValue, name = "原文件.html", conten
   };
 }
 
-// Used only to model projects written by a pre-current-draft build.
-export async function importLegacySource(value, name, content) {
-  const imported = await importSource(value, name, content);
-  const file = path.join(imported.target.projectRootPath, ".stemmio/manifest.json");
-  const manifest = await json(file);
-  delete manifest.currentDraftSchemaVersion;
-  await writeFile(file, JSON.stringify(manifest));
-  return imported;
-}
-
 export async function promoteNextVersion(repository, target, label) {
   const candidate = await repository.createCandidate({
     target,

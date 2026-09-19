@@ -47,7 +47,7 @@ export async function saveSubmissionReceipt(loaded, { operationId, input, projec
     comments,
     changeEvents: Array.isArray(input.changeEvents) ? input.changeEvents : [],
     taskSpec,
-    agentDelivery: normalizeAgentDelivery(input.agentDelivery, { allowLegacy: false }),
+    agentDelivery: normalizeAgentDelivery(input.agentDelivery),
     projectRulesSha256: sha256(await readFile(projectRulesPath)),
   };
   if (snapshot.sourceSha256 !== loaded.source.sha256) {

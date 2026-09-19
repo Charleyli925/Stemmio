@@ -73,17 +73,9 @@
       "$ref": "#/$defs/sha256"
     },
     "outputRelativePath": {
-      "oneOf": [
-        {
-          "const": "output/index.html",
-          "description": "Legacy frozen Attempt output path."
-        },
-        {
-          "type": "string",
-          "pattern": "^output/(?:V1\\.[0-9]+|[^/\\\\]+-V1\\.[0-9]+)\\.html$",
-          "description": "Stemmio-generated original-name plus semantic Version output path."
-        }
-      ]
+      "type": "string",
+      "pattern": "^output/(?:V1\\.[0-9]+|[^/\\\\]+-V1\\.[0-9]+)\\.html$",
+      "description": "Stemmio-generated original-name plus semantic Version output path."
     },
     "outputSha256": {
       "$ref": "#/$defs/sha256"

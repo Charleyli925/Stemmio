@@ -1446,13 +1446,20 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
         // that protection and the unopened history receipt intact.
         await stopStemmio(app.electronApp, userData, { cleanup: false });
       } else {
+        // The first renderer intentionally loses the opened acknowledgement;
+        // the restarted renderer is a fresh client and must be allowed to
+        // retry the current endpoint.
+        await app.page.unroute("**/history-version/opened");
         await closeStemmioGracefully(app.electronApp, app.page);
       }
       app = null;
       if (recoveryCase === "rename") {
         const renamed = path.join(target.projectRootPath, "renamed-history.html");
         renameSync(expectedPath, renamed);
-        await repository.workspace({ sourcePath: renamed });
+        // Renaming the managed source changes the current project identity
+        // boundary.  Re-resolve the target instead of querying with the
+        // pre-rename path and relying on the retired legacy rebinding path.
+        target = (await repository.workspace({ sourcePath: renamed })).target;
         expectedPath = renamed;
       }
       // The pending case intentionally uses the existing persisted tab. For
@@ -1481,6 +1488,9 @@ for (const recoveryCase of ["pending", "rename", "superseded"]) {
         expect(restored.recoveryState).toBe("superseded");
         await expect(app.page.getByRole("button", { name: "打开已创建版本", exact: true })).toHaveCount(0);
       } else {
+        // Restart recovery verifies and acknowledges the current Canvas after
+        // the new Electron process is ready; allow that durable acknowledgement
+        // the same eventual boundary used by the visible current-mode checks.
         await expect.poll(
           async () => (await repository.queryHistoryCreation({ target, operationId })).openedAt,
           { timeout: 60_000 },

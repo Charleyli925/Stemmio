@@ -176,9 +176,6 @@ export function publicExecutionSession(entry) {
   return Object.freeze({
     providerId: entry.providerId || null,
     runtimeId: entry.runtimeId || null,
-    // Retain this only for legacy in-memory sessions. Renderer identity is
-    // provider/runtime based and must not infer a provider from a transport alias.
-    ...(entry.driver ? { driver: entry.driver } : {}),
     state: entry.state,
     phase: entry.phase,
     startedAt: entry.startedAt,

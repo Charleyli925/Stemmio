@@ -1245,17 +1245,51 @@ export class VersionWorkflow {
       if (phase === "created" && context.workingCopyId === result.workingCopyId
         && this.#versionSession.snapshot.currentBasedOnVersionId === result.versionId
         && this.#versionSession.snapshot.viewMode === "current") {
+        const canvasAuthority = this.#documentSession.canvasAuthority;
+        const canvasAlreadyVerified = canvasAuthority?.status === "verified"
+          && canvasAuthority.renderedSha256 === result.contentSha256
+          && this.#documentSession.persistedSourceSha256 === result.contentSha256;
+        // Exact opening authority already loaded this Working Copy, but its
+        // Canvas may still be pending its first ACK. Leave the receipt
+        // queryable and let the controller retry once that ACK is published;
+        // do not start a second physical reload from this recovery path.
+        if (canvasAuthority?.status === "pending" && !canvasAlreadyVerified) {
+          if (!this.#projectSession.matches(context)) return;
+          this.#setHistoryCreation({ phase, operationId, context, result }, generation);
+          return;
+        }
         try {
-          await new Promise((resolve) => {
-            if (typeof this.#canvasPort.requestFrame !== "function") {
-              resolve();
-              return;
+          const verifyCurrentCanvas = async () => {
+            if (canvasAlreadyVerified) return;
+            if (typeof this.#canvasPort.requestFrame === "function") {
+              await new Promise((resolve) => {
+                this.#canvasPort.requestFrame(() => this.#canvasPort.requestFrame(resolve));
+              });
             }
-            this.#canvasPort.requestFrame(() => this.#canvasPort.requestFrame(resolve));
-          });
-          if (!this.#projectSession.matches(context) || generation !== this.#creationGeneration
-            || this.#snapshot.navigation.phase !== "idle") return;
-          await this.#canvasPort.verifyRendered(this.#documentSession.html, this.#documentSession.persistedSourceSha256, context);
+            try {
+              await this.#canvasPort.verifyRendered(
+                this.#documentSession.html,
+                this.#documentSession.persistedSourceSha256,
+                context,
+              );
+            } catch (firstCause) {
+              // Startup hydration can publish the current identity one frame
+              // before the disposable Canvas has settled. Re-check once at
+              // the next frame instead of leaving a creation receipt pending
+              // because of that presentation race.
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              try {
+                await this.#canvasPort.verifyRendered(
+                  this.#documentSession.html,
+                  this.#documentSession.persistedSourceSha256,
+                  context,
+                );
+              } catch {
+                throw firstCause;
+              }
+            }
+          };
+          await verifyCurrentCanvas();
           if (!this.#projectSession.matches(context) || generation !== this.#creationGeneration
             || this.#snapshot.navigation.phase !== "idle") return;
           phase = "opened";

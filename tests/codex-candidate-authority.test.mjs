@@ -79,7 +79,7 @@ for (const nativeMode of [null, "complete", "missing-finalizer"]) test(`Codex ${
   const repository = new ProjectFileRepository({
     projectsRoot: path.join(root, "projects"),
     agentDeliveryNormalizer(value) {
-      return normalizeAgentDelivery(value, { allowLegacy: false });
+      return normalizeAgentDelivery(value);
     },
   });
   const imported = await repository.importExternal({
