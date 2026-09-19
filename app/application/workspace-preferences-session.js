@@ -1,4 +1,9 @@
-import { normalizeAgentConfigurations, validAgentConfigurations, normalizeDocumentAgentSelections, validDocumentAgentSelections } from "../../shared/agent-configuration-preferences.mjs";
+import {
+  WORKSPACE_PREFERENCE_DEFAULTS as DEFAULT_WORKSPACE_PREFERENCES,
+  normalizeWorkspacePatch,
+  normalizeWorkspacePreferences,
+} from "../../shared/workspace-preferences.mjs";
+import { validAgentConfigurations } from "../../shared/agent-configuration-preferences.mjs";
 
 /** @typedef {import("./workspace-preferences-session.d.ts").WorkspacePreferenceAgentId} WorkspacePreferenceAgentId */
 /** @typedef {import("./workspace-preferences-session.d.ts").WorkspacePreferenceMutationResult} WorkspacePreferenceMutationResult */
@@ -11,169 +16,13 @@ import { normalizeAgentConfigurations, validAgentConfigurations, normalizeDocume
 /** @typedef {Readonly<Record<string, number>>} WorkspacePreferenceGenerations */
 /** @typedef {{ attempted: Set<number>; confirmed: Set<number> }} WorkspacePreferenceOperationEvidence */
 /** @typedef {Readonly<{ completion: Promise<boolean>; generations: WorkspacePreferenceGenerations }>} QueuedWorkspacePatch */
-
-export const DEFAULT_WORKSPACE_PREFERENCES = Object.freeze({
-  rememberPanelWidths: true,
-  sidebarWidth: 264,
-  inspectorWidth: 376,
-  motion: "system",
-  restoreTabsOnLaunch: true,
-  reviewChangeContextVisibility: 25,
-  reviewCommentContextVisibility: 15,
-  defaultAgentProviderId: "qoder",
-  agentConfigurations: Object.freeze({}),
-  documentAgentSelections: Object.freeze({}),
-  disabledAgentProviderIds: Object.freeze([]),
-});
-
-export const WORKSPACE_PREFERENCE_LIMITS = Object.freeze({
-  sidebarWidth: Object.freeze({ min: 200, max: 420 }),
-  inspectorWidth: Object.freeze({ min: 280, max: 520 }),
-  reviewChangeContextVisibility: Object.freeze({ min: 0, max: 100 }),
-  reviewCommentContextVisibility: Object.freeze({ min: 0, max: 100 }),
-});
-
 const WORKSPACE_KEYS = new Set(Object.keys(DEFAULT_WORKSPACE_PREFERENCES));
-const AGENT_PROVIDER_IDS = new Set(["stemmio", "qoder", "codex"]);
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-/** @param {unknown} value @returns {readonly WorkspacePreferenceAgentId[]} */
-function normalizedDisabledAgentProviderIds(value) {
-  if (!Array.isArray(value)) return Object.freeze([]);
-  /** @type {WorkspacePreferenceAgentId[]} */
-  const ids = [];
-  /** @type {Set<unknown>} */
-  const seen = new Set();
-  for (const item of value) {
-    if (!AGENT_PROVIDER_IDS.has(item) || seen.has(item)) continue;
-    seen.add(item);
-    ids.push(/** @type {WorkspacePreferenceAgentId} */ (item));
-  }
-  return Object.freeze(ids);
-}
-
-/**
- * @param {unknown} value
- * @param {number} fallback
- * @param {Readonly<{ min: number; max: number }>} limits
- */
-function normalizedWidth(value, fallback, { min, max }) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.round(Math.min(max, Math.max(min, value)) * 10) / 10;
-}
-
-/** @param {unknown} value @returns {WorkspacePreferences} */
-export function normalizeWorkspacePreferences(value) {
-  const source = isRecord(value) ? value : {};
-  return Object.freeze({
-    rememberPanelWidths: typeof source.rememberPanelWidths === "boolean"
-      ? source.rememberPanelWidths
-      : DEFAULT_WORKSPACE_PREFERENCES.rememberPanelWidths,
-    sidebarWidth: normalizedWidth(
-      source.sidebarWidth,
-      DEFAULT_WORKSPACE_PREFERENCES.sidebarWidth,
-      WORKSPACE_PREFERENCE_LIMITS.sidebarWidth,
-    ),
-    inspectorWidth: normalizedWidth(
-      source.inspectorWidth,
-      DEFAULT_WORKSPACE_PREFERENCES.inspectorWidth,
-      WORKSPACE_PREFERENCE_LIMITS.inspectorWidth,
-    ),
-    motion: source.motion === "reduced" ? "reduced" : "system",
-    restoreTabsOnLaunch: typeof source.restoreTabsOnLaunch === "boolean"
-      ? source.restoreTabsOnLaunch
-      : DEFAULT_WORKSPACE_PREFERENCES.restoreTabsOnLaunch,
-    reviewChangeContextVisibility: normalizedWidth(
-      source.reviewChangeContextVisibility,
-      DEFAULT_WORKSPACE_PREFERENCES.reviewChangeContextVisibility,
-      WORKSPACE_PREFERENCE_LIMITS.reviewChangeContextVisibility,
-    ),
-    reviewCommentContextVisibility: normalizedWidth(
-      source.reviewCommentContextVisibility,
-      DEFAULT_WORKSPACE_PREFERENCES.reviewCommentContextVisibility,
-      WORKSPACE_PREFERENCE_LIMITS.reviewCommentContextVisibility,
-    ),
-    defaultAgentProviderId: typeof source.defaultAgentProviderId === "string"
-      && AGENT_PROVIDER_IDS.has(source.defaultAgentProviderId)
-      ? /** @type {WorkspacePreferenceAgentId} */ (source.defaultAgentProviderId)
-      : DEFAULT_WORKSPACE_PREFERENCES.defaultAgentProviderId,
-    disabledAgentProviderIds: normalizedDisabledAgentProviderIds(source.disabledAgentProviderIds),
-    agentConfigurations: normalizeAgentConfigurations(source.agentConfigurations),
-    documentAgentSelections: normalizeDocumentAgentSelections(source.documentAgentSelections),
-  });
-}
-
-/** @param {unknown} value @returns {WorkspacePreferencesPatch} */
-export function normalizeWorkspacePatch(value) {
-  if (!isRecord(value) || !Object.keys(value).length) {
-    throw new TypeError("工作台偏好不能为空。");
-  }
-  const keys = Object.keys(value);
-  if (keys.some((key) => !WORKSPACE_KEYS.has(key))) {
-    throw new TypeError("工作台偏好包含未知字段。");
-  }
-  /** @type {Record<string, unknown>} */
-  const normalized = {};
-  for (const key of keys) {
-    const next = value[key];
-    if (key === "documentAgentSelections") {
-      if (!validDocumentAgentSelections(next)) throw new TypeError("文档服务选择无效或已达到数量上限。");
-      normalized[key] = normalizeDocumentAgentSelections(next);
-      continue;
-    }
-    if (key === "agentConfigurations") {
-      if (!validAgentConfigurations(next)) throw new TypeError("服务配置无效。");
-      normalized[key] = normalizeAgentConfigurations(next);
-      continue;
-    }
-    if (key === "rememberPanelWidths" || key === "restoreTabsOnLaunch") {
-      if (typeof next !== "boolean") throw new TypeError(`${key} 必须是布尔值。`);
-      normalized[key] = next;
-      continue;
-    }
-    if (key === "motion") {
-      if (next !== "system" && next !== "reduced") {
-        throw new TypeError("动态效果选项无效。");
-      }
-      normalized[key] = next;
-      continue;
-    }
-    if (key === "defaultAgentProviderId") {
-      if (typeof next !== "string" || !AGENT_PROVIDER_IDS.has(next)) {
-        throw new TypeError("默认 Agent 无效。");
-      }
-      normalized[key] = next;
-      continue;
-    }
-    if (key === "disabledAgentProviderIds") {
-      if (!Array.isArray(next) || next.some((id) => !AGENT_PROVIDER_IDS.has(id))) {
-        throw new TypeError("停用的 AI 服务无效。");
-      }
-      normalized[key] = normalizedDisabledAgentProviderIds(next);
-      continue;
-    }
-    const limits = WORKSPACE_PREFERENCE_LIMITS[
-      /** @type {"sidebarWidth" | "inspectorWidth" | "reviewChangeContextVisibility" | "reviewCommentContextVisibility"} */ (key)
-    ];
-    if (
-      typeof next !== "number"
-      || !Number.isFinite(next)
-      || next < limits.min
-      || next > limits.max
-    ) throw new TypeError(`${key} 超出允许范围。`);
-    normalized[key] = Math.round(next * 10) / 10;
-  }
-  return /** @type {WorkspacePreferencesPatch} */ (Object.freeze(normalized));
-}
-
-/**
- * @param {Partial<WorkspacePreferencesSnapshot>} [input]
- * @returns {WorkspacePreferencesSnapshot}
- */
 function freezeSnapshot({
   loaded = false,
   saving = false,

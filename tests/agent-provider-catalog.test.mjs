@@ -514,7 +514,7 @@ test("late availability and mismatched preflight results cannot replace newer au
         selection: selection("first", { modelId: "wrong" }),
         expiresAt: new Date(20_000).toISOString(),
       }),
-      qoderAvailability() {
+      agentAvailability() {
         return availabilityCalls.shift().promise;
       },
     },
@@ -667,6 +667,9 @@ test("one-click install is gated to installable providers and then refreshes ava
       async agentAvailability() {
         return { status: "ready" };
       },
+      async agentDiagnose() {
+        return { status: "ready", diagnostic: { readiness: "ready", cause: null } };
+      },
       async agentProviders() {
         return {
           providers: [{
@@ -720,6 +723,10 @@ test("post-install availability rechecks the provider's resolved selected author
       async agentAvailability({ selection: current }) {
         availabilitySelections.push(current);
         return { status: "ready" };
+      },
+      async agentDiagnose({ selection: current }) {
+        availabilitySelections.push(current);
+        return { status: "ready", diagnostic: { readiness: "ready", cause: null } };
       },
     },
     providers: [QODER_AGENT_PROVIDER],

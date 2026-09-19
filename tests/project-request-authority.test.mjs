@@ -12,6 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { normalizeAgentDelivery } from "../shared/agent-delivery.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import {
   ProjectFileRepository,
   ProjectFileRepositoryError,
@@ -32,17 +33,20 @@ import {
 
 function requestFor(summary, overrides = {}) {
   const target = { targetId: "target_test" };
+  const comments = [{
+    commentId: "comment_test",
+    text: summary,
+    target,
+    attachments: [],
+  }];
+  const targets = [target];
   return {
     freezeCutoffRevision: 0,
     summary,
-    comments: [{
-      commentId: "comment_test",
-      text: summary,
-      target,
-      attachments: [],
-    }],
+    comments,
     changeEvents: [],
-    targets: [target],
+    targets,
+    taskSpec: compileTaskSpec({ comments, targets }),
     ...overrides,
   };
 }
@@ -154,13 +158,12 @@ test("request preparation fault injection restores one immutable active Request"
         }],
       }],
       targets: [{ targetId: "target_fault" }],
-      instructions: [{
-        instructionId: "instruction_fault",
-        text: "读取附件",
-        targetRefs: ["target_fault"],
-        attachmentRefs: ["attachment_fault"],
-      }],
     };
+    request.taskSpec = compileTaskSpec({
+      comments: request.comments,
+      targets: request.targets,
+      attachments: request.comments.flatMap((comment) => comment.attachments),
+    });
     const prompt = `# ${failpoint}\n`;
     const failing = new ProjectFileRepository({
       projectsRoot: value.projects,
@@ -284,13 +287,12 @@ test("project recovery publishes a verified staged Request after a process-like 
       }],
     }],
     targets: [{ targetId: "target_recovery" }],
-    instructions: [{
-      instructionId: "instruction_recovery",
-      text: "读取附件",
-      targetRefs: ["target_recovery"],
-      attachmentRefs: ["attachment_recovery"],
-    }],
   };
+  request.taskSpec = compileTaskSpec({
+    comments: request.comments,
+    targets: request.targets,
+    attachments: request.comments.flatMap((comment) => comment.attachments),
+  });
   const interrupted = new ProjectFileRepository({
     projectsRoot: value.projects,
     failpoint: async (name) => name === "request-published",
@@ -506,9 +508,12 @@ test("a Request freezes comments, targets and project rules alongside its exact 
     summary: "按评论更新标题",
     comments,
     changeEvents: [{ eventId: "edit_001", kind: "text", target: { targetId: "target_title" } }],
-    instructions: [{ instructionId: "instruction_001", text: "保留其他内容" }],
     targets: [{ targetId: "target_title", selector: "h1" }],
-    preserveOutsideTargets: false,
+    taskSpec: compileTaskSpec({
+      comments,
+      targets: [{ targetId: "target_title", selector: "h1" }],
+      attachments: comments.flatMap((comment) => comment.attachments),
+    }),
   };
   await assert.rejects(
     value.repository.prepareRequest({
@@ -698,12 +703,11 @@ test("attachments-only comments freeze every byte before Request authority is pu
       summary: "只根据附件完成修改",
       comments,
       targets: comments.map((comment) => comment.target),
-      instructions: comments.map((comment) => ({
-        instructionId: comment.commentId.replace("comment_", "instruction_"),
-        text: "",
-        targetRefs: [comment.target.targetId],
-        attachmentRefs: comment.attachments.map((attachment) => attachment.attachmentId),
-      })),
+      taskSpec: compileTaskSpec({
+        comments,
+        targets: comments.map((comment) => comment.target),
+        attachments: comments.flatMap((comment) => comment.attachments),
+      }),
     },
     prompt: "# 附件任务\n",
   });
@@ -835,12 +839,16 @@ test("invalid comment attachments stop before request.json and Runtime authority
             attachments: [attachment],
           }],
           targets: [{ targetId: "target_invalid" }],
-          instructions: [{
-            instructionId: "instruction_invalid",
-            text: "",
-            targetRefs: ["target_invalid"],
-            attachmentRefs: [attachmentId],
-          }],
+          taskSpec: compileTaskSpec({
+            comments: [{
+              commentId,
+              text: "",
+              target: { targetId: "target_invalid" },
+              attachments: [attachment],
+            }],
+            targets: [{ targetId: "target_invalid" }],
+            attachments: [attachment],
+          }),
         },
         prompt: "# invalid attachment\n",
       }),

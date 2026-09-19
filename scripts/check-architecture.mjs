@@ -315,7 +315,7 @@ function bridgeImport(specifier) {
 }
 
 function hasProviderImplementationImport(imports) {
-  return imports.some((specifier) => /(?:^|\/)(?:qoder-availability|QoderAvailabilityCard|qoder-provider)(?:\.[^/]*)?$/u.test(specifier));
+  return imports.some((specifier) => /(?:^|\/)(?:qoder-provider)(?:\.[^/]*)?$/u.test(specifier));
 }
 
 function hostDependencyImport(specifier) {

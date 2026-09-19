@@ -8,23 +8,8 @@ async function source(relativePath) {
   return readFile(new URL(relativePath, import.meta.url), "utf8");
 }
 
-test("the legacy Qoder card is a presentation-only wrapper over the neutral card", async () => {
-  const [wrapper, card] = await Promise.all([
-    source("../app/components/QoderAvailabilityCard.tsx"),
-    source("../app/components/AgentProviderCard.tsx"),
-  ]);
-  assert.match(wrapper, /import AgentProviderCard from "\.\/AgentProviderCard"/u);
-  assert.match(wrapper, /<AgentProviderCard \{\.\.\.props\} presentation=\{QODER_CARD_PRESENTATION\}/u);
-  assert.doesNotMatch(wrapper, /useState|useEffect|useRef/u);
-  for (const literal of [
-    'displayName: "Qoder CLI"',
-    'logoSrc: "./qoder-logo.png"',
-    'cardClassName: "qoder-availability-card"',
-    'primaryActionDataAttribute: "data-qoder-primary"',
-    '安装 Qoder CLI',
-    '登录 Qoder',
-  ]) assert.match(wrapper, new RegExp(literal, "u"));
-
+test("the generic Agent card owns provider presentation", async () => {
+  const card = await source("../app/components/AgentProviderCard.tsx");
   for (const contract of [
     "data-status={availability.status}",
     "data-surface={surface}",

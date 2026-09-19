@@ -1717,12 +1717,18 @@ function availabilitySelection(value) {
 
 async function agentAvailability(selectionInput = null) {
   const selection = availabilitySelection(selectionInput);
-  return agentBridgeService.availability(selection ? { selection } : {});
+  if (!selection) {
+    throw new HttpError(400, "AGENT_SELECTION_REQUIRED", "Agent availability requires an explicit selection.");
+  }
+  return agentBridgeService.availability({ selection });
 }
 
 async function agentDiagnose(selectionInput = null) {
   const selection = availabilitySelection(selectionInput);
-  return agentBridgeService.diagnose(selection ? { selection } : {});
+  if (!selection) {
+    throw new HttpError(400, "AGENT_SELECTION_REQUIRED", "Agent diagnosis requires an explicit selection.");
+  }
+  return agentBridgeService.diagnose({ selection });
 }
 
 async function agentProviders() {

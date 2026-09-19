@@ -88,8 +88,8 @@ import type {
 import { createDocumentWorkflowCodecs } from "./application/document-workflow-codecs.js";
 import { createRunWorkflowCodecs } from "./application/run-workflow-codecs.js";
 import {
-  INITIAL_QODER_AVAILABILITY,
-} from "./domain/qoder-availability.js";
+  INITIAL_AGENT_PROVIDER_AVAILABILITY,
+} from "./domain/agent-provider-state.js";
 import { agentProviderCardsFromCatalog } from "./application/agent-provider-catalog.js";
 import {
   DEFAULT_OPENAI_COMPATIBLE_REASONING,
@@ -770,8 +770,8 @@ export default function Workbench() {
       selection: provider.selection,
     }),
   );
-  const qoderAvailability = shellSnapshot?.run?.qoderAvailability
-    ?? INITIAL_QODER_AVAILABILITY;
+  const agentAvailability = shellSnapshot?.run?.agentAvailability
+    ?? INITIAL_AGENT_PROVIDER_AVAILABILITY;
   const agentCards = agentProviderCardsFromCatalog(agentCatalogSnapshot);
   const workspacePreferencesController = useWorkspacePreferences(
     desktopUiPreferencesApi,
@@ -822,7 +822,7 @@ export default function Workbench() {
   const aiConversation = useAiConversation({
     controllerRef: workspaceControllerRef,
     draftReadOnly: ["preparing", "ready"].includes(shellSnapshot?.project?.close.phase || ""),
-    qoderAvailability,
+    agentAvailability,
     agentDisplayName,
     executionDisplayName,
     agentActionName: agentPresentation.agentName || agentPresentation.displayName,
@@ -4812,7 +4812,7 @@ export default function Workbench() {
       if (
         deliveryMode === "managed-agent"
         && workspaceControllerRef.current
-          ?.getSnapshot().run?.qoderAvailability.status !== "ready"
+          ?.getSnapshot().run?.agentAvailability.status !== "ready"
       ) return;
       reportInternalFailure({
         area: "runs",

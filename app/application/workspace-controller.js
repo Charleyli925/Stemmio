@@ -1839,18 +1839,6 @@ export class WorkspaceController {
     return this.#requireRunWorkflow().manageAgentAccess(kind, selection, options);
   }
 
-  refreshQoderAvailability() {
-    return this.#requireRunWorkflow().refreshQoderAvailability();
-  }
-
-  checkQoderUsability() {
-    return this.#requireRunWorkflow().checkQoderUsability();
-  }
-
-  copyQoderGuidance(input) {
-    return this.#requireRunWorkflow().copyQoderGuidance(input);
-  }
-
   startAgentLogin(selection) {
     return this.#requireRunWorkflow().startAgentLogin(selection);
   }
@@ -1861,10 +1849,6 @@ export class WorkspaceController {
 
   startAgentLogout(selection) {
     return this.#requireRunWorkflow().startAgentLogout(selection);
-  }
-
-  installQoder() {
-    return this.#requireRunWorkflow().installQoder();
   }
 
   installAgent(selection) {

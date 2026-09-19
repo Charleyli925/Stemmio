@@ -13,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { inspectSourceElementIdentity } from "../bridge/project-file-repository/working-copy.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import {
   ProjectFileRepository,
   ProjectFileRepositoryError,
@@ -435,6 +436,13 @@ for (const sameContent of [false, true]) {
 test(`prepared Candidate recovery retains runtime authority (same content: ${sameContent})`, async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value);
+  const comments = [{
+    commentId: "comment_candidate_recovery",
+    text: "recover sealed candidate",
+    target: { targetId: "target_candidate_recovery" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_candidate_recovery" }];
   const request = await value.repository.prepareRequest({
     target: imported.target,
     requestId: "req_candidate_recovery",
@@ -442,12 +450,9 @@ test(`prepared Candidate recovery retains runtime authority (same content: ${sam
     expectedSourceSha256: imported.target.sourceSha256,
     request: {
       summary: "recover sealed candidate",
-      comments: [{
-        commentId: "comment_candidate_recovery",
-        text: "recover sealed candidate",
-        target: { targetId: "target_candidate_recovery" },
-      }],
-      targets: [{ targetId: "target_candidate_recovery" }],
+      comments,
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: "# recover sealed candidate\n",
   });
@@ -835,6 +840,13 @@ test("promotion retries the next same-ordinal path after an OS no-replace collis
 test("request finalization creates a reviewable Candidate only, and manifest path traversal is refused", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value);
+  const comments = [{
+    commentId: "comment_candidate_lifecycle",
+    text: "candidate lifecycle",
+    target: { targetId: "target_candidate_lifecycle" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_candidate_lifecycle" }];
   const prepared = await value.repository.prepareRequest({
     target: imported.target,
     requestId: "req_workflow",
@@ -842,12 +854,9 @@ test("request finalization creates a reviewable Candidate only, and manifest pat
     expectedSourceSha256: imported.target.sourceSha256,
     request: {
       summary: "candidate lifecycle",
-      comments: [{
-        commentId: "comment_candidate_lifecycle",
-        text: "candidate lifecycle",
-        target: { targetId: "target_candidate_lifecycle" },
-      }],
-      targets: [{ targetId: "target_candidate_lifecycle" }],
+      comments,
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: "# Frozen candidate request\n",
   });
@@ -885,6 +894,20 @@ test("request finalization seals Candidate impact against its requested Stable I
   const outsideId = identity.elements.find((element) => element.tagName === "title")?.stemmioId;
   assert.ok(targetId);
   assert.ok(outsideId);
+  const comments = [{
+    commentId: "comment_h1",
+    text: "只修改标题。",
+    target: { targetId: "target_h1" },
+    attachments: [],
+  }];
+  const targets = [{
+    targetId: "target_h1",
+    elementId: targetId,
+    label: "页面标题",
+    level: "module",
+    selector: "h1",
+    resolution: "exact",
+  }];
   const prepared = await value.repository.prepareRequest({
     target: imported.target,
     requestId: "req_candidate_impact",
@@ -892,21 +915,10 @@ test("request finalization seals Candidate impact against its requested Stable I
     expectedSourceSha256: imported.target.sourceSha256,
     request: {
       summary: "验证评论目标之外的修改提示",
-      comments: [],
+      comments,
       changeEvents: [],
-      instructions: [{
-        instructionId: "instruction_h1",
-        text: "只修改标题。",
-        targetRefs: ["target_h1"],
-      }],
-      targets: [{
-        targetId: "target_h1",
-        elementId: targetId,
-        label: "页面标题",
-        level: "module",
-        selector: "h1",
-        resolution: "exact",
-      }],
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: "# Candidate impact\n",
   });
@@ -949,6 +961,25 @@ test("request finalization treats a comment root and its descendants as one allo
   };
   const baseHtml = `<!doctype html><html data-stemmio-id="${ids.html}"><head data-stemmio-id="${ids.head}"><title data-stemmio-id="${ids.title}">Scope</title></head><body data-stemmio-id="${ids.body}"><section data-stemmio-id="${ids.section}"><h2 data-stemmio-id="${ids.heading}">标题</h2><p data-stemmio-id="${ids.paragraph}">正文</p></section><aside data-stemmio-id="${ids.outside}">旁支</aside></body></html>`;
   const imported = await importSource(value, "comment-root-scope.html", baseHtml);
+  const comments = [{
+    commentId: "comment_section",
+    text: "调整 Section 内的标题和正文",
+    target: {
+      targetId: "target_section",
+      elementId: ids.section,
+      level: "module",
+      selector: "section",
+      resolution: "exact",
+    },
+    attachments: [],
+  }];
+  const targets = [{
+    targetId: "target_section",
+    elementId: ids.section,
+    level: "module",
+    selector: "section",
+    resolution: "exact",
+  }];
   const prepared = await value.repository.prepareRequest({
     target: imported.target,
     requestId: "req_comment_root_scope",
@@ -957,29 +988,9 @@ test("request finalization treats a comment root and its descendants as one allo
     request: {
       freezeCutoffRevision: 0,
       summary: "评论整个 Section",
-      comments: [{
-        commentId: "comment_section",
-        text: "调整 Section 内的标题和正文",
-        target: {
-          targetId: "target_section",
-          elementId: ids.section,
-          level: "module",
-          selector: "section",
-          resolution: "exact",
-        },
-      }],
-      targets: [{
-        targetId: "target_section",
-        elementId: ids.section,
-        level: "module",
-        selector: "section",
-        resolution: "exact",
-      }],
-      instructions: [{
-        instructionId: "instruction_section",
-        text: "更新 Section 内容",
-        targetRefs: ["target_section"],
-      }],
+      comments,
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: "# Section scope\n",
   });

@@ -362,7 +362,7 @@ test("local availability reads installation identity without running Qoder", asy
   });
   t.after(() => service.dispose());
 
-  const availability = await service.availability();
+  const availability = await service.availability({ selection: QODER_SELECTION });
 
   assert.deepEqual(availability, {
     ok: true,
@@ -387,9 +387,9 @@ test("local availability re-reads disk after Qoder CLI is installed", async (t) 
   });
   t.after(() => service.dispose());
 
-  assert.equal((await service.availability()).status, "not-installed");
+  assert.equal((await service.availability({ selection: QODER_SELECTION })).status, "not-installed");
   await symlink(fixture.bundle, fixture.launcher);
-  assert.equal((await service.availability()).status, "ready");
+  assert.equal((await service.availability({ selection: QODER_SELECTION })).status, "ready");
 });
 
 test("Finder-sparse discovery covers npm prefixes and common Node managers", async (t) => {
@@ -435,7 +435,7 @@ test("local availability distinguishes unsupported or invalid installs from abse
       resolveTask: async () => taskAuthority(),
     });
     caseTest.after(() => service.dispose());
-    assert.deepEqual(await service.availability(), {
+    assert.deepEqual(await service.availability({ selection: QODER_SELECTION }), {
       ok: true,
       status: "unavailable",
       reason: "invalid-installation",
@@ -457,7 +457,7 @@ test("local availability distinguishes unsupported or invalid installs from abse
       resolveTask: async () => taskAuthority(),
     });
     caseTest.after(() => service.dispose());
-    assert.equal((await service.availability()).status, "unavailable");
+    assert.equal((await service.availability({ selection: QODER_SELECTION })).status, "unavailable");
   });
 });
 
@@ -753,7 +753,7 @@ test("Agent Bridge never invents a resumed Qoder session after restart", async (
   const service = createService(command, { runTask: async () => ({}) });
   t.after(() => service.dispose());
   assert.equal(service.status(IDENTITY), null);
-  const interrupted = service.interrupted(IDENTITY);
+  const interrupted = service.interrupted(IDENTITY, { selection: QODER_SELECTION });
   assert.equal(interrupted.state, "interrupted");
   assert.equal(interrupted.retryable, false);
   assert.equal(interrupted.errorCode, "AGENT_RESTART_RECOVERY_REQUIRED");
