@@ -26,6 +26,11 @@ export type ProjectRulesScheduler = Readonly<{
   clearTimeout(handle: unknown): void;
 }>;
 
+export type ProjectRulesVisibleScope = Readonly<{
+  projectId: string;
+  documentId: string;
+}>;
+
 export type ProjectRulesWorkflowConstruction = Readonly<{
   bridgeClient: {
     projectFile(
@@ -57,20 +62,39 @@ export class ProjectRulesWorkflow {
     opened: boolean;
     reused?: boolean;
   }>>;
-  updateContent(input: { content: string }): ProjectRulesWorkflowOutcome<{
+  prepareOpen(input: {
+    context: ProjectRulesContext;
+  }): Promise<ProjectRulesWorkflowOutcome<{
+    prepared: boolean;
+    preparationId: string;
+    reused?: boolean;
+  }>>;
+  commitPreparedOpen(input: {
+    preparationId: string;
+  }): ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>;
+  discardPreparedOpen(input: { preparationId: string }): boolean;
+  retry(input?: { scope?: ProjectRulesVisibleScope }): Promise<ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>>;
+  updateContent(input: { content: string; scope?: ProjectRulesVisibleScope }): ProjectRulesWorkflowOutcome<{
     updated: boolean;
   }>;
   beginComposition(input: {
     target: unknown;
     baselineValue: string;
+    scope?: ProjectRulesVisibleScope;
   }): number | null;
-  finishComposition(input: { target: unknown }): boolean;
-  leaveEditor(): boolean;
-  restore(): ProjectRulesWorkflowOutcome<{
+  finishComposition(input: { target: unknown; scope?: ProjectRulesVisibleScope }): boolean;
+  leaveEditor(input?: { scope?: ProjectRulesVisibleScope }): boolean;
+  restore(input?: { scope?: ProjectRulesVisibleScope }): ProjectRulesWorkflowOutcome<{
     restored: boolean;
     editorGeneration: number;
   }>;
-  save(): Promise<ProjectRulesWorkflowOutcome<{
+  save(input?: { scope?: ProjectRulesVisibleScope }): Promise<ProjectRulesWorkflowOutcome<{
     saved: boolean;
     reconciled?: boolean;
   }>>;

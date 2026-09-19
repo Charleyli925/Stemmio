@@ -4095,6 +4095,7 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
     `/registered-project/open?projectId=${encodeURIComponent(projectId)}${expectedTarget ? `&workingCopyId=${encodeURIComponent(expectedTarget.workingCopyId)}` : ""}`,
   );
   const target = payload.openTarget;
+  const historyCreation = payload.historyCreation ?? null;
   if (
     !target
     || typeof target !== "object"
@@ -4114,6 +4115,13 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
     || typeof payload.content !== "string"
     || typeof payload.lastModifiedAt !== "string"
     || !payload.lastModifiedAt
+    || (historyCreation !== null && (
+      !historyCreation
+      || typeof historyCreation !== "object"
+      || Array.isArray(historyCreation)
+      || !/^[A-Za-z0-9_-]{8,160}$/u.test(String(historyCreation.operationId || ""))
+      || !/^ver_\d{4,}$/u.test(String(historyCreation.versionId || ""))
+    ))
   ) {
     throw new ProjectFileError(
       "REGISTERED_PROJECT_TARGET_INVALID",
@@ -4149,6 +4157,12 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
   return Object.freeze({
     ...projectWithIdentity(project, target),
     openTarget: Object.freeze({ ...target }),
+    historyCreation: historyCreation
+      ? Object.freeze({
+        operationId: String(historyCreation.operationId),
+        versionId: String(historyCreation.versionId),
+      })
+      : null,
   });
 }
 

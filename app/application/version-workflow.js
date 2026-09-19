@@ -2,6 +2,10 @@ import { decodeWorkspaceResponse } from "./workspace-controller-codecs.js";
 import { isBridgeRequestError } from "./bridge-client.js";
 import { verifyOpenTarget } from "./verified-project-context.js";
 import { planVersionActivate, planVersionPrepareReview } from "./version/review-plan.js";
+import {
+  copyProjectSurfaceContext,
+  isProjectSurfaceContext,
+} from "./project-surface-context.js";
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
@@ -50,6 +54,8 @@ function errorCode(cause, fallback) {
 }
 
 function copyContext(context) {
+  const surface = copyProjectSurfaceContext(context);
+  if (surface) return surface;
   if (
     !context
     || !Number.isSafeInteger(Number(context.epoch))
@@ -699,27 +705,29 @@ export class VersionWorkflow {
     context = this.#projectSession.context,
     deadlineAt = this.#clock.now() + 15_000,
     fromDeferred = false,
+    switchPrepared = false,
   } = {}) {
     if (this.#disposed) {
       return blocked("VERSION_WORKFLOW_DISPOSED", "版本工作流已经停止。");
     }
     const current = copyContext(context);
-    if (!current || !this.#projectSession.matches(current)) {
+    if (!current || !this.#acceptsSurfaceContext(current)) {
       return stale(current || {});
     }
     if (!version?.id) {
       return blocked("VERSION_HISTORY_PRECONDITION", "当前历史版本缺少可验证的版本 ID。");
     }
-    if (this.#projectWorkflow.projectHydrating || this.#projectWorkflow.projectLoadError) {
+    const ownsCurrentRuntime = this.#projectSession.matches(current);
+    if (ownsCurrentRuntime && (this.#projectWorkflow.projectHydrating || this.#projectWorkflow.projectLoadError)) {
       return blocked("VERSION_HISTORY_PROJECT_UNAVAILABLE", "项目状态尚未准备完成，不能切换历史视图。");
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext(current)) {
       return blocked("VERSION_HISTORY_RUN_LOCKED", "当前 AI 处理尚未完成，不能切换历史视图。");
     }
-    if (!fromDeferred) {
+    if (!fromDeferred && !switchPrepared) {
       const deferred = this.#deferCanvasCommand(
         "project-switch",
-        () => this.viewHistory({ version, context: current, deadlineAt, fromDeferred: true }),
+        () => this.viewHistory({ version, context: current, deadlineAt, fromDeferred: true, switchPrepared }),
       );
       if (deferred) return deferred;
     }
@@ -728,7 +736,7 @@ export class VersionWorkflow {
       return blocked("VERSION_NAVIGATION_BUSY", "当前 HTML 视图正在切换，请稍后重试。");
     }
     try {
-      if (this.#versionSession.snapshot.viewMode === "current") {
+      if (!switchPrepared && this.#versionSession.snapshot.viewMode === "current") {
         const frozen = this.#freezeCurrentCanvas(
           "当前编辑画布尚未完成安全收口，无法打开历史版本。",
         );
@@ -753,6 +761,7 @@ export class VersionWorkflow {
       this.#versionSession.enterHistory(String(version.id), {
         projectId: current.projectId, documentId: current.documentId,
         sourcePath: current.sourcePath, versionId: String(version.id), content, sha256,
+        context: current,
       });
       const value = { context: current, versionId: String(version.id), content, sha256 };
       this.#emitEvent({ type: "version-history-viewed", ...value });
@@ -1041,21 +1050,28 @@ export class VersionWorkflow {
     if (this.#activeExportOperation !== null) {
       return blocked("EXPORT_BUSY", "导出正在进行。");
     }
+    const history = this.#versionSession.snapshot.historyPreview;
     const locator = this.#projectSession.locator;
-    let context = copyContext(this.#projectSession.context);
-    const localDocument = !context && !locator.sourcePath && locator.epoch > 0
+    let context = history
+      ? copyContext(history.context)
+      : copyContext(this.#projectSession.context);
+    const localDocument = !history && !context && !locator.sourcePath && locator.epoch > 0
       && Boolean(this.#documentSession.html);
     if (!context && !localDocument) return blocked("PROJECT_CONTEXT_REQUIRED", "请先打开项目。");
-    const isCurrentDocument = () => context
-      ? this.#sameCurrentDocument(context)
-      : !this.#disposed && this.#projectSession.epoch === locator.epoch && !this.#projectSession.sourcePath;
-    const history = this.#versionSession.snapshot.historyPreview;
-    if (history && (!context || history.projectId !== context.projectId || history.documentId !== context.documentId
-      || history.sourcePath !== context.sourcePath)) return stale(context || locator);
+    if (history && (!context || !this.#acceptsSurfaceContext(context)
+      || history.projectId !== context.projectId || history.documentId !== context.documentId
+      || !this.#codecs.sameSourcePath(history.sourcePath, context.sourcePath))) {
+      return stale(context || locator);
+    }
+    const isCurrentSurface = () => history
+      ? !this.#disposed && this.#versionSession.snapshot.historyPreview === history
+      : context
+        ? this.#sameCurrentDocument(context)
+        : !this.#disposed && this.#projectSession.epoch === locator.epoch && !this.#projectSession.sourcePath;
     if (!history) {
       const checkpoint = this.#canvasPort.checkpointSource?.();
       if (checkpoint && !checkpoint.ok) return blocked("EXPORT_EDIT_PENDING", checkpoint.reason || "请先完成当前文字输入。");
-      if (!isCurrentDocument()) return stale(context || locator);
+      if (!isCurrentSurface()) return stale(context || locator);
       context = copyContext(this.#projectSession.context);
     }
     const html = history ? history.content : this.#documentSession.html;
@@ -1063,7 +1079,7 @@ export class VersionWorkflow {
     const sequence = ++this.#exportSequence;
     this.#activeExportOperation = sequence;
     const setState = (value) => {
-      if (!isCurrentDocument() || sequence !== this.#exportSequence) return;
+      if (!isCurrentSurface() || sequence !== this.#exportSequence) return;
       this.#snapshot = Object.freeze({ ...this.#snapshot, export: Object.freeze({ context, ...value, sequence: ++this.#resultSequence }) });
       this.#publishSnapshot();
     };
@@ -1071,7 +1087,7 @@ export class VersionWorkflow {
     let exported;
     try {
       const hash = await this.#hashPort.sha256(html);
-      if (!isCurrentDocument() || sequence !== this.#exportSequence) return stale(context || locator);
+      if (!isCurrentSurface() || sequence !== this.#exportSequence) return stale(context || locator);
       const ordinal = history ? this.#versionSession.snapshot.versions.find((version) => version.id === history.versionId)?.ordinal : null;
       const name = history ? `${String(suggestedName || "项目").replace(/\.html?$/iu, "")}-V${ordinal}.html` : suggestedName;
       exported = await this.#filePort.exportHtmlCopy({ html, sourcePath: context?.sourcePath || null, suggestedName: name });
@@ -1080,13 +1096,13 @@ export class VersionWorkflow {
         return succeeded({ cancelled: true });
       }
       if (exported.kind === "download-started") {
-        if (!isCurrentDocument()) return stale(context || locator);
+        if (!isCurrentSurface()) return stale(context || locator);
         setState({ phase: "download-started" });
         return succeeded({ downloadStarted: true });
       }
       if (!context) throw new Error("浏览器下载未提供可验证的文件保存回执。");
       if (exported.sha256 !== hash || !String(exported.path || "")) throw new Error("导出文件未通过内容校验。");
-      if (!this.#sameCurrentDocument(context)) return stale(context);
+      if (!isCurrentSurface()) return stale(context);
       if (!history) await this.#documentWorkflow.recordVerifiedExport({ context, html, revision, exported });
       if (saveVersion && !history) {
         setState({ phase: "saving-version", path: exported.path });
@@ -1109,7 +1125,7 @@ export class VersionWorkflow {
       return rejected("EXPORT_FAILED", reason);
     } finally {
       if (this.#activeExportOperation === sequence) this.#activeExportOperation = null;
-      if (sequence === this.#exportSequence && !isCurrentDocument()) {
+      if (sequence === this.#exportSequence && !isCurrentSurface()) {
         const { export: _completedExport, ...snapshot } = this.#snapshot;
         this.#snapshot = Object.freeze(snapshot);
         this.#publishSnapshot();
@@ -1141,7 +1157,7 @@ export class VersionWorkflow {
   async createVersionFromHistory({ operationId, context = this.#projectSession.context } = {}) {
     const current = copyContext(context);
     if (this.#disposed) return blocked("VERSION_WORKFLOW_DISPOSED", "版本工作流已经停止。");
-    if (!current || !this.#projectSession.matches(current)) return stale(current || {});
+    if (!current || !this.#acceptsSurfaceContext(current)) return stale(current || {});
     const pending = this.#snapshot.creation;
     if (pending?.context.projectId === current.projectId && pending.context.documentId === current.documentId
       && !["opened", "superseded", "not-created"].includes(pending.phase)) {
@@ -1152,20 +1168,24 @@ export class VersionWorkflow {
       || preview.sourcePath !== current.sourcePath || !/^[A-Za-z0-9_-]{8,160}$/.test(String(operationId || ""))) {
       return blocked("HISTORY_CREATION_PRECONDITION", "请先打开要作为来源的历史版本。");
     }
-    if (this.#runSession.activeLocked) return blocked("HISTORY_CREATION_RUN_LOCKED", "请先完成当前 AI 任务或候选的处理。");
+    if (this.#runLockedForContext(current)) return blocked("HISTORY_CREATION_RUN_LOCKED", "请先完成当前 AI 任务或候选的处理。");
     const operation = this.#beginNavigation("creating", current);
     if (!operation) return blocked("VERSION_NAVIGATION_BUSY", "版本操作正在进行。");
     const creationGeneration = ++this.#creationGeneration;
     this.#setHistoryCreation({ phase: "creating", operationId, context: current }, creationGeneration);
     let attempted = false;
     try {
-      const drained = await this.#projectWorkflow.drain("history", { deadlineAt: this.#clock.now() + 15_000 });
+      const drained = isProjectSurfaceContext(current)
+        ? { ok: true }
+        : await this.#projectWorkflow.drain("history", { deadlineAt: this.#clock.now() + 15_000 });
       if (!this.#isNavigationCurrent(operation)) return stale(current);
       if (!drained.ok) return blocked("HISTORY_CREATION_DRAIN", drained.reason || "当前修改尚未保存。");
       attempted = true;
       const payload = await this.#bridgeClient.createVersionFromHistory({
         target: current, operationId, versionId: preview.versionId,
-        expectedSourceSha256: this.#documentSession.persistedSourceSha256,
+        expectedSourceSha256: isProjectSurfaceContext(current)
+          ? current.sourceSha256
+          : this.#documentSession.persistedSourceSha256,
         expectedSnapshotSha256: preview.sha256,
       });
       const result = this.#validateHistoryCreation(payload, current, operationId, preview.versionId, preview.sha256);
@@ -1226,6 +1246,15 @@ export class VersionWorkflow {
         && this.#versionSession.snapshot.currentBasedOnVersionId === result.versionId
         && this.#versionSession.snapshot.viewMode === "current") {
         try {
+          await new Promise((resolve) => {
+            if (typeof this.#canvasPort.requestFrame !== "function") {
+              resolve();
+              return;
+            }
+            this.#canvasPort.requestFrame(() => this.#canvasPort.requestFrame(resolve));
+          });
+          if (!this.#projectSession.matches(context) || generation !== this.#creationGeneration
+            || this.#snapshot.navigation.phase !== "idle") return;
           await this.#canvasPort.verifyRendered(this.#documentSession.html, this.#documentSession.persistedSourceSha256, context);
           if (!this.#projectSession.matches(context) || generation !== this.#creationGeneration
             || this.#snapshot.navigation.phase !== "idle") return;
@@ -1858,8 +1887,29 @@ export class VersionWorkflow {
   #isNavigationCurrent(operation) {
     return Boolean(
       this.#isNavigationActive(operation)
-      && (!operation.context || this.#projectSession.matches(operation.context)),
+      && (
+        !operation.context
+        || isProjectSurfaceContext(operation.context)
+        || this.#projectSession.matches(operation.context)
+      ),
     );
+  }
+
+  #acceptsSurfaceContext(context) {
+    return Boolean(
+      isProjectSurfaceContext(context)
+      || this.#projectSession.matches(context),
+    );
+  }
+
+  #runLockedForContext(context) {
+    if (!this.#runSession.activeLocked) return false;
+    const activeRun = this.#runSession.activeRun;
+    if (!activeRun) return true;
+    return activeRun.projectId && activeRun.documentId
+      ? activeRun.projectId === context.projectId
+        && activeRun.documentId === context.documentId
+      : activeRun.sourcePath === context.sourcePath;
   }
 
   #isNavigationActive(operation) {

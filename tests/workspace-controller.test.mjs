@@ -2460,7 +2460,23 @@ test("workspace controller aggregates and dispatches the typed PROJECT.md workfl
     harness.controller.updateProjectRules({ content: "# Updated rules" }).status,
     "succeeded",
   );
-  assert.equal((await harness.controller.saveProjectRules()).status, "succeeded");
+  const visibleScope = {
+    projectId: harness.context.projectId,
+    documentId: harness.context.documentId,
+  };
+  const wrongScope = { ...visibleScope, projectId: "project_rules_other" };
+  assert.equal(
+    harness.controller.restoreProjectRules({ scope: wrongScope }).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.controller.saveProjectRules({ scope: wrongScope })).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.controller.saveProjectRules({ scope: visibleScope })).status,
+    "succeeded",
+  );
   assert.equal(harness.persisted, "# Updated rules");
   assert.equal(
     snapshots.at(-1)?.projectRules?.savedContent,

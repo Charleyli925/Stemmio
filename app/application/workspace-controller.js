@@ -1707,6 +1707,22 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().open(input);
   }
 
+  prepareProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().prepareOpen(input);
+  }
+
+  commitPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().commitPreparedOpen(input);
+  }
+
+  discardPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().discardPreparedOpen(input);
+  }
+
+  retryProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().retry(input);
+  }
+
   updateProjectRules(input) {
     return this.#requireProjectRulesWorkflow().updateContent(input);
   }
@@ -1719,16 +1735,16 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().finishComposition(input);
   }
 
-  leaveProjectRulesEditor() {
-    return this.#requireProjectRulesWorkflow().leaveEditor();
+  leaveProjectRulesEditor(input) {
+    return this.#requireProjectRulesWorkflow().leaveEditor(input);
   }
 
-  restoreProjectRules() {
-    return this.#requireProjectRulesWorkflow().restore();
+  restoreProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().restore(input);
   }
 
-  saveProjectRules() {
-    return this.#requireProjectRulesWorkflow().save();
+  saveProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().save(input);
   }
 
   closeProjectRules() {
@@ -2729,15 +2745,44 @@ export class WorkspaceController {
     const current = this.#projectCatalogSnapshot;
     if (event.type === "project-hydrated" && event.historyCreation?.operationId) {
       const versionWorkflow = this.#versionWorkflow;
+      const navigationWorkflow = this.#workbenchNavigationWorkflow;
+      const restoreOpenedReceipt = async (context) => {
+        if (!versionWorkflow || !navigationWorkflow) return;
+        // Hydration publishes its supplemental event before the enclosing
+        // Workbench navigation transaction has released ownership. Waiting
+        // first prevents restoreHistoryCreation() from observing a transient
+        // busy phase and silently dropping the only opened-at repair attempt.
+        const navigationIdle = await navigationWorkflow.waitForIdle();
+        if (!navigationIdle || this.#disposed) return;
+        let liveContext = this.#projectSession.context;
+        if (
+          liveContext?.projectId !== context?.projectId
+          || liveContext?.documentId !== context?.documentId
+        ) return;
+        await versionWorkflow.restoreHistoryCreation({
+          operationId: event.historyCreation.operationId,
+          context: liveContext,
+        });
+        const creation = versionWorkflow.getSnapshot().creation;
+        const needsSettledCanvasRetry = Boolean(
+          creation?.result?.status === "created"
+          && creation.result.openedAt === null
+          && creation.result.recoveryState !== "superseded"
+          && ["created", "open-failed"].includes(creation.phase)
+        );
+        if (!needsSettledCanvasRetry) return;
+        liveContext = this.#projectSession.context;
+        if (
+          liveContext?.projectId !== context?.projectId
+          || liveContext?.documentId !== context?.documentId
+        ) return;
+        await versionWorkflow.returnToCurrent({ context: liveContext });
+      };
       const restoringPersistedTab = this.#workbenchNavigationSession?.snapshot.intent?.kind
         === "startup-restore";
       if (!restoringPersistedTab) {
-        void versionWorkflow?.restoreHistoryCreation({
-          operationId: event.historyCreation.operationId,
-          context: event.context,
-        });
+        void restoreOpenedReceipt(event.context);
       }
-      const navigationWorkflow = this.#workbenchNavigationWorkflow;
       const tabsSession = this.#workbenchTabsSession;
       void (async () => {
         if (!restoringPersistedTab) return;
@@ -2783,10 +2828,7 @@ export class WorkspaceController {
           if (!restoredSurfaceActive || this.#disposed) return;
         }
         if (requested.kind === "document") {
-          await versionWorkflow.restoreHistoryCreation({
-            operationId: event.historyCreation.operationId,
-            context: this.#projectSession.context,
-          });
+          await restoreOpenedReceipt(this.#projectSession.context);
           return;
         }
         const currentTab = tabsSession.snapshot.tabs.find((tab) => (

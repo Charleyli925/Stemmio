@@ -36,6 +36,7 @@ export type HtmlProject = {
   projectId?: string;
   documentId?: string;
   openTarget?: Record<string, unknown>;
+  historyCreation?: Readonly<{ operationId: string; versionId: string }> | null;
   openKind?: "project";
 };
 

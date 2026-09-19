@@ -1,3 +1,8 @@
+import {
+  copyProjectSurfaceContext,
+  isProjectSurfaceContext,
+} from "./project-surface-context.js";
+
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const UNKNOWN_HOST_CODES = new Set([
   "INVALID_PROJECT_RESPONSE",
@@ -76,7 +81,8 @@ function stale(context) {
  * @returns {ProjectContext | null}
  */
 function copyContext(context) {
-  return context ? Object.freeze({ ...context }) : null;
+  return copyProjectSurfaceContext(context)
+    || (context ? Object.freeze({ ...context }) : null);
 }
 
 /**
@@ -211,15 +217,14 @@ export class BrowserOpenWorkflow {
     if (this.#disposed) {
       return blocked("BROWSER_OPEN_DISPOSED", "浏览器打开工作流已经停止。");
     }
-    const context = copyContext(this.#projectSession.context);
-    if (!context?.sourcePath || !this.#projectSession.matches(context)) {
-      return blocked("BROWSER_OPEN_CONTEXT_REQUIRED", "当前页面没有可验证的 HTML 文件。");
-    }
     const version = this.#versionSession.snapshot;
     if (version.viewMode === "history") {
       const history = version.historyPreview;
+      const context = copyContext(history?.context || this.#projectSession.context);
       if (
         !history
+        || !context?.sourcePath
+        || (!isProjectSurfaceContext(context) && !this.#projectSession.matches(context))
         || history.projectId !== context.projectId
         || history.documentId !== context.documentId
         || history.sourcePath !== context.sourcePath
@@ -232,12 +237,16 @@ export class BrowserOpenWorkflow {
         );
       }
       return succeeded(Object.freeze({
-        key: `version:${context.epoch}:${context.projectId}:${context.documentId}:${history.versionId}`,
+        key: `version:${context.surfaceContextId || context.epoch}:${context.projectId}:${context.documentId}:${history.versionId}`,
         kind: "version",
         context,
         versionId: history.versionId,
         expectedSha256: history.sha256,
       }));
+    }
+    const context = copyContext(this.#projectSession.context);
+    if (!context?.sourcePath || !this.#projectSession.matches(context)) {
+      return blocked("BROWSER_OPEN_CONTEXT_REQUIRED", "当前页面没有可验证的 HTML 文件。");
     }
     if (version.viewMode !== "current") {
       return blocked("BROWSER_OPEN_SURFACE_UNSUPPORTED", "当前页面不能在浏览器中打开。");
@@ -255,10 +264,9 @@ export class BrowserOpenWorkflow {
     // navigating. Fence on the stable document identity here; the final byte
     // identity is checked separately against DocumentSession and again in
     // Desktop immediately before the external side effect.
-    if (
-      this.#disposed
-      || !this.#projectSession.matches(stableIdentity(target.context))
-    ) return false;
+    if (this.#disposed) return false;
+    if (!isProjectSurfaceContext(target.context)
+      && !this.#projectSession.matches(stableIdentity(target.context))) return false;
     const version = this.#versionSession.snapshot;
     if (target.kind === "working-copy") {
       return version.viewMode === "current" && !version.historyPreview;
