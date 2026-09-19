@@ -19,6 +19,8 @@ import { promisify } from "node:util";
 
 import { _electron as electron } from "playwright";
 
+import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
+
 const require = createRequire(import.meta.url);
 const electronExecutable = require("electron");
 const execFileAsync = promisify(execFile);
@@ -602,8 +604,8 @@ async function seedElectronProjects(userData, activePath, recentPaths) {
   }), "utf8");
 }
 
-async function launchElectron(userData, activePath, recentPaths) {
-  await seedElectronProjects(userData, activePath, recentPaths);
+async function launchElectron(userData, activePath = null, recentPaths = []) {
+  if (activePath) await seedElectronProjects(userData, activePath, recentPaths);
   const electronApp = await electron.launch({
     executablePath: electronExecutable,
     args: [path.join(productRoot, "desktop", "main.mjs")],
@@ -637,17 +639,25 @@ async function rendererPid(electronApp, rendererUrl) {
   }, rendererUrl);
 }
 
-async function waitForLiveSourcePath(page) {
-  await page.waitForFunction(() => (
-    document.querySelector("main.workbench")?.getAttribute("data-project-state") === "ready"
-  ), null, { timeout: 30_000 });
-  return page.evaluate(async () => {
-    const project = await window.stemmioProjects?.getActiveProject?.();
-    if (!project?.sourcePath) {
-      throw new Error("Stemmio did not expose an imported Working Copy path.");
-    }
-    return project.sourcePath;
-  });
+async function waitForLiveSourcePath(page, expectedProjectId = null) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const sourcePath = await page.evaluate(async (expectedId) => {
+      if (document.querySelector("main.workbench")?.getAttribute("data-project-state") !== "ready") {
+        return null;
+      }
+      const project = await window.stemmioProjects?.getActiveProject?.();
+      if (
+        typeof project?.sourcePath !== "string"
+        || !project.sourcePath
+        || (expectedId && project.projectId !== expectedId)
+      ) return null;
+      return project.sourcePath;
+    }, expectedProjectId).catch(() => null);
+    if (sourcePath) return sourcePath;
+    await page.waitForTimeout(50);
+  }
+  throw new Error("Stemmio did not expose the expected imported Working Copy path.");
 }
 
 async function currentFrame(page, expectedPath, expectedToken = null) {
@@ -824,6 +834,22 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
     const launched = await launchElectron(userData, sourceA, [sourceA, sourceB]);
     electronApp = launched.electronApp;
     const liveA = await waitForLiveSourcePath(launched.page);
+    const managedSourceA = await readFile(liveA, "utf8");
+    assert(
+      managedSourceA.includes(token(0)),
+      "Imported benchmark Working Copy lost the frozen edit token.",
+    );
+    const repository = new ProjectFileRepository({
+      projectsRoot: path.dirname(path.dirname(liveA)),
+    });
+    const importedB = await repository.importExternal({
+      sourcePath: sourceB,
+      expectedSourceSha256: sha256(initialSourceB),
+    });
+    assert(
+      importedB?.target?.projectId && importedB?.target?.exactSourcePath,
+      "Benchmark project B did not become a registered Working Copy.",
+    );
     let frame = await currentFrame(launched.page, liveA, token(0));
     const initialRevision = Number(await launched.page.locator("[data-persist-state]").first().getAttribute("data-persisted-revision"));
 
@@ -840,7 +866,13 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
       const dirtyCloseDurationMs = Number(formatNumber(performance.now() - startedAt));
       const [rendererGap, rendererMemory] = await Promise.all([gap.stop().catch(() => ({ maxGapMs: 0, samples: 0 })), memory.stop()]);
       electronApp = null;
-      await assertSourceBytes(liveA, replacement(initialSourceA, dirtyToken), "Dirty close");
+      const reopened = await launchElectron(userData);
+      electronApp = reopened.electronApp;
+      const recoveredA = await waitForLiveSourcePath(reopened.page);
+      await currentFrame(reopened.page, recoveredA, dirtyToken);
+      await assertSourceBytes(recoveredA, replacement(managedSourceA, dirtyToken), "Dirty close recovery");
+      await closeElectronGracefully(electronApp, reopened.rendererUrl);
+      electronApp = null;
       return {
         dirtyClose: {
           durationMs: dirtyCloseDurationMs,
@@ -860,7 +892,7 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
     await persistedRevision(launched.page, initialRevision);
     const autosaveDurationMs = Number(formatNumber(performance.now() - autosaveStartedAt));
     const [autosaveRendererGap, autosaveRendererMemory] = await Promise.all([autosaveGap.stop(), autosaveMemory.stop()]);
-    await assertSourceBytes(liveA, replacement(initialSourceA, autosaveToken), "Electron autosave");
+    await assertSourceBytes(liveA, replacement(managedSourceA, autosaveToken), "Electron autosave");
 
     frame = await currentFrame(launched.page, liveA, autosaveToken);
     const switchToken = token(2_000 + sampleIndex);
@@ -874,15 +906,19 @@ async function runElectronSession(runRoot, sizeMiB, sequence, sampleIndex) {
       await launched.page.getByRole("button", { name: "展开左侧边栏" }).click();
     }
     const switchStartedAt = performance.now();
-    await sidebar.locator(".sidebar-project-row")
+    const projectB = sidebar.locator(".sidebar-project-item")
       .filter({ hasText: path.basename(sourceB, path.extname(sourceB)) })
-      .first()
-      .click();
-    const liveB = await waitForLiveSourcePath(launched.page);
+      .first();
+    await projectB.locator(".sidebar-project-row").click();
+    await projectB.locator(".sidebar-project-current-row").click();
+    const liveB = await waitForLiveSourcePath(
+      launched.page,
+      importedB.target.projectId,
+    );
     await currentFrame(launched.page, liveB, token(6_000));
     const dirtySwitchDurationMs = Number(formatNumber(performance.now() - switchStartedAt));
     const [switchRendererGap, switchRendererMemory] = await Promise.all([switchGap.stop(), switchMemory.stop()]);
-    await assertSourceBytes(liveA, replacement(initialSourceA, switchToken), "Dirty switch");
+    await assertSourceBytes(liveA, replacement(managedSourceA, switchToken), "Dirty switch");
 
     const [closeGap, closeMemory] = await Promise.all([
       startRendererGapMonitor(launched.page),

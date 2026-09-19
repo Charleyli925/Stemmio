@@ -372,7 +372,11 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   synthetic HTML 上串行运行。它必须同时保留 external-write conflict、
   restart recovery 与 exact-byte oracle；restart recovery 不仅验证磁盘
   字节，也必须重新打开已注册 workspace 并验证项目/文档身份、Hash 和
-  persisted revision；并报告样本数、p50/p95/max、
+  persisted revision；exact-byte oracle 以导入后完成 Stable-ID 物化的
+  Working Copy 为冻结基线，不把导入前外部原稿误当为可编辑源；
+  dirty close 的 elapsed 截止于原关闭事件，安全 oracle 在计时外使用同一
+  隔离 userData 重开并验证恢复后 Working Copy 的完整字节；
+  并报告样本数、p50/p95/max、
   request/response bytes、renderer/Bridge RSS、renderer rAF gap 和明确的
   `skip-12` 或 `authorize-12-pr1` 决策；不同 SHA、并行负载或旧诊断样本
   不得混合。
