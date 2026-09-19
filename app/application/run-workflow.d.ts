@@ -50,7 +50,7 @@ export type RunWorkflowCodecs = Readonly<{
 export type RunWorkflowSnapshot = Readonly<{
   polling: boolean;
   pendingReconciliations: ReadonlyArray<string>;
-  qoderAvailability: AgentProviderAvailabilitySnapshot;
+  agentAvailability: AgentProviderAvailabilitySnapshot;
   agentCatalog: AgentCatalogSnapshot;
   agentPresentation: AgentProviderPresentation;
   accessRepair: Readonly<{
@@ -90,7 +90,7 @@ export type RunWorkflowConstruction = Readonly<{
     | "createRequest"
     | "workspace"
     | "status"
-    | "qoderAvailability"
+    | "agentAvailability"
     | "preflightAgent"
     | "startAgent"
     | "cancelActiveRun"
@@ -198,15 +198,6 @@ export class RunWorkflow {
     kind: AgentProviderGuidanceKind;
     selection?: AgentSelection | null;
   }): Promise<RunWorkflowOutcome<{ kind: AgentProviderGuidanceKind; copied: true }>>;
-  refreshQoderAvailability(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
-  checkQoderUsability(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
-  copyQoderGuidance(input: {
-    kind: AgentProviderGuidanceKind;
-  }): Promise<RunWorkflowOutcome<{ kind: AgentProviderGuidanceKind; copied: true }>>;
   startAgentLogin(selection?: AgentSelection | null): Promise<RunWorkflowOutcome<{
     availability: AgentProviderAvailabilitySnapshot;
     cancelled?: boolean;
@@ -221,9 +212,6 @@ export class RunWorkflow {
     availability: AgentProviderAvailabilitySnapshot;
   }>>;
   cancelAgentInstall(selection?: AgentSelection | null): Promise<RunWorkflowOutcome>;
-  installQoder(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
   planSubmission(): RunSubmitPlan;
   submit(input?: {
     projectName?: string;

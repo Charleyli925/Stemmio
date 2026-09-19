@@ -153,54 +153,24 @@ function instructionFromComment(comment, index) {
   };
 }
 
-function normalizedLegacyInstruction(instruction, index) {
-  if (!isRecord(instruction)) {
-    throw taskSpecError(`instructions[${index}] is invalid.`);
-  }
-  const text = boundedText(instruction.text, `instructions[${index}].text`, {
-    min: 1,
-    max: 20_000,
-  });
-  return {
-    instructionId: String(instruction.instructionId || ""),
-    priority: "required",
-    text,
-    targetRefs: Array.isArray(instruction.targetRefs)
-      ? instruction.targetRefs.map(String)
-      : [],
-    acceptanceCriteria: exactMatchingClauses(text, ACCEPTANCE_SIGNAL),
-    ...(Array.isArray(instruction.attachmentRefs) && instruction.attachmentRefs.length > 0
-      ? { attachmentRefs: instruction.attachmentRefs.map(String) }
-      : {}),
-  };
-}
-
 export function compileTaskSpec({
   comments = [],
-  instructions = [],
   targets = [],
   attachments = [],
-  legacySummary = "",
-  legacyPreserveOutsideTargets = false,
 } = {}) {
-  if (!Array.isArray(comments) || !Array.isArray(instructions) || !Array.isArray(targets)) {
+  if (!Array.isArray(comments) || !Array.isArray(targets) || !Array.isArray(attachments)) {
     throw taskSpecError("Task Spec inputs must be arrays.");
   }
-  const compiledInstructions = comments.length > 0
-    ? comments.map(instructionFromComment)
-    : instructions.map(normalizedLegacyInstruction);
+  const compiledInstructions = comments.map(instructionFromComment);
   if (compiledInstructions.length === 0) {
     throw taskSpecError("Task Spec requires at least one instruction.");
   }
   const instructionTexts = compiledInstructions.map((instruction) => instruction.text);
-  const objective = (instructionTexts.join("；") || String(legacySummary || "").trim())
-    .slice(0, 5_000);
+  const objective = instructionTexts.join("；").slice(0, 5_000);
   const nonGoals = [...new Set(
     instructionTexts.flatMap((text) => exactMatchingClauses(text, NON_GOAL_SIGNAL)),
   )];
-  const scopePolicy = legacyPreserveOutsideTargets === true && comments.length === 0
-    ? TASK_SCOPE_TARGETS_ONLY
-    : scopePolicyFor(comments, targets);
+  const scopePolicy = scopePolicyFor(comments, targets);
   return assertTaskSpec({
     taskSchemaVersion: TASK_SPEC_SCHEMA_VERSION,
     objective,

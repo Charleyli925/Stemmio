@@ -1014,17 +1014,12 @@ export class AgentCatalogState {
     this.#generationByProvider.set(frozen.providerId, generation);
     this.#setAvailability(frozen.providerId, checkingAgentProviderAvailability(previous));
     try {
-      const availabilityMethod = typeof this.#bridgeClient.agentAvailability === "function"
-        ? (input) => this.#bridgeClient.agentAvailability(input)
-        : typeof this.#bridgeClient.qoderAvailability === "function"
-          ? (input) => this.#bridgeClient.qoderAvailability(input)
-          : null;
-      if (!availabilityMethod) {
+      if (typeof this.#bridgeClient.agentAvailability !== "function") {
         throw Object.assign(new Error("Agent availability is unavailable."), {
           code: "AGENT_AVAILABILITY_UNAVAILABLE",
         });
       }
-      const result = await availabilityMethod({ selection: frozen });
+      const result = await this.#bridgeClient.agentAvailability({ selection: frozen });
       if (
         this.#disposed
         || this.#generationByProvider.get(frozen.providerId) !== generation
@@ -1062,21 +1057,15 @@ export class AgentCatalogState {
     this.#diagnoseGenerationByProvider.set(frozen.providerId, generation);
     const configurationGeneration = this.#generationByProvider.get(frozen.providerId) || 0;
     const operationId = `diagnose_${frozen.providerId}_${generation}`;
-    const checking = (async () => {
+    let checking;
+    checking = (async () => {
       let timeout;
       const previousDiagnostic = this.#providers.get(frozen.providerId)?.diagnostic || null;
       try {
         // Bridge AgentInstaller owns install state. Hydrate it before running a
         // side-effect-free diagnosis so a reopened Settings page can cancel an
         // installation already in flight.
-        const diagnoseMethod = typeof this.#bridgeClient.agentDiagnose === "function"
-          ? (input) => this.#bridgeClient.agentDiagnose(input)
-          : typeof this.#bridgeClient.agentAvailability === "function"
-            ? (input) => this.#bridgeClient.agentAvailability(input)
-            : typeof this.#bridgeClient.qoderAvailability === "function"
-              ? (input) => this.#bridgeClient.qoderAvailability(input)
-              : null;
-        if (!diagnoseMethod) {
+        if (typeof this.#bridgeClient.agentDiagnose !== "function") {
           throw Object.assign(new Error("Agent diagnosis is unavailable."), {
             code: "AGENT_DIAGNOSE_UNAVAILABLE",
           });
@@ -1084,7 +1073,7 @@ export class AgentCatalogState {
         const result = await Promise.race([
           (async () => {
             await this.#applyPublicCatalog();
-            return diagnoseMethod({ selection: frozen });
+            return this.#bridgeClient.agentDiagnose({ selection: frozen });
           })(),
           new Promise((_, reject) => {
             timeout = setTimeout(() => reject(Object.assign(new Error("本次检查已超时，请重新检查。"), {

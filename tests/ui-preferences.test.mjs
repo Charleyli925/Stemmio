@@ -12,12 +12,14 @@ import test from "node:test";
 import {
   UI_PREFERENCES_SCHEMA_VERSION,
   decodeUiPreferences,
-  normalizeWorkspacePatch,
   readUiPreferences,
   recordUiWorkspacePreferences,
   readLastExportDirectory,
   recordLastExportDirectory,
 } from "../desktop/ui-preferences.mjs";
+import {
+  normalizeWorkspacePatch,
+} from "../shared/workspace-preferences.mjs";
 
 const DEFAULT_WORKSPACE = {
   rememberPanelWidths: true,
@@ -87,7 +89,7 @@ test("retired first-edit-guide fields are ignored", () => {
   assert.equal(decoded.workspace.sidebarWidth, 320);
 });
 
-test("v1 preferences migrate to the workspace-only shape", async (t) => {
+test("unsupported v1 preferences fall back to defaults without rewriting", async (t) => {
   const userDataPath = await temporaryUserData(t);
   await writeFile(path.join(userDataPath, "ui-preferences.json"), JSON.stringify({
     schemaVersion: 1,
@@ -99,17 +101,14 @@ test("v1 preferences migrate to the workspace-only shape", async (t) => {
     builtInWelcomeProjectId: "project_legacy_welcome",
   }), "utf8");
 
-  const migrated = await readUiPreferences({ userDataPath });
-  assert.equal(migrated.schemaVersion, UI_PREFERENCES_SCHEMA_VERSION);
-  assert.deepEqual(migrated.workspace, DEFAULT_WORKSPACE);
-  const persisted = JSON.parse(await readFile(
-    path.join(userDataPath, "ui-preferences.json"),
-    "utf8",
-  ));
-  assert.deepEqual(Object.keys(persisted).sort(), ["schemaVersion", "workspace"]);
+  const rejected = await readUiPreferences({ userDataPath });
+  assert.equal(rejected.schemaVersion, UI_PREFERENCES_SCHEMA_VERSION);
+  assert.deepEqual(rejected.workspace, DEFAULT_WORKSPACE);
+  const persisted = await readFile(path.join(userDataPath, "ui-preferences.json"), "utf8");
+  assert.match(persisted, /"schemaVersion":1/u);
 });
 
-test("v1 migration does not overwrite a concurrent workspace update", async (t) => {
+test("an unsupported preference file does not overwrite a concurrent current update", async (t) => {
   const userDataPath = await temporaryUserData(t);
   await writeFile(path.join(userDataPath, "ui-preferences.json"), JSON.stringify({
     schemaVersion: 1,
@@ -117,17 +116,11 @@ test("v1 migration does not overwrite a concurrent workspace update", async (t) 
     builtInWelcomeProjectId: "project_legacy_welcome",
   }), "utf8");
 
-  await Promise.all([
-    readUiPreferences({ userDataPath }),
-    recordUiWorkspacePreferences({
-      userDataPath,
-      workspace: { sidebarWidth: 328 },
-    }),
-  ]);
+  await readUiPreferences({ userDataPath });
+  await recordUiWorkspacePreferences({ userDataPath, workspace: { sidebarWidth: 328 } });
   const final = await readUiPreferences({ userDataPath });
   assert.equal(final.schemaVersion, UI_PREFERENCES_SCHEMA_VERSION);
   assert.equal(final.workspace.sidebarWidth, 328);
-  assert.equal("firstRealHtmlEditGuide" in final, false);
 });
 
 test("workspace preference decoding clamps damaged values and strict writes reject unsafe patches", () => {

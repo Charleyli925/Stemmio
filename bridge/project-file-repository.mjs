@@ -61,7 +61,6 @@ import {
 } from "../shared/project-storage-contract.mjs";
 import {
   assertTaskSpec,
-  compileTaskSpec,
 } from "../shared/task-spec.mjs";
 
 import {
@@ -2566,20 +2565,15 @@ export class ProjectFileRepository {
       { projectRootPath: loaded.paths.projectRootPath },
     );
     assertWorkingCopyState(workingState, loaded, loaded.workingCopy);
-    const requestInput = isObject(request) ? structuredClone(request) : {};
+    const requestInput = isObject(request) ? structuredClone(request) : null;
     let taskSpec;
     try {
-      taskSpec = requestInput.taskSpec
-        ? assertTaskSpec(requestInput.taskSpec, { requireAttachmentResolution: false })
-        : compileTaskSpec({
-            comments: Array.isArray(requestInput.comments) ? requestInput.comments : [],
-            instructions: Array.isArray(requestInput.instructions)
-              ? requestInput.instructions
-              : [],
-            targets: Array.isArray(requestInput.targets) ? requestInput.targets : [],
-            legacySummary: requestInput.summary,
-            legacyPreserveOutsideTargets: requestInput.preserveOutsideTargets === true,
-          });
+      if (!requestInput || !Object.hasOwn(requestInput, "taskSpec")) {
+        throw Object.assign(new TypeError("Request requires a complete Task Spec."), {
+          code: "TASK_SPEC_REQUIRED",
+        });
+      }
+      taskSpec = assertTaskSpec(requestInput.taskSpec, { requireAttachmentResolution: false });
     } catch (cause) {
       throw new ProjectFileRepositoryError(
         "TASK_SPEC_INVALID",

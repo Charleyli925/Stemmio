@@ -45,6 +45,7 @@ import {
   waitForTitleStem,
   writeFileSync,
 } from "./electron-native-harness.mjs";
+import { compileTaskSpec } from "../../../shared/task-spec.mjs";
 
 function identityPreservingCandidateHtml(target, title) {
   const current = readFileSync(target.exactSourcePath, "utf8");
@@ -858,6 +859,13 @@ test("Electron Finder reveals the current draft and derived AI task while histor
     expect(openedRoot.body.path).toBe(continued.target.projectRootPath);
 
     const requestId = "req_e2e_visible_ai_task_0001";
+    const comments = [{
+      commentId: "comment_e2e_history_candidate",
+      text: "从历史 Version 2 生成待审阅的 Version 8",
+      target: { targetId: "target_e2e_history_candidate" },
+      attachments: [],
+    }];
+    const targets = [{ targetId: "target_e2e_history_candidate" }];
     const request = await repository.prepareRequest({
       target: continued.target,
       requestId,
@@ -866,14 +874,10 @@ test("Electron Finder reveals the current draft and derived AI task while histor
       request: {
         freezeCutoffRevision: 0,
         summary: "从历史 Version 2 生成待审阅的 Version 8",
-        comments: [{
-          commentId: "comment_e2e_history_candidate",
-          text: "从历史 Version 2 生成待审阅的 Version 8",
-          target: { targetId: "target_e2e_history_candidate" },
-          attachments: [],
-        }],
+        comments,
         changeEvents: [],
-        targets: [{ targetId: "target_e2e_history_candidate" }],
+        targets,
+        taskSpec: compileTaskSpec({ comments, targets }),
       },
       prompt: "# E2E AI task\n\n只生成候选 HTML。\n",
     });

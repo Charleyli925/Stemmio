@@ -299,11 +299,6 @@ export function createBridgeClient({
       { selection: selection ? JSON.stringify(selection) : null },
       "暂时无法诊断 Agent。",
     ),
-    qoderAvailability: ({ selection } = {}) => query(
-      "/agent/availability",
-      { selection: selection ? JSON.stringify(selection) : null },
-      "暂时无法检查 Qoder CLI。",
-    ),
     agentProviders: () => query(
       "/agent/providers",
       {},

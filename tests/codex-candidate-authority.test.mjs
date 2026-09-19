@@ -11,6 +11,7 @@ import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { inspectSourceElementIdentity } from "../bridge/project-file-repository/working-copy.mjs";
 import { normalizeAgentDelivery } from "../shared/agent-delivery.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 
 const acpFixture = fileURLToPath(new URL(
   "./fixtures/codex-acp-agent.mjs",
@@ -94,6 +95,13 @@ for (const nativeMode of [null, "complete", "missing-finalizer"]) test(`Codex ${
     resolvedModelId: "codex:gpt-synthetic",
     reasoning: { requested: null, applied: null, resolution: "provider-default" },
   };
+  const comments = [{
+    commentId: "comment_codex_candidate",
+    text: "Modify the page through Codex",
+    target: { targetId: "target_codex_candidate" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_codex_candidate" }];
   const request = await repository.prepareRequest({
     target: imported.target,
     requestId: "req_codex_candidate_authority",
@@ -102,14 +110,10 @@ for (const nativeMode of [null, "complete", "missing-finalizer"]) test(`Codex ${
     request: {
       freezeCutoffRevision: 0,
       summary: "Modify the page through Codex",
-      comments: [{
-        commentId: "comment_codex_candidate",
-        text: "Modify the page through Codex",
-        target: { targetId: "target_codex_candidate" },
-        attachments: [],
-      }],
+      comments,
       changeEvents: [],
-      targets: [{ targetId: "target_codex_candidate" }],
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
       agentDelivery: {
         mode: "managed-agent",
         selection,

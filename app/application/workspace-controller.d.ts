@@ -677,11 +677,6 @@ export class WorkspaceController {
     selection: import("../domain/agent-provider-state.js").AgentSelection,
     options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
-  refreshQoderAvailability(): Promise<RunWorkflowOutcome>;
-  checkQoderUsability(): Promise<RunWorkflowOutcome>;
-  copyQoderGuidance(input: {
-    kind: import("../domain/agent-provider-state.js").AgentProviderGuidanceKind;
-  }): Promise<RunWorkflowOutcome>;
   startAgentLogin(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
@@ -691,7 +686,6 @@ export class WorkspaceController {
   startAgentLogout(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
-  installQoder(): Promise<RunWorkflowOutcome>;
   installAgent(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;

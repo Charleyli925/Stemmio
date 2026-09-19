@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectFileRepository } from '../bridge/project-file-repository.mjs';
 import { sha256 } from '../bridge/lifecycle-core.mjs';
+import { compileTaskSpec } from '../shared/task-spec.mjs';
 import { fixture, html, importSource, json, promoteNextVersion } from './project-file-repository-harness.mjs';
 const manifestPath = (t) => path.join(t.projectRootPath, '.stemmio/manifest.json');
 const statePath = (t) => path.join(t.projectRootPath, '.stemmio/working-copies', t.workingCopyId + '.json');
@@ -281,10 +282,11 @@ for(const [field,mutate] of [
 test('completed adoption replay preserves a newer real Request and Candidate through restart', async (t) => {
   const value = await fixture(t);
   const { target } = await importSource(value);
+  const comments = [{ commentId: 'comment_replay', text: 'Revise heading', target: { targetId: 'target_replay' }, attachments: [] }];
+  const targets = [{ targetId: 'target_replay' }];
   const prepare = async (active, requestId) => value.repository.prepareRequest({
     target: active, requestId, attemptId: 'attempt_001', expectedSourceSha256: active.sourceSha256,
-    request: { comments: [{ commentId: 'comment_replay', text: 'Revise heading', target: { targetId: 'target_replay' }, attachments: [] }],
-      targets: [{ targetId: 'target_replay' }], agentDelivery: { mode: 'clipboard' } }, prompt: 'Frozen request',
+    request: { comments, targets, taskSpec: compileTaskSpec({ comments, targets }), agentDelivery: { mode: 'clipboard' } }, prompt: 'Frozen request',
   });
   await prepare(target, 'req_adoption_replay_a');
   const first = await value.repository.completeRequest({ target, requestId: 'req_adoption_replay_a',

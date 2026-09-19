@@ -6,6 +6,7 @@ import { submissionRequestMatches } from "../bridge/project-file-repository/subm
 import assert from "node:assert/strict";
 import test from "node:test";
 import { defaultManagedAgentDelivery } from "../shared/agent-delivery.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import Ajv2020 from "ajv/dist/2020.js";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
@@ -17,7 +18,9 @@ const operationId = "submission_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 async function setup(t) {
   const value = await fixture(t);
   const { target } = await importSource(value);
-  const input = { expectedSourceSha256: target.sourceSha256, comments: [{ commentId: "comment_test", text: "Adjust heading", target: { targetId: "target_test" }, attachments: [] }], targets: [{ targetId: "target_test" }],
+  const comments = [{ commentId: "comment_test", text: "Adjust heading", target: { targetId: "target_test" }, attachments: [] }];
+  const targets = [{ targetId: "target_test" }];
+  const input = { expectedSourceSha256: target.sourceSha256, comments, targets, taskSpec: compileTaskSpec({ comments, targets }),
     agentDelivery: { mode: "clipboard" } };
   return { ...value, target, input };
 }

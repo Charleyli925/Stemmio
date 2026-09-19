@@ -1978,8 +1978,7 @@
         "^bridge/agent/providers/qoder-provider\\.mjs$",
         "^bridge/qoder-acp-client\\.mjs$",
         "^scripts/qoder-acp-spike(?:-client)?\\.mjs$",
-        "^app/components/QoderAvailabilityCard\\.tsx$",
-        "^app/domain/qoder-availability\\.(?:js|d\\.ts)$"
+        "^app/domain/agent-provider-state\\.(?:js|d\\.ts)$"
       ],
       "suites": [
         "typecheck",

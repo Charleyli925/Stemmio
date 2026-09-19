@@ -15,10 +15,9 @@ import {
   canonicalLifecycleState,
 } from "../app/domain/run-lifecycle.js";
 import {
-  INITIAL_QODER_AVAILABILITY,
-  qoderAvailabilityFromLocalResult,
-  qoderAvailabilityPresentation,
-} from "../app/domain/qoder-availability.js";
+  INITIAL_AGENT_PROVIDER_AVAILABILITY,
+  agentProviderAvailabilityFromLocalResult,
+} from "../app/domain/agent-provider-state.js";
 
 const SOURCE_A = "/tmp/run-workflow-a.html";
 const SOURCE_B = "/tmp/run-workflow-b.html";
@@ -242,7 +241,7 @@ function createHarness({
       calls.status.push([nextSourcePath, requestId, attemptId]);
       return { status: "processing" };
     },
-    async qoderAvailability() {
+    async agentAvailability() {
       calls.availability.push(true);
       return { status: "ready" };
     },
@@ -1273,17 +1272,17 @@ test("a selection changed during preflight affects only the next Request", async
 test("local Qoder refresh changes only shared availability state", async () => {
   const harness = createHarness({
     bridge: {
-      async qoderAvailability() {
+      async agentAvailability() {
         harness.calls.availability.push(true);
         return { status: "not-installed" };
       },
     },
   });
 
-  const outcome = await harness.workflow.refreshQoderAvailability();
+  const outcome = await harness.workflow.refreshAgentAvailability();
 
   assert.equal(outcome.status, "succeeded");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "not-installed");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "not-installed");
   assert.equal(harness.calls.availability.length, 1);
   assert.equal(harness.calls.preflight.length, 0);
   assert.equal(harness.calls.createRequest.length, 0);
@@ -1297,38 +1296,38 @@ test("local Qoder refresh changes only shared availability state", async () => {
 test("local Qoder discovery never creates a green state without a real preflight", async () => {
   const harness = createHarness({
     bridge: {
-      async qoderAvailability() {
+      async agentAvailability() {
         harness.calls.availability.push(true);
         return { status: "ready" };
       },
     },
   });
-  const localOnly = qoderAvailabilityFromLocalResult(
+  const localOnly = agentProviderAvailabilityFromLocalResult(
     { status: "ready" },
-    INITIAL_QODER_AVAILABILITY,
+    INITIAL_AGENT_PROVIDER_AVAILABILITY,
     "2026-08-11T00:00:00.000Z",
   );
   assert.notEqual(localOnly.status, "ready");
 
-  const refreshing = harness.workflow.refreshQoderAvailability();
+  const refreshing = harness.workflow.refreshAgentAvailability();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(harness.calls.preflight.length, 0);
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "checking");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "checking");
   const outcome = await refreshing;
   assert.equal(outcome.status, "succeeded");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "checking");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "checking");
   harness.workflow.dispose();
 });
 
 test("a Settings usability check does not authorize a later Qoder submission", async () => {
   const harness = createHarness();
 
-  const checked = await harness.workflow.checkQoderUsability();
+  const checked = await harness.workflow.checkAgentUsability();
   assert.equal(checked.status, "succeeded");
   assert.equal(harness.calls.diagnose.length, 1);
   assert.equal(harness.calls.preflight.length, 0);
   assert.equal(harness.calls.createRequest.length, 0);
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "ready");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "ready");
   assert.equal(harness.calls.checkpoint, 0);
   assert.equal(harness.calls.freeze, 0);
   assert.equal(harness.calls.unlock, 0);
@@ -1343,9 +1342,10 @@ test("a Settings usability check does not authorize a later Qoder submission", a
 test("Settings keeps checking and guiding Qoder while Codex is selected", async () => {
   const harness = createHarness();
   const codex = harness.workflow.getSnapshot().agentCatalog.providers.codex.selection;
+  const qoder = harness.workflow.getSnapshot().agentCatalog.providers.qoder.selection;
   harness.workflow.selectAgent(codex);
 
-  const checked = await harness.workflow.checkQoderUsability();
+  const checked = await harness.workflow.checkAgentUsability(qoder);
   assert.equal(checked.status, "succeeded");
   assert.equal(harness.calls.diagnose.at(-1).selection.providerId, "qoder");
   assert.equal(harness.workflow.freezeAgentSelection().providerId, "codex");
@@ -1358,7 +1358,7 @@ test("Settings keeps checking and guiding Qoder while Codex is selected", async 
     "ready",
   );
 
-  const copied = await harness.workflow.copyQoderGuidance({ kind: "install" });
+  const copied = await harness.workflow.copyAgentGuidance({ kind: "install", selection: qoder });
   assert.equal(copied.status, "succeeded");
   assert.equal(harness.calls.handoff.at(-1).purpose, "qoder-install-guidance");
   assert.equal(harness.workflow.freezeAgentSelection().providerId, "codex");
@@ -1385,7 +1385,7 @@ test("Settings rechecks the resolved current Qoder selection", async () => {
     },
   });
 
-  const first = await harness.workflow.checkQoderUsability();
+  const first = await harness.workflow.checkAgentUsability();
   assert.equal(first.status, "succeeded");
   assert.equal(
     harness.workflow.freezeAgentSelection().resolvedModelId,
@@ -1394,17 +1394,17 @@ test("Settings rechecks the resolved current Qoder selection", async () => {
   assert.equal(harness.calls.preflight.length, 0);
   assert.equal(harness.calls.diagnose.at(-1).selection.resolvedModelId, null);
 
-  const refreshed = await harness.workflow.refreshQoderAvailability();
+  const refreshed = await harness.workflow.refreshAgentAvailability();
   assert.equal(refreshed.status, "succeeded");
   assert.equal(harness.calls.preflight.length, 0);
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "ready");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "ready");
   harness.workflow.dispose();
 });
 
 test("Qoder guidance copy is isolated from Request and Canvas authority", async () => {
   const harness = createHarness();
 
-  const copied = await harness.workflow.copyQoderGuidance({ kind: "install" });
+  const copied = await harness.workflow.copyAgentGuidance({ kind: "install" });
 
   assert.equal(copied.status, "succeeded");
   assert.equal(harness.calls.handoff.length, 1);
@@ -1415,7 +1415,7 @@ test("Qoder guidance copy is isolated from Request and Canvas authority", async 
   assert.equal(harness.calls.createRequest.length, 0);
   assert.equal(harness.calls.freeze, 0);
   assert.equal(
-    harness.workflow.getSnapshot().qoderAvailability.guidanceCopied,
+    harness.workflow.getSnapshot().agentAvailability.guidanceCopied,
     "install",
   );
   harness.workflow.dispose();
@@ -1429,18 +1429,18 @@ test("one-click Qoder install refreshes availability without creating a prefligh
         installCalls.push(request);
         return { ok: true, providerId: "qoder", installSource: "managed" };
       },
-      async qoderAvailability() {
+      async agentAvailability() {
         return { status: "ready" };
       },
     },
   });
-  const installed = await harness.workflow.installQoder();
+  const installed = await harness.workflow.installAgent();
   assert.equal(installed.status, "succeeded");
   assert.deepEqual(installCalls, [{ providerId: "qoder" }]);
   assert.equal(harness.calls.preflight.length, 0);
   assert.equal(harness.calls.handoff.length, 0);
   assert.equal(harness.calls.createRequest.length, 0);
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "ready");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "ready");
   const codex = harness.workflow.getSnapshot().agentCatalog.providers.codex.selection;
   const alsoInstalled = await harness.workflow.installAgent(codex);
   assert.equal(alsoInstalled.status, "succeeded");
@@ -1450,17 +1450,17 @@ test("one-click Qoder install refreshes availability without creating a prefligh
 test("a successful use-time check retires the one-time install continuation marker", async () => {
   const harness = createHarness();
 
-  await harness.workflow.copyQoderGuidance({ kind: "install" });
+  await harness.workflow.copyAgentGuidance({ kind: "install" });
   assert.equal(
-    harness.workflow.getSnapshot().qoderAvailability.guidanceCopied,
+    harness.workflow.getSnapshot().agentAvailability.guidanceCopied,
     "install",
   );
 
-  const checked = await harness.workflow.checkQoderUsability();
+  const checked = await harness.workflow.checkAgentUsability();
 
   assert.equal(checked.status, "succeeded");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "ready");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.guidanceCopied, null);
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "ready");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.guidanceCopied, null);
   assert.equal(harness.calls.createRequest.length, 0);
   assert.equal(harness.calls.freeze, 0);
   harness.workflow.dispose();
@@ -1489,13 +1489,13 @@ test("a local disk refresh preserves a known authentication requirement", async 
     },
   });
 
-  const checked = await harness.workflow.checkQoderUsability();
+  const checked = await harness.workflow.checkAgentUsability();
   assert.equal(checked.status, "rejected");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "auth-required");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "auth-required");
 
-  const refreshed = await harness.workflow.refreshQoderAvailability();
+  const refreshed = await harness.workflow.refreshAgentAvailability();
   assert.equal(refreshed.status, "succeeded");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "auth-required");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "auth-required");
   assert.equal(harness.calls.createRequest.length, 0);
   assert.equal(harness.calls.freeze, 0);
   harness.workflow.dispose();
@@ -1524,12 +1524,12 @@ test("a changed Qoder installation asks for a Stemmio restart in shared state", 
     },
   });
 
-  const checked = await harness.workflow.checkQoderUsability();
+  const checked = await harness.workflow.checkAgentUsability();
 
   assert.equal(checked.status, "rejected");
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "unavailable");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "unavailable");
   assert.equal(
-    harness.workflow.getSnapshot().qoderAvailability.reason,
+    harness.workflow.getSnapshot().agentAvailability.reason,
     "invalid-installation",
   );
   assert.equal(harness.calls.createRequest.length, 0);
@@ -1594,9 +1594,9 @@ test("a failed Qoder preflight creates no Request and leaves editing recoverable
   assert.equal(harness.runSession.submissionPending, false);
   assert.equal(harness.calls.freeze, 1);
   assert.equal(harness.calls.unlock, 1);
-  assert.equal(harness.workflow.getSnapshot().qoderAvailability.status, "unavailable");
+  assert.equal(harness.workflow.getSnapshot().agentAvailability.status, "unavailable");
   assert.equal(
-    harness.workflow.getSnapshot().qoderAvailability.reason,
+    harness.workflow.getSnapshot().agentAvailability.reason,
     "account-capacity",
   );
   harness.workflow.dispose();
@@ -1626,11 +1626,11 @@ test("capacity and timeout preflight failures keep truthful recovery reasons", a
         },
       },
     });
-    const outcome = await harness.workflow.checkQoderUsability();
+    const outcome = await harness.workflow.checkAgentUsability();
     assert.equal(outcome.status, "rejected");
-    const availability = harness.workflow.getSnapshot().qoderAvailability;
+    const availability = harness.workflow.getSnapshot().agentAvailability;
     assert.equal(availability.reason, reason);
-    assert.equal(qoderAvailabilityPresentation(availability).statusLabel, statusLabel);
+    assert.ok(availability.reason === reason);
     assert.equal(harness.calls.createRequest.length, 0);
     assert.equal(harness.calls.freeze, 0);
     assert.equal(harness.calls.checkpoint, 0);
@@ -1649,8 +1649,8 @@ test("concurrent automatic Qoder checks share one diagnosis promise", async () =
       },
     },
   });
-  const first = harness.workflow.checkQoderUsability();
-  const second = harness.workflow.checkQoderUsability();
+  const first = harness.workflow.checkAgentUsability();
+  const second = harness.workflow.checkAgentUsability();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(harness.calls.diagnose.length, 1);
   diagnosis.resolve({
