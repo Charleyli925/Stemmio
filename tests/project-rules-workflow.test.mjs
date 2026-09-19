@@ -317,3 +317,35 @@ test("a stale write cannot stall saving PROJECT.md in the next project", async (
   );
   assert.equal(harness.workflow.getSnapshot().savedContent, "# New project");
 });
+
+test("detached project rules keep their own identity and ignore another project's run lock", async () => {
+  const harness = createHarness();
+  harness.runSession.trackRun({
+    projectId: harness.context.projectId,
+    documentId: harness.context.documentId,
+    sourcePath: SOURCE_PATH,
+    requestId: "request_other_project",
+    attemptId: "attempt_001",
+    status: "processing",
+  }, { activate: "always" });
+  const detached = Object.freeze({
+    surfaceContextId: "surface:rules:project_b:document_b",
+    epoch: 7,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: "/tmp/project-b.html",
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_b",
+    versionId: "ver_0001",
+    exactSourcePath: "/tmp/project-b.html",
+    sourceSha256: `sha256:${"b".repeat(64)}`,
+    sessionEpoch: 7,
+  });
+
+  assert.equal((await harness.workflow.open({ context: detached })).status, "succeeded");
+  assert.equal(harness.workflow.updateContent({ content: "# Project B" }).status, "succeeded");
+  assert.equal((await harness.workflow.save()).status, "succeeded");
+  assert.equal(harness.calls.writes.at(-1).projectId, "project_b");
+  assert.equal(harness.projectSession.projectId, harness.context.projectId);
+});

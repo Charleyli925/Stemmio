@@ -23,6 +23,7 @@ type HtmlDisplaySurfaceProps = {
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
   onFirstScroll?: (scrollTop: number) => void;
+  presentationKey?: string;
 };
 
 /**
@@ -38,12 +39,15 @@ export default function HtmlDisplaySurface({
   initialScrollTop = 0,
   onScrollTopChange,
   onFirstScroll,
+  presentationKey,
 }: HtmlDisplaySurfaceProps) {
   const fallbackBase = baseHrefFromSourcePath(sourcePath);
-  const { resourceBase } = usePreviewResourceBase(html, sourcePath, false);
+  const { resourceBase, ready } = usePreviewResourceBase(html, sourcePath, false);
   const frameHtml = useMemo(
-    () => sanitizeScrollableDisplayDocument(html, resourceBase || fallbackBase),
-    [fallbackBase, html, resourceBase],
+    () => ready
+      ? sanitizeScrollableDisplayDocument(html, resourceBase || fallbackBase)
+      : null,
+    [fallbackBase, html, ready, resourceBase],
   );
   const [loadedFrameHtml, setLoadedFrameHtml] = useState<string | null>(null);
   const [scrollableFrameHtml, setScrollableFrameHtml] = useState<string | null>(null);
@@ -66,11 +70,12 @@ export default function HtmlDisplaySurface({
       className={styles.surface}
       style={{ "--html-display-height": height } as CSSProperties}
       data-testid="html-display-surface"
-      data-display-ready={loadedFrameHtml === frameHtml ? "true" : "false"}
-      data-scrollable-ready={scrollableFrameHtml === frameHtml ? "true" : "false"}
+      data-display-ready={frameHtml && loadedFrameHtml === frameHtml ? "true" : "false"}
+      data-scrollable-ready={frameHtml && scrollableFrameHtml === frameHtml ? "true" : "false"}
     >
       {status ? <div className={styles.status} role="status">{status}</div> : null}
-      <iframe
+      {frameHtml ? <iframe
+        key={presentationKey || frameHtml}
         ref={frameRef}
         className={styles.frame}
         title="HTML 页面（正在准备编辑）"
@@ -147,7 +152,7 @@ export default function HtmlDisplaySurface({
           setLoadedFrameHtml(frameHtml);
           performance.mark("stemmio:document:static-frame-loaded");
         }}
-      />
+      /> : null}
     </div>
   );
 }

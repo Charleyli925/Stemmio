@@ -1,3 +1,6 @@
+import type { ProjectContext } from "./project-session.js";
+import type { ProjectSurfaceContext } from "./project-surface-context.js";
+
 export type VersionViewMode = "current" | "history";
 
 export type HistoryPreview = Readonly<{
@@ -7,6 +10,7 @@ export type HistoryPreview = Readonly<{
   versionId: string;
   content: string;
   sha256: string;
+  context?: ProjectContext | ProjectSurfaceContext;
 }>;
 
 export type VersionViewSnapshot = {

@@ -1,4 +1,5 @@
 import { isBridgeRequestError } from "./bridge-client.js";
+import { isProjectSurfaceContext } from "./project-surface-context.js";
 
 const AUTOSAVE_DELAY_MS = 700;
 
@@ -189,13 +190,22 @@ export class ProjectRulesWorkflow {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (!context || !this.#projectSession.matches(context)) return stale(context);
+    if (!this.#acceptsContext(context)) return stale(context);
     if (
       this.#snapshot.open
       && !this.#snapshot.error
       && this.#projectRulesSession.matchesContext(context)
     ) {
       return succeeded({ opened: true, reused: true });
+    }
+    if (this.#snapshot.open && !this.#projectRulesSession.matchesContext(context)) {
+      const drained = await this.drain();
+      if (!drained) {
+        return blocked(
+          "PROJECT_RULES_SWITCH_BLOCKED",
+          "当前长期规则尚未完成安全保存。",
+        );
+      }
     }
     this.#clearAutosaveTimer();
     const token = this.#projectRulesSession.beginOpen(context);
@@ -227,7 +237,7 @@ export class ProjectRulesWorkflow {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext()) {
       return blocked("PROJECT_RULES_RUN_LOCKED", "AI 处理期间不能修改项目规则。");
     }
     if (!this.#projectRulesSession.updateContent(String(content ?? ""))) {
@@ -237,7 +247,7 @@ export class ProjectRulesWorkflow {
   }
 
   beginComposition({ target, baselineValue } = {}) {
-    if (this.#disposed || this.#runSession.activeLocked) return null;
+    if (this.#disposed || this.#runLockedForContext()) return null;
     return this.#projectRulesSession.beginComposition(target, String(baselineValue ?? ""));
   }
 
@@ -255,7 +265,7 @@ export class ProjectRulesWorkflow {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext()) {
       return blocked("PROJECT_RULES_RUN_LOCKED", "AI 处理期间不能还原项目规则。");
     }
     const restore = this.#projectRulesSession.restore();
@@ -283,8 +293,9 @@ export class ProjectRulesWorkflow {
     }
     if (this.#savePromise) return this.#savePromise;
     if (!this.#snapshot.open) return Promise.resolve(succeeded({ saved: false }));
-    if (!this.#projectRulesSession.matchesContext(this.#projectSession.context)) {
-      return Promise.resolve(stale(this.#projectSession.context));
+    const context = this.#projectRulesSession.context;
+    if (!context || !this.#acceptsContext(context)) {
+      return Promise.resolve(stale(context));
     }
     if (this.#snapshot.loading || this.#snapshot.error) {
       return Promise.resolve(blocked(
@@ -292,7 +303,7 @@ export class ProjectRulesWorkflow {
         this.#snapshot.error || "项目规则尚未完成读取，暂时不能保存。",
       ));
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext()) {
       return Promise.resolve(blocked(
         "PROJECT_RULES_RUN_LOCKED",
         "AI 处理期间不能保存项目规则。",
@@ -356,7 +367,7 @@ export class ProjectRulesWorkflow {
 
   inspect() {
     return this.#projectRulesSession.inspect({
-      locked: this.#runSession.activeLocked,
+      locked: this.#runLockedForContext(),
     });
   }
 
@@ -429,8 +440,35 @@ export class ProjectRulesWorkflow {
     return Boolean(
       !this.#disposed
       && this.#projectRulesSession.isCurrent(token)
-      && this.#projectSession.matches(token.context),
+      && this.#acceptsContext(token.context),
     );
+  }
+
+  retry() {
+    const context = this.#projectRulesSession.context;
+    return context
+      ? this.open({ context })
+      : Promise.resolve(blocked(
+        "PROJECT_RULES_CONTEXT_REQUIRED",
+        "当前长期规则没有可重试的项目身份。",
+      ));
+  }
+
+  #acceptsContext(context) {
+    return Boolean(
+      context
+      && (isProjectSurfaceContext(context) || this.#projectSession.matches(context)),
+    );
+  }
+
+  #runLockedForContext(context = this.#projectRulesSession.context) {
+    if (!this.#runSession.activeLocked) return false;
+    const activeRun = this.#runSession.activeRun;
+    if (!context || !activeRun) return true;
+    return activeRun.projectId && activeRun.documentId
+      ? activeRun.projectId === context.projectId
+        && activeRun.documentId === context.documentId
+      : activeRun.sourcePath === context.sourcePath;
   }
 
   #nextOperationId() {
@@ -470,7 +508,7 @@ export class ProjectRulesWorkflow {
       && !snapshot.error
       && !snapshot.saving
       && !snapshot.compositionActive
-      && !this.#runSession.activeLocked
+      && !this.#runLockedForContext()
       && snapshot.content !== snapshot.savedContent,
     );
     if (!eligible) {

@@ -1,9 +1,11 @@
+import type { ProjectSurfaceContext } from "./project-surface-context.js";
+
 export type ProjectRulesContext = Readonly<{
   epoch: number;
   projectId: string;
   documentId: string;
   sourcePath: string;
-}>;
+}> | ProjectSurfaceContext;
 
 export type ProjectRulesSnapshot = Readonly<{
   open: boolean;
@@ -49,6 +51,7 @@ export class ProjectRulesSession {
   failSave(token: ProjectRulesOperation, error: string): boolean;
   abandonSave(token: ProjectRulesOperation): boolean;
   readonly compositionActive: boolean;
+  readonly context: ProjectRulesContext | null;
   inspect(options?: { locked?: boolean }):
     | { state: "resolved" }
     | { state: "pending" | "blocked"; reason: string };

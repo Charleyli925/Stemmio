@@ -1,4 +1,11 @@
+import {
+  copyProjectSurfaceContext,
+  isProjectSurfaceContext,
+} from "./project-surface-context.js";
+
 function copyContext(context) {
+  const surface = copyProjectSurfaceContext(context);
+  if (surface) return surface;
   if (
     !context
     || !Number.isSafeInteger(Number(context.epoch))
@@ -17,6 +24,13 @@ function copyContext(context) {
 }
 
 function sameContext(left, right) {
+  if (isProjectSurfaceContext(left) || isProjectSurfaceContext(right)) {
+    return Boolean(
+      isProjectSurfaceContext(left)
+      && isProjectSurfaceContext(right)
+      && left.surfaceContextId === right.surfaceContextId,
+    );
+  }
   return Boolean(
     left
     && right
@@ -288,6 +302,10 @@ export class ProjectRulesSession {
 
   get compositionActive() {
     return Boolean(this.#composition);
+  }
+
+  get context() {
+    return this.#context;
   }
 
   inspect({ locked = false } = {}) {

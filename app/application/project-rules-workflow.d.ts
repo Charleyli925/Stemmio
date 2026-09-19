@@ -57,6 +57,10 @@ export class ProjectRulesWorkflow {
     opened: boolean;
     reused?: boolean;
   }>>;
+  retry(): Promise<ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>>;
   updateContent(input: { content: string }): ProjectRulesWorkflowOutcome<{
     updated: boolean;
   }>;

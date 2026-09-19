@@ -18,6 +18,7 @@ import {
 } from "./project/switch-plan.js";
 import { copyProjectContext } from "./verified-project-context.js";
 import { reportInternalFailure } from "./internal-failure.js";
+import { createProjectSurfaceContext } from "./project-surface-context.js";
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const SWITCH_DEADLINE_MS = 15_000;
@@ -217,6 +218,16 @@ function copyProject(value) {
     /^project_[A-Za-z0-9_-]+$/.test(projectId)
     && /^doc_[A-Za-z0-9_-]+$/.test(documentId)
   );
+  const historyCreation = value.historyCreation
+    && typeof value.historyCreation === "object"
+    && !Array.isArray(value.historyCreation)
+    && /^[A-Za-z0-9_-]{8,160}$/u.test(String(value.historyCreation.operationId || ""))
+    && /^ver_\d{4,}$/u.test(String(value.historyCreation.versionId || ""))
+    ? Object.freeze({
+      operationId: String(value.historyCreation.operationId),
+      versionId: String(value.historyCreation.versionId),
+    })
+    : null;
   return Object.freeze({
     ...(value.path ? { path: String(value.path) } : {}),
     name: value.name,
@@ -230,6 +241,7 @@ function copyProject(value) {
     ...(value.lastModifiedAt
       ? { lastModifiedAt: String(value.lastModifiedAt) }
       : {}),
+    ...(historyCreation ? { historyCreation } : {}),
   });
 }
 
@@ -704,6 +716,58 @@ export class ProjectWorkflow {
       sourceTransitionToken,
       authorityReceiptContinuation,
     });
+  }
+
+  async resolveRegisteredSurfaceTarget({ projectId, documentId, transactionId } = {}) {
+    if (this.#disposed) {
+      return blocked("PROJECT_WORKFLOW_DISPOSED", "项目读取工作流已经停止。");
+    }
+    const expectedProjectId = String(projectId || "");
+    const expectedDocumentId = String(documentId || "");
+    if (!expectedProjectId || !expectedDocumentId) {
+      return blocked("PROJECT_SURFACE_IDENTITY_REQUIRED", "目标页面缺少完整的项目身份。");
+    }
+    let project;
+    const live = completeAuthorityContext(this.#projectSession.context);
+    if (
+      live
+      && live.projectId === expectedProjectId
+      && live.documentId === expectedDocumentId
+    ) {
+      project = {
+        projectId: live.projectId,
+        documentId: live.documentId,
+        sourcePath: live.sourcePath,
+        sha256: live.sourceSha256,
+        openTarget: live,
+      };
+    } else {
+      if (typeof this.#projectOpenPort.readRegisteredProjection !== "function") {
+        return blocked("PROJECT_SURFACE_READ_UNAVAILABLE", "当前 Stemmio 版本缺少项目页面读取通道。");
+      }
+      try {
+        project = copyProject(await this.#projectOpenPort.readRegisteredProjection(expectedProjectId));
+      } catch (cause) {
+        return rejected(
+          projectErrorCode(cause, "PROJECT_SURFACE_READ_FAILED"),
+          projectErrorMessage(this.#codecs, cause, "目标项目页面暂时无法读取。"),
+        );
+      }
+    }
+    if (
+      !project
+      || project.projectId !== expectedProjectId
+      || project.documentId !== expectedDocumentId
+    ) {
+      return rejected("PROJECT_SURFACE_IDENTITY_MISMATCH", "目标项目页面身份不一致，已拒绝打开。");
+    }
+    const context = createProjectSurfaceContext({ transactionId, project });
+    return context
+      ? succeeded({
+        context,
+        ...(project.historyCreation ? { historyCreation: project.historyCreation } : {}),
+      })
+      : rejected("PROJECT_SURFACE_TARGET_INVALID", "目标项目缺少可验证的精确文件身份。");
   }
 
   async prepareSwitch({ fromDeferred = false } = {}) {
@@ -2741,6 +2805,9 @@ export class ProjectWorkflow {
       if (!applicationApplied) return "stale";
       applied = true;
       const epoch = this.#projectSession.epoch;
+      const authorityReceiptContinuation = Object.freeze({
+        receipt: this.#documentSession.sourceReceipt,
+      });
       // Accepted-result FIFO owns synchronous publication order, not remote
       // hydration latency. A successor may retire this query only after the
       // workflow proves that the just-published project has no mutable work.
@@ -2751,6 +2818,7 @@ export class ProjectWorkflow {
             sourcePath: project.sourcePath,
             epoch,
             sourceTransitionToken: epoch,
+            authorityReceiptContinuation,
           }),
         ]);
         if (hydrated.status === "succeeded") {
@@ -3728,6 +3796,7 @@ export class ProjectWorkflow {
       project,
       epoch: locator.epoch,
       activeLocked: this.#runSession.activeLocked,
+      sourceReceipt: this.#documentSession.sourceReceipt,
     }) || null;
     this.#emit({
       type: "project-applied",

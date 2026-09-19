@@ -12,6 +12,17 @@
   box-shadow: none;
 }
 
+.preview > [role="status"],
+.viewport {
+  grid-area: 1 / 1;
+}
+
+.preview > [role="status"] {
+  z-index: 2;
+  align-self: start;
+  justify-self: center;
+}
+
 /*
  * The frame and the read-only comment marker layer share one positioning
  * context. Marker coordinates arrive viewport-relative from inside the page, so

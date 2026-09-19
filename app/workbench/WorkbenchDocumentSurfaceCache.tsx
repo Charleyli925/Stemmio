@@ -181,6 +181,7 @@ export default function WorkbenchDocumentSurfaceCache({
           key={`${entry.tabId}:${entry.sourceSha256}`}
         >
           <HtmlDisplaySurface
+            presentationKey={`${entry.tabId}:${entry.sourceSha256}`}
             html={entry.html}
             sourcePath={entry.sourcePath}
             height={height}

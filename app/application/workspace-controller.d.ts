@@ -591,8 +591,12 @@ export class WorkspaceController {
   refreshRecentProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   refreshRegisteredProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   openProjectRules(input: {
-    context: ProjectContext;
+    context: import("./project-rules-session.js").ProjectRulesContext;
   }): Promise<ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>>;
+  retryProjectRules(): Promise<ProjectRulesWorkflowOutcome<{
     opened: boolean;
     reused?: boolean;
   }>>;
