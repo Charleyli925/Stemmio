@@ -20,12 +20,25 @@ export type DocumentCanvasAuthorityStatus =
   | "verified"
   | "failed";
 
-export type DocumentCanvasAuthority = {
-  status: DocumentCanvasAuthorityStatus;
-  generation: number;
-  renderedSha256: string | null;
-  error: string | null;
-};
+export type DocumentCanvasAuthority =
+  | Readonly<{
+      status: "idle" | "pending";
+      generation: number;
+      renderedSha256: null;
+      error: null;
+    }>
+  | Readonly<{
+      status: "verified";
+      generation: number;
+      renderedSha256: string;
+      error: null;
+    }>
+  | Readonly<{
+      status: "failed";
+      generation: number;
+      renderedSha256: null;
+      error: string;
+    }>;
 
 export type DocumentCanvasRenderObservation = Readonly<{
   receipt: DocumentSourceReceipt;
@@ -34,7 +47,7 @@ export type DocumentCanvasRenderObservation = Readonly<{
   frameGeneration: number;
 }>;
 
-export type DocumentSessionSnapshot = {
+export type DocumentSessionSnapshot = Readonly<{
   html: string;
   persistedSourceSha256: string | null;
   workingHtmlSha256: string | null;
@@ -47,7 +60,7 @@ export type DocumentSessionSnapshot = {
   persistError: string;
   hasPendingWrite: boolean;
   isFlushing: boolean;
-};
+}>;
 
 export type PersistedBoundaryResult =
   | {
@@ -74,18 +87,38 @@ export type DocumentWrite = Readonly<{
   html: string;
 }>;
 
+export type DocumentSessionOptions = Readonly<{
+  html?: string;
+  persistedSourceSha256?: string | null;
+  workingHtmlSha256?: string | null;
+  editRevision?: number;
+  lastPersistedRevision?: number;
+  persistState?: DocumentPersistState;
+  persistError?: string;
+  context?: ProjectContext | null;
+  operationId?: string;
+}>;
+
+export type DocumentEditAcceptance<TWrite extends DocumentWrite> =
+  | Readonly<{
+      accepted: true;
+      revision: number;
+      write: TWrite | null;
+    }>
+  | Readonly<{
+      accepted: false;
+      revision: number;
+      write: null;
+    }>;
+
+export type DocumentWriteConfirmation = Readonly<{
+  accepted: boolean;
+  completesCurrentDocument: boolean;
+  authorityChanged: boolean;
+}>;
+
 export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
-  constructor(options?: {
-    html?: string;
-    persistedSourceSha256?: string | null;
-    workingHtmlSha256?: string | null;
-    editRevision?: number;
-    lastPersistedRevision?: number;
-    persistState?: DocumentPersistState;
-    persistError?: string;
-    context?: ProjectContext | null;
-    operationId?: string;
-  });
+  constructor(options?: DocumentSessionOptions);
   setObserver(
     observer: ((snapshot: DocumentSessionSnapshot) => void) | null,
   ): void;
@@ -138,11 +171,7 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
     sourceSha256?: string;
     context?: ProjectContext | null;
     write?: Omit<TWrite, "html" | "revision"> | null;
-  }): Readonly<{
-    accepted: boolean;
-    revision: number;
-    write: TWrite | null;
-  }>;
+  }): DocumentEditAcceptance<TWrite>;
   restorePendingWrite(write: TWrite): TWrite;
   beginWrite(): TWrite | null;
   restoreWrite(write: TWrite, value?: {
@@ -167,11 +196,7 @@ export class DocumentSession<TWrite extends DocumentWrite = DocumentWrite> {
     routingChanged?: boolean;
     operationId?: string;
     nextWrite?: TWrite;
-  }): Readonly<{
-    accepted: boolean;
-    completesCurrentDocument: boolean;
-    authorityChanged: boolean;
-  }>;
+  }): DocumentWriteConfirmation;
   reconcileRecoveredRevision(value: number): DocumentSessionSnapshot;
   markPersistenceIdle(): boolean;
   recordPersistenceFailure(value: {

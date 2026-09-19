@@ -11,11 +11,17 @@ import {
 
 const productRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(productRoot, "app/application/source-receipt.js");
+const documentSessionSourcePath = path.join(
+  productRoot,
+  "app/application/document-session.js",
+);
 
 test("the official SourceReceipt config rejects the implementation mutation", () => {
   const result = verifySourceReceiptTypecheck();
   assert.equal(result.sourcePath, sourcePath);
+  assert.equal(result.documentSessionSourcePath, documentSessionSourcePath);
   assert.equal(result.diagnosticCode, 2322);
+  assert.deepEqual(result.documentSessionDiagnosticCodes, [2322, 2322, 2322]);
 });
 
 test("the proof fails if the official config stops checking JavaScript", () => {
@@ -44,6 +50,21 @@ test("the proof fails if the implementation leaves the official compiler inputs"
   );
 });
 
+test("the proof fails if DocumentSession leaves the official compiler inputs", () => {
+  const parsedConfig = loadSourceReceiptTypecheckConfig();
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      parsedConfig: {
+        ...parsedConfig,
+        fileNames: parsedConfig.fileNames.filter(
+          (fileName) => path.resolve(fileName) !== documentSessionSourcePath,
+        ),
+      },
+    }),
+    /implementation is missing from the official compiler inputs.*document-session\.js/u,
+  );
+});
+
 test("the proof fails when the mutation location is absent or ambiguous", async () => {
   const sourceText = await readFile(sourcePath, "utf8");
   const anchor = "sessionIncarnation: revision(input.sessionIncarnation),";
@@ -54,5 +75,22 @@ test("the proof fails when the mutation location is absent or ambiguous", async 
   assert.throws(
     () => verifySourceReceiptTypecheck({ sourceText: `${sourceText}\n${anchor}\n` }),
     /mutation anchor must match exactly once; matched 2/u,
+  );
+});
+
+test("the proof fails when a DocumentSession mutation location is absent or ambiguous", async () => {
+  const sourceText = await readFile(documentSessionSourcePath, "utf8");
+  const anchor = "renderedSha256: String(renderedSha256 || \"\"),";
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      documentSessionSourceText: sourceText.replace(anchor, ""),
+    }),
+    /verified-rendered-hash mutation anchor must match exactly once; matched 0/u,
+  );
+  assert.throws(
+    () => verifySourceReceiptTypecheck({
+      documentSessionSourceText: `${sourceText}\n${anchor}\n`,
+    }),
+    /verified-rendered-hash mutation anchor must match exactly once; matched 2/u,
   );
 });

@@ -25,3 +25,30 @@ session.confirmCanvas({
 
 // @ts-expect-error Published receipts are immutable authority evidence.
 receipt.sequence = 2;
+
+const canvasAuthority = session.canvasAuthority;
+if (canvasAuthority.status === "verified") {
+  const renderedSha256: string = canvasAuthority.renderedSha256;
+  const error: null = canvasAuthority.error;
+  void renderedSha256;
+  void error;
+} else if (canvasAuthority.status === "failed") {
+  const renderedSha256: null = canvasAuthority.renderedSha256;
+  const error: string = canvasAuthority.error;
+  void renderedSha256;
+  void error;
+} else {
+  const renderedSha256: null = canvasAuthority.renderedSha256;
+  const error: null = canvasAuthority.error;
+  void renderedSha256;
+  void error;
+}
+
+// @ts-expect-error Canvas authority is immutable evidence.
+canvasAuthority.status = "pending";
+
+const previewEdit = session.acceptEdit({ html: "<main>preview</main>", write: null });
+if (previewEdit.accepted) {
+  const revision: number = previewEdit.revision;
+  void revision;
+}

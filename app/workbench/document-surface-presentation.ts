@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { DocumentSurfaceControllerCapability } from "../application/workspace-controller-capabilities.js";
+import type { DocumentCanvasAuthority } from "../application/document-session.js";
 import type {
   DocumentSurfaceCacheEntry,
   DocumentSurfaceCacheSnapshot,
@@ -55,11 +56,7 @@ export function useDocumentSurfaceHandoff({
   tabs: WorkbenchTabsSnapshot;
   sourceSha256: string | null;
   renderedSourceSha256: string | null;
-  canvasAuthority: Readonly<{
-    status?: string;
-    generation?: number;
-    renderedSha256?: string | null;
-  }> | null;
+  canvasAuthority: DocumentCanvasAuthority | null;
   canvasGeneration: number;
   sourceReceipt: DocumentSourceReceipt | null;
   navigationReceipt: WorkbenchNavigationReceipt | null;
@@ -125,7 +122,10 @@ export function useDocumentSurfaceHandoff({
     (exactReceiptApplies
       ? receiptVerified && canvasVerified
       : (sourceSha256 && renderedSourceSha256 === sourceSha256) || canvasVerified)
-    || canvasAuthority?.status === "failed",
+    || (
+      canvasAuthority?.status === "failed"
+      && canvasAuthority.generation === canvasGeneration
+    ),
   );
   useEffect(() => {
     if (!terminal || !retainedCandidateToken) return;

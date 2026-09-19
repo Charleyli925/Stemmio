@@ -222,6 +222,26 @@ test("document session owns source bytes, revisions and pending write", () => {
   assert.equal(session.canvasAuthority.generation, 0);
 });
 
+test("T08 preview-only edit is accepted without creating pending persistence work", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+
+  const accepted = session.acceptEdit({
+    html: "<main>preview</main>",
+    operationId: "preview-edit",
+    write: null,
+  });
+
+  assert.deepEqual(accepted, {
+    accepted: true,
+    revision: 1,
+    write: null,
+  });
+  assert.equal(session.html, "<main>preview</main>");
+  assert.equal(session.persistState, "preview-dirty");
+  assert.equal(session.pendingWrite, null);
+  assert.equal(session.snapshot.hasPendingWrite, false);
+});
+
 test("authoritative source publication replaces bytes and Hash in one generation", () => {
   const session = new DocumentSession({
     html: "<main>old</main>",
@@ -550,6 +570,36 @@ test("a late restore cannot clear a newer active write", () => {
   }), { accepted: true, completesCurrentDocument: true, authorityChanged: true });
 });
 
+test("T03 a late W1 failure cannot change active W2 persistence state", () => {
+  const session = new DocumentSession({ html: "<main>source</main>" });
+  const first = acceptQueuedEdit(session, "<main>W1</main>").write;
+  assert.equal(session.beginWrite(), first);
+  const second = acceptQueuedEdit(session, "<main>W2</main>").write;
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: first,
+    html: first.html,
+    sourceSha256: sha256(first.html),
+    persistedRevision: first.revision,
+  }), { accepted: true, completesCurrentDocument: false, authorityChanged: false });
+  assert.equal(session.beginWrite(), second);
+  const beforeLateFailure = session.snapshot;
+
+  assert.equal(session.recordPersistenceFailure({
+    error: "late W1 failure",
+    write: first,
+  }), false);
+  assert.equal(session.snapshot, beforeLateFailure);
+  assert.equal(session.persistState, "writing");
+  assert.equal(session.persistError, "");
+  assert.equal(session.pendingWrite, null);
+  assert.deepEqual(session.acceptWriteConfirmation({
+    write: second,
+    html: second.html,
+    sourceSha256: sha256(second.html),
+    persistedRevision: second.revision,
+  }), { accepted: true, completesCurrentDocument: true, authorityChanged: true });
+});
+
 test("write confirmation accepts only the exact active bytes", () => {
   const session = new DocumentSession({ html: "<main>source</main>" });
   const write = acceptQueuedEdit(session, "<main>accepted</main>").write;
@@ -857,11 +907,21 @@ test("source publication puts the new canvas generation into pending until an ex
   const html = "<main>canvas</main>";
   const digest = sha256(html);
   const session = new DocumentSession({ html, persistedSourceSha256: digest });
-  assert.equal(session.canvasAuthority.status, "idle");
+  assert.deepEqual(session.canvasAuthority, {
+    status: "idle",
+    generation: 0,
+    renderedSha256: null,
+    error: null,
+  });
+  assert.equal(Object.isFrozen(session.canvasAuthority), true);
 
   session.publishAuthority({ html, persistedSourceSha256: digest });
-  assert.equal(session.canvasAuthority.status, "pending");
-  assert.equal(session.canvasAuthority.generation, 1);
+  assert.deepEqual(session.canvasAuthority, {
+    status: "pending",
+    generation: 1,
+    renderedSha256: null,
+    error: null,
+  });
 
   assert.equal(session.confirmCanvas({
     generation: 0,
@@ -1216,7 +1276,12 @@ test("failed receipts are terminal until a newer authority receipt is published"
     error: "timeout",
     receipt: first,
   }), true);
-  assert.equal(session.canvasAuthority.status, "failed");
+  assert.deepEqual(session.canvasAuthority, {
+    status: "failed",
+    generation: first.canvasGeneration,
+    renderedSha256: null,
+    error: "timeout",
+  });
   assert.equal(session.confirmCanvas({
     generation: first.canvasGeneration,
     renderedSha256: digest,
