@@ -621,6 +621,18 @@
       ]
     },
     {
+      "id": "comment-model",
+      "patterns": [
+        "^app/workbench/comment-model\\.ts$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/comment-workflow.test.mjs"
+      ]
+    },
+    {
       "id": "comment-workflow",
       "patterns": [
         "^app/application/comment-workflow(?:-codecs)?\\.(?:js|d\\.ts)$",

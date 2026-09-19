@@ -389,6 +389,16 @@ test("the checked preference interpreter selects its producer and direct consume
   }
 });
 
+test("comment model changes select the direct target-rebind counter oracle", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["app/workbench/comment-model.ts"],
+  });
+  assert.ok(plan.matchedOwners.includes("comment-model"));
+  assert.ok(plan.selectedNodeTests.includes("tests/comment-workflow.test.mjs"));
+});
+
 test("owner rules select only the direct regression coverage for representative files", () => {
   let totalNodeTests = 0;
   for (const ownerCase of TASK_OWNER_CASES) {
