@@ -756,7 +756,7 @@ official compiler inputs.
 | Preference ordering proof | Deterministic test evidence |
 | --- | --- |
 | P01 hydration versus first update | `the first preference change waits for hydration without losing the optimistic patch` |
-| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a same-field update accepted after rollback record invocation writes last`; `an update queued from the closing pump publication gets a fresh durable turn` |
+| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a later ordinary update supersedes an Agent intent during its baseline read`; `a same-field update accepted after rollback record invocation writes last`; `an update queued from the closing pump publication gets a fresh durable turn` |
 | P03 stale durable A owns only its field | `a same-field update accepted during rollback authority read fences the restore` |
 | P04 unrelated field during rollback | `an unrelated update during rollback authority read does not block the narrow restore` |
 | P05 failed patch followed by newer value | `a newer ordinary preference beats the failed patch retained for one retry` |

@@ -571,6 +571,51 @@ test("a newer ordinary write is never overwritten by an older Agent rollback", a
   session.dispose();
 });
 
+test("a later ordinary update supersedes an Agent intent during its baseline read", async () => {
+  let durable = structuredClone(persisted);
+  let reads = 0;
+  let releaseBaseline;
+  let baselineStarted;
+  const baseline = new Promise((resolve) => { releaseBaseline = resolve; });
+  const started = new Promise((resolve) => { baselineStarted = resolve; });
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() {
+      reads += 1;
+      if (reads === 2) {
+        baselineStarted();
+        await baseline;
+      }
+      return durable;
+    },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  const older = session.commitDefaultAgent({
+    intentId: "baseline-window-agent",
+    providerId: "stemmio",
+    isCurrent: () => true,
+  });
+  await started;
+  const newer = session.update({ defaultAgentProviderId: "qoder" });
+  releaseBaseline();
+  assert.deepEqual(await older, {
+    status: "superseded",
+    intentId: "baseline-window-agent",
+    write: "not-started",
+  });
+  assert.equal(await newer, true);
+  assert.deepEqual(calls, [{ workspace: { defaultAgentProviderId: "qoder" } }]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
+  assert.equal(session.snapshot.workspace.defaultAgentProviderId, "qoder");
+  assert.equal(session.retry(), false);
+  session.dispose();
+});
+
 test("a same-field update accepted during rollback authority read fences the restore", async () => {
   let durable = structuredClone(persisted);
   let releaseFirstRecord;

@@ -262,6 +262,8 @@ export class WorkspacePreferencesSession {
   #pendingGenerations = new Map();
   /** @type {Map<string, number>} */
   #fieldIntentGenerations = new Map();
+  /** @type {Map<string, number>} */
+  #ordinaryIntentGenerations = new Map();
   /** @type {Map<number, WorkspacePreferenceOperationEvidence>} */
   #operationEvidence = new Map();
   #nextGeneration = 0;
@@ -338,6 +340,7 @@ export class WorkspacePreferencesSession {
   update(patch) {
     if (this.#disposed) return Promise.resolve(false);
     const normalized = normalizeWorkspacePatch(patch);
+    this.#advanceOrdinaryIntentGenerations(Object.keys(normalized));
     return this.#queuePatch(normalized).completion;
   }
 
@@ -420,10 +423,16 @@ export class WorkspacePreferencesSession {
     if (!String(intentId || "") || typeof isCurrent !== "function") {
       throw new TypeError("Agent access preference commit requires a current intent.");
     }
+    if (this.#disposed || !isCurrent()) return Promise.resolve(this.#notStartedResult(intentId));
+    const ordinaryFence = this.#captureOrdinaryIntentGenerations(["disabledAgentProviderIds"]);
     return this.#enqueueAgentMutation(async () => {
       if (this.#disposed || !isCurrent()) return this.#notStartedResult(intentId);
       const authority = await this.#readAgentMutationBaseline();
-      if (this.#disposed || !isCurrent()) return this.#notStartedResult(intentId);
+      if (
+        this.#disposed
+        || !isCurrent()
+        || !this.#matchesOrdinaryIntentGenerations(ordinaryFence)
+      ) return this.#notStartedResult(intentId);
       if (!authority) return this.#notWrittenResult(intentId);
       const previous = authority.disabledAgentProviderIds;
       const next = disabled
@@ -586,14 +595,44 @@ export class WorkspacePreferencesSession {
 
   /** @param {WorkspacePreferencesPatch} patch @returns {WorkspacePreferenceGenerations} */
   #claimFieldGenerations(patch) {
+    return this.#reserveFieldGenerations(Object.keys(patch));
+  }
+
+  /** @param {readonly string[]} keys @returns {WorkspacePreferenceGenerations} */
+  #reserveFieldGenerations(keys) {
     /** @type {Record<string, number>} */
     const generations = {};
-    for (const key of Object.keys(patch)) {
+    for (const key of keys) {
       const generation = ++this.#nextGeneration;
       generations[key] = generation;
       this.#fieldIntentGenerations.set(key, generation);
     }
     return Object.freeze(generations);
+  }
+
+  /** @param {readonly string[]} keys */
+  #advanceOrdinaryIntentGenerations(keys) {
+    for (const key of keys) {
+      this.#ordinaryIntentGenerations.set(
+        key,
+        (this.#ordinaryIntentGenerations.get(key) || 0) + 1,
+      );
+    }
+  }
+
+  /** @param {readonly string[]} keys @returns {WorkspacePreferenceGenerations} */
+  #captureOrdinaryIntentGenerations(keys) {
+    return Object.freeze(Object.fromEntries(keys.map((key) => [
+      key,
+      this.#ordinaryIntentGenerations.get(key) || 0,
+    ])));
+  }
+
+  /** @param {WorkspacePreferenceGenerations} fence */
+  #matchesOrdinaryIntentGenerations(fence) {
+    return Object.entries(fence).every(([key, generation]) => (
+      (this.#ordinaryIntentGenerations.get(key) || 0) === generation
+    ));
   }
 
   /** @param {WorkspacePreferencesPatch} patch @returns {WorkspacePreferenceGenerations} */
@@ -660,10 +699,16 @@ export class WorkspacePreferencesSession {
    * @returns {Promise<WorkspacePreferenceMutationResult>}
    */
   #commitAgentMutation({ intentId, ownedPatch, restorePatch, isCurrent }) {
+    if (this.#disposed || !isCurrent()) return Promise.resolve(this.#notStartedResult(intentId));
+    const ordinaryFence = this.#captureOrdinaryIntentGenerations(Object.keys(ownedPatch));
     return this.#enqueueAgentMutation(async () => {
       if (this.#disposed || !isCurrent()) return this.#notStartedResult(intentId);
       const authority = await this.#readAgentMutationBaseline();
-      if (this.#disposed || !isCurrent()) return this.#notStartedResult(intentId);
+      if (
+        this.#disposed
+        || !isCurrent()
+        || !this.#matchesOrdinaryIntentGenerations(ordinaryFence)
+      ) return this.#notStartedResult(intentId);
       if (!authority) return this.#notWrittenResult(intentId);
       const previous = restorePatch(authority);
       return this.#runStartedAgentMutation({
@@ -684,7 +729,12 @@ export class WorkspacePreferencesSession {
    * }>} input
    * @returns {Promise<WorkspacePreferenceMutationResult>}
    */
-  async #runStartedAgentMutation({ intentId, ownedPatch, restorePatch, isCurrent }) {
+  async #runStartedAgentMutation({
+    intentId,
+    ownedPatch,
+    restorePatch,
+    isCurrent,
+  }) {
     if (!this.#port) return this.#notWrittenResult(intentId);
     /** @type {WorkspacePreferenceOperationEvidence} */
     const evidence = { attempted: new Set(), confirmed: new Set() };
