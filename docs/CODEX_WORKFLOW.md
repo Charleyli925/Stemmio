@@ -18,103 +18,63 @@ An implementation PR is not a release. Merging to `main` updates the canonical s
 
 ## Task lifecycle
 
-One lifecycle covers analysis, implementation and delivery. Scale its record to
-the change: a small task needs a few sentences, not a filled-in form. A planning
-request stays planning, a review request stays read-only, and a problem found
-while investigating is recorded and handled under the existing authorization
-instead of turning into an implementation task on its own.
+One lifecycle covers analysis, implementation and delivery, but every task uses
+only the stages that match its type and authorization. A planning request stops
+after a reviewable plan and acceptance method; a verification request runs only
+the authorized checks; a review request stays read-only; implementation uses the
+editing and delivery stages. Steps may be combined, reordered or omitted when
+they do not apply. Permission, required verification and the definition of
+complete do not become weaker as a result. Explain an omitted item only when it
+limits the credibility of the conclusion.
 
 | Stage | Judgement required | Record |
 | --- | --- | --- |
-| Intake | Does the user want analysis, planning, implementation or delivery? How far may this task go? | outcome, allowed scope, behavior to preserve, completion standard, delivery authority |
-| Investigation | What does the current source actually do? Which assumptions were checked? | relevant files, call paths, current rules, known problems |
-| Planning | Which behavior changes? How will correctness and the absence of regression be proven? | key decisions, acceptance claims, verification method |
-| Implementation | Is the change in the owning module? Did it add unnecessary mechanism? | focused code or document diff with local checks |
-| Verification | What actually ran? Does the evidence match the current source? | version-bound results, first failure, uncovered items |
-| Review | Is the implementation correct, rather than merely as planned? | evidenced defects, suggestions and verification gaps |
-| Delivery | What do the current evidence and authorization support? | actual deliverable, evidence, remaining limits |
-| Retention | What is worth keeping long-term so the same mistake cannot return? | regression test, rule update or ADR |
+| Intake | Does the user want analysis, planning, verification, implementation or later delivery, and how far may the task go? | outcome, allowed scope, behavior to preserve, completion standard, delivery authority |
+| Investigation | What does current source and the owning rule actually establish? | verified facts, reasoned inferences, open questions and relevant call paths |
+| Planning | What behavior must be proven through which real entry, and what would refute it? | key decisions, observable acceptance claims and verification method |
+| Implementation | Is the change in the owner and no larger than needed? | focused diff plus necessary tests and edit-time checks |
+| Verification | What actually ran, against which source, and what remains unproved? | version-bound result, first failure, result categories and coverage limits |
+| Review | Is the actual diff correct against current contracts? | evidenced defects, unverified suspicions, suggestions and verification gaps |
+| Delivery | What do the evidence and current authorization support? | actual deliverable, accessible evidence, remaining limits and delivery stage |
+| Retention | What must remain to prevent a repeat? | regression test, owner-rule update or durable ADR when warranted |
 
-### Intake
+Scale the record to the decision. A small task needs a few sentences, while an
+asynchronous, public-interface or authority-boundary change needs the facts that
+affect its behavior. Keep verified facts, inferences and open questions distinct;
+source describes current behavior and accepted product or security rules define
+required behavior. Check versioned third-party facts against official material.
+For a significant change, state an observable acceptance claim rather than "the
+tests pass", and surface a missing verification capability during planning.
 
-State the outcome, the allowed scope, the behavior that must be preserved, the
-completion standard and the delivery authority. A small task can settle these in
-a few sentences; multi-module, asynchronous or public-protocol work adds the
-detail that changes the work. Notice a related problem, record it, and leave it
-outside this scope.
+Within the agreed scope, the implementer owns routine choices, necessary fixes
+and proportionate retesting. When a new fact changes agreed behavior, authority,
+write scope or the validity of acceptance, pause that affected part and hand it
+to the task owner; unaffected work may continue. The task owner asks the user
+only when a material choice or new authorization is required. Related findings
+stay recorded outside scope unless the existing authorization already covers
+them.
 
-### Investigation
-
-Separate three things: a verified fact backed by current code, callers,
-configuration, test output or normative documentation; an inference together
-with its reasoning; and an open question. Source code proves how something runs
-today, while accepted product and security rules define what it must satisfy;
-when the two conflict, report the conflict instead of adopting the current code
-or an old test as the answer. An open question must not be used as an
-established fact later in the same report.
-
-For a third-party protocol, dependency, tool capability or public default, check
-the official material for the applicable version. Do not design an interface
-from model memory.
-
-### Planning
-
-Before a significant change, answer: which behavior must be proven, through
-which real entry point, observing what result, and which failure or
-counterexample would refute it. "The tests pass" is not an acceptance claim; "a
-completed older operation cannot overwrite a newer result" is.
-
-This is not a mandatory failing test first. Reproduce an existing defect where
-possible, define the observable result first for new capability, and for a
-documentation change check the rule, its references and the consistency of the
-entry points. When the required verification capability does not exist, surface
-that during planning instead of closing the task with "there is no test yet".
-
-### Implementation
-
-The implementer owns local choices, necessary tests and self-checks inside the
-agreed scope and does not request approval for ordinary details; worker handoffs
-keep following `CODEX_SUBAGENT_ROUTING_WORKSHEET.md` section 5.3 instead of
-growing a second task-state system.
-
-Pause the affected part and report evidence when new facts change the target
-behavior, a public interface, authority, the write scope or the validity of the
-acceptance. The parts that remain clearly safe may continue. Never continue on a
-plan that has been shown invalid and then describe the result as delivered as
-planned.
-
-### Verification
-
-Report what actually ran, on which source, with which command and result. Keep
-the first failure and distinguish passed, failed, skipped, not executed,
-cancelled and blocked. `tests/TEST_STRATEGY.md` owns the evidence required per
-change type, test reliability, failure classification and evidence reuse.
-
-### Review
-
-Independent review checks the correctness of the actual implementation against
-the current source, not its conformity to the plan, and may find the plan itself
-wrong. A useful finding states the location, the trigger, the requirement that
-broke, the actual impact, the evidence and the fix direction, and separates
-verified defects, unverified suspicion and optional suggestions. Review quality
-is not measured by the number of comments.
-
-### Delivery
-
-State what the current evidence supports and where authorization ends. The
-existing boundaries do not change: an ordinary implementation stops at a tested
-Draft PR unless the user authorized more.
-
-### Retention
-
-Something worth keeping long-term becomes a regression test, an update to the
-owning rule or an ADR. A routine change needs none.
+Verification and review use the rules in
+[Test strategy](../tests/TEST_STRATEGY.md#改动类型与证据质量) and the applicable
+review contract. Preserve the first failure and keep result categories distinct.
+An ordinary implementation reaches a tested Draft PR; an explicitly authorized
+later delivery continues under the existing Ready, merge, package or release
+rules. Keep a regression test, owner-rule update or ADR only when it has lasting
+value.
 
 ## Evidence and reports
 
 Evidence lives in the existing carriers: the session and the Pull Request for a
 simple task, `output/` reports and test artifacts for a complex one. Do not
 transcribe machine-generated commands, counts and results into a second store.
+
+Local raw evidence and reviewer-accessible evidence are different. Keep full
+logs, sensitive details and large artifacts in the authorized local or CI
+carrier. The Pull Request includes enough desensitized facts to check each
+conclusion and links an existing CI artifact or other authorized shared carrier
+when needed. A local `output/` path documents reproducibility, but does not by
+itself make the material available to a GitHub reviewer and must not be the only
+support for a reviewable claim.
 
 A reader must be able to answer which source and baseline were verified, with
 which method, in which environment, with which result, and how far the
@@ -410,9 +370,11 @@ Write an ADR only for a decision with long-term value: the problem, the choice,
 the alternatives that were really considered, the benefits, the costs and the
 condition that would reopen it. Small mechanical changes need none. When a
 related ADR already exists, do not create a duplicate: record the successor or
-the current status through `docs/ADR_CURATION.md`, which owns status marking, the
-index and archive moves and leaves an ADR's historical rationale intact.
-`docs/decisions/README.md` is the living index.
+the current status through the [ADR curation workflow](ADR_CURATION.md), which
+owns change notice, status marking, the index and archive moves and leaves an
+ADR's historical rationale intact. The task owner gives the notice required by
+that workflow before an ADR change and lists the actual ADR impact at delivery.
+[The ADR index](decisions/README.md) is the living index.
 
 A retrospective exists to prevent a repeat: an important escaped defect states
 why the existing evidence did not catch it and which regression, rule or process

@@ -1,62 +1,51 @@
 ---
 name: stemmio-engineering-workflow
-description: Plan, implement, verify and deliver a Stemmio development task on evidence, including preparing the tested Draft PR. Use for development planning, implementation, task verification and delivery; not for read-only questions that change nothing.
+description: Route Stemmio planning, verification, implementation and delivery tasks to the applicable evidence-driven lifecycle without expanding their authority. Use for development work and its delivery; not for a general read-only question.
 ---
 
 # Stemmio Engineering Workflow
 
-Trigger: a development task in this repository — planning, implementation,
-verification or delivery, including the pre-publication check. A read-only
-question that changes nothing does not use this skill.
+Use this skill for a Stemmio development plan, an authorized verification, an
+implementation task or later delivery. Choose the task type before choosing the
+steps:
 
-This skill is the execution method. `AGENTS.md` owns the mandatory rules,
-`docs/CODEX_WORKFLOW.md` owns the lifecycle, commands and delivery boundaries, and
-`tests/TEST_STRATEGY.md` owns the required evidence. Read those instead of a copy
-here.
+| Task type | Apply |
+| --- | --- |
+| Planning | Investigate current source, produce a reviewable plan and define acceptance evidence. Do not create a branch, edit or deliver unless requested. |
+| Verification | Freeze the requested source, run only the authorized checks and report their actual result. Do not turn a failing check into an implementation task without authority. |
+| Implementation | Use an isolated worktree, edit the owner, add necessary tests, run the applicable gates, inspect and commit the intended diff, push and open a Draft PR. |
+| Later delivery | Continue from the current tested source only as far as the user has authorized under the existing Ready, merge, packaging or release rules. |
 
-1. Resolve the active Git root and the working state with `npm run task:status`.
-   Work in an isolated task worktree (`npm run task:start -- <prefix>/<name>` or
-   `npm run task:attach -- <branch>`) and never stash or mix unrelated user
-   changes.
-2. Settle the intake facts in writing before editing: outcome, allowed scope,
-   behavior to preserve, completion standard and delivery authority
-   (`docs/CODEX_WORKFLOW.md` -> `Task lifecycle` -> Intake). Keep a small task to
-   a few sentences.
-3. Separate verified facts, inferences and open questions while investigating.
-   Source proves current behavior; accepted product and security rules define
-   required behavior; report any conflict instead of resolving it by assumption.
-   Check third-party protocols, dependency and tool capabilities against the
-   applicable version's official material rather than model memory.
-4. Locate the owning module and its contract through `docs/ARCHITECTURE_MAP.md`
-   and `npm run gate:plan -- --context-domain <id>` or `--context-file <path>`,
-   then read the matched contract, owners and named sections. Expand only for a
-   dependency, failure or contract change.
-5. State the acceptance claim before implementing: which behavior must be
-   proven, through which real entry point, observing what result, and which
-   failure or counterexample would refute it. Surface a missing verification
-   capability now instead of after implementation.
-6. Implement inside the owning module and pull in the required evidence from the
-   change-type table in `tests/TEST_STRATEGY.md`. Run `npm run gate:edit` while
-   editing. Report to the user, and continue the unaffected work, when a new fact
-   changes the target behavior, a public interface, authority, the write scope or
-   the validity of the acceptance.
-7. Run `npm run task:finish` once before publication. It already owns
-   `gate:task`; do not run both as separate completion gates, and do not add a
-   second matrix of your own.
-8. Review the unstaged and staged diff, stage only the intended paths, then
-   commit, push and open the Draft PR with the evidence bound to the verified
-   source and the remaining limits stated. Pre-publication checks live here, not
-   in a separate entry.
-9. Stop at the tested Draft PR. Ready, packaging, merge and release each need
-   their own authorization, and `npm run task:audit` / `task:retire` only apply
-   to the exact merged task.
+[AGENTS.md](../../../AGENTS.md) owns mandatory repository rules,
+[Codex workflow](../../../docs/CODEX_WORKFLOW.md#task-lifecycle) owns task stages,
+commands and delivery boundaries, and
+[Test strategy](../../../tests/TEST_STRATEGY.md#改动类型与证据质量) owns evidence.
+Use those sources for policy instead of repeating them here.
 
-Output: the focused diff, the commands actually run with their results bound to
-the verified source, the evidence that was skipped or not executed, and the
-remaining limits and delivery stage.
+For every task, settle the requested outcome, scope, behavior to preserve,
+completion standard and authority. Distinguish verified facts, inferences and
+open questions, then locate only the owner and contracts needed for the risk.
+State the observable acceptance claim and the real entry that will prove or
+refute it before implementation.
 
-Prohibitions: no second gate, evidence store, task manager or test scheduler; no
-direct push to `main`; no writing in a checkout that belongs to another writer;
-no product scope added because a problem was noticed along the way; no
-completion claim while a required suite is unexecuted, a first failure is
-unclassified or an authorized step is still pending.
+For implementation, inspect the worktree with `npm run task:status`, use
+`npm run gate:plan` to locate capability context, run `npm run gate:edit` while
+editing when useful, and run `npm run task:finish` once before publication.
+`task:finish` already owns the task gate. Review both unstaged and staged diffs
+and publish only intended paths.
+
+Complete routine choices, in-scope repairs and proportionate retesting without
+an approval round trip. When a new fact changes agreed behavior, authority,
+write scope or acceptance, pause the affected work and send the evidence to the
+task owner; unaffected work may continue. Ask the user only when a material
+choice or new authorization is actually required. A child reports to the root
+agent rather than independently expanding scope or contacting the user.
+
+Output the artifact appropriate to the task type: a plan and acceptance method;
+version-bound verification evidence; or a focused implementation with its
+tested source, accessible evidence, remaining limits and actual delivery stage.
+
+Do not create a second gate, evidence store, task manager or test scheduler; do
+not push to `main`, write in another owner's worktree, add product scope because
+a related problem was noticed, or claim completion while required authorized
+work remains unfinished.

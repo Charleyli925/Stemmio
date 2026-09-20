@@ -59,6 +59,7 @@ For any implementation or delivery task, the root reads `docs/CODEX_WORKFLOW.md`
 
 - For code changes needing capability or ownership context, locate through `docs/ARCHITECTURE_MAP.md` and `npm run gate:plan -- --context-domain <id>` or `--context-file <path>`. Read the matched contract, owners, implementation, tests and named sections; expand only for a dependency, failure or contract change.
 - If guidance conflicts, name and quote the files and state the affected decision. Use `docs/decisions/README.md` for living ADR status; do not infer current behavior from historical ADR prose.
+- Before changing an ADR, give the user-visible notice required by the [ADR curation rules](docs/ADR_CURATION.md#adr-change-notice); list actual ADR changes again at delivery.
 - Enlarge or repeat verification only for changed code, missing coverage, a new failure or a specific risk. Node tests do not prove Enter, IME, caret or iframe continuity; use public-behavior evidence for those paths.
 - Deliver the actual result, verification evidence and remaining limits. Do not widen the task into packaging, merge or release.
 
@@ -91,7 +92,7 @@ Before finishing, use `CODEX_WORKFLOW.md` section `Documentation impact`; when c
 
 ## Code Review Rules
 
-Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes` (including `Validation placement`), `Asynchronous ownership and cleanup`, `Ownership and commit points`, `Requirements before mechanism`, `Where a limit must be enforced`, `Interfaces, model input and user-facing copy`, `Defaults, dependencies and compatibility`, `Tests` and `Definition of complete`, then the task-specific contracts routed above and `.agents/skills/stemmio-code-review/SKILL.md`. Apply these boundaries:
+Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes` (including `Validation placement`), `Tests` and `Definition of complete`, then the task-specific contracts routed above and `.agents/skills/stemmio-code-review/SKILL.md`. For asynchronous, lifecycle or resource work, also read `Asynchronous ownership and cleanup` and `Ownership and commit points`; for abstractions, dependencies or compatibility, read `Requirements before mechanism` and `Defaults, dependencies and compatibility`; for permission, protocol, model or user-facing boundaries, read `Where a limit must be enforced` and `Interfaces, model input and user-facing copy`. Apply these boundaries:
 
 - Fail closed at irreversible filesystem, AI-adoption, identity, persistence and release boundaries; require equivalent protection and negative coverage for any change there.
 - Converge or degrade automatically for reversible coordination failures. Presentation and preflight uncertainty must not block editing.

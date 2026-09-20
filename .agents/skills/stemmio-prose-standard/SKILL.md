@@ -1,48 +1,42 @@
 ---
 name: stemmio-prose-standard
-description: Write or review Stemmio engineering documents, owner documents, code comments, decision records and retrospectives. Use when a change touches normative documentation, placement of a rule, ADRs or comment quality; not for product-facing user copy.
+description: Write or review Stemmio engineering documents, owner documents, code comments, decision records and retrospectives without changing the task's write authority. Use for normative prose, rule placement, ADRs and comment quality; not for product-facing copy.
 ---
 
 # Stemmio Prose Standard
 
-Trigger: writing or reviewing a normative document, an owner document, a code
-comment, an ADR, a decision note or a retrospective in this repository.
+Use this skill when writing or reviewing a normative document, owner document,
+code comment, ADR, decision note or retrospective. A writing or modification
+task applies edits only within its authorized scope. A review task returns
+findings, evidence and suggested text without editing. The skill never changes
+the task's write authority.
 
-Read `docs/CODEX_WORKFLOW.md` sections `Documentation, decisions and
-retrospectives`, `Evidence and reports` and `Documentation impact`;
-`docs/decisions/README.md` for the living index; and `docs/ADR_CURATION.md` for
-numbering, status and archive rules.
+Read the affected code or owner document and the relevant sections of
+[Codex workflow](../../../docs/CODEX_WORKFLOW.md#documentation-decisions-and-retrospectives).
+Read [the ADR index](../../../docs/decisions/README.md) and
+[ADR curation](../../../docs/ADR_CURATION.md#adr-change-notice) only for ADR or
+decision-status work; a small comment or wording change does not require the ADR
+corpus. For ADR work, the root agent gives the required user notice before the
+change and reports the actual ADR impact at delivery.
 
-1. Decide the single normative home before writing: process in
-   `docs/CODEX_WORKFLOW.md`, implementation shape in
-   `docs/ENGINEERING_STANDARDS.md`, test evidence in `tests/TEST_STRATEGY.md`,
-   simplification scope in `docs/SIMPLIFICATION_AUDIT.md`, and a long-term
-   decision in an ADR. Other documents keep a short pointer, never a second
-   full copy of the same rule.
-2. Keep the status honest: current requirement, plan, accepted-but-unimplemented,
-   implemented and retired must stay distinguishable, and a future plan must not
-   read as current behavior.
-3. Keep comments to the non-obvious contract — behavior, failure, timing,
-   ownership, exceptions and consequences. Remove a comment that restates code,
-   narrates the change or repeats the architecture rationale, but never remove a
-   limit a maintainer needs.
-4. Write an ADR only for a decision with long-term value, with the problem, the
-   choice, the alternatives really considered, benefits, costs and the condition
-   that would reopen it. When a related ADR exists, record the successor or the
-   current status through `docs/ADR_CURATION.md` instead of duplicating or
-   rewriting its rationale.
-5. Update the owner document in the same change when the code makes it
-   inaccurate. If no document changes, state why the existing documentation is
-   still accurate.
-6. Use a retrospective for prevention: an escaped defect explains why the
-   existing evidence missed it and which regression, rule or process step
-   catches it next time. A routine bug is not an incident report.
+Choose one normative home: workflow for stages and delivery, engineering
+standards for implementation shape, test strategy for evidence, simplification
+audit for audit scope, and an ADR for a durable decision. Other files point to
+that owner rather than copying its rule. Keep current requirements, plans,
+accepted-but-unimplemented decisions, implemented behavior and retired history
+visibly distinct.
 
-Output: the updated owner document or comment, with the referenced paths and
-section names actually existing, plus an explicit statement of what changed and
-what deliberately did not.
+Comments preserve only the non-obvious behavior, failure, timing, ownership,
+exception or consequence. An ADR records a durable problem, decision, real
+alternatives, benefits, costs and reopening condition without rewriting prior
+rationale. A retrospective explains why evidence missed an escaped defect and
+which regression or owning rule prevents a repeat. Update an owner document
+when the implementation makes it inaccurate; otherwise state why it remains
+accurate.
 
-Prohibitions: no parallel rule text, no new notes or index system beside
-`docs/decisions/`, no rewording of an ADR's historical rationale, no deleting
-history to hide a superseded decision, and no new workflow step without a named
-problem, executor, evidence and a reason the existing steps are insufficient.
+For an edit task, output the focused document or comment change and the
+documentation impact. For a review task, output the location, evidence, problem
+and proposed wording. In both cases, referenced links and section anchors must
+resolve. Do not create a parallel rule, note index or workflow, delete history,
+or add a process step without a named problem, executor, evidence and gap in the
+existing process.
