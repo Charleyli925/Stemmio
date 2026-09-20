@@ -2,6 +2,28 @@
 
 Curates `docs/decisions/` so the directory stays a navigable knowledge base instead of an append-only pile. This workflow is agent-agnostic: any coding agent (or a human) can execute it by following this document. Curation means **status marking, indexing and moving clearly superseded ADRs into `docs/decisions/archive/` — never deleting or rewriting their rationale**. An ADR's text is a historical record; only its metadata (status header, index entry, filename in a numbering collision, and archive location) may change.
 
+## ADR change notice
+
+Before adding, editing, renaming, changing the status of or archiving an ADR,
+the root agent tells the user which ADR number and file are involved, what will
+change, why, and whether the existing decision changes. Do not repeat an
+approval request for the same change when the user has already seen and
+authorized it. Give a new notice when execution expands the scope or changes the
+decision.
+
+An unapproved architecture decision, replacement of an existing decision, or a
+status/index/archive operation that this workflow requires the requester to
+approve waits for explicit authorization. A mechanical edit already inside the
+authorized scope proceeds after notice without stopping for approval on every
+line.
+
+Accepted ADRs keep their historical reasoning and rejected alternatives. Change
+a decision through a new proposal or successor ADR, never by rewriting the old
+body to make the history appear continuous. The Pull Request and final delivery
+list each actual ADR change and its impact; a proposed but unimplemented change
+is marked pending. A child agent reports ADR implications to the root agent, who
+owns the user notice.
+
 ## Workflow
 
 ```
@@ -37,13 +59,19 @@ Read each ADR and assign exactly one status. For LIVING candidates, spot-verify 
 
 | Status | Meaning | Test |
 | --- | --- | --- |
-| **LIVING** | Still constrains how code must be written today | A PR violating it should be rejected; the modules/behaviors it names still exist |
+| **LIVING** | Accepted and still constrains current or planned implementation | A PR violating it should be rejected; an accepted-but-unimplemented decision remains living and is labelled as such |
 | **HISTORICAL** | The decision shaped the codebase but no longer guides new work | Context is past; nothing enforces it; deleting it loses history, not guidance |
 | **SUPERSEDED** | A later ADR or contract document replaced it | Name the successor explicitly |
 
 Signals for SUPERSEDED: a later ADR covers the same subsystem with a different conclusion; the mechanism it mandates was replaced (verify with `rg` for the named modules); a contract document (`docs/ARCHITECTURE_CONTRACT.md`, `docs/STATE_OWNERSHIP.md`) now owns the rule.
 
-When unsure between LIVING and HISTORICAL, mark LIVING and flag it in the report for the requester — false-historical is the expensive mistake. An ADR explicitly marked **Superseded** is archived after its successor is verified; a partially amended section does not justify moving the whole ADR.
+The absence of current code is not evidence that an accepted but explicitly
+unimplemented decision is historical or invalid. Classify it from its approval
+and successor status, and keep its implementation state visible in the index.
+When unsure between LIVING and HISTORICAL, mark LIVING and flag it in the report
+for the requester — false-historical is the expensive mistake. An ADR explicitly
+marked **Superseded** is archived after its successor is verified; a partially
+amended section does not justify moving the whole ADR.
 
 ### Step 3: Curation report
 
@@ -56,7 +84,11 @@ Write `output/adr-curation-YYYY-MM-DD.md` containing:
 
 ### Step 4: Apply (only after explicit approval)
 
-Per AGENTS.md: `npm run task:start -- docs/adr-curation`, apply exactly the operations from the report, run `npm run adr:check`, `npm run gate:edit`, and open a Draft PR. Changes allowed:
+Apply exactly the approved operations from the report on an isolated task
+branch. Run the applicable ADR checks, including `npm run adr:check`, then follow
+the standard implementation, verification and delivery lifecycle in
+[Codex workflow](CODEX_WORKFLOW.md#task-lifecycle). Do not maintain a separate
+ADR-specific command sequence. Changes allowed:
 
 - Create/refresh the active `docs/decisions/README.md` and historical `docs/decisions/archive/README.md` indexes
 - Add one status line under a superseded ADR's title: `> Status: Superseded by [ADR-00YY](00YY-....md)`

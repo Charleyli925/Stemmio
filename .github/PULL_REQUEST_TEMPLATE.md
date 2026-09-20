@@ -1,6 +1,9 @@
 <!-- Keep this short. Reference reports and machine output instead of pasting
-     full logs or matrices; durable results stay in output/ and are linked here.
+     full logs or matrices; a local output/ path is not by itself accessible
+     evidence for a GitHub reviewer.
      A Draft PR does not have to claim that everything is finished. -->
+
+Evidence follows the [repository evidence rules](../docs/CODEX_WORKFLOW.md#evidence-and-reports).
 
 ## Goal and scope
 
@@ -14,7 +17,8 @@ small mechanical change.
 ## Verification evidence
 
 - Source verified (commit, tree, or working-tree hash when uncommitted changes were tested):
-- Acceptance claim → method or command → result → report location:
+- Acceptance claim → method or command → result → reviewer-accessible summary or artifact:
+- Local raw evidence or reproduction path, when applicable:
 - Skipped, not executed, failed or reused evidence, and why:
 - The change contains no secrets, personal paths, user files, build output or release binaries.
 
@@ -22,6 +26,7 @@ small mechanical change.
 
 - Confirmed findings and how they were handled:
 - Normative documents updated in this PR, or why existing documentation stays accurate:
+- ADRs added, changed, renamed, reclassified or archived, and their impact; proposed-only ADR work is marked pending:
 
 ## Remaining limits and delivery state
 
