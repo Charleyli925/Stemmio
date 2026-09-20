@@ -1269,7 +1269,7 @@ export class DocumentWorkflow {
       key,
       kind: "repair-current-canvas",
       context: activeContext,
-      perform: async (operationId) => {
+      perform: async (operationId, adoptOperationContext) => {
         // Freeze may synchronously checkpoint an active native edit. Bind the
         // repair to the post-freeze source fact, then join Document's existing
         // save single-flight before rebuilding only its projection.
@@ -1279,21 +1279,35 @@ export class DocumentWorkflow {
           const saved = await this.flush({ throughRevision: source.editRevision });
           if (saved.status !== "succeeded") return saved;
         }
-        if (!this.#isCurrent(activeContext)
-          || this.#documentSession.html !== source.html
+        let repairContext = activeContext;
+        if (!this.#isCurrent(repairContext)) {
+          const current = copyContext(this.#projectSession.context);
+          const document = this.#documentSession.snapshot;
+          if (!sameOpenRoute(repairContext, current, this.#codecs.sameSourcePath)
+            || document.html !== source.html
+            || document.editRevision !== source.editRevision
+            || !SHA256.test(String(current?.sourceSha256 || ""))
+            || current.sourceSha256 !== document.persistedSourceSha256
+            || current.sourceSha256 !== document.workingHtmlSha256
+            || !adoptOperationContext(current)) {
+            return stale(repairContext);
+          }
+          repairContext = current;
+        }
+        if (this.#documentSession.html !== source.html
           || this.#documentSession.editRevision !== source.editRevision) {
-          return stale(activeContext);
+          return stale(repairContext);
         }
         const rebuildFence = this.#canvasPort.captureActiveFrameFence?.();
         const reloaded = this.#documentSession.reloadCanvas({
-          context: activeContext,
+          context: repairContext,
           operationId,
         });
         this.#canvasPort.invalidateRenderAcks();
         return this.#restoreAcceptedPage({
           operationId,
           operation: "repair-current-canvas",
-          context: activeContext,
+          context: repairContext,
           html: reloaded.html,
           sourceSha256: reloaded.workingHtmlSha256,
           sourceStatus: "unchanged",
@@ -3130,10 +3144,15 @@ export class DocumentWorkflow {
         return stale(context);
       }
       operation.freezeLeaseAcquired = true;
-      return await perform(operation.operationId);
+      return await perform(operation.operationId, (nextContext) => {
+        const verified = copyContext(nextContext);
+        if (!verified || !this.#isCurrent(verified)) return false;
+        operation.context = Object.freeze({ ...verified });
+        return true;
+      });
     })().catch((cause) => {
-      if (this.#sourceOperation !== operation || !this.#isCurrent(context)) {
-        return stale(context);
+      if (this.#sourceOperation !== operation || !this.#isCurrent(operation.context)) {
+        return stale(operation.context);
       }
       const message = this.#codecs.errorMessage(
         cause,
@@ -3145,7 +3164,7 @@ export class DocumentWorkflow {
         type: kind.includes("conflict") || kind.includes("external-preview")
           ? "document-conflict-force-unlock-failed"
           : "document-authority-reload-failed",
-        context,
+        context: operation.context,
         code: sourceErrorCode(cause, "DOCUMENT_SOURCE_OPERATION_REJECTED"),
         message,
         fatal: false,
@@ -3159,7 +3178,7 @@ export class DocumentWorkflow {
     }).finally(() => {
       if (this.#sourceOperation !== operation) return;
       this.#sourceOperation = null;
-      if (operation.freezeLeaseAcquired && this.#isCurrent(context)) {
+      if (operation.freezeLeaseAcquired && this.#isCurrent(operation.context)) {
         this.#canvasPort.unlock?.();
       }
       this.#emit({

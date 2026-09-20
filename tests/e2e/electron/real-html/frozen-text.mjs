@@ -283,6 +283,7 @@ export async function executeFrozenText({ frame, target, access, page, editor,
       await expect(locator).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u, { timeout: 2_000 });
       // Native caret positioning, not a synthetic selection assignment.
       await page.keyboard.press(keyShortcut("ArrowDown"));
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
       return endFocus();
   };
   try {

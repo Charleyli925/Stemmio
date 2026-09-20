@@ -17,6 +17,8 @@ const CONFIG_KEYS = [
 ];
 const REPOSITORY_COMPONENT_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 const PACKAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/u;
+const PUBLIC_RELEASES_OWNER = "Charleyli925";
+const PUBLIC_RELEASES_REPOSITORY = "Stemmio-Releases";
 
 function assertRepositoryComponent(value, label) {
   assert.match(
@@ -50,6 +52,16 @@ export function expectedApplicationUpdateConfig(packageJson) {
   assert.equal(provider.releaseType, "release", "stable updates must use GitHub releases");
   const owner = assertRepositoryComponent(provider.owner, "build.publish owner");
   const repo = assertRepositoryComponent(provider.repo, "build.publish repo");
+  assert.equal(
+    owner,
+    PUBLIC_RELEASES_OWNER,
+    "stable updates must use the reviewed public release owner",
+  );
+  assert.equal(
+    repo,
+    PUBLIC_RELEASES_REPOSITORY,
+    "stable updates must use the reviewed public release repository",
+  );
   return Object.freeze({
     owner,
     repo,

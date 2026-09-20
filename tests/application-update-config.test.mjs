@@ -20,7 +20,7 @@ function packageJson(overrides = {}) {
         {
           provider: "github",
           owner: "Charleyli925",
-          repo: "Stemmio",
+          repo: "Stemmio-Releases",
           releaseType: "release",
         },
       ],
@@ -33,7 +33,7 @@ test("formal packaging generates one deterministic stable update config", async 
   const manifest = packageJson();
   const expected = {
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     provider: "github",
     releaseType: "release",
     updaterCacheDirName: "stemmio-updater",
@@ -43,7 +43,7 @@ test("formal packaging generates one deterministic stable update config", async 
     serializeApplicationUpdateConfig(manifest),
     [
       "owner: Charleyli925",
-      "repo: Stemmio",
+      "repo: Stemmio-Releases",
       "provider: github",
       "releaseType: release",
       "updaterCacheDirName: stemmio-updater",
@@ -78,12 +78,25 @@ test("update config fails closed when provider or embedded channel drifts", () =
         publish: [{
           provider: "generic",
           owner: "Charleyli925",
-          repo: "Stemmio",
+          repo: "Stemmio-Releases",
           releaseType: "release",
         }],
       },
     })),
     /GitHub provider/u,
+  );
+  assert.throws(
+    () => expectedApplicationUpdateConfig(packageJson({
+      build: {
+        publish: [{
+          provider: "github",
+          owner: "Charleyli925",
+          repo: "Stemmio",
+          releaseType: "release",
+        }],
+      },
+    })),
+    /reviewed public release repository/u,
   );
   assert.throws(
     () => parseApplicationUpdateConfig(

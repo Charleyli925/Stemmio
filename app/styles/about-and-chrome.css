@@ -1,4 +1,4 @@
-/* About keeps product identity and public-source navigation in one deliberate
+/* About keeps product identity and public distribution navigation in one deliberate
    desktop surface; update and Agent controls live on the Settings page. */
 .about-dialog {
   width: min(580px, calc(100vw - 32px));

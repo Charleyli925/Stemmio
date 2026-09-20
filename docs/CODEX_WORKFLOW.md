@@ -406,7 +406,7 @@ Behavior and its documentation form one change. Use this routing table:
 | Architecture capability routing or user-visible guards | `docs/ARCHITECTURE_MAP.md`, `scripts/capability-context.json`, `docs/GUARD_LEDGER.md`, `docs/ENGINEERING_STANDARDS.md` |
 | Packaging, provenance, signing or publication | `docs/RELEASING.md`, `CHANGELOG.md` |
 | Dependency policy or advisory exception | `docs/DEPENDENCY_SECURITY.md` |
-| Public/private source boundary | `docs/OPEN_SOURCE_BOUNDARY.md`, notices, contribution or security policies as applicable |
+| Public/private source boundary | `docs/PRIVATE_SOURCE_BOUNDARY.md`, notices, contribution or security policies as applicable |
 
 If no document changes, the final report and PR must say why existing documentation remains accurate.
 
