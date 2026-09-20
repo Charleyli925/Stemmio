@@ -2148,6 +2148,7 @@ function authorizePatchPlan(plan, index, patches) {
     ) {
       fail("REORDER_DIFFERENT_PARENT", "Authorized reorder targets have different parents.");
     }
+    let includesMovedTarget = false;
     for (const patch of patches) {
       if (!String(patch.kind ?? "").includes("reorder")) {
         fail("PATCH_KIND_MISMATCH", "Sibling reorder has a non-reorder operation.", { patch });
@@ -2158,16 +2159,15 @@ function authorizePatchPlan(plan, index, patches) {
         "PATCH_OUTSIDE_TARGET",
         "Sibling reorder patch is outside the authorized parent content.",
       );
-      if (
-        patch.endOffset <= moving.range.startOffset
-        || patch.startOffset >= moving.range.endOffset
-      ) {
-        fail(
-          "PATCH_OUTSIDE_TARGET",
-          "Sibling reorder patch does not include the moved target fragment.",
-          { patch, targetRange: moving.range },
-        );
-      }
+      includesMovedTarget ||= patch.endOffset > moving.range.startOffset
+        && patch.startOffset < moving.range.endOffset;
+    }
+    if (!includesMovedTarget) {
+      fail(
+        "PATCH_OUTSIDE_TARGET",
+        "Sibling reorder patches do not include the moved target fragment.",
+        { patches, targetRange: moving.range },
+      );
     }
     if (!isInverse) {
       const desiredIndex = plan.metadata?.nextOrder?.indexOf(moving.nodeId);

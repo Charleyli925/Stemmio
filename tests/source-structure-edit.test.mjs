@@ -107,6 +107,42 @@ test("insert, delete and cross-parent move keep source identity authoritative", 
   assert.equal(target.stemmioId, ids.second);
 });
 
+test("same-parent move and delete preserve surrounding authored whitespace exactly", () => {
+  const formatted = html.replace(
+    `<p data-stemmio-id="${ids.second}">B</p></section>`,
+    `<p data-stemmio-id="${ids.second}">B</p>\n  </section>`,
+  );
+  const baseline = createSemanticDocumentState(formatted);
+  const duplicated = applySemanticOperation(
+    baseline,
+    createDuplicateElementOperation(formatted, {
+      baseRevision: 0,
+      operationId: "op_duplicate_ws_01",
+      elementId: ids.second,
+    }),
+    { randomUUID: uuidFactory("21000000-0000-4000-8000-000000000001") },
+  );
+  const moved = applySemanticOperation(
+    duplicated.nextState,
+    createMoveElementOperation(duplicated.html, {
+      baseRevision: duplicated.nextRevision,
+      operationId: "op_move_ws_000001",
+      elementId: duplicated.insertedRootElementId,
+      parentElementId: ids.left,
+      beforeElementId: ids.second,
+    }),
+  );
+  const deleted = applySemanticOperation(
+    moved.nextState,
+    createDeleteElementOperation(moved.html, {
+      baseRevision: moved.nextRevision,
+      operationId: "op_delete_ws_0001",
+      elementId: duplicated.insertedRootElementId,
+    }),
+  );
+  assert.equal(deleted.html, formatted);
+});
+
 test("cross-parent move refuses a cycle into the moving element's descendants", () => {
   const baseline = createSemanticDocumentState(html);
   assert.throws(() => applySemanticOperation(

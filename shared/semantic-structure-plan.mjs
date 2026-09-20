@@ -241,30 +241,7 @@ function siblingReorderPlan(source, elements, target, insertion) {
       { parentElementId: parent.elementId },
     );
   }
-  const boundaries = [];
-  for (let index = 0; index < siblings.length - 1; index += 1) {
-    boundaries.push(gapBoundary(source, siblings[index], siblings[index + 1]));
-  }
-  const trailingBoundary = trailingCommentBoundary(
-    source,
-    parent,
-    siblings.at(-1),
-  );
-  const units = siblings.map((element, position) => {
-    const startOffset = position === 0
-      ? parent.contentStartOffset
-      : boundaries[position - 1];
-    const endOffset = position === siblings.length - 1
-      ? trailingBoundary
-      : boundaries[position];
-    return {
-      elementId: element.elementId,
-      startOffset,
-      endOffset,
-      raw: source.slice(startOffset, endOffset),
-    };
-  });
-  const oldOrder = units.map((unit) => unit.elementId);
+  const oldOrder = siblings.map((element) => element.elementId);
   const movingIndex = oldOrder.indexOf(target.elementId);
   const remaining = oldOrder.filter((elementId) => elementId !== target.elementId);
   const insertionIndex = insertion.before
@@ -288,20 +265,66 @@ function siblingReorderPlan(source, elements, target, insertion) {
   if (firstChanged < 0) {
     return { patches: [], beforeOrder: oldOrder, nextOrder };
   }
-  const byElementId = new Map(units.map((unit) => [unit.elementId, unit]));
-  const startOffset = units[firstChanged].startOffset;
-  const endOffset = units[lastChanged].endOffset;
+  if (gaps.some((gap) => gap.includes("<!--"))) {
+    const boundaries = [];
+    for (let index = 0; index < siblings.length - 1; index += 1) {
+      boundaries.push(gapBoundary(source, siblings[index], siblings[index + 1]));
+    }
+    const trailingBoundary = trailingCommentBoundary(source, parent, siblings.at(-1));
+    const units = siblings.map((element, position) => {
+      const startOffset = position === 0
+        ? parent.contentStartOffset
+        : boundaries[position - 1];
+      const endOffset = position === siblings.length - 1
+        ? trailingBoundary
+        : boundaries[position];
+      return {
+        elementId: element.elementId,
+        startOffset,
+        endOffset,
+        raw: source.slice(startOffset, endOffset),
+      };
+    });
+    const byElementId = new Map(units.map((unit) => [unit.elementId, unit]));
+    const startOffset = units[firstChanged].startOffset;
+    const endOffset = units[lastChanged].endOffset;
+    return {
+      patches: [sourcePatch(
+        startOffset,
+        endOffset,
+        source,
+        nextOrder
+          .slice(firstChanged, lastChanged + 1)
+          .map((elementId) => byElementId.get(elementId).raw)
+          .join(""),
+        "sibling-reorder",
+      )],
+      beforeOrder: oldOrder,
+      nextOrder,
+    };
+  }
+  const raw = source.slice(target.startOffset, target.endOffset);
   return {
-    patches: [sourcePatch(
-      startOffset,
-      endOffset,
-      source,
-      nextOrder
-        .slice(firstChanged, lastChanged + 1)
-        .map((elementId) => byElementId.get(elementId).raw)
-        .join(""),
-      "sibling-reorder",
-    )],
+    // With no authored comment owning a sibling gap, whitespace remains at its
+    // existing source position instead of becoming part of the moved element.
+    // Exact remove/insert patches let a later delete restore the pre-insert
+    // source byte-for-byte.
+    patches: canonicalPatches([
+      sourcePatch(
+        target.startOffset,
+        target.endOffset,
+        source,
+        "",
+        "sibling-reorder",
+      ),
+      sourcePatch(
+        insertion.offset,
+        insertion.offset,
+        source,
+        raw,
+        "sibling-reorder",
+      ),
+    ]),
     beforeOrder: oldOrder,
     nextOrder,
   };
