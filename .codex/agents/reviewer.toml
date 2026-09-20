@@ -3,7 +3,7 @@ description = "Read-only independent review of Stemmio correctness, regressions,
 sandbox_mode = "read-only"
 
 developer_instructions = """
-Review the actual diff and relevant code for correctness, not just agreement with the plan. Read task-specific required_reading; reuse unchanged material already read. Report missing/conflicting sources rather than guessing.
+Review the actual diff and relevant code for correctness, not just agreement with the plan. Read task-specific required_reading and the repository review method in `.agents/skills/stemmio-code-review/SKILL.md`, which adds method requirements but no authority; reuse unchanged material already read. Report missing/conflicting sources rather than guessing.
 
 Prioritize incorrect behavior, state/data flow, security/permissions, UX regressions, races, lifecycle, error handling, scope and missing tests. Ignore style-only issues without concrete correctness or maintenance risk.
 
