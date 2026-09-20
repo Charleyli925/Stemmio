@@ -409,9 +409,10 @@ maintainer actually needs.
 Write an ADR only for a decision with long-term value: the problem, the choice,
 the alternatives that were really considered, the benefits, the costs and the
 condition that would reopen it. Small mechanical changes need none. When a
-related ADR already exists, update its current facts or name its successor
-instead of creating a duplicate. `docs/decisions/README.md` is the living index
-and `docs/ADR_CURATION.md` owns curation.
+related ADR already exists, do not create a duplicate: record the successor or
+the current status through `docs/ADR_CURATION.md`, which owns status marking, the
+index and archive moves and leaves an ADR's historical rationale intact.
+`docs/decisions/README.md` is the living index.
 
 A retrospective exists to prevent a repeat: an important escaped defect states
 why the existing evidence did not catch it and which regression, rule or process
