@@ -12,20 +12,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Charleyli925/Stemmio/releases/latest"><img src="https://img.shields.io/github/v/release/Charleyli925/Stemmio?style=flat-square&label=latest" alt="Latest Stemmio release" /></a>
-  <a href="https://github.com/Charleyli925/Stemmio/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Charleyli925/Stemmio/ci.yml?branch=main&style=flat-square&label=build" alt="Stemmio build status" /></a>
+  <a href="https://github.com/Charleyli925/Stemmio-Releases/releases/latest"><img src="https://img.shields.io/github/v/release/Charleyli925/Stemmio-Releases?style=flat-square&label=latest" alt="Latest Stemmio release" /></a>
   <img src="https://img.shields.io/badge/macOS-12%2B-111111?style=flat-square&logo=apple" alt="macOS 12 or later" />
   <img src="https://img.shields.io/badge/Apple%20silicon-arm64-6e5de7?style=flat-square" alt="Apple silicon arm64" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-4d66cc?style=flat-square" alt="Apache 2.0 license" /></a>
+  <img src="https://img.shields.io/badge/source-proprietary-5f3dc4?style=flat-square" alt="Proprietary source" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/Charleyli925/Stemmio/releases/latest"><strong>Download for Apple silicon</strong></a>
+  <a href="https://github.com/Charleyli925/Stemmio-Releases/releases/latest"><strong>Download for Apple silicon</strong></a>
   · <a href="#english">English</a>
   · <a href="#chinese">中文</a>
   · <a href="docs/ARCHITECTURE.md">Architecture</a>
   · <a href="PRIVACY.md">Usage data</a>
-  · <a href="https://github.com/Charleyli925/Stemmio/issues/new/choose">Report an issue</a>
+  · <a href="https://github.com/Charleyli925/Stemmio-Releases/issues/new/choose">Report an issue</a>
 </p>
 
 <p align="center">
@@ -106,14 +105,14 @@ The current HTML bytes are authoritative. Preview DOM is disposable and is never
 
 ### Download and requirements
 
-[Download the latest Stemmio DMG](https://github.com/Charleyli925/Stemmio/releases/latest) from GitHub Releases.
+[Download the latest Stemmio DMG](https://github.com/Charleyli925/Stemmio-Releases/releases/latest) from Stemmio Releases.
 
 - macOS 12 or later
 - Apple silicon (`arm64`)
 - Current desktop interface: Simplified Chinese
 - Optional managed Qoder execution requires a separately installed and signed-in `@qoder-ai/qodercli` 1.1.27 or newer; clipboard handoff does not.
 - Current builds use ad-hoc signing and are not Apple-notarized. On first launch, Control-click Stemmio and choose **Open** if macOS blocks it.
-- Verify the DMG with the release’s `SHA256SUMS.txt`. Every official release also includes `update-manifest.json` and `build-info.json` for version and source provenance.
+- Verify the DMG with the release’s `SHA256SUMS.txt`. Every official release also includes `latest-mac.yml` and `build-info.json` for updater metadata and source provenance.
 - Packaged desktop builds send limited allowlisted Stemmio usage and fault statistics by default. That telemetry does not send HTML, comments, attachments, filenames, paths, clipboard contents, Mac serial numbers, or raw errors; user-authorized Qoder/Agent processing is a separate third-party data path. See the [usage data notice](PRIVACY.md).
 
 <a id="chinese"></a>
@@ -182,23 +181,23 @@ AI 结果看起来合理，也可能藏着遗漏。源页把“查看修改”�
 
 ### 下载与运行要求
 
-从 [GitHub Releases](https://github.com/Charleyli925/Stemmio/releases/latest) 下载最新版 Stemmio DMG。
+从 [Stemmio Releases](https://github.com/Charleyli925/Stemmio-Releases/releases/latest) 下载最新版 Stemmio DMG。
 
 - macOS 12 或更高版本
 - Apple 芯片 Mac（`arm64`）
 - 当前桌面界面语言：简体中文
 - AI 面板中的源页 Agent、Codex 或 Qoder 连接按各自的登录/配置状态运行；需要其他本地 Agent 时使用“复制任务”。
 - 当前构建使用 ad-hoc 签名，尚未完成 Apple 公证。首次启动如被 macOS 拦截，请按住 Control 点击 Stemmio，然后选择“打开”。
-- 可使用 Release 中的 `SHA256SUMS.txt` 校验 DMG；正式 Release 还包含 `update-manifest.json` 与 `build-info.json`，用于核对版本和源码来源。
+- 可使用 Release 中的 `SHA256SUMS.txt` 校验 DMG；正式 Release 还包含 `latest-mac.yml` 与 `build-info.json`，用于核对更新元数据和源码来源。
 - 正式桌面版本默认回传有限、白名单化的 Stemmio 使用与故障统计；该遥测不回传 HTML、评论、附件、文件名/路径、剪贴板、电脑序列号或原始错误。用户明确选择的 Qoder/Agent 第三方处理是另一条数据路径，详见[使用数据说明](PRIVACY.md)。
 
-## Build and contribute / 开发与贡献
+## Authorized source development / 授权源码开发
 
-Stemmio is an Electron desktop application built with React and TypeScript. The repository includes the renderer, desktop boundary, source-patch engine, validation protocol, fixtures, automated gates, and release provenance tooling.
+Stemmio is an Electron desktop application built with React and TypeScript. This private repository includes the renderer, desktop boundary, source-patch engine, validation protocol, fixtures, automated gates, and release provenance tooling.
 
-源页是使用 React、TypeScript 与 Electron 构建的桌面应用。仓库包含渲染界面、桌面权限边界、源码 Patch 引擎、校验协议、固定样本、自动化门禁和发布溯源工具。
+源页是使用 React、TypeScript 与 Electron 构建的桌面应用。本私有仓库包含渲染界面、桌面权限边界、源码 Patch 引擎、校验协议、固定样本、自动化门禁和发布溯源工具。
 
-### Local development / 本地开发
+### Internal local development / 内部本地开发
 
 Requires macOS 12 or later and Node.js `22.13.0` or a compatible Node 22 release.
 
@@ -241,16 +240,16 @@ Release and artifact gates accept only committed, clean source trees. See the [d
 
 ### Source of truth / 唯一真相
 
-The public `main` branch is the canonical source. Task branches are temporary working surfaces; DMGs, `.app` bundles, `release/`, and `output/` are reproducible artifacts, not source.
+The private `main` branch is the canonical source. Task branches are temporary working surfaces; DMGs, `.app` bundles, `release/`, and `output/` are reproducible artifacts, not source.
 
-公开仓库的 `main` 分支是项目源码的唯一真相。任务分支只是临时工作面；DMG、`.app`、`release/` 和 `output/` 都是可重新生成的产物，不是源码。
+私有仓库的 `main` 分支是项目源码的唯一真相。任务分支只是临时工作面；DMG、`.app`、`release/` 和 `output/` 都是可重新生成的产物，不是源码。
 
-Before contributing, read [CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md), the [usage data notice](PRIVACY.md), and the [public-source boundary](docs/OPEN_SOURCE_BOUNDARY.md). Report security issues privately through [SECURITY.md](SECURITY.md), not through a public Issue.
+Authorized collaborators should read [CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md), the [usage data notice](PRIVACY.md), and the [private-source boundary](docs/PRIVATE_SOURCE_BOUNDARY.md). Report security issues privately through [SECURITY.md](SECURITY.md), not through a public Issue.
 
-参与贡献前，请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)、[行为准则](CODE_OF_CONDUCT.md)、[使用数据说明](PRIVACY.md)与[公开源码边界](docs/OPEN_SOURCE_BOUNDARY.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开 Issue。
+获授权的协作者应阅读 [CONTRIBUTING.md](CONTRIBUTING.md)、[行为准则](CODE_OF_CONDUCT.md)、[使用数据说明](PRIVACY.md)与[私有源码边界](docs/PRIVATE_SOURCE_BOUNDARY.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要提交公开 Issue。
 
 ## License / 许可证
 
-Code is licensed under the [Apache License 2.0](LICENSE). The Stemmio name and visual identity are not granted under the code license; see [TRADEMARKS.md](TRADEMARKS.md). Third-party notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Future private-source versions are governed by the [Stemmio Proprietary Source License](LICENSE). The Stemmio name and visual identity are not granted under that license; see [TRADEMARKS.md](TRADEMARKS.md). Third-party notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Previously published Apache-2.0 versions remain governed by their published terms.
 
-代码以 [Apache License 2.0](LICENSE) 开源。Stemmio 名称和视觉标识不随代码许可证授权，详见 [TRADEMARKS.md](TRADEMARKS.md)。第三方依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+后续私有源码版本适用 [Stemmio 专有源码许可证](LICENSE)。Stemmio 名称和视觉标识不随该许可证授权，详见 [TRADEMARKS.md](TRADEMARKS.md)。第三方依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。此前按 Apache-2.0 发布的版本仍适用其发布时的条款。

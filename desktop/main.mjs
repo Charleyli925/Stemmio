@@ -115,7 +115,7 @@ import {
 } from "./project-path-policy.mjs";
 import {
   LATEST_RELEASE_PAGE_URL,
-  PROJECT_REPOSITORY_URL,
+  PUBLIC_RELEASES_REPOSITORY_URL,
 } from "./product-links.mjs";
 import { createApplicationUpdateController } from "./application-update.mjs";
 import {
@@ -343,7 +343,7 @@ const UPDATE_CHANNELS = Object.freeze({
   downloadAvailable: "html-updates:download-available",
   installDownloaded: "html-updates:install-downloaded",
   openLatestRelease: "html-updates:open-latest-release",
-  openRepository: "html-updates:open-repository",
+  openPublicReleases: "html-updates:open-public-releases",
 });
 const USAGE_CHANNELS = Object.freeze({
   capture: "html-usage:capture",
@@ -4271,8 +4271,8 @@ async function openLatestRelease() {
   return { opened: true };
 }
 
-async function openProjectRepository() {
-  await shell.openExternal(PROJECT_REPOSITORY_URL);
+async function openPublicReleases() {
+  await shell.openExternal(PUBLIC_RELEASES_REPOSITORY_URL);
   return { opened: true };
 }
 
@@ -4415,7 +4415,7 @@ function registerProjectIpc() {
     ensureApplicationUpdateController,
     coordinateApplicationUpdateInstall,
     openLatestRelease,
-    openProjectRepository,
+    openPublicReleases,
   });
   registerWindowIpc({
     ipcMain,

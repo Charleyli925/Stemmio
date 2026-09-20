@@ -15,10 +15,10 @@ export type AboutStemmioDialogProps = {
   open: boolean;
   appVersion: string;
   architecture?: string | null;
-  repositoryOpenFailed: boolean;
+  publicReleasesOpenFailed: boolean;
   userNoticeOpenFailed: boolean;
   onClose: () => void;
-  onOpenRepository: () => void;
+  onOpenPublicReleases: () => void;
   onOpenUserNotice: () => void;
 };
 
@@ -26,10 +26,10 @@ export default function AboutStemmioDialog({
   open,
   appVersion,
   architecture,
-  repositoryOpenFailed,
+  publicReleasesOpenFailed,
   userNoticeOpenFailed,
   onClose,
-  onOpenRepository,
+  onOpenPublicReleases,
   onOpenUserNotice,
 }: AboutStemmioDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -98,18 +98,18 @@ export default function AboutStemmioDialog({
         <button
           className="about-github-link"
           type="button"
-          onClick={onOpenRepository}
+          onClick={onOpenPublicReleases}
         >
           <span className="about-github-icon" aria-hidden="true">
             <GithubLogoIcon size={24} weight="fill" />
           </span>
           <span>
-            <strong>Stemmio on GitHub</strong>
-            <small>查看源代码、问题与正式发布记录</small>
+            <strong>Stemmio Releases on GitHub</strong>
+            <small>下载、更新说明与产品支持</small>
           </span>
           <ArrowSquareOutIcon aria-hidden="true" size={17} weight="bold" />
         </button>
-        {repositoryOpenFailed ? (
+        {publicReleasesOpenFailed ? (
           <p className="about-link-error" role="alert">
             GitHub 页面没有打开，请检查网络后重试。
           </p>
