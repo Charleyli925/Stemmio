@@ -3,7 +3,7 @@ import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import path from "node:path";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
-import { readFile, writeFile, rename, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { fixture, html, importSource, promoteNextVersion } from "./project-file-repository-harness.mjs";
 
 test("history creation allocates V9 from V3 and replays the same operation", async (t) => {
@@ -82,6 +82,30 @@ test("creation refuses changed snapshots, changed current bytes and pending Cand
   await assert.rejects(value.repository.createVersionFromHistory({ ...request, expectedSourceSha256: `sha256:${"b".repeat(64)}` }), { code: "HISTORY_CREATION_SOURCE_CHANGED" });
   await value.repository.createCandidate({ target, candidateId: "candidate_history_pending_0001", requestId: "req_history_pending_0001", html: html("candidate"), expectedSourceSha256: target.sourceSha256 });
   await assert.rejects(value.repository.createVersionFromHistory(request), { code: "HISTORY_CREATION_RUN_LOCKED" });
+});
+
+test("legacy history transaction directories are rejected without replay", async (t) => {
+  const value = await fixture(t);
+  const { target } = await importSource(value);
+  const operationId = "legacy_rejected_0001";
+  const transactionDirectory = path.join(
+    target.projectRootPath,
+    ".stemmio",
+    "transactions",
+    `history_${operationId}`,
+  );
+  await mkdir(transactionDirectory, { recursive: true });
+  await writeFile(
+    path.join(transactionDirectory, "transaction.json"),
+    JSON.stringify({ kind: "history-creation", operationId }),
+    "utf8",
+  );
+
+  await assert.rejects(
+    value.repository.queryHistoryCreation({ target, operationId }),
+    { code: "UNSUPPORTED_TRANSACTION_FORMAT" },
+  );
+  assert.equal(await readFile(target.exactSourcePath, "utf8"), html("V1"));
 });
 
 test("a replayed operation cannot change its source and a query cannot cross project identity", async (t) => {

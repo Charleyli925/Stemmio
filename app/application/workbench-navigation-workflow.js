@@ -88,6 +88,8 @@ export class WorkbenchNavigationWorkflow {
   #terminalReceipts = new Map();
   #idleWaiters = new Set();
   #closeFreeze = null;
+  #startupHistoryContinuation = null;
+  #startupHistoryContinuationSequence = 0;
 
   constructor({
     session,
@@ -655,6 +657,7 @@ export class WorkbenchNavigationWorkflow {
 
   dispose() {
     this.#disposed = true;
+    this.#cancelStartupHistoryContinuation();
     this.#closeFreeze = null;
     if (this.#active) this.#rollbackAndRelease(this.#active, {
       code: "WORKBENCH_NAVIGATION_DISPOSED",
@@ -849,13 +852,20 @@ export class WorkbenchNavigationWorkflow {
             // Ordinary History navigation stays detached. Startup restore is
             // the narrow exception: finish an interrupted create-and-open
             // operation so the verified Canvas can durably acknowledge it.
+            const continuation = { cancelled: false };
+            const continuationSequence = active.startupHistoryContinuationSequence;
+            this.#startupHistoryContinuation = continuation;
             this.#setTimer(() => {
-              if (this.#disposed) return;
+              if (this.#startupHistoryContinuation !== continuation
+                || continuationSequence !== this.#startupHistoryContinuationSequence) return;
+              this.#startupHistoryContinuation = null;
+              if (this.#disposed || continuation.cancelled) return;
               void this.openRegisteredProject({
                 projectId: target.projectId,
                 documentId: target.documentId,
                 title: target.title,
                 force: true,
+                intentKind: "startup-history-recovery",
               });
             }, 0);
           }
@@ -1297,6 +1307,10 @@ export class WorkbenchNavigationWorkflow {
   }
 
   #admit(intent, execute) {
+    if (!["startup-restore", "startup-history-recovery"].includes(String(intent?.kind || ""))) {
+      this.#startupHistoryContinuationSequence += 1;
+      this.#cancelStartupHistoryContinuation();
+    }
     const predecessor = this.#admissionTail.catch(() => {});
     let release;
     const completion = new Promise((resolve) => { release = resolve; });
@@ -1305,6 +1319,13 @@ export class WorkbenchNavigationWorkflow {
       return this.#beginAdmission(intent, execute, release);
     }
     return predecessor.then(() => this.#beginAdmission(intent, execute, release));
+  }
+
+  #cancelStartupHistoryContinuation() {
+    if (this.#startupHistoryContinuation) {
+      this.#startupHistoryContinuation.cancelled = true;
+      this.#startupHistoryContinuation = null;
+    }
   }
 
   #beginAdmission(intent, execute, release) {
@@ -1334,6 +1355,7 @@ export class WorkbenchNavigationWorkflow {
       applicationId: null,
       applicationAuthorityOpen: true,
       currentSurfaceCommitScope: Object.freeze({}),
+      startupHistoryContinuationSequence: this.#startupHistoryContinuationSequence,
       cancelReceiptWait: null,
       cancelSettlementWait: null,
       release: () => {

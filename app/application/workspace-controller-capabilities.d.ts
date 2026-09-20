@@ -319,6 +319,7 @@ export interface NavigationControllerCommands {
     title: string;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
     force?: boolean;
+    intentKind?: string;
     committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
 }

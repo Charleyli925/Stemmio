@@ -1249,15 +1249,6 @@ export class VersionWorkflow {
         const canvasAlreadyVerified = canvasAuthority?.status === "verified"
           && canvasAuthority.renderedSha256 === result.contentSha256
           && this.#documentSession.persistedSourceSha256 === result.contentSha256;
-        // Exact opening authority already loaded this Working Copy, but its
-        // Canvas may still be pending its first ACK. Leave the receipt
-        // queryable and let the controller retry once that ACK is published;
-        // do not start a second physical reload from this recovery path.
-        if (canvasAuthority?.status === "pending" && !canvasAlreadyVerified) {
-          if (!this.#projectSession.matches(context)) return;
-          this.#setHistoryCreation({ phase, operationId, context, result }, generation);
-          return;
-        }
         try {
           const verifyCurrentCanvas = async () => {
             if (canvasAlreadyVerified) return;

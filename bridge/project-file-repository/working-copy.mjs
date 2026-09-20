@@ -892,8 +892,8 @@ export async function compareAndSwapWorkingCopyFile({
       }
       await unlink(temporary);
     } else {
-      // Legacy source-element migration already owns complete before/after
-      // recovery bytes and uses its existing publication path.
+      // Current force-unlock identity adoption already owns complete
+      // before/after recovery bytes and uses its existing publication path.
       await rename(temporary, sourcePath);
     }
     swapped = true;

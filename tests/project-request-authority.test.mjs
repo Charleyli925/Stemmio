@@ -51,13 +51,13 @@ function requestFor(summary, overrides = {}) {
   };
 }
 
-test("frozen policy v2 owns stable HTML editing rules and keeps v1 readable", () => {
+test("frozen policy v2 is the only supported Request format", () => {
   assert.equal(FROZEN_REQUEST_POLICY_VERSION, "2.0.0");
   assert.equal(FROZEN_REQUEST_PROMPT_TEMPLATE_VERSION, "2.0.0");
-  assert.deepEqual([...SUPPORTED_FROZEN_REQUEST_POLICY_VERSIONS], ["1.0.0", "2.0.0"]);
+  assert.deepEqual([...SUPPORTED_FROZEN_REQUEST_POLICY_VERSIONS], ["2.0.0"]);
   assert.deepEqual(
     [...SUPPORTED_FROZEN_REQUEST_PROMPT_TEMPLATE_VERSIONS],
-    ["1.0.0", "2.0.0"],
+    ["2.0.0"],
   );
   assert.match(FROZEN_REQUEST_RULES, /AI_RULES\.md, explicit requirements in change-request\.json, PROJECT\.md/iu);
   assert.match(FROZEN_REQUEST_RULES, /changeEvents are audit context, not actions to replay, undo or apply again/iu);
@@ -68,6 +68,37 @@ test("frozen policy v2 owns stable HTML editing rules and keeps v1 readable", ()
   assert.match(FROZEN_REQUEST_RULES, /change its authored host, configuration or script/iu);
   assert.match(FROZEN_REQUEST_RULES, /targets-plus-required-dependencies allows only their minimal direct dependencies/iu);
   assert.match(FROZEN_REQUEST_RULES, /Do not add external dependencies, tracking, network calls/iu);
+});
+
+test("retired frozen Request versions are rejected without conversion", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "request-retired-version.html");
+  const requestId = "req_retired_template_version";
+  const prepared = await value.repository.prepareRequest({
+    target: imported.target,
+    requestId,
+    attemptId: "attempt_retired_template_0001",
+    expectedSourceSha256: imported.target.sourceSha256,
+    request: requestFor("Retired template version."),
+    prompt: "# Request\n",
+  });
+  const requestPath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "requests",
+    prepared.requestId,
+    "request.json",
+  );
+  const record = await json(requestPath);
+  record.policyVersion = "1.0.0";
+  await writeFile(requestPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    value.repository.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "REQUEST_TEMPLATE_VERSION_INVALID",
+  );
+  assert.equal((await json(requestPath)).policyVersion, "1.0.0");
 });
 
 test("Request publication rechecks source bytes after freezing its input bundle", async (t) => {

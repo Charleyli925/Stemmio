@@ -329,9 +329,8 @@ Request 不定义任何基于时间窗口的成功条件。
 在冻结 HTML 中的 `changeEvents` 只保存在 `input/annotations/records.json` 和
 内部不可变 Request 记录中：前者是用户表达证据，后者是审计事实，均不是需要
 再次执行的动作。新 Request 同时冻结 `taskSchemaVersion`、`policyVersion` 和
-`promptTemplateVersion`。当前规则与 Prompt 模板版本均为 `2.0.0`；`1.0.0`
-当前 Request 必须具备这些字段；缺失字段或更早版本直接拒绝，不做原地改写、补齐、
-完成或取消。
+`promptTemplateVersion`。当前规则与 Prompt 模板版本均为 `2.0.0`；只接受这两个
+当前版本字段。缺失字段或更早版本直接拒绝，不做原地改写、补齐、完成或取消。
 
 ## 6. Annotation records v3
 
