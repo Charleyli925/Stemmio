@@ -12,7 +12,13 @@ import { workspaceSourceFingerprint } from "./e2e/electron/real-html/workspace-p
 import { digestFrozenEntry } from "./e2e/electron/real-html/frozen-entry-contract.mjs";
 import { FROZEN_FORMAT_OPERATIONS, FROZEN_STRUCTURE_CLOSED_LOOP_OPERATIONS,
   FROZEN_STRUCTURE_PROBE_OPERATIONS, frozenDigest, readFrozenSelection } from "./e2e/electron/real-html/frozen-selection.mjs";
-import { executePlan, ensureRendererBuilt, runCommand } from "./e2e/electron/frozen-html-scenarios.mjs";
+import {
+  aggregateCapabilityPreflightReports,
+  executePlan,
+  ensureRendererBuilt,
+  preflightReportDirectoryFromOutput,
+  runCommand,
+} from "./e2e/electron/frozen-html-scenarios.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const entry = path.join(root, "tests/e2e/electron/frozen-html-scenarios.mjs");
@@ -41,6 +47,44 @@ test("preflight requires an explicit corpus and does not fall back to discovery"
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /FROZEN_ENTRY_CORPUS_REQUIRED/u);
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /AUTOMATIC_DISCOVERY_EXECUTION/u);
+});
+
+test("isolated capability preflight reports aggregate only matching source provenance", () => {
+  const report = (index) => ({
+    schemaVersion: 4,
+    mode: "capability-preflight-only",
+    head: "a".repeat(40),
+    tree: "b".repeat(40),
+    workspaceSourceSha256: "c".repeat(64),
+    untrackedSourceFileCount: 0,
+    planned: 1,
+    corpusFiles: 2,
+    selectedFileIndexes: [index + 1],
+    results: [{
+      fileId: `H0${index + 1}`,
+      originalSha256: `${index + 1}`.repeat(64),
+      originalSize: 10 + index,
+      originalUnchanged: true,
+      status: "PENDING_REVIEW",
+      capabilityManifest: { fingerprint: `f${index}`, draft: { issues: [] } },
+    }],
+  });
+  const aggregate = aggregateCapabilityPreflightReports([report(0), report(1)]);
+  assert.equal(aggregate.planned, 2);
+  assert.equal(aggregate.pendingReview, 2);
+  assert.equal(aggregate.originalsUnchanged, true);
+  assert.match(aggregate.draftFingerprint, /^[a-f0-9]{64}$/u);
+  assert.equal(
+    preflightReportDirectoryFromOutput("Private report: /tmp/stemmio-report\n"),
+    "/tmp/stemmio-report",
+  );
+  assert.throws(
+    () => aggregateCapabilityPreflightReports([
+      report(0),
+      { ...report(1), workspaceSourceSha256: "d".repeat(64) },
+    ]),
+    { code: "FROZEN_ENTRY_PREFLIGHT_PROVENANCE_MISMATCH" },
+  );
 });
 
 test("plan validation fails before renderer build when a nested manifest is missing", async () => {

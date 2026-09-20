@@ -1,7 +1,17 @@
 // Thin public entry for the reviewed A/B/C real-HTML scenario family.
 // Listing and plan validation are read-only. Execution only dispatches the
 // existing frozen executors; it never discovers or substitutes a target.
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -28,6 +38,145 @@ const PROCESS_TERM_GRACE_MS = 1_000;
 const PROCESS_KILL_WAIT_MS = 2_000;
 const PROCESS_POLL_MS = 25;
 const MAX_OUTPUT_SUMMARY_BYTES = 32 * 1024;
+
+export function preflightReportDirectoryFromOutput(stdout) {
+  const matches = [...String(stdout || "").matchAll(/^Private report: (.+)$/gmu)];
+  if (matches.length !== 1 || !path.isAbsolute(matches[0][1])) {
+    throw Object.assign(new Error("The isolated capability preflight did not publish one absolute report directory."), {
+      code: "FROZEN_ENTRY_PREFLIGHT_REPORT_PATH_INVALID",
+    });
+  }
+  return path.resolve(matches[0][1]);
+}
+
+export function aggregateCapabilityPreflightReports(childReports) {
+  if (!Array.isArray(childReports) || childReports.length === 0) {
+    throw Object.assign(new Error("Capability preflight aggregation requires at least one child report."), {
+      code: "FROZEN_ENTRY_PREFLIGHT_REPORTS_MISSING",
+    });
+  }
+  const first = childReports[0];
+  const provenanceFields = ["head", "tree", "workspaceSourceSha256", "untrackedSourceFileCount"];
+  for (const [index, report] of childReports.entries()) {
+    if (!report || report.mode !== "capability-preflight-only" || report.results?.length !== 1) {
+      throw Object.assign(new Error("An isolated capability preflight report has an invalid shape."), {
+        code: "FROZEN_ENTRY_PREFLIGHT_REPORT_INVALID",
+        details: { index: index + 1 },
+      });
+    }
+    for (const field of provenanceFields) {
+      if (report[field] !== first[field]) {
+        throw Object.assign(new Error("Isolated capability preflight source provenance drifted between files."), {
+          code: "FROZEN_ENTRY_PREFLIGHT_PROVENANCE_MISMATCH",
+          details: { index: index + 1, field },
+        });
+      }
+    }
+  }
+  const results = childReports.map((report) => report.results[0]);
+  const aggregate = {
+    ...first,
+    planned: results.length,
+    corpusFiles: results.length,
+    selectedFileIndexes: [],
+    results,
+    pendingReview: results.filter((row) => row.status === "PENDING_REVIEW").length,
+    discoveryErrors: results.filter((row) => row.status === "DISCOVERY_ERROR").length,
+    environmentBlocked: results.filter((row) => row.status === "ENVIRONMENT_BLOCKED").length,
+    originalsUnchanged: results.every((row) => row.originalUnchanged === true),
+  };
+  aggregate.draftFingerprint = createHash("sha256").update(Buffer.from(JSON.stringify({
+    head: aggregate.head,
+    tree: aggregate.tree,
+    workspaceSourceSha256: aggregate.workspaceSourceSha256,
+    files: results.map((row) => ({
+      fileId: row.fileId,
+      originalSha256: row.originalSha256,
+      originalSize: row.originalSize,
+      originalUnchanged: row.originalUnchanged,
+      manifestFingerprint: row.capabilityManifest?.fingerprint || null,
+      draft: row.capabilityManifest?.draft || null,
+    })),
+  }))).digest("hex");
+  return aggregate;
+}
+
+async function runIsolatedCapabilityPreflight() {
+  const corpus = process.env.STEMMIO_REAL_HTML_DIR;
+  const corpusFiles = readdirSync(corpus).filter((name) => /\.html?$/iu.test(name)).sort();
+  if (corpusFiles.length === 0) {
+    throw Object.assign(new Error("The local corpus contains no HTML files."), {
+      code: "FROZEN_ENTRY_CORPUS_EMPTY",
+    });
+  }
+  const aggregateDirectory = mkdtempSync(path.join(tmpdir(), "stemmio-real-html-acceptance-"));
+  process.stdout.write(`Private report: ${aggregateDirectory}\n`);
+  const reports = [];
+  const reportDirectories = [];
+  let childFailure = false;
+  for (let index = 0; index < corpusFiles.length; index += 1) {
+    const child = await runCommand(
+      process.execPath,
+      [path.join(electronDirectory, "local-html-corpus.mjs")],
+      {
+        env: {
+          ...process.env,
+          STEMMIO_REAL_HTML_MODE: "capability-preflight-only",
+          STEMMIO_REAL_HTML_FILE_INDEXES: String(index + 1),
+        },
+        outputDirectory: path.join(aggregateDirectory, "children", String(index)),
+        printOutput: false,
+      },
+    );
+    if (child.spawnError || child.timedOut || child.cleanup?.confirmed !== true) {
+      childFailure = true;
+    }
+    const reportDirectory = preflightReportDirectoryFromOutput(child.stdout);
+    const childReport = JSON.parse(readFileSync(path.join(reportDirectory, "results.json"), "utf8"));
+    reports.push(childReport);
+    reportDirectories.push(reportDirectory);
+    const row = childReport.results?.[0];
+    const firstFailure = row?.discovery?.firstFailure;
+    const suffix = firstFailure ? ` firstFailure=${firstFailure.stage}/${firstFailure.code}` : "";
+    process.stdout.write(
+      `${index + 1}/${corpusFiles.length}: ${row?.status || "ENVIRONMENT_BLOCKED"} capability preflight${suffix}\n`,
+    );
+    if (child.exitCode !== 0) childFailure = true;
+  }
+  const aggregate = aggregateCapabilityPreflightReports(reports);
+  for (let index = 0; index < aggregate.results.length; index += 1) {
+    const row = aggregate.results[index];
+    const relativeSeed = row.preflightWorkingCopy?.frozenSeed?.relativePath;
+    if (typeof relativeSeed !== "string" || path.isAbsolute(relativeSeed)) continue;
+    const source = path.resolve(reportDirectories[index], relativeSeed);
+    const sourceRoot = `${path.resolve(reportDirectories[index])}${path.sep}`;
+    if (!source.startsWith(sourceRoot)) {
+      throw Object.assign(new Error("An isolated frozen seed escaped its report directory."), {
+        code: "FROZEN_ENTRY_PREFLIGHT_SEED_PATH_INVALID",
+        details: { index: index + 1 },
+      });
+    }
+    const destination = path.resolve(aggregateDirectory, relativeSeed);
+    const destinationRoot = `${path.resolve(aggregateDirectory)}${path.sep}`;
+    if (!destination.startsWith(destinationRoot)) {
+      throw Object.assign(new Error("An aggregate frozen seed escaped its report directory."), {
+        code: "FROZEN_ENTRY_PREFLIGHT_SEED_PATH_INVALID",
+        details: { index: index + 1 },
+      });
+    }
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(source, destination);
+  }
+  writeFileSync(
+    path.join(aggregateDirectory, "results.json"),
+    JSON.stringify(aggregate, null, 2),
+  );
+  return childFailure
+    || aggregate.pendingReview !== corpusFiles.length
+    || aggregate.originalsUnchanged !== true
+    ? 1
+    : 0;
+}
 
 function reportError(error) {
   return {
@@ -556,6 +705,9 @@ async function main(argv) {
       });
     }
     await ensureRendererBuilt();
+    if (!String(process.env.STEMMIO_REAL_HTML_FILE_INDEXES || "").trim()) {
+      return runIsolatedCapabilityPreflight();
+    }
     const result = await runCommand(process.execPath, [path.join(electronDirectory, "local-html-corpus.mjs")], {
       env: { ...process.env, STEMMIO_REAL_HTML_MODE: "capability-preflight-only" },
     });

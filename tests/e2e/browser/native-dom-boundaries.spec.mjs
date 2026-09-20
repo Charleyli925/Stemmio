@@ -737,6 +737,31 @@ test("clicking a canvas selects the dedicated surface instead of the wrapping mo
     .not.toHaveAttribute("data-html-canvas-selected", /.+/u);
 });
 
+test("pressing a disabled input selects the exact authored control", async ({ page }) => {
+  const source = Buffer.from(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Disabled control selection</title></head>
+<body>
+  <main>
+    <div data-native-case="disabled-control-wrapper">
+      <input data-native-case="disabled-input" type="text" value="Read only value" disabled>
+    </div>
+  </main>
+</body>
+</html>`, "utf8");
+  const { editor, frame } = await loadFixture(page, "disabled-input-selection.html", {
+    buffer: source,
+  });
+  const input = frame.locator(caseSelector("disabled-input"));
+  const wrapper = frame.locator(caseSelector("disabled-control-wrapper"));
+
+  await input.click({ force: true, position: { x: 8, y: 8 } });
+
+  await expect(input).toHaveAttribute("data-html-canvas-selected", "part");
+  await expect(wrapper).not.toHaveAttribute("data-html-canvas-selected", /.+/u);
+  await expect(editor.getByRole("toolbar")).toBeVisible();
+});
+
 test("double-clicking a canvas selects the dedicated root without entering text editing", {
   tag: ["@gate-smoke","@smoke-editing"],
 }, async ({ page }) => {
