@@ -13,5 +13,20 @@ export const WORKSPACE_PREFERENCE_DEFAULTS: Readonly<{
   disabledAgentProviderIds: readonly [];
 }>;
 export const WORKSPACE_PREFERENCE_LIMITS: Readonly<Record<string, Readonly<{ min: number; max: number }>>>;
-export function normalizeWorkspacePreferences(value: unknown): Readonly<Record<string, unknown>>;
-export function normalizeWorkspacePatch(value: unknown): Readonly<Record<string, unknown>>;
+export type WorkspacePreferenceMotion = "system" | "reduced";
+export type WorkspacePreferenceAgentId = "stemmio" | "qoder" | "codex";
+export type WorkspacePreferences = Readonly<{
+  rememberPanelWidths: boolean;
+  sidebarWidth: number;
+  inspectorWidth: number;
+  motion: WorkspacePreferenceMotion;
+  restoreTabsOnLaunch: boolean;
+  reviewChangeContextVisibility: number;
+  reviewCommentContextVisibility: number;
+  defaultAgentProviderId: WorkspacePreferenceAgentId;
+  agentConfigurations: Readonly<Record<string, Readonly<{ modelId: string | null; reasoning: string | null }>>>;
+  documentAgentSelections: Readonly<Record<string, WorkspacePreferenceAgentId>>;
+  disabledAgentProviderIds: readonly WorkspacePreferenceAgentId[];
+}>;
+export function normalizeWorkspacePreferences(value: unknown): WorkspacePreferences;
+export function normalizeWorkspacePatch(value: unknown): Readonly<Partial<WorkspacePreferences>>;

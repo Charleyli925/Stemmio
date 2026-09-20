@@ -17,17 +17,22 @@ import { validAgentConfigurations } from "../../shared/agent-configuration-prefe
 /** @typedef {{ attempted: Set<number>; confirmed: Set<number> }} WorkspacePreferenceOperationEvidence */
 /** @typedef {Readonly<{ completion: Promise<boolean>; generations: WorkspacePreferenceGenerations }>} QueuedWorkspacePatch */
 const WORKSPACE_KEYS = new Set(Object.keys(DEFAULT_WORKSPACE_PREFERENCES));
+const DEFAULT_WORKSPACE = /** @type {WorkspacePreferences} */ (DEFAULT_WORKSPACE_PREFERENCES);
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * @param {Partial<WorkspacePreferencesSnapshot>} [input]
+ * @returns {WorkspacePreferencesSnapshot}
+ */
 function freezeSnapshot({
   loaded = false,
   saving = false,
   error = null,
-  workspace = DEFAULT_WORKSPACE_PREFERENCES,
+  workspace = DEFAULT_WORKSPACE,
 } = {}) {
   return Object.freeze({
     loaded: Boolean(loaded),
