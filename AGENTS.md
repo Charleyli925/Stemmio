@@ -59,6 +59,7 @@ For any implementation or delivery task, the root reads `docs/CODEX_WORKFLOW.md`
 
 - For code changes needing capability or ownership context, locate through `docs/ARCHITECTURE_MAP.md` and `npm run gate:plan -- --context-domain <id>` or `--context-file <path>`. Read the matched contract, owners, implementation, tests and named sections; expand only for a dependency, failure or contract change.
 - If guidance conflicts, name and quote the files and state the affected decision. Use `docs/decisions/README.md` for living ADR status; do not infer current behavior from historical ADR prose.
+- Before changing an ADR, give the user-visible notice required by the [ADR curation rules](docs/ADR_CURATION.md#adr-change-notice); list actual ADR changes again at delivery.
 - Enlarge or repeat verification only for changed code, missing coverage, a new failure or a specific risk. Node tests do not prove Enter, IME, caret or iframe continuity; use public-behavior evidence for those paths.
 - Deliver the actual result, verification evidence and remaining limits. Do not widen the task into packaging, merge or release.
 

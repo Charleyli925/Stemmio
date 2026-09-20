@@ -181,7 +181,16 @@ test("frozen element entry rejects wrong text bindings and edits heading paragra
           const before = readFileSync(working);
           await expect(executeFrozenText({ ...input, target: { ...target,
             textEntry: { ...target.textEntry, trailingText: "" } }, rows: rows() }))
-            .rejects.toMatchObject({ code: "FROZEN_TEXT_FOCUS_MISMATCH" });
+            .rejects.toMatchObject({
+              code: "FROZEN_TEXT_FOCUS_MISMATCH",
+              details: { conditions: {
+                identityMatches: true,
+                focusMatches: true,
+                editable: true,
+                selectionInside: true,
+                caretAtEnd: false,
+              } },
+            });
           const handle = await access.target(id).elementHandle();
           await requireFrozenTextFocus(handle, id, { atEnd: true, trailingText });
           await expect(requireFrozenTextFocus(handle, id, { atEnd: true, trailingText: "    " }))
