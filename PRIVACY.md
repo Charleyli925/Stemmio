@@ -58,7 +58,7 @@ Agent 的结果都必须先进入 Stemmio 候选审阅，只有用户明确采�
 
 ## 联系与变更
 
-问题可通过 [Stemmio GitHub Issues](https://github.com/Charleyli925/Stemmio/issues/new/choose) 提出。收集范围、接收方或身份策略发生实质变化时，必须先更新本说明与产品内说明，再随新版本发布。
+问题可通过 [Stemmio Releases Issues](https://github.com/Charleyli925/Stemmio-Releases/issues/new/choose) 提出。收集范围、接收方或身份策略发生实质变化时，必须先更新本说明与产品内说明，再随新版本发布。
 
 ---
 

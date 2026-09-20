@@ -26,9 +26,9 @@ old-data recovery entry point, or old-client distribution path.
   Records containing the retired full-array impact members are rejected.
 - Preferences use the current schema and validation rules. An unsupported or
   damaged file falls back to safe defaults without an upgrade write.
-- Release assets contain the signed updater metadata, installers, differential
-  update files, checksums and provenance. The schema-1 `update-manifest.json`
-  artifact is neither generated nor required.
+- Public distribution assets contain the signed updater metadata, installers,
+  differential update files, checksums and provenance. The schema-1
+  `update-manifest.json` artifact is neither generated nor required.
 
 ## Current mutable-record rule
 

@@ -284,9 +284,10 @@ import {
   type Version,
   type WorkspaceIssue,
 } from "./workbench/types";
-const PROJECT_REPOSITORY_URL = "https://github.com/Charleyli925/Stemmio";
+const PUBLIC_RELEASES_REPOSITORY_URL =
+  "https://github.com/Charleyli925/Stemmio-Releases";
 const LATEST_RELEASE_PAGE_URL =
-  "https://github.com/Charleyli925/Stemmio/releases/latest";
+  "https://github.com/Charleyli925/Stemmio-Releases/releases/latest";
 class DeferredEditorCommandDiscardedError extends Error {
   readonly reason: NativeDeferredCommandDiscardReason;
 
@@ -1585,7 +1586,7 @@ export default function Workbench() {
   const [desktopUpdatesAvailable, setDesktopUpdatesAvailable] = useState(false);
   const [manualUpdateCheckPending, setManualUpdateCheckPending] = useState(false);
   const [manualUpdateCheckFailed, setManualUpdateCheckFailed] = useState(false);
-  const [repositoryOpenFailed, setRepositoryOpenFailed] = useState(false);
+  const [publicReleasesOpenFailed, setPublicReleasesOpenFailed] = useState(false);
   const [releaseNotesOpenFailed, setReleaseNotesOpenFailed] = useState(false);
   const [userNoticeOpenFailed, setUserNoticeOpenFailed] = useState(false);
   const [pendingExit, setPendingExit] = useState(false);
@@ -2233,7 +2234,7 @@ export default function Workbench() {
     const active = document.activeElement;
     if (active instanceof HTMLElement) overlayReturnFocusRef.current = active;
     setManualUpdateCheckFailed(false);
-    setRepositoryOpenFailed(false);
+    setPublicReleasesOpenFailed(false);
     setReleaseNotesOpenFailed(false);
     setUserNoticeOpenFailed(false);
     setAboutOpen(true);
@@ -2300,18 +2301,18 @@ export default function Workbench() {
     }
   }, []);
 
-  const openProjectRepository = useCallback(async () => {
-    setRepositoryOpenFailed(false);
+  const openPublicReleases = useCallback(async () => {
+    setPublicReleasesOpenFailed(false);
     try {
       const updates = window.stemmioUpdates;
       if (updates) {
-        const result = await updates.openRepository();
-        if (!result?.opened) throw new Error("GitHub repository did not open.");
+        const result = await updates.openPublicReleases();
+        if (!result?.opened) throw new Error("Public releases page did not open.");
         return;
       }
-      window.open(PROJECT_REPOSITORY_URL, "_blank", "noopener,noreferrer");
+      window.open(PUBLIC_RELEASES_REPOSITORY_URL, "_blank", "noopener,noreferrer");
     } catch {
-      setRepositoryOpenFailed(true);
+      setPublicReleasesOpenFailed(true);
     }
   }, []);
 
@@ -6595,10 +6596,10 @@ export default function Workbench() {
         open={aboutOpen}
         appVersion={applicationVersion}
         architecture={updateResult?.architecture}
-        repositoryOpenFailed={repositoryOpenFailed}
+        publicReleasesOpenFailed={publicReleasesOpenFailed}
         userNoticeOpenFailed={userNoticeOpenFailed}
         onClose={closeAboutStemmio}
-        onOpenRepository={() => void openProjectRepository()}
+        onOpenPublicReleases={() => void openPublicReleases()}
         onOpenUserNotice={() => void openUserNotice()}
       />
 
