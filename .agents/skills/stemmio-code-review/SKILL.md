@@ -9,13 +9,13 @@ Trigger: a request to review a diff, a Pull Request, a module or an architecture
 change. Review is read-only and never edits, commits, pushes, changes PR state or
 expands authorization.
 
-Read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes`, `Tests`,
-`Definition of complete`, `Asynchronous ownership and cleanup`, `Ownership and
-commit points`, `Requirements before mechanism`, `Where a limit must be enforced`,
-`Interfaces, model input and user-facing copy` and `Defaults, dependencies and
-compatibility`, plus the task-specific contract routed by `docs/ARCHITECTURE_MAP.md`
-and `AGENTS.md` section `Code Review Rules`. Reuse material already read when the
-source has not changed.
+Follow the baseline and risk-triggered reading in
+[AGENTS.md](../../../AGENTS.md#code-review-rules), then read the task-specific
+contract routed by [Architecture map](../../../docs/ARCHITECTURE_MAP.md). Read
+asynchronous ownership and commit-point rules for lifecycle or resource work;
+requirements/default/dependency rules for abstractions and compatibility; and
+limit/interface rules for permission, protocol, model or user-facing boundaries.
+Reuse unchanged material already read.
 
 1. Read the actual diff — the Pull Request diff, not only the local working tree
    — together with the surrounding current source. A claim in the description is
@@ -37,10 +37,10 @@ source has not changed.
    confirmed stopped.
 6. Judge the evidence: bound to the reviewed source, taken from an observable
    result instead of a component or agent self-report, expectations not
-   recomputed by the implementation under test, a new guard or race regression
-   proven by a reverse experiment, skipped and unexecuted checks reported as
-   such, reused evidence still valid for this source, baseline, configuration,
-   environment and command.
+   recomputed by the implementation under test, reverse proof present where
+   [Test strategy](../../../tests/TEST_STRATEGY.md#反向证明) requires it, skipped
+   and unexecuted checks reported as such, and reused evidence still valid for
+   this source, baseline, configuration, environment and command.
 7. Classify by verified impact rather than by label, and apply the scope-stop
    rule: verified P0/P1 defects and required deterministic gate failures block
    delivery, while P2/P3 and unclassified findings are recorded for the PR body

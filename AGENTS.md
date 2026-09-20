@@ -92,7 +92,7 @@ Before finishing, use `CODEX_WORKFLOW.md` section `Documentation impact`; when c
 
 ## Code Review Rules
 
-Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes` (including `Validation placement`), `Asynchronous ownership and cleanup`, `Ownership and commit points`, `Requirements before mechanism`, `Where a limit must be enforced`, `Interfaces, model input and user-facing copy`, `Defaults, dependencies and compatibility`, `Tests` and `Definition of complete`, then the task-specific contracts routed above and `.agents/skills/stemmio-code-review/SKILL.md`. Apply these boundaries:
+Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes` (including `Validation placement`), `Tests` and `Definition of complete`, then the task-specific contracts routed above and `.agents/skills/stemmio-code-review/SKILL.md`. For asynchronous, lifecycle or resource work, also read `Asynchronous ownership and cleanup` and `Ownership and commit points`; for abstractions, dependencies or compatibility, read `Requirements before mechanism` and `Defaults, dependencies and compatibility`; for permission, protocol, model or user-facing boundaries, read `Where a limit must be enforced` and `Interfaces, model input and user-facing copy`. Apply these boundaries:
 
 - Fail closed at irreversible filesystem, AI-adoption, identity, persistence and release boundaries; require equivalent protection and negative coverage for any change there.
 - Converge or degrade automatically for reversible coordination failures. Presentation and preflight uncertainty must not block editing.
