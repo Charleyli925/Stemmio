@@ -14,9 +14,13 @@ Stemmio keeps the release standard high while avoiding repeated proof of the sam
 | Main integrity | Source candidate is merged | Match merged PR, Tree Hash, version and fresh PR attestation | Repeat any Node, Browser or Electron source test |
 | Developer preview | Explicit manual request only | Clean Tree, stable Developer ID DMG, packaged-content audit, isolated startup and non-release attestation | Notarize, create updater assets, become a prerequisite, tag or publish; missing/failed signing cannot fall back to ad-hoc |
 | Release candidate | Manual `Release Candidate` dispatch on current `main` | Pre-sign content/runtime proof, signed-App checkpoint, final DMG/ZIP/update checks, release asset hashes and candidate attestation | Rebuild the verified App after checkpoint, create a tag or GitHub Release |
-| Publication | Manual `Release` dispatch for the exact version on current `main` | Fresh matching candidate, downloaded byte hashes and provenance | Rebuild, replace or silently mutate candidate bytes |
+| Publication | Manual `Release` dispatch for the exact version on current private-source `main` | Fresh matching candidate, downloaded byte hashes, provenance and narrowly scoped public-release credential | Rebuild, replace or silently mutate candidate bytes; publish source or use a broad source credential |
 
-The publication workflow creates the annotated tag only after the pre-tag candidate has passed. It publishes the exact downloaded candidate files. A failed candidate therefore does not consume a version tag.
+The publication workflow creates the annotated private-source tag only after
+the pre-tag candidate has passed, then publishes the exact downloaded candidate
+files to public `Stemmio-Releases` with a cross-repository credential restricted
+to that destination. A failed candidate therefore does not consume a source or
+public version tag.
 
 The `Developer Preview` workflow exists only for an explicitly requested
 installation check. No push, Pull Request, schedule, formal candidate or
@@ -109,8 +113,8 @@ Do not raise global timeouts, enable blanket retries or rerun an entire green ma
 2. Confirm `main-integrity` is green for the merge commit. It reuses the exact source evidence and does not rerun source smoke.
 3. Confirm the signing `.p12` and fresh notarization credentials are present in GitHub encrypted secrets, then dispatch `Release Candidate` from `main`. It requires a source-gate attestation no older than 168 hours and fails before assembly when a required credential is missing.
 4. Confirm the pre-sign content/runtime gate passed before App notarization and that the final job consumed the matching signed-App checkpoint. Candidate/checkpoint artifacts are retained for 14 days; the completed candidate is reusable for publication for 72 hours. A failed-job rerun creates a distinct final candidate identity and publication resolves only the successful attempt.
-5. Dispatch `Release` from `main` with the exact package version. It verifies and publishes the candidate, then creates the annotated immutable tag and GitHub Release.
-6. If publication fails after the exact tag was created but before the Release exists, rerun the same publication workflow. It may resume only when the existing annotated tag resolves to the identical commit.
+5. Confirm `STEMMIO_PUBLIC_RELEASES_TOKEN` is a short-lived fine-grained token restricted to public `Stemmio-Releases` with Contents write, then dispatch `Release` from `main` with the exact package version. It verifies and publishes the candidate, creates the annotated immutable source tag, and creates the public GitHub Release.
+6. If publication fails after the exact source tag was created but before the public Release exists, rerun the same publication workflow. It may resume only when the existing annotated source tag resolves to the identical commit.
 
 Manual tag pushes are outside the governed path. Never move an existing tag or replace published assets.
 

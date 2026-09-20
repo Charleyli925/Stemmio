@@ -70,7 +70,7 @@ const updateChannels = Object.freeze({
   downloadAvailable: "html-updates:download-available",
   installDownloaded: "html-updates:install-downloaded",
   openLatestRelease: "html-updates:open-latest-release",
-  openRepository: "html-updates:open-repository",
+  openPublicReleases: "html-updates:open-public-releases",
 });
 const usageChannels = Object.freeze({
   capture: "html-usage:capture",
@@ -414,7 +414,7 @@ const updatesApi = Object.freeze({
   },
   installDownloaded: () => invokeProject(updateChannels.installDownloaded),
   openLatestRelease: () => invokeProject(updateChannels.openLatestRelease),
-  openRepository: () => invokeProject(updateChannels.openRepository),
+  openPublicReleases: () => invokeProject(updateChannels.openPublicReleases),
 });
 
 const query = new URLSearchParams(globalThis.location.search);

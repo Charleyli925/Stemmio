@@ -1,6 +1,6 @@
 # Stemmio agent guidance
 
-This repository is the complete public source boundary for Stemmio. Keep this
+This repository is the complete private source boundary for Stemmio. Keep this
 file short: follow the rules below, then read only the task-specific documents
 listed under Progressive disclosure.
 
@@ -73,7 +73,7 @@ The paths below are read gates, not optional references: before the matching act
 Use `ARCHITECTURE_MAP.md` and capability context when locating code ownership; read the relevant `ARCHITECTURE_CONTRACT.md`, `STATE_OWNERSHIP.md` and `SECURITY_MODEL.md` sections for module-boundary, public-interface or persistence changes. Simple documentation fixes need only their affected sources. Reuse already-read unchanged material; expand reading when source or assumptions change.
 
 - Non-Ultra subagents: `CODEX_SUBAGENT_ROUTING_WORKSHEET.md` section 5. Testing: `DEVELOPMENT.md` and `tests/TEST_STRATEGY.md`.
-- Git/task delivery: `GIT_WORKFLOW.md` and `CODEX_WORKFLOW.md`. Packaging/release: `RELEASING.md`. Dependencies or public-source boundaries: `DEPENDENCY_SECURITY.md` or `OPEN_SOURCE_BOUNDARY.md`.
+- Git/task delivery: `GIT_WORKFLOW.md` and `CODEX_WORKFLOW.md`. Packaging/release: `RELEASING.md`. Dependencies or private-source boundaries: `DEPENDENCY_SECURITY.md` or `PRIVATE_SOURCE_BOUNDARY.md`.
 - User-visible behavior: the named `INTERACTION_FLOW.md` section and focused policy. Design work additionally uses `PRODUCT_DESIGN_SYSTEM.md`, `DESIGN_REVIEW_PROTOCOL.md` and `DESIGN_LANGUAGE.md` as applicable.
 - AI requests, schemas or versions: `CHANGE_REQUEST_PROTOCOL.md`, relevant schemas/fixtures and the focused AI or product PRD selected by capability context.
 

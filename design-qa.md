@@ -3687,3 +3687,9 @@ private-corpus coverage remains outside this package.
 - Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是 Developer Preview、已安装应用或用户私有 HTML 语料验收；没有视觉样式变化，因此不制造截图差异结论。
 
 final result: passed for the scoped P1 page/session identity contract.
+
+## 2026-09-20 — Private-source distribution entry points
+
+- Mode: DESIGN CHANGE. About no longer presents the private source repository as a public destination. Its existing GitHub entry now opens the public Stemmio Releases channel and describes the available user outcomes: downloads, release notes and product support. Settings remains the sole surface for update controls.
+- Interaction evidence: rebuilt-source Electron execution passed 1/1 for `automatic update actions keep the sidebar product geometry and split About from Settings`. It opens the About path from the normal workbench, verifies the public-distribution link and that Agent/update controls are absent there, then verifies that update controls remain in Settings without changing sidebar geometry.
+- Evidence boundary: this validates the migrated in-app path and copy in an isolated Electron run. It does not claim that a source-repository visibility switch, a signed transition release, anonymous distribution access, or an installed-app update has completed.

@@ -1,5 +1,5 @@
-name: Feature request
-description: Propose a focused product improvement
+name: Internal product proposal
+description: Propose a focused Stemmio product improvement for internal planning
 title: "[Feature]: "
 labels: [enhancement]
 body:

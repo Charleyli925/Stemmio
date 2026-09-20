@@ -413,7 +413,7 @@ test("the app-bundle gate validates app.asar, Bridge scripts, schemas and plist 
   assert.equal(result.legalResourceCount, 5);
   assert.deepEqual(result.applicationUpdate, {
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     provider: "github",
     releaseType: "release",
     updaterCacheDirName: "stemmio-updater",
@@ -531,6 +531,30 @@ test("the app-bundle gate reports each mutated closure boundary", async (t) => {
         { recursive: true, force: true },
       ),
       expected: /dist-desktop/u,
+    },
+    {
+      name: "renderer source map",
+      profile: "candidate",
+      allowUnsigned: true,
+      mutate: ({ productRoot: fixtureProductRoot }) => writeFile(
+        path.join(
+          fixtureProductRoot,
+          "dist-desktop",
+          "proprietary-source-leak.js.map",
+        ),
+        "{}\n",
+      ),
+      expected: /renderer build output must not contain source map artifacts: proprietary-source-leak\.js\.map/u,
+    },
+    {
+      name: "packaged resource source map",
+      profile: "candidate",
+      allowUnsigned: true,
+      mutate: ({ resourcesPath }) => writeFile(
+        path.join(resourcesPath, "proprietary-source-leak.js.map"),
+        "{}\n",
+      ),
+      expected: /packaged Resources must not contain source map artifacts: proprietary-source-leak\.js\.map/u,
     },
     {
       name: "missing telemetry metadata",

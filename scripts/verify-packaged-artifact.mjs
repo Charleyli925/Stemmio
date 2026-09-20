@@ -497,6 +497,15 @@ function asarFilePaths(asarPath) {
   return output.sort();
 }
 
+function assertNoSourceMapArtifacts(relativePaths, label) {
+  const sourceMaps = relativePaths.filter((relativePath) => /\.map$/iu.test(relativePath));
+  assert.deepEqual(
+    sourceMaps,
+    [],
+    `${label} must not contain source map artifacts: ${sourceMaps.join(", ")}`,
+  );
+}
+
 async function assertDirectoryMatches({
   sourceRoot,
   packagedRoot,
@@ -731,7 +740,8 @@ export async function verifyAppBundle({
     access(asarPath),
     assertSourceDependencyClosureIsClean(productRoot, sourcePackageJson),
   ]);
-  await listFiles(resourcesPath);
+  const packagedResourceFiles = await listFiles(resourcesPath);
+  assertNoSourceMapArtifacts(packagedResourceFiles, "packaged Resources");
 
   const expectedIdentity = expectedPackagedAppIdentity({
     packageJson,
@@ -757,9 +767,11 @@ export async function verifyAppBundle({
   const expectedAsarFiles = ["package.json", ...REQUIRED_APP_SOURCE_FILES];
   const rendererSourceRoot = path.join(productRoot, "dist-desktop");
   const rendererFiles = await listFiles(rendererSourceRoot);
+  assertNoSourceMapArtifacts(rendererFiles, "renderer build output");
   expectedAsarFiles.push(...rendererFiles.map((entry) => `dist-desktop/${entry}`));
   expectedAsarFiles.sort();
   const packagedAsarFiles = asarFilePaths(asarPath);
+  assertNoSourceMapArtifacts(packagedAsarFiles, "app.asar");
   for (const relativePath of packagedAsarFiles) {
     assertNoRetiredEditorArtifacts(relativePath, "app.asar path list");
   }

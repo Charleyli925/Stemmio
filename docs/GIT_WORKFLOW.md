@@ -2,7 +2,11 @@
 
 ## Single source of truth
 
-`https://github.com/Charleyli925/Stemmio` is the canonical repository and `main` is the canonical source branch. A local checkout is a working copy. Build folders and installed applications are outputs only.
+`https://github.com/Charleyli925/Stemmio` is the private canonical source
+repository and `main` is the canonical source branch.
+`https://github.com/Charleyli925/Stemmio-Releases` is the public binary,
+update and support repository. A local checkout is a working copy. Build
+folders and installed applications are outputs only.
 
 ```text
 GitHub main
@@ -11,7 +15,7 @@ GitHub main
   -> one explicit Draft-to-Ready final promotion + parallel review/test candidate gate + Tree Hash attestation
   -> main commit + exact-tree/version/PR attestation verification
   -> pre-tag installer candidate + packaged-runtime verification
-  -> exact candidate verification + immutable version tag + GitHub Release
+  -> exact candidate verification + immutable source version tag + public GitHub Release
 ```
 
 When `candidate-context` finds packaging, release metadata, Electron, packaged
@@ -161,10 +165,10 @@ git show <commit>:path/to/file
 git switch -c recovery/<name> <commit>
 ```
 
-Use `git revert <commit>` to undo a merged public change while preserving history. Do not delete history to conceal a secret; revoke the secret first, then follow GitHub's sensitive-data removal procedure.
+Use `git revert <commit>` to undo a merged source change while preserving history. Do not delete history to conceal a secret; revoke the secret first, then follow GitHub's sensitive-data removal procedure.
 
 ## Release rule
 
 Version, commit, tag and artifacts form one immutable set. `npm run release:mac` remains the complete local source-and-artifact gate and refuses a dirty worktree. A candidate-classified Ready PR may invoke the credential-free unsigned (`identity=null`) dry run to prove App assembly, checkpoint recovery, metadata/renderer reconstruction and startup identity without credentials; source-only candidates intentionally skip it, and its distinct non-release checkpoint is never reusable here. The governed GitHub path first runs `Release Candidate` on reviewed `main`: a successful PR source-gate attestation must match the exact tree/version and be no more than seven days old. The workflow embeds the commit/tree in `build-info.json`, verifies one pre-sign App before Apple work, signs/notarizes that same App, freezes it as a resumable checkpoint, and generates the final DMG/ZIP from that checkpoint without rebuilding the App.
 
-Only after that candidate succeeds may the separate `Release` workflow run for the exact version on current `main`. It accepts a matching candidate no more than 72 hours old, verifies every downloaded asset hash, creates the annotated tag and publishes the same files without rebuilding. Do not push release tags manually. See `docs/RELEASING.md` and `docs/RELEASE_PIPELINE_GOVERNANCE.md`.
+Only after that candidate succeeds may the separate `Release` workflow run for the exact version on current `main`. It accepts a matching candidate no more than 72 hours old, verifies every downloaded asset hash, creates the annotated source tag and publishes the same files without rebuilding to public `Stemmio-Releases`. Do not push release tags manually. See `docs/RELEASING.md` and `docs/RELEASE_PIPELINE_GOVERNANCE.md`.

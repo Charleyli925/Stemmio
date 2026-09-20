@@ -338,6 +338,10 @@ test("release workflows build before tagging and publish the verified candidate 
   assert.match(release, /release-candidate-provenance\.mjs verify/u);
   assert.match(release, /git tag -a/u);
   assert.match(release, /gh release create/u);
+  assert.match(release, /STEMMIO_PUBLIC_RELEASES_TOKEN/u);
+  assert.match(release, /PUBLIC_RELEASES_REPOSITORY:\s*Charleyli925\/Stemmio-Releases/u);
+  assert.match(release, /gh release create[\s\S]+--repo "\$PUBLIC_RELEASES_REPOSITORY"/u);
+  assert.doesNotMatch(release, /gh release create[\s\S]+--repo "\$GITHUB_REPOSITORY"/u);
   assert.match(release, /Stemmio-\$\{VERSION\}-arm64\.zip/u);
   assert.match(release, /Stemmio-\$\{VERSION\}-arm64\.zip\.blockmap/u);
   assert.match(release, /latest-mac\.yml/u);

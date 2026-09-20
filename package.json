@@ -3,15 +3,15 @@
   "version": "0.9.89",
   "description": "源页（Stemmio）— Editable islands with byte-exact source outside every edited region.",
   "author": "源页",
-  "license": "Apache-2.0",
+  "license": "UNLICENSED",
   "private": true,
-  "homepage": "https://github.com/Charleyli925/Stemmio#readme",
+  "homepage": "https://github.com/Charleyli925/Stemmio-Releases#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Charleyli925/Stemmio.git"
   },
   "bugs": {
-    "url": "https://github.com/Charleyli925/Stemmio/issues"
+    "url": "https://github.com/Charleyli925/Stemmio-Releases/issues"
   },
   "main": "desktop/main.mjs",
   "engines": {
@@ -834,7 +834,7 @@
       {
         "provider": "github",
         "owner": "Charleyli925",
-        "repo": "Stemmio",
+        "repo": "Stemmio-Releases",
         "releaseType": "release"
       }
     ],

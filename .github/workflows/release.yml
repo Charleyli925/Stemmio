@@ -114,14 +114,9 @@ jobs:
           retention-days: 30
       - name: Create or safely resume the immutable annotated tag
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           TAG="v${VERSION}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to replace immutable assets."
-            exit 1
-          fi
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
             test "$(git cat-file -t "refs/tags/$TAG")" = "tag"
@@ -133,13 +128,31 @@ jobs:
             git tag -a "$TAG" "$GITHUB_SHA" -m "Stemmio ${VERSION}"
             git push origin "refs/tags/$TAG"
           fi
-      - name: Publish immutable GitHub Release
+      - name: Publish immutable public GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          PUBLIC_RELEASES_TOKEN: ${{ secrets.STEMMIO_PUBLIC_RELEASES_TOKEN }}
+          PUBLIC_RELEASES_REPOSITORY: Charleyli925/Stemmio-Releases
           VERSION: ${{ inputs.version }}
         run: |
           CANDIDATE_DIRECTORY="output/downloaded-release-candidate"
-          gh release create "v${VERSION}" \
+          TAG="v${VERSION}"
+          test -n "$PUBLIC_RELEASES_TOKEN" || {
+            echo "STEMMIO_PUBLIC_RELEASES_TOKEN is required to publish the public distribution release." >&2
+            exit 1
+          }
+          test "$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh api "repos/$PUBLIC_RELEASES_REPOSITORY" --jq '.private')" = "false" || {
+            echo "The configured public distribution repository must be public." >&2
+            exit 1
+          }
+          if GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" --repo "$PUBLIC_RELEASES_REPOSITORY" >/dev/null 2>&1; then
+            echo "Public Release $TAG already exists; refusing to replace immutable assets." >&2
+            exit 1
+          fi
+          if GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh api "repos/$PUBLIC_RELEASES_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Public release tag $TAG already exists; refusing to retarget it." >&2
+            exit 1
+          fi
+          GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release create "$TAG" \
             "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.dmg" \
             "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.zip" \
             "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.zip.blockmap" \
@@ -147,7 +160,7 @@ jobs:
             "$CANDIDATE_DIRECTORY/SHA256SUMS.txt" \
             "$CANDIDATE_DIRECTORY/build-info.json" \
             "$CANDIDATE_DIRECTORY/release-candidate.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
+            --repo "$PUBLIC_RELEASES_REPOSITORY" \
+            --target main \
             --notes-file output/release-metadata/release-notes.md \
             --title "Stemmio ${VERSION}"

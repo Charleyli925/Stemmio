@@ -1,11 +1,16 @@
 # Release guide
 
-Official releases use two explicit GitHub Actions stages from reviewed `main`:
+Official releases use two explicit GitHub Actions stages from reviewed private
+source `main`:
 
 1. `Release Candidate` builds and verifies the installer before a tag exists.
-2. `Release` verifies those frozen bytes, creates the annotated immutable tag and publishes the same files.
+2. `Release` verifies those frozen bytes, creates the annotated immutable source
+   tag and publishes the same files to the public
+   `Charleyli925/Stemmio-Releases` distribution repository.
 
-Do not push a release tag manually. A tag is an output of successful candidate verification, not the input that starts packaging.
+Do not push a release tag manually. A source tag is an output of successful
+candidate verification, not the input that starts packaging. The private source
+repository never hosts formal public release assets.
 
 ## Default source set for a latest installer
 
@@ -247,6 +252,15 @@ or test-script fix creates a new Tree and invalidates the old checkpoint.
 
 ## Publish the candidate
 
+Before the first public publication, create a fine-grained GitHub token limited
+to `Charleyli925/Stemmio-Releases` with **Contents: write** only, give it a
+short expiry/rotation owner, and save it as the private source repository
+Actions secret `STEMMIO_PUBLIC_RELEASES_TOKEN`. Do not reuse an administrator
+token, the source repository `GITHUB_TOKEN`, or a personal broad-scope token.
+The source `GITHUB_TOKEN` can create the immutable source tag but cannot write
+to a different repository. The public distribution repository must remain
+public and contain no source checkout or Actions artifact.
+
 After reviewing the candidate run:
 
 1. Select the `Release` workflow.
@@ -263,10 +277,13 @@ The workflow:
 3. resolves a fresh successful `Release Candidate` run for the exact current commit, Tree Hash, version and `arm64` architecture;
 4. downloads the frozen candidate;
 5. verifies the candidate attestation, build provenance, expected file set, sizes and SHA-256 of every asset;
-6. checks that no published Release already exists;
-7. creates an annotated `v<version>` tag at that exact commit;
-8. publishes the candidate DMG, ZIP, ZIP blockmap, `latest-mac.yml`, checksum,
-   build provenance and candidate attestation without rebuilding.
+6. checks that no public Release or public tag for the version already exists;
+7. creates or verifies an annotated source `v<version>` tag at the exact
+   private source commit;
+8. creates the public `v<version>` Release tag from
+   `Stemmio-Releases` `main`, then publishes the candidate DMG, ZIP, ZIP
+   blockmap, `latest-mac.yml`, checksum, build provenance and candidate
+   attestation without rebuilding.
 
 Release notes are the curated CHANGELOG section for that version, never an
 automatically generated commit or Pull Request list: the in-app “查看更新内容”
@@ -274,13 +291,17 @@ entry opens exactly this page, so the notes are product copy rather than
 engineering shorthand. Preview them at any time with
 `npm run release:notes -- --version <x.y.z>`.
 
-If publication fails after the tag push but before the GitHub Release exists, rerun the same `Release` workflow from the same `main` commit and version. It may resume only when the existing tag is annotated and resolves to the identical commit. If a Release already exists, the workflow refuses to replace its assets.
+If publication fails after the source-tag push but before the public GitHub
+Release exists, rerun the same `Release` workflow from the same `main` commit
+and version. It may resume only when the existing source tag is annotated and
+resolves to the identical commit. If a public Release or public tag already
+exists, the workflow refuses to replace or retarget it.
 
 ## Provenance
 
 Packaging refuses committed-source drift or untracked source files. `build-info.json` records version, architecture, repository, commit SHA, Tree SHA and build time. `release-candidate.json` additionally binds the source-gate run, candidate run/attempt and SHA-256 plus size of every public asset.
 
-Publication resolves only the artifact whose name matches the successful run attempt, then revalidates all of that information after downloading it. This keeps a failed-job rerun distinct from bytes uploaded by an earlier attempt of the same workflow run. The Release includes both provenance files, so the published installer can be traced to the reviewed source tree and the exact successful candidate run and attempt.
+Publication resolves only the artifact whose name matches the successful run attempt, then revalidates all of that information after downloading it. This keeps a failed-job rerun distinct from bytes uploaded by an earlier attempt of the same workflow run. The public `Stemmio-Releases` Release includes both provenance files, so the published installer can be traced to the reviewed private source tree and the exact successful candidate run and attempt.
 
 Before publication, the Release workflow regenerates the delivery report for
 the downloaded verified DMG so the eventual release reply uses current PR

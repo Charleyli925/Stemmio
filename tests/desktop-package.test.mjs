@@ -403,7 +403,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
     {
       provider: "github",
       owner: "Charleyli925",
-      repo: "Stemmio",
+      repo: "Stemmio-Releases",
       releaseType: "release",
     },
   ]);
@@ -429,7 +429,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
   assert.deepEqual(packageJson.build.publish, [{
     provider: "github",
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     releaseType: "release",
   }]);
   assert.equal(packageJson.dependencies["@openai/codex"], undefined);
@@ -480,7 +480,7 @@ test("packaged legal notice and icon remain available as reviewed resources", as
   assert.match(notice, /只有用户明确采纳后才成为正式版本/u);
   assert.match(privacy, /用户主动选择源页 Agent、Qoder CLI 或 Codex/u);
   assert.match(privacy, /将完成任务所需的内容发送至 Codex 服务/u);
-  assert.match(notice, /Apache License 2\.0/u);
+  assert.match(notice, /专有许可与担保/u);
   assert.ok(iconInfo.size > 100_000);
 });
 
