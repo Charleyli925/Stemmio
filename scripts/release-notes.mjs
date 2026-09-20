@@ -15,7 +15,6 @@ export const RELEASE_NOTES_RELATIVE_PATH =
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SECTION_HEADING_PATTERN = /^## /u;
-const REPOSITORY_COMPONENT_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 
 export function changelogSectionHeading(version) {
   assert.match(
@@ -55,24 +54,9 @@ export function extractChangelogNotes(changelog, version) {
   return notes;
 }
 
-export function changelogPermalink({ packageJson, version }) {
-  const [provider] = packageJson?.build?.publish ?? [];
-  if (
-    !REPOSITORY_COMPONENT_PATTERN.test(provider?.owner ?? "")
-    || !REPOSITORY_COMPONENT_PATTERN.test(provider?.repo ?? "")
-  ) {
-    return null;
-  }
-  return `https://github.com/${provider.owner}/${provider.repo}/blob/v${version}/${CHANGELOG_RELATIVE_PATH}`;
-}
-
-export function composeReleaseNotes({ changelog, packageJson, version }) {
+export function composeReleaseNotes({ changelog, version }) {
   const notes = extractChangelogNotes(changelog, version);
-  const permalink = changelogPermalink({ packageJson, version });
-  const sections = permalink
-    ? [notes, "---", `完整更新记录 / Full changelog: ${permalink}`]
-    : [notes];
-  return `${sections.join("\n\n")}\n`;
+  return `${notes}\n`;
 }
 
 export async function writeReleaseNotes({
@@ -88,7 +72,6 @@ export async function writeReleaseNotes({
   const releaseVersion = version || packageJson.version;
   const contents = composeReleaseNotes({
     changelog,
-    packageJson,
     version: releaseVersion,
   });
   const notesPath = path.resolve(productRoot, destination);

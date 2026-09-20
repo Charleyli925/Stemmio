@@ -56,18 +56,32 @@ import {
   writeFileSync,
 } from "./ai-closed-loop-helpers.mjs";
 
-async function activateReviewMarkerGroup(frame, marker) {
-  const focusGroupId = await marker.evaluate((element) => {
+async function resolvedMarkerRegion(marker) {
+  return marker.evaluate((element) => {
     const changeId = element.getAttribute("data-stemmio-review-marker") || "";
     const facts = JSON.parse(
       element.getAttribute("data-stemmio-review-projection-facts") || "[]",
     );
-    const fact = facts[0];
-    const displayGroupId = fact?.displayGroupId || `display-fact-${fact?.id || ""}`;
-    return fact?.structureChange === "style"
-      ? `focus-${displayGroupId}`
-      : `focus-${changeId}-${displayGroupId}`;
+    const bars = [...document.querySelectorAll(
+      "[data-stemmio-review-region-bar][data-stemmio-review-focus-group]",
+    )];
+    for (const fact of facts) {
+      const displayGroupId = fact.displayGroupId || `display-fact-${fact.id || ""}`;
+      const focusGroupId = fact.structureChange === "style"
+        ? `focus-${displayGroupId}`
+        : `focus-${changeId}-${displayGroupId}`;
+      const bar = bars.find((candidate) => (
+        candidate.getAttribute("data-stemmio-review-focus-group") === focusGroupId
+      ));
+      if (bar) return focusGroupId;
+    }
+    return null;
   });
+}
+
+async function activateReviewMarkerGroup(frame, marker) {
+  await expect.poll(() => resolvedMarkerRegion(marker), { timeout: 30_000 }).toBeTruthy();
+  const focusGroupId = await resolvedMarkerRegion(marker);
   expect(focusGroupId).toBeTruthy();
   if (await frame.locator("html").getAttribute("data-stemmio-review-focus-group") === focusGroupId) {
     return focusGroupId;
