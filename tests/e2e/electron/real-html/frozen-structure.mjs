@@ -553,7 +553,12 @@ export async function executeFrozenStructure({ frame, target, page, editor, elec
     failUnless(position, "COPY_PLAIN_LEAF_DRIFT");
     await handle.dblclick({ position, timeout: 2_000 });
     await expect(locator).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u, { timeout: 2_000 });
-    await page.keyboard.press(keyShortcut("ArrowDown"));
+    await handle.evaluate(element => {
+      const selection = element.ownerDocument.getSelection();
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element); range.collapse(false);
+      selection.removeAllRanges(); selection.addRange(range); element.focus();
+    });
     await sameDocument();
     return requireFrozenTextFocus(handle, copyTarget.selectedId, { atEnd: true });
   };
