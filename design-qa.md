@@ -3687,3 +3687,14 @@ private-corpus coverage remains outside this package.
 - Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是 Developer Preview、已安装应用或用户私有 HTML 语料验收；没有视觉样式变化，因此不制造截图差异结论。
 
 final result: passed for the scoped P1 page/session identity contract.
+
+## 2026-09-20 — 交接、标签创建与 Agent 旁白合同收敛
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. 没有新增控件、文案、颜色、间距、布局或动效；继续复用现有缓存页、Canvas、标签与 Agent 旁白表面。
+- 可见连续性：静态缓存 iframe 在自身 `onLoad` 直接报告包含 tab、源码 Hash 与本次导航 handoff 身份的 ready 事件。交接所有者只接受当前精确候选，旧 iframe 即使 HTML Hash 相同也不能在新导航轮次完成交接；诊断 `data-*` 仍保留，但不再驱动生产控制链。
+- 旁白表示：侧栏以稳定 ID、有序公开旁白块为唯一输入；复制或展示全文时才以明确的双换行规则派生字符串。原始碎片仍先按消息组装、再脱敏，恢复、实时旁白和持久会话记录仍各自保持生命周期边界。
+- 实际 Electron 证据：在重建源码的合成页面上，快速 A→B→C（含同 Hash 重返的不同 handoff 身份）、Canvas 先于被延迟缓存 iframe 到达、缓存逐出后滚动位置与 Preview 恢复、以及多 Registry 标签冷启动恢复共 4 个定向场景均通过。该行为改变未引入视觉样式，静态截图不会增加对交接时序的有效证据。
+- 确定性合同证据：标签创建命令直接返回创建或复用目标；SourceReceipt 与 Preferences 的实现级类型变异检查继续分别覆盖原有负例，并共享执行基础设施而未降低断言。
+- Evidence boundary: 此处 Electron 用例是隔离工作树中的合成 HTML 行为证据，不是用户私有 HTML 语料、Developer Preview、已打包或已安装应用验收；也不宣称已量化减少闪烁或耗时。
+
+final result: scoped continuity and narration-contract evidence recorded; final task gate result is tracked separately by the delivery workflow.

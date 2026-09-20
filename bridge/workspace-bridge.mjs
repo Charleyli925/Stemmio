@@ -1550,7 +1550,6 @@ function agentSessionForStatus({ request, run, lifecycleStatus }) {
       agentVersion: null,
       eventCount: 0,
       receivedBytes: 0,
-      visibleText: "",
       visibleTextUpdates: [],
       textTruncated: false,
       retryable: false,

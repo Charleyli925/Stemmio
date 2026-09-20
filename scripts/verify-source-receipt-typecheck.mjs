@@ -3,6 +3,13 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
+import {
+  assertOfficialJavaScriptInputs,
+  loadOfficialTypecheckConfig,
+  mutateExactly,
+  verifyImplementationMutations,
+} from "./typecheck-mutation-verifier.mjs";
+
 const productRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultConfigPath = path.join(productRoot, "tsconfig.source-receipt.json");
 const defaultSourcePath = path.join(productRoot, "app/application/source-receipt.js");
@@ -118,93 +125,8 @@ const documentSessionMutations = Object.freeze([
   }),
 ]);
 
-function diagnosticMessage(diagnostic) {
-  return ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
-}
-
-function formatDiagnostics(diagnostics) {
-  return diagnostics.map((diagnostic) => {
-    const file = diagnostic.file?.fileName || "<configuration>";
-    if (!diagnostic.file || typeof diagnostic.start !== "number") {
-      return `${file}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
-    }
-    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-    return `${file}:${position.line + 1}:${position.character + 1}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
-  }).join("\n");
-}
-
 export function loadSourceReceiptTypecheckConfig(configPath = defaultConfigPath) {
-  const resolvedConfigPath = path.resolve(configPath);
-  const loaded = ts.readConfigFile(resolvedConfigPath, ts.sys.readFile);
-  if (loaded.error) {
-    throw new Error(`cannot read the official SourceReceipt typecheck config:\n${formatDiagnostics([loaded.error])}`);
-  }
-  const parsed = ts.parseJsonConfigFileContent(
-    loaded.config,
-    ts.sys,
-    path.dirname(resolvedConfigPath),
-    undefined,
-    resolvedConfigPath,
-  );
-  if (parsed.errors.length > 0) {
-    throw new Error(`cannot parse the official SourceReceipt typecheck config:\n${formatDiagnostics(parsed.errors)}`);
-  }
-  return parsed;
-}
-
-function programFor({ parsedConfig, sourceOverrides = new Map() }) {
-  const resolvedOverrides = new Map(
-    [...sourceOverrides].map(([sourcePath, sourceText]) => [path.resolve(sourcePath), sourceText]),
-  );
-  const host = ts.createCompilerHost(parsedConfig.options, true);
-  const defaultReadFile = host.readFile.bind(host);
-  host.readFile = (fileName) => (
-    resolvedOverrides.has(path.resolve(fileName))
-      ? resolvedOverrides.get(path.resolve(fileName))
-      : defaultReadFile(fileName)
-  );
-  host.getSourceFile = (fileName, languageVersion, onError) => {
-    const text = host.readFile(fileName);
-    if (text === undefined) {
-      onError?.(`cannot read ${fileName}`);
-      return undefined;
-    }
-    return ts.createSourceFile(
-      fileName,
-      text,
-      languageVersion,
-      true,
-      ts.getScriptKindFromFileName(fileName),
-    );
-  };
-  return ts.createProgram({
-    rootNames: parsedConfig.fileNames,
-    options: parsedConfig.options,
-    projectReferences: parsedConfig.projectReferences,
-    host,
-  });
-}
-
-function assertOfficialImplementationCheck(parsedConfig, sourcePaths) {
-  if (parsedConfig.options.allowJs !== true || parsedConfig.options.checkJs !== true) {
-    throw new Error("official SourceReceipt config must enable allowJs and checkJs");
-  }
-  const officialInputs = new Set(parsedConfig.fileNames.map((fileName) => path.resolve(fileName)));
-  for (const sourcePath of sourcePaths) {
-    const resolvedSourcePath = path.resolve(sourcePath);
-    if (!officialInputs.has(resolvedSourcePath)) {
-      throw new Error(`SourceReceipt required input is missing from the official compiler inputs: ${resolvedSourcePath}`);
-    }
-  }
-}
-
-function assertProgramInputs(program, sourcePaths) {
-  for (const sourcePath of sourcePaths) {
-    const resolvedSourcePath = path.resolve(sourcePath);
-    if (!program.getSourceFile(resolvedSourcePath)) {
-      throw new Error(`official SourceReceipt program did not load required input: ${resolvedSourcePath}`);
-    }
-  }
+  return loadOfficialTypecheckConfig({ configPath, subject: "SourceReceipt" });
 }
 
 function assertImplementationContract(sourceText) {
@@ -212,41 +134,6 @@ function assertImplementationContract(sourceText) {
   if (matchCount !== 1) {
     throw new Error(`DocumentSession @implements contract must match exactly once; matched ${matchCount}`);
   }
-}
-
-function mutateExactly(sourceText, { name, anchor, replacement }) {
-  const matchCount = sourceText.split(anchor).length - 1;
-  if (matchCount !== 1) {
-    throw new Error(`${name} mutation anchor must match exactly once; matched ${matchCount}`);
-  }
-  return sourceText.replace(anchor, replacement);
-}
-
-function mutationDiagnostic({
-  parsedConfig,
-  sourcePath,
-  sourceText,
-  mutation,
-}) {
-  const mutatedSource = mutateExactly(sourceText, mutation);
-  const program = programFor({
-    parsedConfig,
-    sourceOverrides: new Map([[sourcePath, mutatedSource]]),
-  });
-  assertProgramInputs(program, [sourcePath]);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  const targetDiagnostics = diagnostics.filter((diagnostic) => (
-    diagnostic.code === mutation.diagnosticCode
-    && path.resolve(diagnostic.file?.fileName || "") === path.resolve(sourcePath)
-    && diagnosticMessage(diagnostic).includes(mutation.diagnosticFragment)
-  ));
-  if (targetDiagnostics.length !== 1 || diagnostics.length !== 1) {
-    throw new Error([
-      `official SourceReceipt config did not isolate the expected ${mutation.name} implementation type error`,
-      formatDiagnostics(diagnostics) || "<no diagnostics>",
-    ].join("\n"));
-  }
-  return targetDiagnostics[0];
 }
 
 export function verifySourceReceiptTypecheck({
@@ -260,12 +147,13 @@ export function verifySourceReceiptTypecheck({
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
   const resolvedDocumentSessionSourcePath = path.resolve(documentSessionSourcePath);
-  assertOfficialImplementationCheck(parsedConfig, [
-    resolvedSourcePath,
-    resolvedDocumentSessionSourcePath,
-    documentSessionContractPath,
-    documentSessionFacadePath,
-  ]);
+  const requiredInputs = [
+    { path: resolvedSourcePath, description: "SourceReceipt required input" },
+    { path: resolvedDocumentSessionSourcePath, description: "SourceReceipt required input" },
+    { path: documentSessionContractPath, description: "SourceReceipt required input" },
+    { path: documentSessionFacadePath, description: "SourceReceipt required input" },
+  ];
+  assertOfficialJavaScriptInputs({ parsedConfig, subject: "SourceReceipt", requiredInputs });
   if (typeof sourceText !== "string") {
     throw new Error(`cannot read SourceReceipt implementation: ${resolvedSourcePath}`);
   }
@@ -285,38 +173,26 @@ export function verifySourceReceiptTypecheck({
     mutateExactly(documentSessionSourceText, mutation);
   }
 
-  const baselineProgram = programFor({
+  const receiptMutationCase = {
+    ...receiptMutation,
+    sourcePath: resolvedSourcePath,
+    sourceText,
+  };
+  const documentSessionMutationCases = documentSessionMutations.map((mutation) => ({
+    ...mutation,
+    sourcePath: resolvedDocumentSessionSourcePath,
+    sourceText: documentSessionSourceText,
+  }));
+  const [receiptDiagnostic, ...documentSessionDiagnostics] = verifyImplementationMutations({
     parsedConfig,
+    subject: "SourceReceipt",
+    requiredInputs,
     sourceOverrides: new Map([
       [resolvedSourcePath, sourceText],
       [resolvedDocumentSessionSourcePath, documentSessionSourceText],
     ]),
+    mutations: [receiptMutationCase, ...documentSessionMutationCases],
   });
-  assertProgramInputs(baselineProgram, [
-    resolvedSourcePath,
-    resolvedDocumentSessionSourcePath,
-    documentSessionContractPath,
-    documentSessionFacadePath,
-  ]);
-  const baselineDiagnostics = ts.getPreEmitDiagnostics(baselineProgram);
-  if (baselineDiagnostics.length > 0) {
-    throw new Error(`official SourceReceipt typecheck must pass before mutation:\n${formatDiagnostics(baselineDiagnostics)}`);
-  }
-
-  const receiptDiagnostic = mutationDiagnostic({
-    parsedConfig,
-    sourcePath: resolvedSourcePath,
-    sourceText,
-    mutation: receiptMutation,
-  });
-  const documentSessionDiagnostics = documentSessionMutations.map((mutation) => (
-    mutationDiagnostic({
-      parsedConfig,
-      sourcePath: resolvedDocumentSessionSourcePath,
-      sourceText: documentSessionSourceText,
-      mutation,
-    })
-  ));
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
     sourcePath: resolvedSourcePath,

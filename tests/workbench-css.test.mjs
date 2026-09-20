@@ -186,10 +186,15 @@ test("cache mounts only explicit ready handoff surfaces on live canvas geometry"
 
   assert.match(moduleCss, /\.cache\s*\{[\s\S]*?grid-column:\s*2/u);
   assert.match(moduleCss, /\.cache\[data-visible="true"\]\s*\{[\s\S]*?padding:\s*0/u);
-  assert.match(cacheComponent, /data-display-ready/u);
   assert.doesNotMatch(cacheComponent, /activeTabId/u);
   assert.match(cacheComponent, /candidateTabId/u);
-  assert.match(cacheComponent, /presentedToken/u);
+  assert.match(cacheComponent, /candidateHandoffId/u);
+  assert.match(cacheComponent, /acceptDisplayReady/u);
+  assert.match(cacheComponent, /sameDocumentSurfaceHandoffToken/u);
+  assert.match(cacheComponent, /presentationKey.*handoffId/u);
+  assert.match(cacheComponent, /onDisplayReady=\{displayReadyToken \? reportDisplayReady : undefined\}/u);
+  assert.match(cacheComponent, /onScrollableReady=\{displayReadyToken \? reportScrollableReady : undefined\}/u);
+  assert.doesNotMatch(cacheComponent, /MutationObserver|querySelector|data-display-ready|presentedToken/u);
   assert.match(cacheComponent, /snapshot\.entries\.filter\(isExplicitHandoffSurface\)/u);
   assert.match(cacheComponent, /data-mounted-count=\{handoffEntries\.length\}/u);
   assert.match(cacheComponent, /entry\.tabId === candidateTabId && entry\.sourceSha256 === candidateSourceSha256/u);

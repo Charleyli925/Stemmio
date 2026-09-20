@@ -44,12 +44,18 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
   assert.doesNotMatch(workbench, /cachedSurfaceInteractionPassthrough/u);
   assert.doesNotMatch(activeHost, /cloneElement/u);
   assert.doesNotMatch(handoff, /\bactiveCandidate\b/u);
-  assert.match(handoff, /pendingToken/u);
+  assert.match(handoff, /pendingHandoffToken/u);
+  assert.match(handoff, /navigationTransactionId/u);
+  assert.match(handoff, /sameDocumentSurfaceHandoffToken/u);
   assert.match(handoff, /sameSourceReceipt/u);
   assert.match(handoff, /eligibleCandidateRef/u);
+  assert.match(handoff, /acceptDisplayReady/u);
+  assert.doesNotMatch(handoff, /completeHandoff|retainPresentedTab/u);
   assert.match(displaySurface, /const \{ resourceBase, ready \} = usePreviewResourceBase/u);
   assert.match(displaySurface, /\{frameHtml \? <iframe/u);
-  assert.match(displaySurface, /key=\{presentationKey/u);
+  assert.match(displaySurface, /handoffId: string/u);
+  assert.match(displaySurface, /key=\{frameIdentity/u);
+  assert.match(displaySurface, /onDisplayReady\?\.\(displayReadyToken\)/u);
   assert.match(activeHost, /data-testid="workbench-active-document-canvas-host"/u);
   assert.match(activeHost, /data-runtime-hot-limit=\{1\}/u);
   assert.doesNotMatch(

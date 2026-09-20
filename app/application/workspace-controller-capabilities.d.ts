@@ -105,7 +105,7 @@ export type WorkspaceShellSnapshot = Readonly<Pick<WorkspaceControllerSnapshot,
     "activeRun" | "recentOutcome" | "activeLocked" | "activeSubmission" | "submissionPending" |
     "activeHandoffMayBeRunning" | "activeHandoffManaged"
   > & { activeHandoff: Omit<NonNullable<RunSessionSnapshot["activeHandoff"]>,
-    "visibleText" | "visibleTextUpdates" | "textTruncated" | "startedAt" | "lastActivityAt" | "receivedBytes" | "updatedAt"
+    "visibleTextUpdates" | "textTruncated" | "startedAt" | "lastActivityAt" | "receivedBytes" | "updatedAt"
   > | null }) | null;
 }>;
 export type WorkspaceShellCapability = Readonly<{

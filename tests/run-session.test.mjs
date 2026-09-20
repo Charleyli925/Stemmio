@@ -154,7 +154,7 @@ test("run session keeps only the public execution activity projection", () => {
     startedAt: "2026-08-26T02:00:00.000Z",
     lastActivityAt: "2026-08-26T02:05:00.000Z",
     receivedBytes: 4_096,
-    visibleText: "公开进度",
+    visibleTextUpdates: [{ id: "public-progress", sequence: 1, text: "公开进度" }],
     errorCode: null,
     errorMessage: null,
     retryable: true,
@@ -164,6 +164,7 @@ test("run session keeps only the public execution activity projection", () => {
   assert.equal(session.activeHandoff.receivedBytes, 4_096);
   assert.equal("stderr" in session.activeHandoff, false);
   assert.equal("reasoning" in session.activeHandoff, false);
+  assert.equal("visibleText" in session.activeHandoff, false);
 });
 
 test("run session treats a recovered processing run as potentially handed off", () => {

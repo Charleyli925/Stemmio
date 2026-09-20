@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DocumentSurfaceControllerCapability } from "../application/workspace-controller-capabilities.js";
 import type { DocumentCanvasAuthority } from "../application/document-session.js";
@@ -26,6 +26,29 @@ import type { ActiveRun } from "../domain/run-lifecycle.js";
 import { sameSourceReceipt } from "../application/document-session.js";
 import type { DocumentSourceReceipt } from "../application/document-session.js";
 import type { WorkbenchNavigationReceipt } from "../application/workbench-navigation-session.js";
+import type { HtmlDisplaySurfaceReadyToken } from "../components/HtmlDisplaySurface";
+
+export type DocumentSurfaceHandoffToken = HtmlDisplaySurfaceReadyToken;
+
+export function sameDocumentSurfaceHandoffToken(
+  left: DocumentSurfaceHandoffToken | null | undefined,
+  right: DocumentSurfaceHandoffToken | null | undefined,
+): boolean {
+  return Boolean(
+    left
+    && right
+    && left.handoffId === right.handoffId
+    && sameDocumentSurfaceCacheToken(left, right),
+  );
+}
+
+function documentSurfaceHandoffToken(
+  token: DocumentSurfaceCacheToken | null,
+  handoffId: string | null,
+): DocumentSurfaceHandoffToken | null {
+  if (!token || !handoffId) return null;
+  return Object.freeze({ ...token, handoffId });
+}
 
 function tokenForEntry(entry: DocumentSurfaceCacheEntry | null): DocumentSurfaceCacheToken | null {
   return documentSurfaceCacheToken(entry);
@@ -50,6 +73,7 @@ export function useDocumentSurfaceHandoff({
   canvasGeneration,
   sourceReceipt,
   navigationReceipt,
+  navigationTransactionId,
   controller,
 }: {
   cache: DocumentSurfaceCacheSnapshot;
@@ -60,25 +84,33 @@ export function useDocumentSurfaceHandoff({
   canvasGeneration: number;
   sourceReceipt: DocumentSourceReceipt | null;
   navigationReceipt: WorkbenchNavigationReceipt | null;
+  navigationTransactionId: string | null;
   controller: DocumentSurfaceControllerCapability | null;
 }): {
   visibleCachedSurface: DocumentSurfaceCacheEntry | null;
   candidateCachedSurface: DocumentSurfaceCacheEntry | null;
+  candidateHandoffId: string | null;
   visibleCachedSurfaceReady: boolean;
-  retainPresentedTab: (token: DocumentSurfaceCacheToken) => boolean;
-  completeHandoff: (token: DocumentSurfaceCacheToken) => void;
+  acceptDisplayReady: (token: DocumentSurfaceHandoffToken) => boolean;
   updateHandoffScroll: (token: DocumentSurfaceCacheToken, scrollTop: number) => void;
   markFirstScroll: (tabId: string, scrollTop: number) => void;
 } {
   const pending = cache.entries.find((entry) => (
     entry.tabId === tabs.pendingTabId
   )) || null;
-  const pendingToken = tokenForEntry(pending);
+  const pendingTabId = pending?.tabId || null;
+  const pendingSourceSha256 = pending?.sourceSha256 || null;
+  const pendingHandoffToken = useMemo(() => (
+    documentSurfaceHandoffToken(
+      pendingTabId && pendingSourceSha256
+        ? documentSurfaceCacheToken({ tabId: pendingTabId, sourceSha256: pendingSourceSha256 })
+        : null,
+      navigationTransactionId || `pending:${tabs.revision}`,
+    )
+  ), [navigationTransactionId, pendingSourceSha256, pendingTabId, tabs.revision]);
   const [presentedToken, setPresentedToken] = useState<DocumentSurfaceCacheToken | null>(null);
-  const [retainedCandidateToken, setCandidateToken] = useState<DocumentSurfaceCacheToken | null>(null);
-  const eligibleCandidateRef = useRef<DocumentSurfaceCacheToken | null>(null);
-  const pendingTabId = pendingToken?.tabId || null;
-  const pendingSourceSha256 = pendingToken?.sourceSha256 || null;
+  const [retainedCandidateHandoffToken, setCandidateToken] = useState<DocumentSurfaceHandoffToken | null>(null);
+  const eligibleCandidateRef = useRef<DocumentSurfaceHandoffToken | null>(null);
   const presentedEntryIsCached = Boolean(
     presentedToken && entryForToken(cache, presentedToken),
   );
@@ -90,22 +122,24 @@ export function useDocumentSurfaceHandoff({
     setPresentedToken(null);
   }, [presentedEntryIsCached, presentedToken]);
   useEffect(() => {
-    if (!pendingTabId || !pendingSourceSha256) return;
+    if (!pendingHandoffToken) return;
     // The pending tab can commit before the static candidate reports ready;
-    // retain its exact token across that commit without creating another
-    // navigation/state owner.
+    // retain its exact per-navigation token across that commit without
+    // creating another navigation/state owner. The transaction id (or the
+    // pending snapshot revision during bootstrap) fences a repeat visit to
+    // identical bytes from an older disposable iframe.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCandidateToken((current) => (
-      current?.tabId === pendingTabId && current.sourceSha256 === pendingSourceSha256
+      sameDocumentSurfaceHandoffToken(current, pendingHandoffToken)
         ? current
-        : documentSurfaceCacheToken({ tabId: pendingTabId, sourceSha256: pendingSourceSha256 })
+        : pendingHandoffToken
     ));
-  }, [pendingSourceSha256, pendingTabId]);
+  }, [pendingHandoffToken]);
   const active = tabs.tabs.find((tab) => tab.tabId === tabs.activeTabId);
   const exactReceiptApplies = Boolean(
-    retainedCandidateToken
+    retainedCandidateHandoffToken
     && navigationReceipt?.kind === "document"
-    && navigationReceipt.tabId === retainedCandidateToken.tabId
+    && navigationReceipt.tabId === retainedCandidateHandoffToken.tabId
     && navigationReceipt.sourceReceipt,
   );
   const receiptVerified = Boolean(
@@ -127,16 +161,41 @@ export function useDocumentSurfaceHandoff({
       && canvasAuthority.generation === canvasGeneration
     ),
   );
+  const retainedCandidateIsActive = Boolean(
+    retainedCandidateHandoffToken
+    && active?.kind === "document"
+    && active.tabId === retainedCandidateHandoffToken.tabId
+    && sourceSha256 === retainedCandidateHandoffToken.sourceSha256,
+  );
+  // Cache overlay is tab-switch presentation only: the pending destination,
+  // or that destination retained until its first verified Canvas. Same-document
+  // Runtime refresh stays inside the mounted HtmlCanvasEditor A/B slots.
+  const candidateHandoffToken = pendingHandoffToken
+    || (retainedCandidateIsActive && !terminal ? retainedCandidateHandoffToken : null);
+  const candidateToken = useMemo(() => (
+    candidateHandoffToken
+      ? documentSurfaceCacheToken(candidateHandoffToken)
+      : null
+  ), [candidateHandoffToken]);
   useEffect(() => {
-    if (!terminal || !retainedCandidateToken) return;
+    if (!terminal || !retainedCandidateHandoffToken) return;
     // Tab-switch cover ends at the first verified Canvas for that tab.
     // A later same-document Runtime refresh must not reuse this token.
-    if (tabs.activeTabId !== retainedCandidateToken.tabId) return;
+    if (tabs.activeTabId !== retainedCandidateHandoffToken.tabId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCandidateToken(null);
-  }, [retainedCandidateToken, tabs.activeTabId, terminal]);
-  const retainPresentedTab = useCallback((token: DocumentSurfaceCacheToken) => {
-    if (!sameDocumentSurfaceCacheToken(eligibleCandidateRef.current, token)) return false;
+    setCandidateToken((current) => (
+      sameDocumentSurfaceHandoffToken(current, retainedCandidateHandoffToken) ? null : current
+    ));
+  }, [retainedCandidateHandoffToken, tabs.activeTabId, terminal]);
+  useEffect(() => {
+    if (candidateToken) return;
+    // The same handoff owner releases its accepted presentation when no exact
+    // candidate remains. The cache component only renders that owner state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPresentedToken((current) => current ? null : current);
+  }, [candidateToken]);
+  const acceptDisplayReady = useCallback((token: DocumentSurfaceHandoffToken) => {
+    if (!sameDocumentSurfaceHandoffToken(eligibleCandidateRef.current, token)) return false;
     const entry = controller?.getSnapshot().documentSurfaceCache?.entries
       .find((candidate) => documentSurfaceCacheEntryMatchesToken(candidate, token));
     if (!entry) return false;
@@ -145,9 +204,6 @@ export function useDocumentSurfaceHandoff({
     setPresentedToken((current) => sameDocumentSurfaceCacheToken(current, exactToken) ? current : exactToken);
     return true;
   }, [controller]);
-  const completeHandoff = useCallback((token: DocumentSurfaceCacheToken) => {
-    setPresentedToken((current) => sameDocumentSurfaceCacheToken(current, token) ? null : current);
-  }, []);
   const updateHandoffScroll = useCallback((token: DocumentSurfaceCacheToken, scrollTop: number) => {
     controller?.updateDocumentSurfacePresentationForToken(token, { scrollTop });
   }, [controller]);
@@ -156,23 +212,12 @@ export function useDocumentSurfaceHandoff({
       detail: Object.freeze({ tabId, scrollTop }),
     });
   }, []);
-  const retainedCandidateIsActive = Boolean(
-    retainedCandidateToken
-    && active?.kind === "document"
-    && active.tabId === retainedCandidateToken.tabId
-    && sourceSha256 === retainedCandidateToken.sourceSha256,
-  );
-  // Cache overlay is tab-switch presentation only: the pending destination,
-  // or that destination retained until its first verified Canvas. Same-document
-  // Runtime refresh stays inside the mounted HtmlCanvasEditor A/B slots.
-  const candidateToken = pendingToken
-    || (retainedCandidateIsActive && !terminal ? retainedCandidateToken : null);
   useLayoutEffect(() => {
     // Publish eligibility before the child surface's passive ready effect can
     // report. This keeps late callbacks fenced without mutating a ref during
     // render.
-    eligibleCandidateRef.current = candidateToken;
-  }, [candidateToken]);
+    eligibleCandidateRef.current = candidateHandoffToken;
+  }, [candidateHandoffToken]);
   const candidateCachedSurface = entryForToken(cache, candidateToken);
   const presentedCachedSurface = entryForToken(cache, presentedToken);
   // During a tab switch, keep the last ready projection over the new live
@@ -183,9 +228,9 @@ export function useDocumentSurfaceHandoff({
   return {
     visibleCachedSurface,
     candidateCachedSurface,
+    candidateHandoffId: candidateHandoffToken?.handoffId || null,
     visibleCachedSurfaceReady: Boolean(visibleCachedSurface),
-    retainPresentedTab,
-    completeHandoff,
+    acceptDisplayReady,
     updateHandoffScroll,
     markFirstScroll,
   };

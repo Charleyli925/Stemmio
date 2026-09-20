@@ -78,6 +78,7 @@
         "^app/application/document-session",
         "^app/application/source-receipt",
         "^scripts/verify-source-receipt-typecheck",
+        "^scripts/typecheck-mutation-verifier",
         "^tests/source-receipt-contract\\.typecheck",
         "^tests/source-receipt-typecheck-verifier",
         "^tsconfig\\.source-receipt",
@@ -139,6 +140,7 @@
         "^app/workbench/use-workspace-preferences",
         "^shared/agent-configuration-preferences",
         "^scripts/verify-workspace-preferences-typecheck",
+        "^scripts/typecheck-mutation-verifier",
         "^tests/(?:workspace-preferences|run-workflow|agent-provider-catalog)",
         "^tsconfig\\.workspace-preferences"
       ],
@@ -531,6 +533,8 @@
         "^app/application/workbench-navigation",
         "^app/application/workbench-tabs",
         "^app/application/browser-document",
+        "^app/workbench/(?:WorkbenchDocumentSurfaceCache|document-surface-presentation)",
+        "^app/components/HtmlDisplaySurface",
         "^app/workbench/workbench-navigation-container",
         "^tests/workbench-navigation",
         "^tests/workbench-tabs"

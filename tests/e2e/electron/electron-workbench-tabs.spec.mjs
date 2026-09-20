@@ -514,6 +514,185 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
   }
 });
 
+test("Electron fences rapid cached A-to-B-to-C returns by navigation handoff identity", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(300_000);
+  const projectA = createSourceFixture("cache-handoff-a.html");
+  const projectB = createSourceFixture("cache-handoff-b.html");
+  const projectC = createSourceFixture("cache-handoff-c.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectC.sourcePath);
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "cache-handoff-a" });
+    const tabB = tabs.filter({ hasText: "cache-handoff-b" });
+    const tabC = tabs.filter({ hasText: "cache-handoff-c" });
+    const tabCId = String(await tabC.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    await expect(tabs).toHaveCount(3);
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "3");
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const candidates = [];
+      let lastCandidate = "";
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+        const tabId = root?.getAttribute("data-candidate-tab-id") || "";
+        const handoffId = root?.getAttribute("data-candidate-handoff-id") || "";
+        const candidate = `${tabId}:${handoffId}`;
+        if (tabId && handoffId && candidate !== lastCandidate) {
+          candidates.push({ tabId, handoffId });
+          lastCandidate = candidate;
+        }
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, {
+        attributes: true,
+        attributeFilter: ["data-candidate-tab-id", "data-candidate-handoff-id"],
+        childList: true,
+        subtree: true,
+      });
+      sample();
+      window.__STEMMIO_TEST_HANDOFF_CANDIDATES__ = candidates;
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+
+    // Queue three returns without waiting for a prior Canvas to settle. The
+    // final C visit has the same bytes as the already-cached C tab, but must
+    // get a fresh handoff identity rather than accept an A/B callback.
+    await tabA.dispatchEvent("click");
+    await tabB.dispatchEvent("click");
+    await tabC.dispatchEvent("click");
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    await expect(tabC).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeLessThanOrEqual(2);
+
+    // A second C return proves that a same-Hash navigation round does not
+    // reuse the prior C surface's handoff token.
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await tabC.click();
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    await expect(tabC).toHaveAttribute("aria-selected", "true");
+    const observedCandidates = await launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_CANDIDATES__ || []
+    ));
+    const cHandoffs = observedCandidates
+      .filter((candidate) => candidate.tabId === tabCId)
+      .map((candidate) => candidate.handoffId);
+    expect(new Set(cHandoffs).size).toBeGreaterThanOrEqual(2);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+  } finally {
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_HANDOFF_CANDIDATES__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+    removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron releases a delayed cache iframe when the verified Canvas arrives first", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("cache-late-a.html");
+  const projectB = createSourceFixture("cache-late-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "cache-late-a" });
+    const tabB = tabs.filter({ hasText: "cache-late-b" });
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    const visibleReadyBefore = await launched.page.evaluate(() => (
+      performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark").length
+    ));
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      const blockCacheLoad = (event) => {
+        const target = event.target;
+        if (
+          target instanceof HTMLIFrameElement
+          && target.closest('[data-testid="workbench-document-surface-cache"]')
+        ) {
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+        }
+      };
+      document.addEventListener("load", blockCacheLoad, true);
+      sample();
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+      window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = blockCacheLoad;
+    });
+
+    await tabA.click();
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeGreaterThanOrEqual(1);
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await expect.poll(() => launched.page.evaluate(() => (
+      performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark").length
+    ))).toBe(visibleReadyBefore);
+
+    await launched.page.evaluate(() => {
+      const blockCacheLoad = window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+      if (blockCacheLoad) document.removeEventListener("load", blockCacheLoad, true);
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+    });
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+  } finally {
+    await launched.page.evaluate(() => {
+      const blockCacheLoad = window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+      if (blockCacheLoad) document.removeEventListener("load", blockCacheLoad, true);
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron restores the visible reading position and Preview mode after HTML cache eviction", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

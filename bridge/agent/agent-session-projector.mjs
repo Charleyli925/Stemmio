@@ -162,7 +162,6 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
       }
       const visibleTextUpdates = Object.freeze(bounded.map(Object.freeze));
       cached = Object.freeze({
-        visibleText: visibleTextUpdates.map((update) => update.text).join("\n\n"),
         visibleTextUpdates,
         textTruncated: publicTruncated,
       });
@@ -187,7 +186,6 @@ export function publicExecutionSession(entry) {
     agentName: entry.agentName ? safePublicAgentText(entry.agentName).slice(0, 160) : null,
     agentVersion: entry.agentVersion ? safePublicAgentText(entry.agentVersion).slice(0, 80) : null,
     eventCount: entry.eventCount || 0,
-    visibleText: safePublicAgentText(entry.visibleText),
     visibleTextUpdates: Object.freeze((entry.visibleTextUpdates || []).map((update, index) => Object.freeze({
       id: cleanPublicId(update.id, `public-${index}`), sequence: update.sequence,
       text: safePublicAgentText(update.text),

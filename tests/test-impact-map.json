@@ -701,6 +701,19 @@
       ]
     },
     {
+      "id": "typecheck-mutation-verifier",
+      "patterns": [
+        "^scripts/typecheck-mutation-verifier\\.mjs$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/source-receipt-typecheck-verifier.test.mjs",
+        "tests/workspace-preferences-typecheck-verifier.test.mjs"
+      ]
+    },
+    {
       "id": "document-workflow",
       "patterns": [
         "^app/application/document-workflow(?:-codecs)?\\.(?:js|d\\.ts)$",
@@ -808,6 +821,7 @@
         "^app/application/document-surface-cache-session\\.(?:js|d\\.ts)$",
         "^app/application/browser-document-session\\.(?:js|d\\.ts)$",
         "^app/workbench/(?:WorkbenchChrome|WorkbenchDocumentSurfaceCache|WorkbenchActiveDocumentCanvas|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
+        "^app/components/HtmlDisplaySurface\\.tsx$",
         "^app/workbench/workbench-document-surface-cache\\.module\\.css$",
         "^desktop/workbench-tabs-state\\.mjs$",
         "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$",
