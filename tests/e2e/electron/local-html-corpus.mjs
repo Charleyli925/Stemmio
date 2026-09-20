@@ -47,6 +47,7 @@ import {
 } from "./real-html/capability-manifest.mjs";
 import {
   capabilityObservationSnapshot,
+  classifyCapabilityProbeFailure,
   collectVisibleAuthoredCandidates,
   discoverRuntimeGeneratedTargets,
   driveAuthoredTabActivation,
@@ -893,16 +894,33 @@ async function freezeCapabilityManifest(
         },
       );
       probed.push({ ...observation, type: majorElementType(observation.tag) });
+      if ([
+        "AUTHORED_DESCENDANT_OCCLUSION",
+        "AUTHORED_CANVAS_ROOT_NO_CAPABILITY",
+        "AUTHORED_RUNTIME_DESCENDANT_OCCLUSION",
+        "AUTHORED_DEDICATED_SURFACE_OCCLUSION",
+        "AUTHORED_MIXED_DESCENDANT_OCCLUSION",
+        "AUTHORED_FOREIGN_SURFACE_OCCLUSION",
+        "AUTHORED_VIEWPORT_UNREACHABLE",
+      ].includes(observation.probeReason)) {
+        // A wrapper wholly covered by proven descendants and the explicit
+        // authored canvas root are reviewed exclusions. The normalizer
+        // validates their complete proof before they can leave the denominator.
+        continue;
+      }
       if (
         allowUnresolved
         && typeof observation.probeReason === "string"
         && observation.probeReason !== "CAPABILITY_OBSERVED"
       ) {
+        const precheckDetails = publicDiagnosticValue({
+          hitTest: observation.hitTest || null,
+        });
         unresolvedProbes.push({
           probeStableId: candidate.stableId,
           operationStableId: null,
           code: observation.probeReason,
-          details: null,
+          details: precheckDetails,
         });
         const discoveryCode = observation.probeReason === "NO_EXACT_HIT_POINT"
           || observation.probeReason.startsWith("CAPABILITY_PROBE_")
@@ -911,7 +929,11 @@ async function freezeCapabilityManifest(
         noteDiscoveryFailure(
           discoveryTrace,
           REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
-          { code: discoveryCode, exactReason: observation.probeReason },
+          {
+            code: discoveryCode,
+            exactReason: observation.probeReason,
+            details: precheckDetails,
+          },
           {
             candidateCount: candidates.length,
             sourceElementCount: sourceElements.length,
@@ -925,18 +947,38 @@ async function freezeCapabilityManifest(
       }
     } catch (cause) {
       if (!allowUnresolved) throw cause;
+      const classified = classifyCapabilityProbeFailure(cause);
+      const failureStack = String(cause?.stack || "");
+      const failureSubstage = [
+        ["authoredHitTest", "authored-hit-test"],
+        ["pageSpaceAuthoredHitPoint", "page-space-hit-point"],
+        ["resetAuthoredProbeSelection", "selection-reset"],
+        ["hostPointerSnapshot", "host-pointer"],
+        ["probeAuthoredCapability", "authored-capability-probe"],
+      ].find(([functionName]) => failureStack.includes(functionName))?.[1]
+        || "unknown-probe-substage";
+      const reportedCause = typeof cause?.code === "string"
+        ? cause
+        : Object.assign(new Error("Capability probe failed without an explicit product or harness code."), {
+          code: classified.code,
+          details: {
+            reasonClass: classified.reasonClass,
+            errorName: classified.errorName,
+            substage: failureSubstage,
+          },
+        });
       noteDiscoveryFailure(
         discoveryTrace,
         REAL_HTML_DISCOVERY_STAGES.CAPABILITY_PROBE,
-        cause,
+        reportedCause,
         { candidateCount: candidates.length, candidateTabKnown: candidate.tabId !== null },
       );
-      stopReason ||= cause?.code || "CAPABILITY_PROBE_FAILED";
+      stopReason ||= classified.code;
       unresolvedProbes.push({
         probeStableId: candidate.stableId,
         operationStableId: cause?.details?.selectedId || null,
-        code: cause?.code || "CAPABILITY_PROBE_FAILED",
-        details: publicDiagnosticValue(cause?.details),
+        code: classified.code,
+        details: publicDiagnosticValue(reportedCause.details),
       });
       await page.keyboard.press("Escape").catch(() => {});
       await waitUntilEditable(page).catch(() => {});
@@ -964,12 +1006,26 @@ async function freezeCapabilityManifest(
       liveDom: normalized.liveDom,
     }),
   );
+  const denominatorExclusionById = new Map(
+    normalized.denominatorExclusions.map((entry) => [entry.elementId, entry]),
+  );
   const aliasByProbeId = new Map(normalized.aliases.map((entry) => [
     entry.probeStableId,
     entry.operationStableId,
   ]));
   manifest.excluded = manifest.excluded.map((entry) => (
-    aliasByProbeId.has(entry.elementId)
+    denominatorExclusionById.has(entry.elementId)
+      ? {
+        elementId: entry.elementId,
+        reasons: [denominatorExclusionById.get(entry.elementId).reason],
+        ...(denominatorExclusionById.get(entry.elementId).descendantStableIds
+          ? {
+            descendantStableIds: denominatorExclusionById.get(entry.elementId)
+              .descendantStableIds,
+          }
+          : {}),
+      }
+      : aliasByProbeId.has(entry.elementId)
       ? {
         ...entry,
         reasons: [CAPABILITY_MANIFEST_REASONS.CANONICALIZED_TO_OPERATION_ANCESTOR],
@@ -977,6 +1033,9 @@ async function freezeCapabilityManifest(
       }
       : entry
   ));
+  const reviewedAuthoredDenominator = authoredDenominator.filter(
+    (entry) => !denominatorExclusionById.has(entry.probeStableId),
+  );
   const observationsById = new Map(normalized.liveDom.map((entry) => [entry.stableId, entry]));
   manifest.entries = manifest.entries.map((entry) => {
     const observation = observationsById.get(entry.elementId);
@@ -1000,7 +1059,7 @@ async function freezeCapabilityManifest(
   const discovery = {
     complete: stopReason == null && examinedCandidateCount === candidatesById.size,
     knownCandidateCount: candidatesById.size,
-    authoredDenominatorCount: authoredDenominator.length,
+    authoredDenominatorCount: reviewedAuthoredDenominator.length,
     examinedCandidateCount,
     probedCandidateCount,
     unexaminedCandidateCount: Math.max(0, candidatesById.size - examinedCandidateCount),
@@ -1075,7 +1134,7 @@ async function freezeCapabilityManifest(
     };
   });
   const denominatorWithOperations = attachOperationGroupsToAuthoredDenominator({
-    authoredDenominator,
+    authoredDenominator: reviewedAuthoredDenominator,
     operationGroups,
     liveDom: canonicalObservations,
     aliases: normalized.aliases,
@@ -3209,6 +3268,7 @@ for (const filename of files) {
       await waitUntilEditable(page).catch(() => {});
     }
     if (capabilityPreflightOnly) {
+      const preflightRuntime = await runtimeContractSnapshot(page);
       const preflightWorkingCopyAfter = await runDiscoveryStage(
         row.discovery,
         REAL_HTML_DISCOVERY_STAGES.PREFLIGHT_INTEGRITY,
@@ -3221,6 +3281,23 @@ for (const filename of files) {
         afterSha256: sha256(preflightWorkingCopyAfter),
         afterSize: preflightWorkingCopyAfter.length,
         unchanged: preflightWorkingCopyBefore.equals(preflightWorkingCopyAfter),
+      };
+      const frozenSeedName = "frozen-managed-seed.html";
+      const frozenSeedPath = path.join(copyDir, frozenSeedName);
+      writeFileSync(frozenSeedPath, preflightWorkingCopyBefore);
+      const frozenSeed = readFileSync(frozenSeedPath);
+      row.preflightWorkingCopy.frozenSeed = {
+        relativePath: `${fileIndex}/${frozenSeedName}`,
+        sha256: sha256(frozenSeed),
+        size: frozenSeed.length,
+        exactManagedCopy: frozenSeed.equals(preflightWorkingCopyBefore),
+      };
+      row.preflightRuntime = {
+        phase: preflightRuntime.runtimePhase,
+        outcome: preflightRuntime.runtimeOutcome,
+        activeGeneration: preflightRuntime.generation,
+        workingSourceSha256: preflightRuntime.workingSourceSha256,
+        renderedProjectionSha256: preflightRuntime.renderedProjectionSha256,
       };
       if (!row.preflightWorkingCopy.unchanged) {
         row.capabilityError = {
@@ -3242,7 +3319,8 @@ for (const filename of files) {
           || row.discovery.firstFailure
           || frozenCapability?.discovery?.complete === false,
         ),
-        workingCopyUnchanged: row.preflightWorkingCopy.unchanged,
+        workingCopyUnchanged: row.preflightWorkingCopy.unchanged
+          && row.preflightWorkingCopy.frozenSeed.exactManagedCopy,
         draftIssues: frozenCapability?.draft?.issues || [],
       });
       recordDiscoveryObservation(

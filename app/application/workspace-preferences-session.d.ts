@@ -5,6 +5,35 @@ export type WorkspacePreferencesPort = Readonly<{
   record(input: Readonly<{ workspace: Readonly<Record<string, unknown>> }>): Promise<unknown>;
 }>;
 
+export type WorkspacePreferenceMutationResult =
+  | Readonly<{
+    status: "committed";
+    intentId: string;
+    persistence: "confirmed";
+  }>
+  | Readonly<{
+    status: "superseded";
+    intentId: string;
+    write: "not-started";
+  }>
+  | Readonly<{
+    status: "superseded";
+    intentId: string;
+    rollback: "confirmed" | "not-needed";
+  }>
+  | Readonly<{
+    status: "unknown";
+    intentId: string;
+    phase: "commit" | "rollback";
+    pending: true;
+  }>
+  | Readonly<{
+    status: "failed";
+    intentId: string;
+    phase: "commit";
+    persistence: "not-written";
+  }>;
+
 export type WorkspacePreferences = Readonly<{
   rememberPanelWidths: boolean;
   sidebarWidth: number;
@@ -49,20 +78,21 @@ export class WorkspacePreferencesSession {
   load(): Promise<WorkspacePreferencesSnapshot>;
   update(patch: Readonly<Partial<WorkspacePreferences>>): Promise<boolean>;
   commitDefaultAgent(input: Readonly<{
+    intentId: string;
     providerId: WorkspacePreferenceAgentId;
     isCurrent(): boolean;
-  }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+  }>): Promise<WorkspacePreferenceMutationResult>;
   commitAgentConfigurations(input: Readonly<{
     intentId: string;
     agentConfigurations: WorkspacePreferences["agentConfigurations"];
     isCurrent(): boolean;
-  }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+  }>): Promise<WorkspacePreferenceMutationResult>;
   setProviderDisabled(input: Readonly<{
     intentId: string;
     providerId: WorkspacePreferenceAgentId;
     disabled: boolean;
     isCurrent(): boolean;
-  }>): Promise<Readonly<{ status: "committed" | "superseded" | "failed" }>>;
+  }>): Promise<WorkspacePreferenceMutationResult>;
   retry(): boolean;
   flush(input?: { deadlineAt?: number }): Promise<boolean>;
   dispose(): void;

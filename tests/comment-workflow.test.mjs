@@ -1,6 +1,6 @@
 import { loadWorkbenchModel } from "./helpers/workbench-model-loader.mjs";
 const commentModel = await loadWorkbenchModel("comment-model");
-const { commentVisualTarget } = commentModel;
+const { commentVisualTarget, rebindTargetsPreservingGlobal } = commentModel;
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -12,6 +12,12 @@ import { DraftSession } from "../app/application/draft-session.js";
 import { ProjectSession } from "../app/application/project-session.js";
 import { RunSession } from "../app/application/run-session.js";
 import { VersionSession } from "../app/application/version-session.js";
+import {
+  disableEditPipelineCounters,
+  enableEditPipelineCounters,
+  readEditPipelineCounters,
+  resetEditPipelineCounters,
+} from "../app/lib/edit-pipeline-counters.js";
 
 const SOURCE_PATH = "/tmp/comment-workflow.html";
 const NEXT_SOURCE_PATH = "/tmp/comment-workflow-next.html";
@@ -80,6 +86,83 @@ function attachment({
     source: "file-picker",
   };
 }
+
+function measureCommentTargetRebind(run) {
+  disableEditPipelineCounters();
+  enableEditPipelineCounters();
+  resetEditPipelineCounters();
+  try {
+    const value = run();
+    return { value, counters: readEditPipelineCounters() };
+  } finally {
+    disableEditPipelineCounters();
+  }
+}
+
+const REBIND_HTML = `<!doctype html><html><body data-stemmio-id="sm1_22222222222242229222222222222222"><main data-stemmio-id="sm1_3333333333334333a333333333333333"><p data-stemmio-id="sm1_11111111111141118111111111111111">更新后的正文</p></main></body></html>`;
+
+function rebindableCommentTarget() {
+  return {
+    id: "target_local_rebind",
+    elementId: "sm1_11111111111141118111111111111111",
+    expectedSourceSha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    label: "正文",
+    selector: "main p",
+    level: "part",
+    tagName: "p",
+    text: "旧正文",
+    textQuote: "旧正文",
+    resolution: "exact",
+  };
+}
+
+test("comment target rebind skips source indexing when there are no targets", () => {
+  const { value, counters } = measureCommentTargetRebind(() => (
+    rebindTargetsPreservingGlobal(REBIND_HTML, [])
+  ));
+  assert.deepEqual(value, []);
+  assert.equal(counters.sourceIndexBuilds, 0);
+});
+
+test("global comment target normalizes without building a source index", () => {
+  const globalTarget = {
+    id: "target_global_page",
+    elementId: "sm1_22222222222242229222222222222222",
+    label: "旧页面名称",
+    selector: "BODY",
+    level: "module",
+    tagName: "html",
+    text: "旧页面文本",
+    resolution: "rebound",
+  };
+  const { value, counters } = measureCommentTargetRebind(() => (
+    rebindTargetsPreservingGlobal(REBIND_HTML, [globalTarget])
+  ));
+  assert.equal(counters.sourceIndexBuilds, 0);
+  assert.deepEqual(value[0], {
+    ...globalTarget,
+    label: "整个页面",
+    selector: "body",
+    level: "module",
+    tagName: "body",
+    text: "",
+    resolution: "exact",
+  });
+});
+
+test("a local comment target still builds one index and rebinds to the updated source", () => {
+  const localTarget = rebindableCommentTarget();
+  const { value, counters } = measureCommentTargetRebind(() => (
+    rebindTargetsPreservingGlobal(REBIND_HTML, [localTarget])
+  ));
+  assert.equal(counters.sourceIndexBuilds, 1);
+  assert.equal(value[0].id, localTarget.id);
+  assert.equal(value[0].elementId, localTarget.elementId);
+  assert.equal(value[0].resolution, "exact");
+  assert.equal(value[0].textQuote, "更新后的正文");
+  assert.notEqual(value[0].expectedSourceSha256, localTarget.expectedSourceSha256);
+  assert.equal(value[0].sourceAnchor.sourceSha256, value[0].expectedSourceSha256);
+});
 
 function memoryRecoveryStore() {
   const values = new Map();

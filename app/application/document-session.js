@@ -11,6 +11,17 @@ export {
   sameSourceReceiptContext,
 };
 
+/** @typedef {import("./document-session-contract.d.ts").DocumentCanvasAuthority} DocumentCanvasAuthority */
+/** @typedef {import("./document-session-contract.d.ts").DocumentPersistState} DocumentPersistState */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionSnapshot} DocumentSessionSnapshot */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionOptions} DocumentSessionOptions */
+/** @typedef {import("./document-session-contract.d.ts").DocumentWrite} DocumentWrite */
+/** @typedef {import("./document-session-contract.d.ts").DocumentWriteConfirmation} DocumentWriteConfirmation */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSessionInstance<DocumentWrite & Record<string, unknown>, unknown>} DocumentSessionDeclaration */
+/** @typedef {import("./document-session-contract.d.ts").PersistedBoundaryResult} PersistedBoundaryResult */
+/** @typedef {import("./document-session-contract.d.ts").DocumentSourceReceipt} DocumentSourceReceipt */
+/** @typedef {import("./document-session-contract.d.ts").ProjectContext} ProjectContext */
+
 const PERSIST_STATES = new Set([
   "idle",
   "preview-dirty",
@@ -20,26 +31,29 @@ const PERSIST_STATES = new Set([
   "conflict",
 ]);
 
+/** @param {unknown} value */
 function revision(value) {
   const next = Number(value);
   return Number.isSafeInteger(next) && next >= 0 ? next : 0;
 }
 
+/** @param {unknown} value @returns {DocumentPersistState} */
 function persistState(value) {
-  return PERSIST_STATES.has(value) ? value : "idle";
+  return typeof value === "string" && PERSIST_STATES.has(value)
+    ? /** @type {DocumentPersistState} */ (value)
+    : "idle";
 }
 
+/** @param {unknown} value @returns {value is DocumentWrite} */
 function isDocumentWrite(value) {
-  return Boolean(
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && Number.isSafeInteger(value.revision)
-    && value.revision >= 0
-    && typeof value.html === "string"
-  );
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = /** @type {Record<string, unknown>} */ (value);
+  return Number.isSafeInteger(record.revision)
+    && Number(record.revision) >= 0
+    && typeof record.html === "string";
 }
 
+/** @param {unknown} left @param {unknown} right */
 function sameWriteBytes(left, right) {
   return Boolean(
     isDocumentWrite(left)
@@ -49,8 +63,10 @@ function sameWriteBytes(left, right) {
   );
 }
 
+/** @param {DocumentWrite & Record<string, unknown>} write @param {ProjectContext | null | undefined} context */
 function writeMatchesContext(write, context) {
   if (!context) return true;
+  const contextRecord = /** @type {Record<string, unknown>} */ (context);
   const fields = ["epoch", "projectId", "documentId", "sourcePath"];
   for (const field of [
     "projectRootPath",
@@ -61,17 +77,27 @@ function writeMatchesContext(write, context) {
     "sourceSha256",
     "sessionEpoch",
   ]) {
-    if (Object.hasOwn(context, field)) fields.push(field);
+    if (Object.hasOwn(contextRecord, field)) fields.push(field);
   }
-  return fields.every((field) => String(write?.[field] ?? "") === String(context[field] ?? ""));
+  return fields.every((field) => (
+    String(write[field] ?? "") === String(contextRecord[field] ?? "")
+  ));
 }
 
+/**
+ * @param {DocumentWrite & Record<string, unknown>} expectedWrite
+ * @param {DocumentWrite & Record<string, unknown>} nextWrite
+ * @param {ProjectContext | null | undefined} context
+ */
 function writeRebaseKeepsOwner(expectedWrite, nextWrite, context) {
   if (!sameWriteBytes(expectedWrite, nextWrite)) return false;
+  const contextRecord = context
+    ? /** @type {Record<string, unknown>} */ (context)
+    : null;
   for (const field of ["projectId", "documentId"]) {
     const expected = String(expectedWrite?.[field] || "");
     const next = String(nextWrite?.[field] || "");
-    const current = String(context?.[field] || "");
+    const current = String(contextRecord?.[field] || "");
     if ((expected && expected !== next) || (current && current !== next)) return false;
   }
   return true;
@@ -99,20 +125,48 @@ function nextSourceSessionIncarnation() {
   return sourceSessionIncarnationSequence;
 }
 
+/**
+ * @param {{
+ *   status?: "idle" | "pending" | "verified" | "failed";
+ *   generation?: number;
+ *   renderedSha256?: string | null;
+ *   error?: string | null;
+ * }} [value]
+ * @returns {DocumentCanvasAuthority}
+ */
 function canvasAuthority({
   status = "idle",
   generation = 0,
   renderedSha256 = null,
   error = null,
 } = {}) {
+  const normalizedStatus = CANVAS_AUTHORITY_STATES.has(status) ? status : "idle";
+  const normalizedGeneration = revision(generation);
+  if (normalizedStatus === "verified") {
+    return Object.freeze({
+      status: "verified",
+      generation: normalizedGeneration,
+      renderedSha256: String(renderedSha256 || ""),
+      error: null,
+    });
+  }
+  if (normalizedStatus === "failed") {
+    return Object.freeze({
+      status: "failed",
+      generation: normalizedGeneration,
+      renderedSha256: null,
+      error: String(error || ""),
+    });
+  }
   return Object.freeze({
-    status: CANVAS_AUTHORITY_STATES.has(status) ? status : "idle",
-    generation: revision(generation),
-    renderedSha256: renderedSha256 ? String(renderedSha256) : null,
-    error: error ? String(error) : null,
+    status: normalizedStatus === "pending" ? "pending" : "idle",
+    generation: normalizedGeneration,
+    renderedSha256: null,
+    error: null,
   });
 }
 
+/** @param {number} generation @returns {DocumentCanvasAuthority} */
 function pendingCanvasAuthority(generation) {
   return canvasAuthority({
     status: "pending",
@@ -120,6 +174,7 @@ function pendingCanvasAuthority(generation) {
   });
 }
 
+/** @param {Exclude<PersistedBoundaryResult, { ready: true }>["code"]} code @param {string} reason @param {boolean} [confirmed] */
 function boundaryBlock(code, reason, confirmed = false) {
   return Object.freeze({
     ready: false,
@@ -129,6 +184,7 @@ function boundaryBlock(code, reason, confirmed = false) {
   });
 }
 
+/** @param {DocumentSessionOptions} [options] @returns {DocumentSessionSnapshot} */
 function initialSnapshot({
   html = "",
   persistedSourceSha256 = null,
@@ -155,27 +211,36 @@ function initialSnapshot({
   });
 }
 
+/** @implements {DocumentSessionDeclaration} */
 export class DocumentSession {
+  /** @type {((snapshot: DocumentSessionSnapshot) => void) | null} */
   #observer = null;
 
+  /** @type {DocumentSessionSnapshot} */
   #snapshot;
 
+  /** @type {(DocumentWrite & Record<string, unknown>) | null} */
   #pendingWrite = null;
 
+  /** @type {(DocumentWrite & Record<string, unknown>) | null} */
   #activeWrite = null;
 
   #authorityGeneration = 0;
 
+  /** @type {WeakMap<DocumentWrite & Record<string, unknown>, number>} */
   #writeAuthorities = new WeakMap();
 
+  /** @type {Promise<unknown> | null} */
   #flushPromise = null;
 
   #receiptSequence = 0;
 
+  /** @type {number | null} */
   #confirmedReceiptSequence = null;
 
   #sessionIncarnation;
 
+  /** @param {DocumentSessionOptions} [options] */
   constructor(options = {}) {
     this.#sessionIncarnation = nextSourceSessionIncarnation();
     this.#snapshot = initialSnapshot(options);
@@ -193,10 +258,12 @@ export class DocumentSession {
     });
   }
 
+  /** @param {((snapshot: DocumentSessionSnapshot) => void) | null} observer */
   setObserver(observer) {
     this.#observer = typeof observer === "function" ? observer : null;
   }
 
+  /** @param {Omit<DocumentSessionSnapshot, "hasPendingWrite" | "isFlushing"> & Partial<Pick<DocumentSessionSnapshot, "hasPendingWrite" | "isFlushing">>} next */
   #emit(next) {
     const persistedSourceSha256 = next.persistedSourceSha256
       ? String(next.persistedSourceSha256)
@@ -214,6 +281,7 @@ export class DocumentSession {
     }
   }
 
+  /** @param {Parameters<DocumentSessionDeclaration["reset"]>[0]} value */
   reset({
     html,
     persistedSourceSha256 = null,
@@ -254,6 +322,7 @@ export class DocumentSession {
     return this.#snapshot;
   }
 
+  /** @param {Parameters<DocumentSessionDeclaration["publishAuthority"]>[0]} value */
   publishAuthority({
     html,
     persistedSourceSha256 = null,
@@ -322,6 +391,7 @@ export class DocumentSession {
     return this.#snapshot;
   }
 
+  /** @param {Parameters<DocumentSessionDeclaration["reloadCanvas"]>[0]} [value] */
   reloadCanvas({ context = null, operationId = "" } = {}) {
     this.#confirmedReceiptSequence = null;
     const canvasGeneration = this.#snapshot.canvasGeneration + 1;
@@ -343,6 +413,7 @@ export class DocumentSession {
     return this.#snapshot;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["confirmWorkingHtml"]>[0]>} [value] */
   confirmWorkingHtml({ revision: expectedRevision, htmlSha256 } = {}) {
     const receivedRevision = revision(expectedRevision);
     const receivedHash = htmlSha256 ? String(htmlSha256) : "";
@@ -357,6 +428,7 @@ export class DocumentSession {
     return true;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["confirmCanvas"]>[0]>} [value] */
   confirmCanvas({
     generation,
     renderedSha256,
@@ -408,6 +480,7 @@ export class DocumentSession {
     return true;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["failCanvas"]>[0]>} [value] */
   failCanvas({ generation, error, receipt } = {}) {
     const expectedGeneration = revision(generation);
     const currentReceipt = this.#snapshot.sourceReceipt;
@@ -437,6 +510,10 @@ export class DocumentSession {
     return true;
   }
 
+  /**
+   * @param {Partial<Parameters<DocumentSessionDeclaration["acceptEdit"]>[0]>} [value]
+   * @returns {import("./document-session-contract.d.ts").DocumentEditAcceptance<DocumentWrite & Record<string, unknown>>}
+   */
   acceptEdit({
     html,
     origin = "local-edit",
@@ -498,6 +575,7 @@ export class DocumentSession {
     });
   }
 
+  /** @param {DocumentWrite & Record<string, unknown>} write */
   restorePendingWrite(write) {
     if (!isDocumentWrite(write)) {
       throw new TypeError("Document restored pending write requires exact HTML and a non-negative revision.");
@@ -537,6 +615,10 @@ export class DocumentSession {
     return write;
   }
 
+  /**
+   * @param {DocumentWrite & Record<string, unknown>} write
+   * @param {{ nextWrite?: DocumentWrite & Record<string, unknown>; replacePending?: boolean }} [value]
+   */
   restoreWrite(write, { nextWrite = write, replacePending = false } = {}) {
     if (!isDocumentWrite(write) || !isDocumentWrite(nextWrite)) {
       throw new TypeError("Document restored write requires exact HTML and a non-negative revision.");
@@ -569,8 +651,9 @@ export class DocumentSession {
     return nextWrite;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["rebaseQueuedWrite"]>[0]>} [value] */
   rebaseQueuedWrite({ expectedWrite, nextWrite } = {}) {
-    if (this.#pendingWrite !== expectedWrite) return false;
+    if (!expectedWrite || !nextWrite || this.#pendingWrite !== expectedWrite) return false;
     if (
       this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
       || !writeRebaseKeepsOwner(
@@ -587,8 +670,9 @@ export class DocumentSession {
     return true;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["rebaseActiveWrite"]>[0]>} [value] */
   rebaseActiveWrite({ expectedWrite, nextWrite } = {}) {
-    if (this.#activeWrite !== expectedWrite) return false;
+    if (!expectedWrite || !nextWrite || this.#activeWrite !== expectedWrite) return false;
     if (
       this.#writeAuthorities.get(expectedWrite) !== this.#authorityGeneration
       || !writeRebaseKeepsOwner(
@@ -604,12 +688,17 @@ export class DocumentSession {
     return true;
   }
 
+  /** @param {DocumentWrite & Record<string, unknown>} write */
   finishWrite(write) {
     if (this.#activeWrite !== write) return false;
     this.#activeWrite = null;
     return true;
   }
 
+  /**
+   * @param {Partial<Parameters<DocumentSessionDeclaration["acceptWriteConfirmation"]>[0]>} [value]
+   * @returns {DocumentWriteConfirmation}
+   */
   acceptWriteConfirmation({
     write,
     html,
@@ -720,6 +809,7 @@ export class DocumentSession {
     });
   }
 
+  /** @param {unknown} value */
   reconcileRecoveredRevision(value) {
     const reconciledRevision = revision(value);
     this.#pendingWrite = null;
@@ -754,6 +844,7 @@ export class DocumentSession {
     return true;
   }
 
+  /** @param {Partial<Parameters<DocumentSessionDeclaration["recordPersistenceFailure"]>[0]>} [value] */
   recordPersistenceFailure({ error, conflict = false, write = null, receipt = null } = {}) {
     if (
       (write && (
@@ -770,6 +861,7 @@ export class DocumentSession {
     return this.#snapshot;
   }
 
+  /** @template {Promise<unknown>} T @param {T} promise @returns {T | false} */
   beginFlush(promise) {
     if (typeof promise?.then !== "function") {
       throw new TypeError("Document flush authority must be a Promise.");
@@ -780,6 +872,7 @@ export class DocumentSession {
     return promise;
   }
 
+  /** @param {Promise<unknown>} promise */
   finishFlush(promise) {
     if (this.#flushPromise !== promise) return false;
     this.#flushPromise = null;
@@ -787,6 +880,10 @@ export class DocumentSession {
     return true;
   }
 
+  /**
+   * @param {Parameters<DocumentSessionDeclaration["reconcilePersistedBoundary"]>[0]} value
+   * @returns {Promise<PersistedBoundaryResult>}
+   */
   async reconcilePersistedBoundary({
     frozenHtml,
     reportedSourceSha256 = null,
@@ -935,6 +1032,7 @@ export class DocumentSession {
     return this.#snapshot.html;
   }
 
+  /** @param {import("./document-session-contract.d.ts").SourceReceiptInput} input */
   #nextReceipt(input) {
     this.#receiptSequence += 1;
     return createSourceReceipt({

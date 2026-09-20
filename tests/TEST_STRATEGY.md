@@ -93,6 +93,7 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
 - 核心 Node：算法、状态机、序列化、事务、错误关闭和 forward/inverse 不变量。
 - Runtime Continuity Probe：`runtime-continuity-probe.js` 只在测试调用 enable 后记录 `frameCreated` / `candidateCreated`、canvas/评论栏宽度、scrollTop 和可见 Frame。生产路径默认静默。Electron `electron-runtime-continuity.spec.mjs` 用静态页、嵌套滚动页和 Script 图表页证明连续编辑不重建 Runtime、评论栏宽度不闪、以及重建后第 6 个空行的 Caret 落点。`electron-seeded-faults.spec.mjs` 在同一探针上注入 Active iframe 消失和编辑中 Candidate iframe，证明 canary 会失败并在恢复后收敛。
 - 编辑链路计算计数：`edit-pipeline-counters.js` 只在测试显式 enable 后累计整文 `buildSourceIndex`、完整 `applyPatchPlan` 和插入点全树扫描。默认关闭，事件不含 HTML。`tests/edit-pipeline-baseline.test.mjs` 冻结当前 kernel 与 Canvas 单路物化次数；后续删除重复工作时必须更新这些数字。kernel 在同一次 apply 内复用已构建索引后，不得把状态包装或身份计算的重复解析算回基线。插入点全树扫描只在源码 Hash 或 iframe document 身份变化时发生，overlay/滚动/选区更新不得另计一次。片段解析、浏览器 DOM 解析和独立持久化验证不计入同一组。
+  评论目标重绑还必须证明空目标和仅全局页面目标不会建立整文索引，非空本地目标仍恰好进入一次重绑索引；对应计数由 `tests/comment-workflow.test.mjs` 固定。
 - 已删除的 Canvas `useCallback` 源码切片断言由既有 Electron 行为测试接替，映射写在 `tests/html-canvas-runtime-startup.test.mjs`。保留的只是退役路径禁令（例如 `forceRuntimeHandoff`、`lastValidCommentLayoutRef`）和 queued-static oracle。
 - 测试 Inventory 与风险账本：`npm run test:inventory` 从实际 Playwright 配置的 `testMatch` 生成执行清单（含 Ready / Draft smoke / packaged / DOM 编辑兼容性扫描，以及明确标为 `on-demand` 的 review-annotation），并核对 `tests/test-risk-ledger.json` 的 `ready-full` 文件确实被某个 Ready 配置选中。源码正则只用于辅助提取标题与 Tag，不能单独证明用例会被执行。
 - `DocumentWorkflow`：fake Scheduler、Hash、RecoveryStore、Canvas Port 和 Bridge
@@ -113,10 +114,14 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `page: not-current` 结果由 `tests/run-workflow.test.mjs` 拥有。这些 Node 用例不声称 IME、Focus 或真实 iframe 连续性；继续复用
   `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
   `conflict-force-unlock.spec.mjs` 的真实接纳接线。
-- `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
-  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
+- `SourceReceipt` / `DocumentSession` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
+  `source-receipt.js`、真实 `document-session.js`、单一实例合同 `document-session-contract.d.ts`、
+  runtime façade `document-session.d.ts` 与调用者合约，并从
   `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
-  再以内存源码覆盖完成定向错误变异。证明必须在目标实现位置得到指定类型错误；若正式配置
+  再以内存源码覆盖完成定向错误变异。`DocumentSession` 变异分别把 verified Hash 置空、
+  generation 改成字符串、把 accepted edit 结果改成错误形状、删除实例方法，以及让
+  Canvas / flush getter 返回错误类型，都必须在指定生产位置只产生预期类型错误；
+  若正式配置
   关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
   也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`
@@ -368,7 +373,11 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   synthetic HTML 上串行运行。它必须同时保留 external-write conflict、
   restart recovery 与 exact-byte oracle；restart recovery 不仅验证磁盘
   字节，也必须重新打开已注册 workspace 并验证项目/文档身份、Hash 和
-  persisted revision；并报告样本数、p50/p95/max、
+  persisted revision；exact-byte oracle 以导入后完成 Stable-ID 物化的
+  Working Copy 为冻结基线，不把导入前外部原稿误当为可编辑源；
+  dirty close 的 elapsed 截止于原关闭事件，安全 oracle 在计时外使用同一
+  隔离 userData 重开并验证恢复后 Working Copy 的完整字节；
+  并报告样本数、p50/p95/max、
   request/response bytes、renderer/Bridge RSS、renderer rAF gap 和明确的
   `skip-12` 或 `authorize-12-pr1` 决策；不同 SHA、并行负载或旧诊断样本
   不得混合。
@@ -680,7 +689,7 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 | 非法 SourceReceipt 不能被放行 | 固定的非法值、缺失字段、超界数字和 context 投影与生产守卫结果对比；不调用守卫自己生成期望 | `tests/document-session.test.mjs` 的 `source receipt guard ...` 正反例 | `node --test tests/document-session.test.mjs` |
 | 原子写入异常不掩盖真实结果 | 故障注入后独立读取目标字节、目录项和主错误，区分 replace 前后的 cleanup | `tests/lifecycle-core.test.mjs` 的 255-byte、directory-sync 和 cleanup failure 用例 | `node --test tests/lifecycle-core.test.mjs` |
 | 禁止的架构依赖必须失败 | 独立临时源码中的合法/非法 AST 固定样例，再执行完整生产图检查 | `tests/architecture-boundaries.test.mjs` 与 `scripts/check-architecture.mjs` | `npm run architecture:check && node --test tests/architecture-boundaries.test.mjs` |
-| SourceReceipt 核心实现真正受类型检查 | 编译输入列表核对加定向错误变异；变异未报错则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
+| SourceReceipt / DocumentSession 核心实现真正受类型检查 | contract / façade / 实现 root 核对加七个定向错误变异；任一变异未在指定生产位置报预期错误则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
 | 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
 | 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
 | 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |
@@ -740,6 +749,28 @@ reference retirement, replacement-save/old-clear ordering, Settings clear-action
 gating, provider-disabled preference rollback, retry without reconnect/default
 commit, receipt precedence, and slow-A/fast-B projection fencing. The checked production interpreter and
 the test stubs share the union in `agent-credential-operation-contract.d.ts`.
+`tests/workspace-preferences-session.test.mjs` separately owns the single
+renderer durable-write turn, lost-response reconciliation, field-generation
+owned rollback, disposal fencing, strict complete persistence receipts and a
+Main-backed reopen oracle. The actual production Session, precise mutation
+receipt and RunWorkflow/Catalog receipt interpreter are checked by
+`typecheck:workspace-preferences`; the verifier rejects directed producer and
+consumer mutations and fails if either JavaScript implementation leaves the
+official compiler inputs.
+
+| Preference ordering proof | Deterministic test evidence |
+| --- | --- |
+| P01 hydration versus first update | `the first preference change waits for hydration without losing the optimistic patch` |
+| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a later ordinary update supersedes an Agent intent during its baseline read`; `a same-field update accepted after rollback record invocation writes last`; `an update queued from the closing pump publication gets a fresh durable turn` |
+| P03 stale durable A owns only its field | `a same-field update accepted during rollback authority read fences the restore` |
+| P04 unrelated field during rollback | `an unrelated update during rollback authority read does not block the narrow restore` |
+| P05 failed patch followed by newer value | `a newer ordinary preference beats the failed patch retained for one retry` |
+| P06 queued operation disposed before write | `dispose prevents a queued Agent mutation from starting a write`; `a same-field intent that replaces an Agent patch before record leaves it not-started` |
+| P07 dispose after durable write starts | `dispose reconciles a durable Agent write whose response was lost`; `dispose lets started Agent mutations finish only their predetermined rollback` |
+| P08 rollback failure or lost response | `Agent mutations require a strict durable rollback baseline before writing`; `terminal supersession retires only its failed pending Agent patch`; `a lost rollback response is confirmed only when authority shows the restore`; `an unconfirmed rollback remains unknown and does not claim restoration` |
+| P09 Agent preference operations stay distinct | `a credential intent reaches the single preferences session and restores superseded configuration`; `concurrent provider access changes preserve both disabled providers`; `a later unrelated terminal failure cannot downgrade confirmed Agent persistence` |
+| P10 reopen matches the promise | `a confirmed Agent preference survives a real Main persistence reopen` |
+
 `tests/desktop-preload-ipc.test.mjs` proves
 missing capabilities fail explicitly and forwards operation/model identity.
 Electron may restore a synthetic Key only for an isolated profile with explicit

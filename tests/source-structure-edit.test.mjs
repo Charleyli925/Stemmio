@@ -107,6 +107,96 @@ test("insert, delete and cross-parent move keep source identity authoritative", 
   assert.equal(target.stemmioId, ids.second);
 });
 
+test("same-parent move and delete preserve surrounding authored whitespace exactly", () => {
+  const formatted = html.replace(
+    `<p data-stemmio-id="${ids.second}">B</p></section>`,
+    `<p data-stemmio-id="${ids.second}">B</p>\n  </section>`,
+  );
+  const baseline = createSemanticDocumentState(formatted);
+  const duplicated = applySemanticOperation(
+    baseline,
+    createDuplicateElementOperation(formatted, {
+      baseRevision: 0,
+      operationId: "op_duplicate_ws_01",
+      elementId: ids.second,
+    }),
+    { randomUUID: uuidFactory("21000000-0000-4000-8000-000000000001") },
+  );
+  const moved = applySemanticOperation(
+    duplicated.nextState,
+    createMoveElementOperation(duplicated.html, {
+      baseRevision: duplicated.nextRevision,
+      operationId: "op_move_ws_000001",
+      elementId: duplicated.insertedRootElementId,
+      parentElementId: ids.left,
+      beforeElementId: ids.second,
+    }),
+  );
+  const deleted = applySemanticOperation(
+    moved.nextState,
+    createDeleteElementOperation(moved.html, {
+      baseRevision: moved.nextRevision,
+      operationId: "op_delete_ws_0001",
+      elementId: duplicated.insertedRootElementId,
+    }),
+  );
+  assert.equal(deleted.html, formatted);
+});
+
+test("same-parent copy move and delete preserve unrelated authored comments exactly", () => {
+  const commentCases = [
+    `<section data-stemmio-id="${ids.left}"><!--leading-->\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <p data-stemmio-id="${ids.second}">B</p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <!--between-->\n  <p data-stemmio-id="${ids.second}">B</p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <!--between-->\n  <p data-stemmio-id="${ids.second}">B<!--inside--></p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <p data-stemmio-id="${ids.second}">B</p><!--trailing-->\n</section>`,
+  ];
+  const originalSection = html.slice(
+    html.indexOf(`<section data-stemmio-id="${ids.left}">`),
+    html.indexOf("</section>") + "</section>".length,
+  );
+  for (const [caseIndex, section] of commentCases.entries()) {
+    const source = html.replace(originalSection, section);
+    const duplicated = applySemanticOperation(
+      createSemanticDocumentState(source),
+      createDuplicateElementOperation(source, {
+        baseRevision: 0,
+        operationId: `op_duplicate_comment_${caseIndex}`,
+        elementId: ids.second,
+      }),
+      {
+        randomUUID: uuidFactory(
+          `22000000-0000-4000-8000-00000000000${caseIndex + 1}`,
+        ),
+      },
+    );
+    const moved = applySemanticOperation(
+      createSemanticDocumentState(duplicated.html, {
+        revision: duplicated.nextRevision,
+        lineage: duplicated.nextState.lineage,
+      }),
+      createMoveElementOperation(duplicated.html, {
+        baseRevision: duplicated.nextRevision,
+        operationId: `op_move_comment_${caseIndex}`,
+        elementId: duplicated.insertedRootElementId,
+        parentElementId: ids.left,
+        beforeElementId: ids.second,
+      }),
+    );
+    const deleted = applySemanticOperation(
+      createSemanticDocumentState(moved.html, {
+        revision: moved.nextRevision,
+        lineage: moved.nextState.lineage,
+      }),
+      createDeleteElementOperation(moved.html, {
+        baseRevision: moved.nextRevision,
+        operationId: `op_delete_comment_${caseIndex}`,
+        elementId: duplicated.insertedRootElementId,
+      }),
+    );
+    assert.equal(deleted.html, source, `comment case ${caseIndex + 1}`);
+  }
+});
+
 test("cross-parent move refuses a cycle into the moving element's descendants", () => {
   const baseline = createSemanticDocumentState(html);
   assert.throws(() => applySemanticOperation(

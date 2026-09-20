@@ -33,6 +33,7 @@ import {
   publicOpenAiCompatibleVendors,
   publicModelsForVendor,
 } from "../../shared/openai-compatible-vendors.mjs";
+import { interpretWorkspacePreferenceMutation } from "./workspace-preference-mutation-outcome.js";
 
 const QODER_FAILURE_REASONS = Object.freeze({
   QODER_COMMAND_NOT_FOUND: "not-installed",
@@ -1893,8 +1894,10 @@ export class AgentCatalogState {
       reasoning: provider.selection.reasoning.requested,
     }]));
     const write = this.#configurationWrite.catch(() => {}).then(async () => {
-      if (intent && !intent.isCurrent()) return Object.freeze({ status: "superseded" });
-      return this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations, intent);
+      if (intent && !intent.isCurrent()) return null;
+      return intent
+        ? this.#configurationPreferencesPort.commitAgentConfigurations(agentConfigurations, intent)
+        : this.#configurationPreferencesPort.saveAgentConfigurations(agentConfigurations);
     });
     this.#configurationWrite = write;
     const result = await write;
@@ -1903,15 +1906,25 @@ export class AgentCatalogState {
         code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
       });
     }
-    const status = result?.status || (result === false ? "failed" : "committed");
-    if (status === "superseded") {
+    if (!intent && result !== true) {
+      throw Object.assign(new Error("Agent configuration was not persisted."), {
+        code: "AGENT_PREFERENCES_SAVE_FAILED",
+      });
+    }
+    if (!intent) return;
+    const outcome = interpretWorkspacePreferenceMutation(result);
+    if (outcome.kind === "superseded") {
       throw Object.assign(new Error("Agent configuration operation was superseded."), {
         code: "AGENT_PREFERENCES_SAVE_SUPERSEDED",
       });
     }
-    if (status === "failed") {
-      throw Object.assign(new Error("Agent configuration was not persisted."), {
-        code: "AGENT_PREFERENCES_SAVE_FAILED",
+    if (outcome.errorCode) {
+      throw Object.assign(new Error(
+        outcome.kind === "unknown"
+          ? "Agent configuration persistence is unconfirmed."
+          : "Agent configuration was not persisted.",
+      ), {
+        code: outcome.errorCode,
       });
     }
   }

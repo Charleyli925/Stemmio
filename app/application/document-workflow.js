@@ -374,8 +374,8 @@ export class DocumentWorkflow {
       sourcePath: this.#projectSession.sourcePath,
       persistedSourceSha256: document.persistedSourceSha256,
       workingHtmlSha256: document.workingHtmlSha256,
-      canvasStatus: document.canvasAuthority?.status,
-      canvasRenderedSha256: document.canvasAuthority?.renderedSha256,
+      canvasStatus: document.canvasAuthority.status,
+      canvasRenderedSha256: document.canvasAuthority.renderedSha256,
     });
     return Object.freeze({ ...plan, sourceSha256: document.persistedSourceSha256 });
   }
@@ -1247,7 +1247,7 @@ export class DocumentWorkflow {
       && requested.editRevision === requested.lastPersistedRevision
       && SHA256.test(String(requested.workingHtmlSha256 || ""))
       && requested.workingHtmlSha256 === requested.persistedSourceSha256
-      && canvasAuthority?.status === "verified"
+      && canvasAuthority.status === "verified"
       && canvasAuthority.generation === requested.canvasGeneration
       && canvasAuthority.renderedSha256 === requested.workingHtmlSha256
     ) {
@@ -3320,8 +3320,9 @@ export class DocumentWorkflow {
       pageStatus: restored ? "restored" : "repair-required",
       reason: restored
         ? undefined
-        : this.#documentSession.canvasAuthority.error
-          || "文件已经接纳，但页面尚未恢复。",
+        : this.#documentSession.canvasAuthority.status === "failed"
+          ? this.#documentSession.canvasAuthority.error
+          : "文件已经接纳，但页面尚未恢复。",
     }));
   }
 

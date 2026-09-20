@@ -305,6 +305,7 @@ See `tests/TEST_STRATEGY.md` for the separate eight-file core acceptance scope.
 | Command | Purpose |
 | --- | --- |
 | `npm run gate:edit` | Fast, impact-selected feedback for uncommitted work |
+| `npm run typecheck:workspace-preferences` | Check the actual renderer preference Session and production receipt interpreter, then prove directed implementation and consumer mutations are rejected by that same official config |
 | `npm run gate:plan -- --base origin/main` | Compact JSON of the task-lane selection: owners, Node tests, capability canaries, estimated fan-out and capability reading sets |
 | `npm run gate:plan -- --context-domain <id>` | Same reading map before any files have changed; does not select tests or change `task:finish` |
 | `node scripts/capability-context-locate.mjs` | Compare five representative locate tasks against the frozen pre-change map and size snapshot; reports preset first-locate reading size, not observed Agent reading |
@@ -317,7 +318,7 @@ See `tests/TEST_STRATEGY.md` for the separate eight-file core acceptance scope.
 | `npm run gate:candidate-app:auto` | Guarded internal formal-candidate preflight: assemble one ad-hoc App, verify contents, then run the complete packaged-runtime oracle before signing |
 | `npm run release:mac` | Complete source gate, signed arm64 DMG/ZIP package, packaged runtime test, artifact verification and exact live PR/content delivery report; release credentials are required for notarization proof |
 | `npm run test:electron:ci-preflight` | Synthetic hosted-macOS window, timer and animation-frame preflight used before Electron product suites |
-| `npm run benchmark:persistence` | Build one Electron renderer, then serially collect frozen-main full-HTML persistence decision evidence: it rejects changed runtime inputs outside its explicit harness/report allowlist; each autosave, switch and close duration stops at that operation's own endpoint; and it measures memory, event-loop and safety oracles |
+| `npm run benchmark:persistence` | Build one Electron renderer, freeze the imported Working Copy bytes after required Stable-ID materialization, then serially collect full-HTML persistence decision evidence: it rejects changed runtime inputs outside its explicit harness/report allowlist; each autosave, switch and close duration stops at that operation's own endpoint; and it measures memory, event-loop and safety oracles |
 
 Every `gate:edit` or `gate:task` run writes its selected files, suites and reasons
 to `output/test-runs/<run-id>/selection.json`, including which rule matched each

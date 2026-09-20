@@ -537,17 +537,28 @@ export async function executeFrozenStructure({ frame, target, page, editor, elec
     const locator = frozenFrameAccess(frame, copyTarget, calls).target(copyTarget.selectedId);
     handle = await locator.elementHandle(); documentHandle = await frame.evaluateHandle(() => document);
     const position = await handle.evaluate(element => {
-      const text = [...element.childNodes].find(node => node.nodeType === 3 && node.textContent);
-      if (!text) return null;
-      const range = element.ownerDocument.createRange(); range.setStart(text, 0); range.setEnd(text, 1);
-      const rect = range.getBoundingClientRect(), outer = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0
-        ? { x: rect.left - outer.left + rect.width / 2, y: rect.top - outer.top + rect.height / 2 } : null;
+      const outer = element.getBoundingClientRect();
+      for (const text of [...element.childNodes].filter(node => node.nodeType === 3 && node.textContent)) {
+        for (let offset = 0; offset < text.textContent.length; offset += 1) {
+          const range = element.ownerDocument.createRange();
+          range.setStart(text, offset); range.setEnd(text, offset + 1);
+          const rect = range.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return { x: rect.left - outer.left + rect.width / 2, y: rect.top - outer.top + rect.height / 2 };
+          }
+        }
+      }
+      return null;
     });
     failUnless(position, "COPY_PLAIN_LEAF_DRIFT");
     await handle.dblclick({ position, timeout: 2_000 });
     await expect(locator).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u, { timeout: 2_000 });
-    await page.keyboard.press(keyShortcut("ArrowDown"));
+    await handle.evaluate(element => {
+      const selection = element.ownerDocument.getSelection();
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element); range.collapse(false);
+      selection.removeAllRanges(); selection.addRange(range); element.focus();
+    });
     await sameDocument();
     return requireFrozenTextFocus(handle, copyTarget.selectedId, { atEnd: true });
   };

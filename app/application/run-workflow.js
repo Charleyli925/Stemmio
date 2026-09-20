@@ -5,6 +5,7 @@ import { revalidateCommentTextLocators } from "./run/text-locator-validation.js"
 import { createRunWorkflowCodecs } from "./run-workflow-codecs.js";
 import { verifyOpenTarget, verifyProjectContext } from "./verified-project-context.js";
 import { AgentCatalogState } from "./agent-provider-catalog.js";
+import { interpretWorkspacePreferenceMutation } from "./workspace-preference-mutation-outcome.js";
 import {
   interpretAgentCredentialOperation,
   isAgentCredentialRecordId,
@@ -2585,11 +2586,11 @@ export class RunWorkflow {
       providerId: ready.providerId,
       isCurrent,
     });
-    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
-    if (saveStatus === "failed") {
-      return rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。");
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    if (saveOutcome.errorCode) {
+      return rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。");
     }
-    if (saveStatus === "superseded" || !isCurrent()) {
+    if (saveOutcome.kind === "superseded" || !isCurrent()) {
       return succeeded({ committed: false, superseded: true });
     }
     const committed = this.#agentCatalog.commitPendingDefault(intentId);
@@ -2615,12 +2616,12 @@ export class RunWorkflow {
       providerId: selected.providerId,
       isCurrent,
     });
-    const saveStatus = saved?.status || (saved === false ? "failed" : isCurrent() ? "committed" : "superseded");
-    return saveStatus === "failed"
-      ? rejected("AGENT_PREFERENCES_SAVE_FAILED", "默认 Agent 暂时无法保存。")
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    return saveOutcome.errorCode
+      ? rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。")
       : succeeded({
-        committed: saveStatus === "committed",
-        superseded: saveStatus === "superseded",
+        committed: saveOutcome.kind === "committed",
+        superseded: saveOutcome.kind === "superseded",
         selection: selected,
         intentId,
       });
@@ -3220,10 +3221,11 @@ export class RunWorkflow {
           disabled,
           isCurrent: () => this.#credentialIntentCurrent(intent),
         });
-        if (!this.#credentialIntentCurrent(intent) || receipt?.status === "superseded") {
+        const outcome = interpretWorkspacePreferenceMutation(receipt);
+        if (!this.#credentialIntentCurrent(intent) || outcome.kind === "superseded") {
           return "superseded";
         }
-        return receipt === true || receipt?.status === "committed" ? "committed" : "failed";
+        return outcome.kind;
       } catch {
         return this.#credentialIntentCurrent(intent) ? "failed" : "superseded";
       }
@@ -3248,6 +3250,13 @@ export class RunWorkflow {
       const enabled = await setProviderDisabled(false);
       if (enabled === "superseded") {
         return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (enabled === "unknown") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接状态没有保存，请重试。",
+          { stage: "enable-provider" },
+        );
       }
       if (enabled === "failed") {
         return rejected(
@@ -3314,6 +3323,13 @@ export class RunWorkflow {
       const disabled = await setProviderDisabled(true);
       if (disabled === "superseded") {
         return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (disabled === "unknown") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接已断开，但停用状态没有保存，请重试。",
+          { stage: "disable-provider" },
+        );
       }
       if (disabled === "failed") {
         return rejected(

@@ -85,6 +85,7 @@
       ],
       "entryInterfaces": [
         "app/application/document-workflow.d.ts",
+        "app/application/document-session-contract.d.ts",
         "app/application/document-session.d.ts",
         "app/application/source-receipt-contract.d.ts",
         "app/application/document/save-plan.d.ts",
@@ -124,6 +125,59 @@
           "path": "docs/INTERACTION_FLOW.md",
           "headings": [
             "## 5. \u76f4\u63a5\u7f16\u8f91\u4e0e\u81ea\u52a8\u5199\u56de"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agent-preferences",
+      "patterns": [
+        "^app/application/workspace-preferences-session",
+        "^app/application/workspace-preference-mutation-outcome",
+        "^app/application/(?:run-workflow|agent-provider-catalog)(?:\\.js|\\.d\\.ts)$",
+        "^app/application/workspace-controller\\.d\\.ts$",
+        "^app/workbench/use-workspace-preferences",
+        "^shared/agent-configuration-preferences",
+        "^scripts/verify-workspace-preferences-typecheck",
+        "^tests/(?:workspace-preferences|run-workflow|agent-provider-catalog)",
+        "^tsconfig\\.workspace-preferences"
+      ],
+      "entryInterfaces": [
+        "app/application/workspace-preferences-session.d.ts",
+        "app/application/workspace-preference-mutation-outcome.d.ts",
+        "app/application/run-workflow.d.ts",
+        "app/application/agent-provider-catalog.d.ts"
+      ],
+      "owners": [
+        "WorkspacePreferencesSession",
+        "RunWorkflow",
+        "AgentCatalogState"
+      ],
+      "implementationFiles": [
+        "app/application/workspace-preferences-session.js",
+        "app/application/workspace-preference-mutation-outcome.js",
+        "app/application/run-workflow.js",
+        "app/application/agent-provider-catalog.js",
+        "app/workbench/use-workspace-preferences.ts"
+      ],
+      "focusedTests": [
+        "tests/workspace-preferences-session.test.mjs",
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/workspace-preferences-contract.typecheck.ts",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
+      ],
+      "requiredDocs": [
+        "docs/ARCHITECTURE_MAP.md",
+        "docs/STATE_OWNERSHIP.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/INTERACTION_FLOW.md"
+      ],
+      "requiredDocSections": [
+        {
+          "path": "docs/INTERACTION_FLOW.md",
+          "headings": [
+            "### AI 服务设置与任务区（2026-09-09）"
           ]
         }
       ]

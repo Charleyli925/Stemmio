@@ -53,6 +53,29 @@ test("real HTML observer changes select the paired Browser trust probe", () => {
   assert.ok(plan.selectedNodeTests.includes("tests/real-html-stage-contracts.test.mjs"));
 });
 
+test("the shared semantic structure planner routes directly to source and Repository proofs", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["shared/semantic-structure-plan.mjs"],
+  });
+  for (const nodeTest of [
+    "tests/source-patch-engine.test.mjs",
+    "tests/source-structure-edit.test.mjs",
+    "tests/semantic-operation-kernel.test.mjs",
+    "tests/project-semantic-identity-save.test.mjs",
+  ]) assert.ok(plan.selectedNodeTests.includes(nodeTest), nodeTest);
+  assert.deepEqual(suiteIds(plan), [
+    "typecheck",
+    "lint",
+    "node-targeted",
+    "build-web",
+    "browser-editing-smoke",
+    "build-desktop",
+    "electron-editing-smoke",
+  ]);
+});
+
 test("browser-open workflow changes select its application, Desktop and presentation proofs", () => {
   const plan = selectGatePlan({
     map,
@@ -370,6 +393,33 @@ test("SourceReceipt implementation type checks keep their runtime owner coverage
     assert.ok(suiteIds(plan).includes("typecheck"), file);
     assert.ok(plan.selectedNodeTests.includes("tests/document-session.test.mjs"), file);
   }
+});
+
+test("the checked preference interpreter selects its producer and direct consumers", () => {
+  for (const file of [
+    "app/application/workspace-preference-mutation-outcome.js",
+    "app/application/workspace-preference-mutation-outcome.d.ts",
+    "scripts/verify-workspace-preferences-typecheck.mjs",
+    "tsconfig.workspace-preferences.json",
+  ]) {
+    const plan = selectGatePlan({ map, lane: "task", changedFiles: [file] });
+    assert.ok(suiteIds(plan).includes("typecheck"), file);
+    for (const owner of [
+      "tests/workspace-preferences-typecheck-verifier.test.mjs",
+      "tests/run-workflow.test.mjs",
+      "tests/agent-provider-catalog.test.mjs",
+    ]) assert.ok(plan.selectedNodeTests.includes(owner), `${file}: ${owner}`);
+  }
+});
+
+test("comment model changes select the direct target-rebind counter oracle", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["app/workbench/comment-model.ts"],
+  });
+  assert.ok(plan.matchedOwners.includes("comment-model"));
+  assert.ok(plan.selectedNodeTests.includes("tests/comment-workflow.test.mjs"));
 });
 
 test("owner rules select only the direct regression coverage for representative files", () => {

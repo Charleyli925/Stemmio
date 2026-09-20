@@ -9,7 +9,10 @@ import { RUN_SESSION_COORDINATION, RunSession } from "../app/application/run-ses
 import { RunWorkflow } from "../app/application/run-workflow.js";
 import { interpretAgentCredentialOperation } from "../app/application/agent-credential-operation.js";
 import { VersionSession } from "../app/application/version-session.js";
-import { WorkspacePreferencesSession } from "../app/application/workspace-preferences-session.js";
+import {
+  DEFAULT_WORKSPACE_PREFERENCES,
+  WorkspacePreferencesSession,
+} from "../app/application/workspace-preferences-session.js";
 import {
   activeRunFromRecord,
   canonicalLifecycleState,
@@ -36,6 +39,19 @@ function succeeded(value) {
 
 function blocked(code, reason) {
   return { status: "blocked", code, reason };
+}
+
+function committedPreference(intentId = "test-preference") {
+  return { status: "committed", intentId, persistence: "confirmed" };
+}
+
+function failedPreference(intentId = "test-preference") {
+  return { status: "failed", intentId, phase: "commit", persistence: "not-written" };
+}
+
+function configurationPreference(intent, committed = true) {
+  if (!intent) return committed;
+  return committed ? committedPreference(intent.intentId) : failedPreference(intent.intentId);
 }
 
 function runRecord({
@@ -2896,8 +2912,9 @@ test("reconnect persists enablement before restoring a remembered Key", async ()
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled({ disabled }) { calls.push(disabled ? "disable" : "enable"); return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { calls.push(input.disabled ? "disable" : "enable"); return committedPreference(input.intentId); },
       },
     },
   });
@@ -2917,8 +2934,9 @@ test("access changes reject failed preference receipts and a missing credential 
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return false; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return failedPreference(input.intentId); },
       },
     },
   });
@@ -2936,8 +2954,9 @@ test("access changes reject failed preference receipts and a missing credential 
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3223,12 +3242,15 @@ test("commitPendingDefaultAgent ignores a superseded selection after save", asyn
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent({ providerId, isCurrent }) {
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent({ intentId, providerId, isCurrent }) {
           saves.push(providerId);
           if (saves.length === 1) await pendingSave;
-          return { status: isCurrent() ? "committed" : "superseded" };
+          return isCurrent()
+            ? committedPreference(intentId)
+            : { status: "superseded", intentId, rollback: "not-needed" };
         },
-        async setProviderDisabled() { return true; },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3260,8 +3282,9 @@ test("API Key connection keeps the live connection but exposes a failed default 
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return { status: "failed" }; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return failedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3298,8 +3321,9 @@ test("configuration save failure keeps connection, credential save and default c
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return false; },
-        async commitDefaultAgent() { calls.default += 1; return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent, false); },
+        async commitDefaultAgent(input) { calls.default += 1; return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3350,8 +3374,9 @@ test("API Key connect reports usable connection while a lost save receipt conver
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent(input) { defaultCommits.push(input); return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { defaultCommits.push(input); return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3399,8 +3424,9 @@ test("a model-only reconnect preserves the independent remembered credential rec
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3443,8 +3469,9 @@ test("a remembered startup credential refreshes Bridge-backed availability after
           };
         },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3508,8 +3535,9 @@ test("a later remembered credential and default intent fence an older delayed sa
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent(input) { defaultCommits.push(input); return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { defaultCommits.push(input); return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3632,9 +3660,10 @@ test("remove during deferred configuration save fences old credential persist an
       },
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
-        async saveAgentConfigurations() { await configurationSave.promise; return true; },
-        async commitDefaultAgent(input) { defaultCommits.push(input); return true; },
-        async setProviderDisabled() { return true; },
+        async saveAgentConfigurations() { return true; },
+        async commitAgentConfigurations(_value, intent) { await configurationSave.promise; return configurationPreference(intent); },
+        async commitDefaultAgent(input) { defaultCommits.push(input); return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3730,8 +3759,9 @@ test("replacement save stays authoritative while one remove reconciles the old c
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });
@@ -3781,7 +3811,7 @@ test("replacement save stays authoritative while one remove reconciles the old c
 test("a newer connect fences and rolls back a slow provider-disable preference write", async () => {
   const firstRecordStarted = deferred();
   const releaseFirstRecord = deferred();
-  let durable = { workspace: { disabledAgentProviderIds: [], agentConfigurations: {} } };
+  let durable = { workspace: { ...DEFAULT_WORKSPACE_PREFERENCES } };
   let recordCalls = 0;
   const preferences = new WorkspacePreferencesSession({
     port: {
@@ -3817,15 +3847,18 @@ test("a newer connect fences and rolls back a slow provider-disable preference w
         async getAgentConfigurations() {
           return (await preferences.load()).workspace.agentConfigurations;
         },
-        async saveAgentConfigurations(agentConfigurations, intent) {
+        async saveAgentConfigurations(agentConfigurations) {
+          return preferences.update({ agentConfigurations });
+        },
+        async commitAgentConfigurations(agentConfigurations, intent) {
           return preferences.commitAgentConfigurations({
             intentId: intent.intentId,
             agentConfigurations,
             isCurrent: intent.isCurrent,
           });
         },
-        async commitDefaultAgent({ providerId, isCurrent }) {
-          return preferences.commitDefaultAgent({ providerId, isCurrent });
+        async commitDefaultAgent({ intentId, providerId, isCurrent }) {
+          return preferences.commitDefaultAgent({ intentId, providerId, isCurrent });
         },
         async setProviderDisabled(input) {
           return preferences.setProviderDisabled(input);
@@ -3857,7 +3890,7 @@ test("a newer connect fences and rolls back a slow provider-disable preference w
 test("RunWorkflow then Session disposal rolls back a started provider-disable write without publication", async () => {
   const preferenceWriteStarted = deferred();
   const releasePreferenceWrite = deferred();
-  let durable = { workspace: { disabledAgentProviderIds: [], agentConfigurations: {} } };
+  let durable = { workspace: { ...DEFAULT_WORKSPACE_PREFERENCES } };
   const preferenceWrites = [];
   const preferences = new WorkspacePreferencesSession({
     port: {
@@ -3880,15 +3913,18 @@ test("RunWorkflow then Session disposal rolls back a started provider-disable wr
         async getAgentConfigurations() {
           return (await preferences.load()).workspace.agentConfigurations;
         },
-        async saveAgentConfigurations(agentConfigurations, intent) {
+        async saveAgentConfigurations(agentConfigurations) {
+          return preferences.update({ agentConfigurations });
+        },
+        async commitAgentConfigurations(agentConfigurations, intent) {
           return preferences.commitAgentConfigurations({
             intentId: intent.intentId,
             agentConfigurations,
             isCurrent: intent.isCurrent,
           });
         },
-        async commitDefaultAgent({ providerId, isCurrent }) {
-          return preferences.commitDefaultAgent({ providerId, isCurrent });
+        async commitDefaultAgent({ intentId, providerId, isCurrent }) {
+          return preferences.commitDefaultAgent({ intentId, providerId, isCurrent });
         },
         async setProviderDisabled(input) {
           return preferences.setProviderDisabled(input);
@@ -3934,8 +3970,9 @@ test("remove retires an unknown held credential so retry cannot replay the obsol
       agentPreferences: {
         async getAgentConfigurations() { return {}; },
         async saveAgentConfigurations() { return true; },
-        async commitDefaultAgent() { return true; },
-        async setProviderDisabled() { return true; },
+        async commitAgentConfigurations(_value, intent) { return configurationPreference(intent); },
+        async commitDefaultAgent(input) { return committedPreference(input.intentId); },
+        async setProviderDisabled(input) { return committedPreference(input.intentId); },
       },
     },
   });

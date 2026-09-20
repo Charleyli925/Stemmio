@@ -448,7 +448,16 @@ newer saved record. Provider disabled-preference writes carry the same intent
 through the single preferences Session and restore their prior durable value
 when a newer connect or disposal supersedes them. Disposal closes ordinary
 updates and presentation immediately, while an already-started fenced Agent
-write may perform only its predetermined durable rollback. It may retain one short-lived Key only while the same
+write may perform only its predetermined durable reconciliation and rollback.
+That rollback shares the ordinary durable-write turn and checks its field
+generation after the authoritative read, so it cannot overwrite a newer
+same-field intent. An Agent preference mutation also requires a complete
+validated authority baseline before its first write; that same envelope is the
+only source of rollback values. An ordinary same-field update accepted while
+that baseline read is pending supersedes the older Agent mutation before it can
+write. Only a complete validated workspace envelope
+can confirm an Agent preference commit or rollback; a missing, partial or
+default-normalized response remains unconfirmed. It may retain one short-lived Key only while the same
 save/reconciliation intent can still use it; replacement, disconnect, remove,
 disposal and terminal receipts retire that reference (without claiming that JS
 memory can be wiped). `AgentCatalogState` receives only status, reason,
@@ -648,7 +657,11 @@ in that map. Main strictly validates field types, provider identifiers and the
 read and unsafe patches are rejected. The renderer receives only trusted
 `get`/`record` for a narrow workspace patch. A queued read-modify-write and
 atomic replacement prevents Settings and Agent updates from clobbering one
-another. The file must not contain HTML, paths, comments, credentials or
+another. Renderer Agent mutations carry an `intentId` and an explicit durable
+receipt. Superseded rollback first rereads Main authority and restores only a
+field still equal to that intent's owned value; lost responses remain pending
+and `unknown` unless an authoritative read proves the commit or restore. The
+file must not contain HTML, paths, comments, credentials or
 localStorage state.
 Preference errors remain a Settings-page retry state; bounded close flushing
 is best effort and cannot block a source HTML close that already completed its

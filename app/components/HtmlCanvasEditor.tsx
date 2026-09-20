@@ -8979,6 +8979,17 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       | null = null;
     const handleDisabledButtonPointerDown = (event: PointerEvent) => {
       const eventElement = event.target as Element | null;
+      const disabledControl = eventElement?.closest?.(
+        "button:disabled, input:disabled, select:disabled, textarea:disabled",
+      );
+      if (!disabledControl || !event.isPrimary || event.button !== 0) {
+        disabledButtonPointer = null;
+        return;
+      }
+      // Chromium suppresses click for disabled form controls. Treat the
+      // primary pointer press as the missing Canvas click so the authored
+      // control remains selectable without enabling its native action.
+      handleClick(event);
       const disabledButton = eventElement?.closest?.("button:disabled");
       if (!disabledButton) {
         disabledButtonPointer = null;
@@ -9000,8 +9011,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
             y: event.clientY,
           };
       if (!isSecondPress) return;
-      // Chromium intentionally suppresses click/dblclick for disabled form
-      // controls. In the Canvas the authored label is still page text, so the
+      // Chromium also suppresses dblclick for disabled form controls. In the
+      // Canvas the authored label is still page text, so the
       // second pointer press must enter the same V2 island path explicitly.
       handleDoubleClick(event);
     };

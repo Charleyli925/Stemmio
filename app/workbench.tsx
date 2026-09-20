@@ -988,17 +988,19 @@ export default function Workbench() {
           getAgentConfigurations: async () => (
             (await workspacePreferencesSessionPort.load()).workspace.agentConfigurations
           ),
-          saveAgentConfigurations: async (agentConfigurations, intent = null) => (
-            intent
-              ? workspacePreferencesSessionPort.commitAgentConfigurations({
-                intentId: intent.intentId,
-                agentConfigurations,
-                isCurrent: intent.isCurrent,
-              })
-              : workspacePreferencesSessionPort.update({ agentConfigurations })
+          saveAgentConfigurations: async (agentConfigurations) => (
+            workspacePreferencesSessionPort.update({ agentConfigurations })
           ),
-          commitDefaultAgent: async ({ providerId, isCurrent }) => (
+          commitAgentConfigurations: async (agentConfigurations, intent) => (
+            workspacePreferencesSessionPort.commitAgentConfigurations({
+              intentId: intent.intentId,
+              agentConfigurations,
+              isCurrent: intent.isCurrent,
+            })
+          ),
+          commitDefaultAgent: async ({ intentId, providerId, isCurrent }) => (
             workspacePreferencesSessionPort.commitDefaultAgent({
+              intentId,
               providerId: providerId as WorkspacePreferences["defaultAgentProviderId"],
               isCurrent,
             })

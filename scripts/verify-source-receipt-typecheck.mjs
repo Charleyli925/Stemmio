@@ -6,8 +6,117 @@ import ts from "typescript";
 const productRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultConfigPath = path.join(productRoot, "tsconfig.source-receipt.json");
 const defaultSourcePath = path.join(productRoot, "app/application/source-receipt.js");
+const defaultDocumentSessionSourcePath = path.join(
+  productRoot,
+  "app/application/document-session.js",
+);
+const defaultDocumentSessionContractPath = path.join(
+  productRoot,
+  "app/application/document-session-contract.d.ts",
+);
+const defaultDocumentSessionFacadePath = path.join(
+  productRoot,
+  "app/application/document-session.d.ts",
+);
+const implementationContractAnchor = "/** @implements {DocumentSessionDeclaration} */";
 const mutationAnchor = "sessionIncarnation: revision(input.sessionIncarnation),";
 const mutatedAssignment = "sessionIncarnation: String(input.sessionIncarnation),";
+const documentSessionMutations = Object.freeze([
+  Object.freeze({
+    name: "verified-rendered-hash",
+    anchor: "renderedSha256: String(renderedSha256 || \"\"),",
+    replacement: "renderedSha256: null,",
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type 'null' is not assignable to type 'string'",
+  }),
+  Object.freeze({
+    name: "verified-generation",
+    anchor: [
+      "status: \"verified\",",
+      "      generation: normalizedGeneration,",
+      "      renderedSha256: String(renderedSha256 || \"\"),",
+    ].join("\n"),
+    replacement: [
+      "status: \"verified\",",
+      "      generation: String(normalizedGeneration),",
+      "      renderedSha256: String(renderedSha256 || \"\"),",
+    ].join("\n"),
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type 'string' is not assignable to type 'number'",
+  }),
+  Object.freeze({
+    name: "accepted-edit-result",
+    anchor: [
+      "accepted: true,",
+      "      revision: nextRevision,",
+      "      write,",
+    ].join("\n"),
+    replacement: [
+      "accepted: \"yes\",",
+      "      revision: nextRevision,",
+      "      write,",
+    ].join("\n"),
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type '\"yes\"' is not assignable to type 'true'",
+  }),
+  Object.freeze({
+    name: "complete-instance-contract",
+    anchor: [
+      "  markPersistenceIdle() {",
+      "    if (",
+      "      this.#pendingWrite",
+      "      || this.#activeWrite",
+      "      || this.#snapshot.lastPersistedRevision < this.#snapshot.editRevision",
+      "      || this.#snapshot.persistState === \"failed\"",
+      "      || this.#snapshot.persistState === \"conflict\"",
+      "      || (",
+      "        this.#snapshot.workingHtmlSha256",
+      "        && this.#snapshot.workingHtmlSha256 !== this.#snapshot.persistedSourceSha256",
+      "      )",
+      "    ) return false;",
+      "    this.#emit({",
+      "      ...this.#snapshot,",
+      "      persistState: \"idle\",",
+      "      persistError: \"\",",
+      "    });",
+      "    return true;",
+      "  }",
+    ].join("\n"),
+    replacement: "",
+    diagnosticCode: 2420,
+    diagnosticFragment: "Property 'markPersistenceIdle' is missing",
+  }),
+  Object.freeze({
+    name: "canvas-authority-getter",
+    anchor: [
+      "  get canvasAuthority() {",
+      "    return this.#snapshot.canvasAuthority;",
+      "  }",
+    ].join("\n"),
+    replacement: [
+      "  get canvasAuthority() {",
+      "    return \"invalid-canvas-authority\";",
+      "  }",
+    ].join("\n"),
+    diagnosticCode: 2416,
+    diagnosticFragment: "Property 'canvasAuthority' in type 'DocumentSession' is not assignable",
+  }),
+  Object.freeze({
+    name: "flush-promise-getter",
+    anchor: [
+      "  get flushPromise() {",
+      "    return this.#flushPromise;",
+      "  }",
+    ].join("\n"),
+    replacement: [
+      "  get flushPromise() {",
+      "    return \"invalid-flush-promise\";",
+      "  }",
+    ].join("\n"),
+    diagnosticCode: 2416,
+    diagnosticFragment: "Property 'flushPromise' in type 'DocumentSession' is not assignable",
+  }),
+]);
 
 function diagnosticMessage(diagnostic) {
   return ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
@@ -43,13 +152,15 @@ export function loadSourceReceiptTypecheckConfig(configPath = defaultConfigPath)
   return parsed;
 }
 
-function programFor({ parsedConfig, sourcePath, sourceText }) {
-  const resolvedSourcePath = path.resolve(sourcePath);
+function programFor({ parsedConfig, sourceOverrides = new Map() }) {
+  const resolvedOverrides = new Map(
+    [...sourceOverrides].map(([sourcePath, sourceText]) => [path.resolve(sourcePath), sourceText]),
+  );
   const host = ts.createCompilerHost(parsedConfig.options, true);
   const defaultReadFile = host.readFile.bind(host);
   host.readFile = (fileName) => (
-    path.resolve(fileName) === resolvedSourcePath
-      ? sourceText
+    resolvedOverrides.has(path.resolve(fileName))
+      ? resolvedOverrides.get(path.resolve(fileName))
       : defaultReadFile(fileName)
   );
   host.getSourceFile = (fileName, languageVersion, onError) => {
@@ -74,72 +185,154 @@ function programFor({ parsedConfig, sourcePath, sourceText }) {
   });
 }
 
-function assertOfficialImplementationCheck(parsedConfig, sourcePath) {
+function assertOfficialImplementationCheck(parsedConfig, sourcePaths) {
   if (parsedConfig.options.allowJs !== true || parsedConfig.options.checkJs !== true) {
     throw new Error("official SourceReceipt config must enable allowJs and checkJs");
   }
-  const resolvedSourcePath = path.resolve(sourcePath);
-  if (!parsedConfig.fileNames.some((fileName) => path.resolve(fileName) === resolvedSourcePath)) {
-    throw new Error("SourceReceipt implementation is missing from the official compiler inputs");
+  const officialInputs = new Set(parsedConfig.fileNames.map((fileName) => path.resolve(fileName)));
+  for (const sourcePath of sourcePaths) {
+    const resolvedSourcePath = path.resolve(sourcePath);
+    if (!officialInputs.has(resolvedSourcePath)) {
+      throw new Error(`SourceReceipt required input is missing from the official compiler inputs: ${resolvedSourcePath}`);
+    }
   }
 }
 
-function mutateSource(sourceText) {
-  const matchCount = sourceText.split(mutationAnchor).length - 1;
-  if (matchCount !== 1) {
-    throw new Error(`SourceReceipt mutation anchor must match exactly once; matched ${matchCount}`);
+function assertProgramInputs(program, sourcePaths) {
+  for (const sourcePath of sourcePaths) {
+    const resolvedSourcePath = path.resolve(sourcePath);
+    if (!program.getSourceFile(resolvedSourcePath)) {
+      throw new Error(`official SourceReceipt program did not load required input: ${resolvedSourcePath}`);
+    }
   }
-  return sourceText.replace(mutationAnchor, mutatedAssignment);
+}
+
+function assertImplementationContract(sourceText) {
+  const matchCount = sourceText.split(implementationContractAnchor).length - 1;
+  if (matchCount !== 1) {
+    throw new Error(`DocumentSession @implements contract must match exactly once; matched ${matchCount}`);
+  }
+}
+
+function mutateExactly(sourceText, { name, anchor, replacement }) {
+  const matchCount = sourceText.split(anchor).length - 1;
+  if (matchCount !== 1) {
+    throw new Error(`${name} mutation anchor must match exactly once; matched ${matchCount}`);
+  }
+  return sourceText.replace(anchor, replacement);
+}
+
+function mutationDiagnostic({
+  parsedConfig,
+  sourcePath,
+  sourceText,
+  mutation,
+}) {
+  const mutatedSource = mutateExactly(sourceText, mutation);
+  const program = programFor({
+    parsedConfig,
+    sourceOverrides: new Map([[sourcePath, mutatedSource]]),
+  });
+  assertProgramInputs(program, [sourcePath]);
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  const targetDiagnostics = diagnostics.filter((diagnostic) => (
+    diagnostic.code === mutation.diagnosticCode
+    && path.resolve(diagnostic.file?.fileName || "") === path.resolve(sourcePath)
+    && diagnosticMessage(diagnostic).includes(mutation.diagnosticFragment)
+  ));
+  if (targetDiagnostics.length !== 1 || diagnostics.length !== 1) {
+    throw new Error([
+      `official SourceReceipt config did not isolate the expected ${mutation.name} implementation type error`,
+      formatDiagnostics(diagnostics) || "<no diagnostics>",
+    ].join("\n"));
+  }
+  return targetDiagnostics[0];
 }
 
 export function verifySourceReceiptTypecheck({
   parsedConfig = loadSourceReceiptTypecheckConfig(),
   sourcePath = defaultSourcePath,
   sourceText = ts.sys.readFile(sourcePath),
+  documentSessionSourcePath = defaultDocumentSessionSourcePath,
+  documentSessionSourceText = ts.sys.readFile(documentSessionSourcePath),
+  documentSessionContractPath = defaultDocumentSessionContractPath,
+  documentSessionFacadePath = defaultDocumentSessionFacadePath,
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
-  assertOfficialImplementationCheck(parsedConfig, resolvedSourcePath);
+  const resolvedDocumentSessionSourcePath = path.resolve(documentSessionSourcePath);
+  assertOfficialImplementationCheck(parsedConfig, [
+    resolvedSourcePath,
+    resolvedDocumentSessionSourcePath,
+    documentSessionContractPath,
+    documentSessionFacadePath,
+  ]);
   if (typeof sourceText !== "string") {
     throw new Error(`cannot read SourceReceipt implementation: ${resolvedSourcePath}`);
   }
-  const mutatedSource = mutateSource(sourceText);
+  if (typeof documentSessionSourceText !== "string") {
+    throw new Error(`cannot read DocumentSession implementation: ${resolvedDocumentSessionSourcePath}`);
+  }
+  assertImplementationContract(documentSessionSourceText);
+  const receiptMutation = {
+    name: "SourceReceipt",
+    anchor: mutationAnchor,
+    replacement: mutatedAssignment,
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type 'string' is not assignable to type 'number'",
+  };
+  mutateExactly(sourceText, receiptMutation);
+  for (const mutation of documentSessionMutations) {
+    mutateExactly(documentSessionSourceText, mutation);
+  }
 
-  const baselineDiagnostics = ts.getPreEmitDiagnostics(programFor({
+  const baselineProgram = programFor({
     parsedConfig,
-    sourcePath: resolvedSourcePath,
-    sourceText,
-  }));
+    sourceOverrides: new Map([
+      [resolvedSourcePath, sourceText],
+      [resolvedDocumentSessionSourcePath, documentSessionSourceText],
+    ]),
+  });
+  assertProgramInputs(baselineProgram, [
+    resolvedSourcePath,
+    resolvedDocumentSessionSourcePath,
+    documentSessionContractPath,
+    documentSessionFacadePath,
+  ]);
+  const baselineDiagnostics = ts.getPreEmitDiagnostics(baselineProgram);
   if (baselineDiagnostics.length > 0) {
     throw new Error(`official SourceReceipt typecheck must pass before mutation:\n${formatDiagnostics(baselineDiagnostics)}`);
   }
 
-  const mutationDiagnostics = ts.getPreEmitDiagnostics(programFor({
+  const receiptDiagnostic = mutationDiagnostic({
     parsedConfig,
     sourcePath: resolvedSourcePath,
-    sourceText: mutatedSource,
-  }));
-  const targetDiagnostics = mutationDiagnostics.filter((diagnostic) => (
-    diagnostic.code === 2322
-    && path.resolve(diagnostic.file?.fileName || "") === resolvedSourcePath
-    && diagnosticMessage(diagnostic).includes("Type 'string' is not assignable to type 'number'")
-    && diagnosticMessage(diagnostic).includes("sessionIncarnation")
+    sourceText,
+    mutation: receiptMutation,
+  });
+  const documentSessionDiagnostics = documentSessionMutations.map((mutation) => (
+    mutationDiagnostic({
+      parsedConfig,
+      sourcePath: resolvedDocumentSessionSourcePath,
+      sourceText: documentSessionSourceText,
+      mutation,
+    })
   ));
-  if (targetDiagnostics.length !== 1 || mutationDiagnostics.length !== 1) {
-    throw new Error([
-      "official SourceReceipt config did not isolate the expected implementation type error",
-      formatDiagnostics(mutationDiagnostics) || "<no diagnostics>",
-    ].join("\n"));
-  }
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
     sourcePath: resolvedSourcePath,
-    diagnosticCode: targetDiagnostics[0].code,
+    documentSessionSourcePath: resolvedDocumentSessionSourcePath,
+    documentSessionContractPath: path.resolve(documentSessionContractPath),
+    documentSessionFacadePath: path.resolve(documentSessionFacadePath),
+    diagnosticCode: receiptDiagnostic.code,
+    documentSessionDiagnosticCodes: Object.freeze(
+      documentSessionDiagnostics.map((diagnostic) => diagnostic.code),
+    ),
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = verifySourceReceiptTypecheck();
   process.stdout.write(
-    `SourceReceipt implementation mutation rejected by official config (TS${result.diagnosticCode}).\n`,
+    `SourceReceipt and DocumentSession implementation mutations rejected by official config (TS${result.diagnosticCode}; ${result.documentSessionDiagnosticCodes.map((code) => `TS${code}`).join(", ")}).\n`,
   );
 }

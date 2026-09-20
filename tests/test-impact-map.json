@@ -621,6 +621,18 @@
       ]
     },
     {
+      "id": "comment-model",
+      "patterns": [
+        "^app/workbench/comment-model\\.ts$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/comment-workflow.test.mjs"
+      ]
+    },
+    {
       "id": "comment-workflow",
       "patterns": [
         "^app/application/comment-workflow(?:-codecs)?\\.(?:js|d\\.ts)$",
@@ -665,7 +677,7 @@
     {
       "id": "document-session",
       "patterns": [
-        "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
+        "^app/application/(?:document-session(?:-contract)?|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
         "^scripts/verify-source-receipt-typecheck\\.mjs$",
         "^tests/source-receipt-contract\\.typecheck\\.ts$",
         "^tests/source-receipt-typecheck-verifier\\.test\\.mjs$",
@@ -1152,6 +1164,7 @@
         "^app/components/html-canvas-source-commands\\.(?:js|d\\.ts)$",
         "^shared/stemmio-element-identity\\.mjs$",
         "^shared/semantic-identity-delta\\.mjs$",
+        "^shared/semantic-structure-plan\\.mjs$",
         "^schemas/(?:stemmio-element-identity|semantic-operation)\\.v1\\.schema\\.json$",
         "^scripts/(?:source-index|target-resolver)\\.mjs$"
       ],
@@ -1690,6 +1703,24 @@
         "tests/workbench-navigation-workflow.test.mjs",
         "tests/workbench-css.test.mjs",
         "tests/agent-provider-card.test.mjs"
+      ]
+    },
+    {
+      "id": "workspace-preferences-contract",
+      "patterns": [
+        "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
+        "^shared/agent-configuration-preferences\\.d\\.mts$",
+        "^scripts/verify-workspace-preferences-typecheck\\.mjs$",
+        "^tests/workspace-preferences-(?:contract\\.typecheck|typecheck-verifier\\.test)\\.(?:mjs|ts)$",
+        "^tsconfig\\.workspace-preferences\\.json$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
       ]
     },
     {

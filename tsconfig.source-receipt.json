@@ -7,6 +7,9 @@
     "noEmit": true
   },
   "include": [
+    "app/application/document-session-contract.d.ts",
+    "app/application/document-session.d.ts",
+    "app/application/document-session.js",
     "app/application/source-receipt.js",
     "app/application/source-receipt-contract.d.ts",
     "app/application/project-session.d.ts",
