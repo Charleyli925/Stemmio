@@ -73,11 +73,6 @@ const ASSET_ATTRIBUTES = new Set([
 const MAX_CONTINUITY_TEXT_CODEPOINTS = 100_000;
 const TEXT_SHINGLE_SIZE = 4;
 export const IMPACT_SAMPLE_LIMIT = 100;
-const LEGACY_IMPACT_ARRAY_FIELDS = Object.freeze([
-  "changedStableElementIds",
-  "requestedTargetElementIds",
-  "outsideRequestedTargetElementIds",
-]);
 const BOUNDED_IMPACT_FIELDS = Object.freeze([
   "changedElementCount",
   "requestedTargetCount",
@@ -609,5 +604,4 @@ export function assessHtmlCandidate({
 
 export {
   BOUNDED_IMPACT_FIELDS,
-  LEGACY_IMPACT_ARRAY_FIELDS as IMPACT_ARRAY_FIELDS,
 };

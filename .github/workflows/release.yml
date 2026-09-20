@@ -145,7 +145,6 @@ jobs:
             "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.zip.blockmap" \
             "$CANDIDATE_DIRECTORY/latest-mac.yml" \
             "$CANDIDATE_DIRECTORY/SHA256SUMS.txt" \
-            "$CANDIDATE_DIRECTORY/update-manifest.json" \
             "$CANDIDATE_DIRECTORY/build-info.json" \
             "$CANDIDATE_DIRECTORY/release-candidate.json" \
             --repo "$GITHUB_REPOSITORY" \

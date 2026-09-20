@@ -956,6 +956,103 @@ test("启动恢复会继续打开未确认历史创建的当前稿", async () =>
   assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), true);
 });
 
+test("迟到的启动历史查询不会越过设置后再次选择的历史页", async () => {
+  const query = deferred();
+  const timers = [];
+  const harness = fixture({
+    surfaceHistoryCreation: {
+      operationId: "history_restart_delayed_0001",
+      versionId: "ver_0009",
+    },
+    queryHistoryCreation: () => query.promise,
+    setTimer(callback, delayMs) {
+      timers.push({ callback, delayMs });
+      return timers.at(-1);
+    },
+    clearTimer() {},
+  });
+  const historyTabId = `history:${B.projectId}:${B.documentId}`;
+  assert.equal((await harness.workflow.createHistory(
+    { ...B, title: B.name },
+    { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
+  )).status, "succeeded");
+
+  const startup = harness.workflow.activateTab(historyTabId, {
+    intentKind: "startup-restore",
+    force: true,
+  });
+  await nextTurn();
+  const settings = harness.workflow.createSettings();
+  const history = harness.workflow.activateTab(historyTabId);
+  query.resolve({
+    status: "succeeded",
+    value: {
+      status: "created",
+      operationId: "history_restart_delayed_0001",
+      openedAt: null,
+      recoveryState: "pending",
+    },
+  });
+
+  assert.equal((await startup).status, "succeeded");
+  assert.equal((await settings).status, "succeeded");
+  assert.equal((await history).status, "succeeded");
+  assert.equal(timers.length, 1);
+  timers[0].callback();
+  await harness.workflow.waitForIdle({ deadlineAt: 2_000 });
+  assert.equal(harness.tabs.snapshot.activeTabId, historyTabId);
+  assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), false);
+});
+
+test("排队中的启动恢复冻结入队序号，不越过后续设置和历史选择", async () => {
+  const blocker = deferred();
+  const timers = [];
+  const harness = fixture({
+    surfaceHistoryCreation: {
+      operationId: "history_restart_queued_0001",
+      versionId: "ver_0009",
+    },
+    viewHistory: async ({ version, publishVersion }) => {
+      if (version.id === "ver_blocked") await blocker.promise;
+      publishVersion("history", version.id);
+      return { status: "succeeded", value: { versionId: version.id } };
+    },
+    setTimer(callback, delayMs) {
+      timers.push({ callback, delayMs });
+      return timers.at(-1);
+    },
+    clearTimer() {},
+  });
+  const historyTabId = `history:${B.projectId}:${B.documentId}`;
+  assert.equal((await harness.workflow.createHistory(
+    { ...B, title: B.name },
+    { versionId: "ver_3", ordinal: 3, displayFileName: "Beta-V3.html" },
+  )).status, "succeeded");
+
+  const blockingNavigation = harness.workflow.createHistory(
+    { ...A, title: A.name },
+    { versionId: "ver_blocked", ordinal: 2, displayFileName: "Alpha-V2.html" },
+  );
+  await nextTurn();
+  const startup = harness.workflow.activateTab(historyTabId, {
+    intentKind: "startup-restore",
+    force: true,
+  });
+  const settings = harness.workflow.createSettings();
+  const history = harness.workflow.activateTab(historyTabId);
+
+  blocker.resolve();
+  assert.equal((await blockingNavigation).status, "succeeded");
+  assert.equal((await startup).status, "succeeded");
+  assert.equal((await settings).status, "succeeded");
+  assert.equal((await history).status, "succeeded");
+  assert.equal(timers.length, 1);
+  timers[0].callback();
+  await harness.workflow.waitForIdle({ deadlineAt: 2_000 });
+  assert.equal(harness.tabs.snapshot.activeTabId, historyTabId);
+  assert.equal(harness.calls.includes(`open:registered:${B.projectId}`), false);
+});
+
 test("同一项目切换另一个历史版本时复用标签并重新加载所选快照", async () => {
   const harness = fixture();
   const first = await harness.workflow.createHistory(

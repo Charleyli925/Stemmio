@@ -1,8 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stemmio.local/schemas/project-runtime-state.v4.schema.json",
-  "$comment": "Forward compatible per level. The root is spread on write and `historyActivation` is mutated in place when the desktop confirms, so both preserve a member added by a newer Stemmio. `activeRequest` is replaced with a fresh record on every status transition and `lastAiTask` is re-derived from the AI task record, so both are authored and stay strict.",
+  "$comment": "Forward compatible per level. `activeRequest` is replaced with a fresh record on every status transition and `lastAiTask` is re-derived from the AI task record, so both are authored and stay strict. Historical activation receipts are rejected.",
   "type": "object",
+  "not": { "required": ["historyActivation"] },
   "required": [
     "schemaVersion",
     "projectId",
@@ -106,29 +107,6 @@
         "inputManifestSha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "status": { "enum": ["no-change", "error"] },
         "completedAt": { "type": "string", "format": "date-time" }
-      }
-    },
-    "historyActivation": {
-      "type": ["object", "null"],
-      "required": [
-        "operationId",
-        "projectId",
-        "documentId",
-        "previousWorkingCopyId",
-        "activatedWorkingCopyId",
-        "versionId",
-        "state",
-        "createdAt"
-      ],
-      "properties": {
-        "operationId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,160}$" },
-        "projectId": { "type": "string", "pattern": "^project_[a-f0-9]{16,64}$" },
-        "documentId": { "type": "string", "pattern": "^doc_[a-f0-9]{16,64}$" },
-        "previousWorkingCopyId": { "type": ["string", "null"], "pattern": "^work_ver_\\d{4,}$" },
-        "activatedWorkingCopyId": { "type": "string", "pattern": "^work_ver_\\d{4,}$" },
-        "versionId": { "type": "string", "pattern": "^ver_\\d{4,}$" },
-        "state": { "enum": ["desktop-pending", "desktop-confirmed"] },
-        "createdAt": { "type": "string", "format": "date-time" }
       }
     }
   },

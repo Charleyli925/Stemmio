@@ -1,5 +1,4 @@
 import { writeLegacyNoChangeOutcome } from "./helpers/legacy-v4-no-change.mjs";
-import { seedLegacyHistoryActivation } from "./helpers/legacy-history-activation.mjs";
 import assert from "node:assert/strict";
 import {
   access,

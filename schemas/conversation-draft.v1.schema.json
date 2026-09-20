@@ -40,13 +40,6 @@
         "continue"
       ]
     },
-    "modelId": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "maxLength": 200
-    },
     "modelDisplayName": {
       "type": [
         "string",
@@ -56,7 +49,7 @@
     },
     "deliveryMode": {
       "enum": [
-        "qoder-acp",
+        "managed-agent",
         "clipboard"
       ]
     }

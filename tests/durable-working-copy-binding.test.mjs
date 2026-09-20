@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { readHtmlFile } from "../bridge/project-file-repository/path-safety.mjs";
 import { sourceBindingPath } from "../bridge/project-file-repository/source-binding.mjs";
-import { fixture, importSource, importLegacySource, html, json } from "./project-file-repository-harness.mjs";
+import { fixture, importSource, html, json } from "./project-file-repository-harness.mjs";
 import { createBridgeTestEnvironment } from "./helpers/bridge-test-environment.mjs";
 const run = promisify(execFile);
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -45,10 +45,10 @@ for (const fields of [["device"], ["inode"], ["birthtimeMs"], ["device", "inode"
     assert.equal((await lstat(sourceBindingPath(target.projectRootPath, target.workingCopyId))).ino, (await lstat(target.exactSourcePath)).ino);
   });
 }
-test("five legacy projects converge fifteen drafts into five current files and ten preserved drafts", async (t) => {
+test("multiple current Versions retain one editable file and preserved drafts", async (t) => {
   const value = await fixture(t); const projects = [];
   for (let i = 0; i < 5; i += 1) {
-    const { target } = await importLegacySource(value, `project-${i}.html`);
+    const { target } = await importSource(value, `project-${i}.html`);
     let active = target;
     for (let ordinal = 2; ordinal <= 3; ordinal += 1) {
       const candidateId = `candidate_binding_${i}_${ordinal}`;
@@ -75,7 +75,7 @@ test("five legacy projects converge fifteen drafts into five current files and t
 });
 
 for (const removeBindings of [false, true]) {
-  test(`startup migration batches observations and bounds binding scans (missing anchors: ${removeBindings})`, async (t) => {
+  test(`startup refresh batches observations and bounds binding scans (missing anchors: ${removeBindings})`, async (t) => {
     const value = await fixture(t);
     const imported = await importSource(value);
     let target = imported.target;
@@ -124,8 +124,8 @@ for (const removeBindings of [false, true]) {
     }
   });
 }
-test("Bridge startup converges legacy inactive drafts before serving the project catalog", async (t) => {
-  const value = await fixture(t); const { target } = await importLegacySource(value);
+test("Bridge startup refreshes current draft observations before serving the project catalog", async (t) => {
+  const value = await fixture(t); const { target } = await importSource(value);
   const candidateId = "candidate_bridge_migration_0001";
   await value.repository.createCandidate({ target, requestId: "req_bridge_migration_0001", candidateId, html: html("next"), expectedSourceSha256: target.sourceSha256 });
   const promoted = await value.repository.promoteCandidate({ target, candidateId,
@@ -218,25 +218,6 @@ test("save detects same-hash physical replacement at the commit boundary",async(
  await assert.rejects(writer.saveWorkingCopy({target,html:html("must not overwrite"),expectedSourceSha256:target.sourceSha256,editRevision:1}),{code:"WORKING_COPY_CONFLICT"});assert.deepEqual(await readFile(target.exactSourcePath),before);
 });
 
-for (const stage of ["promotion-prepared", "promotion-snapshot-created", "promotion-working-copy-prepared", "promotion-working-copy-created", "promotion-manifest-committed"]) {
-  test(`new process recovers ${stage} with stale transaction and manifest observations`, async (t) => {
-    const value = await fixture(t); const { target } = await importLegacySource(value);
-    const candidateId = "candidate_binding_crash_01";
-    await value.repository.createCandidate({ target, requestId:"req_binding_crash_01", candidateId, html:html("V2"), expectedSourceSha256:target.sourceSha256 });
-    const writer = new ProjectFileRepository({ projectsRoot:value.projects, failpoint:(name)=>name===stage });
-    await assert.rejects(writer.promoteCandidate({target,candidateId,decisionOperationId: `promote_${candidateId}`}));
-    await drift(target);
-    const journalPath=path.join(target.projectRootPath,".stemmio","transactions",`promote_${candidateId}`,"transaction.json");
-    // Promotion journals keep legacy observations for compatibility, not authority.
-    const transaction=await json(journalPath);
-    if(transaction.preparedWorkingCopyFileIdentity) transaction.preparedWorkingCopyFileIdentity.device="777";
-    if(transaction.workingCopy) transaction.workingCopy.fileIdentity.device="888";
-    await writeFile(journalPath,JSON.stringify(transaction));
-    const rows=await restart(value.projects);assert.equal(rows[0].availability,"ready");
-    const manifest=await json(path.join(target.projectRootPath,".stemmio","manifest.json"));
-    assert.equal(manifest.versions.length,2);assert.equal(manifest.latestOfficialVersionId,"ver_0002");
-  });
-}
 test("architecture rejects persisted physical comparisons including local aliases", async () => {
   const { parseModule, persistentFileIdentityComparisons } = await import("../scripts/architecture-ast-query.mjs");
   for (const source of [
@@ -255,19 +236,6 @@ test("replacement after the final Hash check is preserved instead of overwritten
  }});
  await assert.rejects(writer.saveWorkingCopy({target,html:html("must not overwrite"),expectedSourceSha256:target.sourceSha256,editRevision:1}),{code:"WORKING_COPY_CONFLICT"});
  assert.equal(await readFile(target.exactSourcePath,"utf8"),external);
-});
-
-
-test("two Working Copy anchors cannot claim one surviving visible HTML", async (t) => {
-  const value = await fixture(t); const { target } = await importLegacySource(value);
-  await value.repository.createCandidate({ target, requestId: "req_binding_duplicate", candidateId: "candidate_binding_duplicate", html: html("v2"), expectedSourceSha256: target.sourceSha256 });
-  const promoted = await value.repository.promoteCandidate({ target, candidateId: "candidate_binding_duplicate", decisionOperationId: "promote_candidate_binding_duplicate" });
-  const second = promoted.target;
-  await rm(sourceBindingPath(second.projectRootPath, second.workingCopyId));
-  await rm(second.exactSourcePath);
-  await link(sourceBindingPath(target.projectRootPath, target.workingCopyId), sourceBindingPath(second.projectRootPath, second.workingCopyId));
-  assert.equal((await restart(value.projects))[0].sourceStatus, "duplicate");
-  await assert.rejects(value.repository.saveWorkingCopy({ target: second, html: html("denied"), expectedSourceSha256: target.sourceSha256 }), { code: "MANAGED_PATH_AMBIGUOUS" });
 });
 
 
@@ -362,66 +330,5 @@ for (const collision of ["occupied-copy", "occupied-link", "replaced-link"]) {
     assert.deepEqual(await readFile(manifestPath), manifestBefore);
     assert.equal((await lstat(bindingPath)).ino, bindingBefore.ino);
     assert.deepEqual(await readFile(target.exactSourcePath), bytes);
-  });
-}
-
-for (const replacementStage of ["before-recovery", "before-binding-refresh", "after-binding-refresh"]) {
-  test(`Promotion recovery rejects identical-byte replacement ${replacementStage}`, async (t) => {
-    const value = await fixture(t);
-    const { target } = await importLegacySource(value);
-    const candidateId = "candidate_promotion_live_identity";
-    await value.repository.createCandidate({ target, requestId: "req_promotion_live_identity", candidateId,
-      html: html("V2"), expectedSourceSha256: target.sourceSha256 });
-    const writer = new ProjectFileRepository({ projectsRoot: value.projects,
-      failpoint: (name) => name === "promotion-working-copy-created" });
-    await assert.rejects(writer.promoteCandidate({ target, candidateId, decisionOperationId: `promote_${candidateId}` }));
-    const transaction = await json(path.join(target.projectRootPath, ".stemmio", "transactions",
-      `promote_${candidateId}`, "transaction.json"));
-    const visiblePath = path.join(target.projectRootPath, transaction.workingCopy.sourceRelativePath);
-    const original = await readFile(visiblePath);
-    const originalInformation = await lstat(visiblePath);
-    const manifestPath = path.join(target.projectRootPath, ".stemmio", "manifest.json");
-    const manifestBefore = await readFile(manifestPath);
-    let replaced = false;
-    const replace = async () => {
-      await writeFile(`${visiblePath}.replacement`, original);
-      await rename(`${visiblePath}.replacement`, visiblePath);
-      replaced = true;
-    };
-    const originalOpen = filesystem.open;
-    const originalRename = filesystem.rename;
-    try {
-      if (replacementStage === "before-recovery") await replace();
-      else if (replacementStage === "after-binding-refresh") {
-        filesystem.rename = async function (source, destination) {
-          await originalRename(source, destination);
-          if (!replaced && destination === sourceBindingPath(target.projectRootPath, transaction.workingCopy.workingCopyId)) await replace();
-        };
-        syncBuiltinESMExports();
-      } else {
-        filesystem.open = async function (filePath, ...args) {
-          const handle = await originalOpen.call(this, filePath, ...args);
-          if (!replaced && filePath === path.join(target.projectRootPath, ".stemmio", transaction.preparedWorkingCopyRelativePath)) {
-            const close = handle.close.bind(handle);
-            handle.close = async () => { await close(); if (!replaced) await replace(); };
-          }
-          return handle;
-        };
-        syncBuiltinESMExports();
-      }
-      const recovery = new ProjectFileRepository({ projectsRoot: value.projects });
-      await assert.rejects(recovery.promoteCandidate({ target, candidateId, decisionOperationId: `promote_${candidateId}` }),
-        (error) => ["PROMOTION_PATH_REPLACED", "WORKING_COPY_CONFLICT"].includes(error.code));
-    } finally {
-      filesystem.open = originalOpen;
-      filesystem.rename = originalRename;
-      syncBuiltinESMExports();
-    }
-    assert.equal(replaced, true);
-    assert.notEqual((await lstat(visiblePath)).ino, originalInformation.ino);
-    assert.deepEqual(await readFile(visiblePath), original);
-    assert.deepEqual(await readFile(manifestPath), manifestBefore);
-    const binding = await lstat(sourceBindingPath(target.projectRootPath, transaction.workingCopy.workingCopyId)).catch(() => null);
-    assert.ok(!binding || binding.ino === originalInformation.ino);
   });
 }

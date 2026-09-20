@@ -38,6 +38,7 @@ import {
   runAcpTask as runGenericAcpTask,
 } from "../bridge/agent/runtimes/acp-protocol.mjs";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { inspectSourceElementIdentity } from "../bridge/project-file-repository/working-copy.mjs";
 
@@ -109,6 +110,13 @@ async function createFixture(t) {
   const managedSourceHtml = await readFile(target.exactSourcePath, "utf8");
   assert.equal(inspectSourceElementIdentity(managedSourceHtml).complete, true);
   const promptText = "Follow the Stemmio task contract.\n";
+  const comments = [{
+    commentId: "comment_synthetic_acp",
+    text: "Synthetic ACP test",
+    target: { targetId: "target_synthetic_acp" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_synthetic_acp" }];
   const request = await repository.prepareRequest({
     target,
     ...IDENTITIES,
@@ -116,14 +124,10 @@ async function createFixture(t) {
     request: {
       freezeCutoffRevision: 0,
       summary: "Synthetic ACP test",
-      comments: [{
-        commentId: "comment_synthetic_acp",
-        text: "Synthetic ACP test",
-        target: { targetId: "target_synthetic_acp" },
-        attachments: [],
-      }],
+      comments,
       changeEvents: [],
-      targets: [{ targetId: "target_synthetic_acp" }],
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: promptText,
   });

@@ -87,7 +87,6 @@ function expectedAssetNames(packageVersion, architecture) {
     `${updateZip}.blockmap`,
     "latest-mac.yml",
     "SHA256SUMS.txt",
-    "update-manifest.json",
     "build-info.json",
   ];
 }
@@ -144,19 +143,6 @@ async function validateReleaseAssets({
       treeSha: identity.treeSha,
     },
   );
-  const updateManifest = JSON.parse(
-    await readFile(paths["update-manifest.json"], "utf8"),
-  );
-  if (
-    updateManifest?.schemaVersion !== 1
-    || updateManifest?.version !== identity.packageVersion
-    || !Array.isArray(updateManifest?.architectures)
-    || updateManifest.architectures.length !== 1
-    || updateManifest.architectures[0] !== architecture
-    || updateManifest.publishedAt !== buildInfo.builtAt
-  ) {
-    throw new Error("Release candidate update-manifest.json does not match build provenance.");
-  }
   const checksumText = await readFile(paths["SHA256SUMS.txt"], "utf8");
   const expectedChecksum = `${entries
     .filter((entry) => entry.name !== "SHA256SUMS.txt")
@@ -169,7 +155,6 @@ async function validateReleaseAssets({
   return Object.freeze({
     entries: entries.map((entry) => Object.freeze(entry)),
     buildInfo,
-    updateManifest,
   });
 }
 

@@ -190,6 +190,7 @@ export const REQUIRED_APP_SOURCE_FILES = [
   "desktop/runtime-project-storage-contract.mjs",
   "shared/agent-vendor-key-url.mjs",
   "shared/agent-configuration-preferences.mjs",
+  "shared/workspace-preferences.mjs",
   "app/domain/edit-runtime-contract.js",
   "public/brand-logo.png",
 ];

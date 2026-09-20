@@ -151,9 +151,7 @@ The renderer's main workspace facts are partitioned as follows:
 - Bridge Agent provider/runtime registries: the provider registry is the sole
   provider dispatch point, and the runtime registry
   is the sole runtime dispatch point. Current Coordinator execution binds by
-  canonical selection only; leftover driver aliases fail closed. Historical
-  `mode: "qoder-acp"` records are converted by the Agent Delivery Codec, not
-  the registry. The Qoder provider owns installation identity,
+  canonical selection only; removed delivery aliases fail closed. The Qoder provider owns installation identity,
   version, login/model preflight and raw-error normalization. The Codex ACP
   provider owns the same facts for `providerId: "codex"`; missing login is
   `session/new` JSON-RPC `-32000`, not advertised `authMethods`. The Stemmio
@@ -449,12 +447,10 @@ replaced current source before committing that receipt; opening or retrying the
 same receipt does not drain the now-superseded source again, because creation may
 have intentionally changed those bytes. A lost creation or opened acknowledgement
 is reconciled under the same operation and never recreates the Version or rolls a
-newer Working Copy back. The old `/history-version/continue` route is disk-only
-compatibility: it may only read and replay an already-existing `historyActivation`
-receipt after complete identity and immutable-snapshot validation. It cannot
-create a receipt or change the active Working Copy. A background Candidate
-carries its own complete OpenTarget and may never use whichever target happens
-to be mounted in the foreground.
+newer Working Copy back. Retired activation receipts and continuation routes are
+unsupported input and are never replayed. A background Candidate carries its own
+complete OpenTarget and may never use whichever target happens to be mounted in
+the foreground.
 
 ## Canvas target contract
 
@@ -1205,16 +1201,16 @@ v3 `SourceTransaction` kernel is not on this path. An AI Version publication
 remains a separate immutable transaction. Undo/Redo has no Bridge action route
 or persistent journal.
 
-That same Repository is the sole source-element identity migration owner. New
+That same Repository is the sole source-element identity-materialization owner. New
 imports preserve the external file and immutable V1 snapshot while writing an
-identified managed Working Copy. A legacy registered Working Copy migrates only
-on editable workspace hydration, after normal save recovery and external-change
+identified managed Working Copy. A current registered Working Copy materializes
+missing IDs only on editable workspace hydration, after normal save recovery and external-change
 reconciliation. The transaction seals exact before/after Hashes and complete
 recovery bytes, uses the Working Copy CAS writer, then publishes the state schema
 marker, canonical ID/tag/parent/order binding Hash and fresh manifest file
 identity. Restart accepts only the sealed old or new side. A clean external edit
 may reconcile only when that binding Hash survives; a changed or missing binding
-requires explicit force-unlock before a new controlled migration. Invalid
+requires explicit force-unlock before a new controlled identity materialization. Invalid
 identities, an unresolved save state or third-party bytes fail closed; no
 historical Version, Request, Candidate or Runtime DOM is serialized.
 
@@ -1435,17 +1431,12 @@ read-only negative evidence.
   `basedOnVersionId` / `revision`. Unknown fields fail closed.
 - Candidate records require `identityReport` and `submittedOutputSha256`.
   `candidate-assessment.json` accepts only the current bounded impact shape.
-  Retired executable-surface fields and full-array impact facts fail closed
-  there. Historical Version records may still store the retired full-array
-  impact shape; `candidateAssessmentFromRecord` projects those arrays into
-  bounded counts and samples in memory and does not rewrite the file. Review
-  display consumes only that bounded result.
+  Retired executable-surface fields and full-array impact facts fail closed.
   Sealed HTML Hash verification still runs for current assessments.
 
-The full producer, fixture, persistence and deletion-evidence register is
-[`COMPATIBILITY.md`](COMPATIBILITY.md). The legacy Release
-`update-manifest.json` is a historical-client distribution artifact, not a
-current application compatibility decoder.
+The current-format producer, fixture and rejection register is
+[`COMPATIBILITY.md`](COMPATIBILITY.md). Retired release artifacts are not
+generated or required.
 
 ## Change requirements
 

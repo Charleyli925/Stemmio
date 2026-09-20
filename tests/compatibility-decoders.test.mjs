@@ -154,18 +154,3 @@ test("retired Developer Preview candidate-assessment shapes fail closed", async 
     (error) => error.code === "CANDIDATE_ASSESSMENT_INVALID",
   );
 });
-
-test("legacy update manifest remains a release-only compatibility artifact", async () => {
-  const manifest = await fixture(
-    "compatibility-decoders/legacy-update-manifest.json",
-  );
-  assert.deepEqual(Object.keys(manifest).sort(), [
-    "architectures",
-    "minimumMacOS",
-    "publishedAt",
-    "schemaVersion",
-    "version",
-  ]);
-  assert.equal(manifest.schemaVersion, 1);
-  assert.deepEqual(manifest.architectures, ["arm64"]);
-});

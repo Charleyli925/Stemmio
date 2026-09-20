@@ -14,16 +14,14 @@
 //   - `sequence` is assigned here from the record's own `lastSequence`. The
 //     Repository is the only writer, so strict increase needs no coordination.
 
-import { defaultManagedAgentDelivery, normalizeAgentDelivery } from "./agent-delivery.mjs";
+import { normalizeAgentDelivery } from "./agent-delivery.mjs";
 
 // Conversation v3 is the first Stemmio-owned writer contract.  Older v2
 // records are intentionally unsupported: accepting them here would silently
 // turn a historical PageRoot actor contract into a current record.
 const CONVERSATION_SCHEMA_VERSION = "3.0.0";
-const LEGACY_CONVERSATION_SCHEMA_VERSION = "1.0.0";
 const CONVERSATION_INDEX_SCHEMA_VERSION = "1.0.0";
 const CONVERSATION_DRAFT_SCHEMA_VERSION = "2.0.0";
-const LEGACY_CONVERSATION_DRAFT_SCHEMA_VERSION = "1.0.0";
 
 const CONVERSATION_MESSAGE_LIMIT = 500;
 const CONVERSATION_TURN_LIMIT = 500;
@@ -405,62 +403,6 @@ function cleanProviderBinding(value, label) {
   };
 }
 
-function legacyConversationProjection(raw) {
-  const selection = defaultManagedAgentDelivery().selection;
-  return {
-    ...raw,
-    schemaVersion: CONVERSATION_SCHEMA_VERSION,
-    turns: Array.isArray(raw.turns) ? raw.turns.map((turn) => {
-      const {
-        modelId,
-        reasoningEffort,
-        ...rest
-      } = isRecord(turn) ? turn : {};
-      return {
-        ...rest,
-        providerSelection: {
-          ...selection,
-          requestedModelId: modelId ? `qoder:${modelId}` : null,
-          resolvedModelId: modelId ? `qoder:${modelId}` : null,
-          reasoning: reasoningEffort === "qoder-default"
-            ? { requested: null, applied: null, resolution: "provider-default" }
-            : selection.reasoning,
-        },
-        providerBinding: { providerId: "qoder", runtimeId: "acp" },
-        capabilitySnapshotFingerprint: null,
-      };
-    }) : raw.turns,
-    messages: Array.isArray(raw.messages) ? raw.messages.map((message) => {
-      if (!isRecord(message)) return message;
-      const { modelId, reasoningEffort: _reasoningEffort, ...rest } = message;
-      return {
-        ...rest,
-        actor: message.actor === "qoder" ? "agent" : message.actor,
-        ...(message.actor === "qoder" ? { providerId: "qoder" } : {}),
-        ...(modelId ? { actualModelId: `qoder:${modelId}` } : {}),
-      };
-    }) : raw.messages,
-  };
-}
-
-function legacyDraftProjection(raw) {
-  const { modelId, ...rest } = raw;
-  return {
-    ...rest,
-    schemaVersion: CONVERSATION_DRAFT_SCHEMA_VERSION,
-    ...(modelId
-      ? {
-          providerSelection: {
-            ...defaultManagedAgentDelivery().selection,
-            requestedModelId: `qoder:${modelId}`,
-            resolvedModelId: `qoder:${modelId}`,
-          },
-        }
-      : {}),
-    deliveryMode: raw.deliveryMode === "qoder-acp" ? "managed-agent" : raw.deliveryMode,
-  };
-}
-
 function cleanTurn(raw, label) {
   if (!isRecord(raw)) {
     throw conversationError(
@@ -652,9 +594,6 @@ export function normalizeConversation(raw, { projectId, documentId } = {}) {
       "INVALID_CONVERSATION",
       "A conversation record must be an object.",
     );
-  }
-  if (raw.schemaVersion === LEGACY_CONVERSATION_SCHEMA_VERSION) {
-    raw = legacyConversationProjection(raw);
   }
   if (raw.schemaVersion !== CONVERSATION_SCHEMA_VERSION) {
     throw conversationError(
@@ -1439,9 +1378,6 @@ export function normalizeConversationDraft(raw, { conversationId } = {}) {
       "INVALID_CONVERSATION_DRAFT",
       "A conversation draft must be an object.",
     );
-  }
-  if (raw.schemaVersion === LEGACY_CONVERSATION_DRAFT_SCHEMA_VERSION) {
-    raw = legacyDraftProjection(raw);
   }
   if (raw.schemaVersion !== CONVERSATION_DRAFT_SCHEMA_VERSION) {
     throw conversationError(

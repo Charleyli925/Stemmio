@@ -86,9 +86,9 @@ capability revision fence remain the authority for launch.
 | AI Request freeze, Agent access orchestration, pre-Request use-time check, persisted-boundary verification, safely fenced same-Request Agent start/retry, unknown-POST authority reconciliation, polling lifecycle, cancellation ordering, conflict command sequence, pending sidebar default adoption and access-repair resend | Renderer `RunWorkflow`, composed by `WorkspaceController` | connection, remembered-credential persistence and default preference are separate results. Credential configuration, provider disabled state and validated pending default are written through the narrow preferences port with the same credential/default `intentId`; the single preferences Session rechecks each intent before and after its serialized write. A superseded write restores only a field whose authoritative value still equals that intent's owned value; a newer value is never overwritten. Lost commit or rollback responses are reconciled through `get`, and an unprovable result stays `unknown` with pending recovery instead of claiming persistence. Disposal blocks ordinary updates and publication but lets an already-started Agent mutation finish only that ownership-checked rollback; queued mutations do not start. The credential projection carries its operation kind so Settings can expose same-clear reconciliation without treating unknown persistence as saved. After Request publication every path reads the durable Request selection. Access-repair identity is `{repairIntentId, requestId, attemptId, projectId, documentId, sessionEpoch}` in process memory | Workbench sends intents only; typed credential/preferences ports, Catalog projection and Bridge run lifecycle |
 | AI Request/Attempt lifecycle transition | Bridge run lifecycle | runtime state and immutable Request/Attempt records | `RunWorkflow`, RunSession and finalizer |
 | `AI任务/` derived prompt/Candidate publication, collision allocation and recovery stage | `ProjectFileRepository` plus narrow `ai-task-projection` materializer | immutable Request/Attempt/Candidate records remain authoritative; `.stemmio/recovery/ai-task-projections/` receipt is only a rebuildable display-progress record; runtime `lastAiTask` is a sealed no-change/error Finder anchor, never an active run or Candidate authority | `/ai-task`, trusted Desktop Finder port and handoff presentation |
-| AI Candidate complete-HTML source identity, normalization and report | `ProjectFileRepository` through the pure `candidate-identity` validator | frozen base binding Hash, submitted-output Hash, normalized Candidate Hash and sealed identity report; current Working Copy remains unchanged until Promotion | Candidate Review, Promotion and historical Candidate readers; Runtime DOM is never an input |
+| AI Candidate complete-HTML source identity, normalization and report | `ProjectFileRepository` through the pure `candidate-identity` validator | frozen base binding Hash, submitted-output Hash, normalized Candidate Hash and sealed identity report; current Working Copy remains unchanged until current Version adoption | Candidate Review, adoption and Candidate readers; Runtime DOM is never an input |
 | Immutable Version list, verified read-only history preview and based-on/exact/restored/current-history projection facts | Renderer `VersionSession` | immutable Version records and current runtime pointers | `VersionWorkflow`, Workbench history and Canvas projection |
-| Local version save, export, preserved-draft recovery, version activation, review-candidate preparation, current/history navigation and same-current history creation/open operation identity, Bridge I/O, full OpenTarget/Hash/time validation, receipt-forward recovery and synchronous cross-Session publication | Renderer `VersionWorkflow`, composed by `WorkspaceController` | Repository owns durable manual creation and history activation receipts plus disk-only legacy activation receipts; the workflow publishes only through Project, Document, Version, Draft and Comment owners | Workbench review/history commands, presentation-event adapter and Bridge version lifecycle |
+| Local version save, export, preserved-draft recovery, review-candidate preparation, current/history navigation and same-current history creation/open operation identity, Bridge I/O, full OpenTarget/Hash/time validation, receipt-forward recovery and synchronous cross-Session publication | Renderer `VersionWorkflow`, composed by `WorkspaceController` | Repository owns durable manual creation and current Version transactions; retired activation receipts are rejected; the workflow publishes only through Project, Document, Version, Draft and Comment owners | Workbench review/history commands, presentation-event adapter and Bridge version lifecycle |
 | `PROJECT.md` content, editor generation, composition fence and save projection | Renderer `ProjectRulesSession` | managed `PROJECT.md` | `ProjectRulesWorkflow` and Request freeze |
 | `PROJECT.md` staged Bridge reads, atomic visible-tab/session publication, Bridge writes, 700ms autosave timer, unknown-write authority reconciliation and close/switch drain | Renderer `ProjectRulesWorkflow`, composed by `WorkspaceController`; `WorkbenchNavigationWorkflow` commits the target tab before publishing the prepared rules session | a prepared read is workflow-private and disposable; it publishes only through `ProjectRulesSession` after the matching tab commit, while managed `PROJECT.md` remains authoritative | `ProjectWorkflow` drain, Workbench navigation and Request freeze |
 | Close/switch/submit/history readiness and desktop close lifecycle | The unique `DrainCoordinator` owned by `WorkspaceController`; `ProjectWorkflow` owns the request-scoped close operation | composed owner snapshots, request identity and bounded presentation class; no copied dirty booleans | Electron close handshake, browser fallback and navigation |
@@ -117,7 +117,7 @@ capability revision fence remain the authority for launch.
 | Stable application update schedule, coalesced manual check, download progress and restart-install readiness | Main-process application-update controller | signed GitHub Release metadata plus updater cache; no editor authority | preload status snapshot, Settings Stemmio, sidebar update entry, drain coordinator |
 | Random installation identity, project pseudonym secret, aggregate counters and unsent usage events | Main-process usage-telemetry controller | bounded `usage-telemetry.json` under Stemmio Application Support | PostHog batch ingestion only |
 | Settings tab/category, settings-mode sidebar and return/focus route | Workbench presentation state (`settingsCategory` plus the existing tab navigation commands) | none; the category is disposable and is reset only after the settings tab is truly closed | Settings sidebar/Page, gear entry, Agent install/login entry and Escape/return actions |
-| Workspace layout/motion/restore/default-Agent/`disabledAgentProviderIds`/Agent-configuration projection, pending patch, save error and bounded retry/flush | The single Renderer `WorkspacePreferencesSession`, composed by `useWorkspacePreferences`; Workbench exposes only a narrow Agent preferences port to `RunWorkflow`/Catalog | Main `desktop/ui-preferences.mjs` owns the v2 `workspace` object, strict field/range validation, migration and atomic queued writes; the Renderer accepts persistence confirmation only from a complete valid workspace envelope and retains only bounded per-field intent/evidence generations, never a second durable state mirror; it contains no HTML, comments, attachments, credentials or localStorage authority | Settings Page; startup tab coordinator consumes only `restoreTabsOnLaunch`; ordinary writes and conditional Agent rollback share one durable-write turn, while the Agent mutation tail only orders commands; same-field newer intent fences rollback, unrelated fields do not, and configuration failures remain visible and retryable; resizers submit widths only at an interaction boundary |
+| Workspace layout/motion/restore/default-Agent/`disabledAgentProviderIds`/Agent-configuration projection, pending patch, save error and bounded retry/flush | The single Renderer `WorkspacePreferencesSession`, composed by `useWorkspacePreferences`; Workbench exposes only a narrow Agent preferences port to `RunWorkflow`/Catalog | Main `desktop/ui-preferences.mjs` owns the current `workspace` object, strict field/range validation, no legacy migration, and atomic queued writes; the Renderer accepts persistence confirmation only from a complete valid workspace envelope and retains only bounded per-field intent/evidence generations, never a second durable state mirror; it contains no HTML, comments, attachments, credentials or localStorage authority | Settings Page; startup tab coordinator consumes only `restoreTabsOnLaunch`; ordinary writes and conditional Agent rollback share one durable-write turn, while the Agent mutation tail only orders commands; same-field newer intent fences rollback, unrelated fields do not, and configuration failures remain visible and retryable; resizers submit widths only at an interaction boundary |
 | Edit-canvas pointer-capability hover cursor, delayed outline and one-line caption | `HtmlCanvasEditor` presentation | none; disposable overlay of `resolveCanvasPointerHit`, hidden on click, scroll or text editing | `html-canvas-selection-chrome` overlay |
 | Crash-only renderer recovery records | Recovery store adapter | browser storage, subordinate to Bridge authority | document and draft sessions |
 | V2 text-session lease, editable-island host DOM, logical Selection and IME snapshot | `IslandEditingController` | in-memory until the exact island SourcePatch is acknowledged | Canvas coordinator and document session |
@@ -599,12 +599,10 @@ Rules:
   never receives content or paths, and never registers a drain obligation for
   edit, save, switch, submit, close or update installation.
 - Provider Registry owns installed descriptors and dispatch. Agent Delivery
-  Codec owns canonical Request selection, shipped-binding checks for new
-  managed Requests, and historical `mode: "qoder-acp"` projection at the read
-  boundary. Coordinator execution binds by selection only; leftover driver
-  aliases are not converted there. Status without a live session may still
-  project a historical `driver` for Qoder records. Conversation Repository is
-  the only v2 writer; v1 conversation records are never migrated in place.
+  Codec owns canonical Request selection and shipped-binding checks for managed
+  Requests. Removed delivery aliases fail at the read boundary; Coordinator
+  execution binds by selection only. Conversation Repository writes and reads
+  only the current conversation schema; older records are rejected.
 
 ## 文件与历史合同
 
@@ -745,25 +743,13 @@ VersionWorkflow suppresses superseded receipts and checks again before opening.
 If hydration has already opened the matching current Working Copy, it verifies
 that Canvas and repairs openedAt without another workspace load or publication.
 
-Legacy activation compatibility is disk-only: the retired Renderer, Controller,
-VersionWorkflow and BridgeClient continue/confirm commands are removed. Current
-UI commands use create, query and openCreatedHistoryVersion. The old HTTP
-`/history-version/continue` route calls Repository `replayHistoryVersionActivation`
-and can only return an existing `historyActivation` receipt. Project, document,
-selected Version, predecessor and activated Working Copy must all agree; even a
-new click ID replays the receipt's original operation ID. Missing or mismatched
-receipts are rejected through a read-only Registry lookup before Workspace
-recovery, root rename repair or external-source coordination. Confirmation keeps
-its full receipt checks and only changes pending to confirmed once. Runtime
-receipt decoding, restart hydration and generic Desktop managed-source activation
-remain compatible; no old activation command creates a receipt or changes the
-active Working Copy.
-active Working Copy. No production Workbench/UI caller uses
-`continueEditingHistoryVersion`; the Controller forwarding method and workflow
-remain deprecated compatibility surfaces exercised by legacy activation protocol
-tests. The single-current migration retires legacy editable membership;
-compatibility readers do not grant authority to open independent historical work
-files.
+The retired history activation surface is unsupported. Current UI commands use
+create, query and `openCreatedHistoryVersion`; a current Version transaction
+owns the single editable Working Copy and its crash recovery. Historical
+activation receipts and continuation commands are rejected before Workspace
+recovery, root rename repair or external-source coordination. No production
+Workbench/UI caller exposes the removed continuation methods, and no reader
+grants authority to open an independent historical work file.
 
 ## Preflight submission receipts
 
@@ -773,7 +759,7 @@ ProjectFileRepository serializes `submissions/<submissionOperationId>.json` insi
 
 AgentRuntimeCoordinator emits bounded, fixed-category execution facts through its injected repository writer. The start fact must persist before invoking a provider. Stage facts are serialized independently of Renderer mounts; a persistence failure aborts execution and disallows automatic retry. Raw provider text, arguments and output do not enter this history path. On execution settlement, only the assembled visible-text allowlist is sealed as a public summary, redacted by the public projector and bounded to 4096 characters; hidden reasoning and tool output remain excluded. The existing submission receipt replays this immutable summary after restart; Request and Promotion outboxes continue to own result and decision facts.
 
-ProjectFileRepository writes terminal Request state and stable Conversation event IDs together in request.json, then projects those facts through the submission receipt into the fixed Conversation. A crash between these files replays the same event IDs; it never restarts generation. initialize() reconciles only submissions created by this flow: accepted without a Request becomes not-started, and processing Requests receive an interrupted fact while retaining existing Request/lease authority. Missing older submissions never cause invented history. Promotion confirmation remains owned by the completed Promotion transaction.
+ProjectFileRepository writes terminal Request state and stable Conversation event IDs together in request.json, then projects those facts through the submission receipt into the fixed Conversation. A crash between these files replays the same event IDs; it never restarts generation. initialize() reconciles only submissions created by this flow: accepted without a Request becomes not-started, and processing Requests receive an interrupted fact while retaining existing Request/lease authority. Missing older submissions never cause invented history. Adoption confirmation remains owned by the completed current Version transaction.
 
 Coordinator persists progress on phase transitions; repeated tool activity in the same phase does not create another durable progress fact. A return to a previous phase remains a new transition. Submission progress retains at most 64 facts, with one durable truncation update at the limit; further omitted progress does not rewrite the receipt. Start, stop, result, decision and final summary facts retain their existing durability boundaries.
 
@@ -804,7 +790,7 @@ ConversationWorkflow owns a bounded single-flight read refresh while the sidebar
 
 ### Trusted modification adoption
 
-VersionWorkflow drains current source and Draft before adoption. The decision carries the reviewed Candidate ID, original source hash and existing `promote_<candidateId>` transaction identity. Promotion freezes comments whose content/revision differs from the submission and publishes them with the updated current Working Copy; unchanged submitted comments alone are consumed. Completed Promotion is the authority for an idempotent adopted Conversation fact. Unknown or failed delivery never implies adoption. The sidebar opens Review first; adopt and explicit discard remain separate decisions.
+VersionWorkflow drains current source and Draft before adoption. The decision carries the reviewed Candidate ID, original source hash and current Version transaction identity. Adoption freezes comments whose content/revision differs from the submission and publishes them with the updated current Working Copy; unchanged submitted comments alone are consumed. Completed adoption is the authority for an idempotent adopted Conversation fact. Unknown or failed delivery never implies adoption. The sidebar opens Review first; adopt and explicit discard remain separate decisions.
 
 PR-8: AgentRuntimeCoordinator owns in-flight execution startup keyed by the
 existing execution identity. Cancellation marks that startup, waits for its
@@ -813,15 +799,15 @@ check prevents a stopped, unpublished startup from spawning later. This registry
 is transient coordination, not a new durable Task/Run authority. VersionWorkflow retains and reconciles lost adoption responses using the identical Candidate decision operation; Promotion remains the idempotent authority.
 ### Adoption receipt reconciliation
 
-VersionWorkflow owns an ephemeral pending-activation projection keyed by the existing
-Run operation identity. It retains the original Promotion decision payload and
+VersionWorkflow owns an ephemeral pending-adoption projection keyed by the existing
+Run operation identity. It retains the original current Version decision payload and
 replays that same idempotent decision after unknown Bridge receipts; the persisted
-Promotion transaction remains the only adoption authority. Two lost replies show
+current Version transaction remains the only adoption authority. Two lost replies show
 `adoptionPhase: unknown`, retain the per-Run activation lock, and release navigation.
 Reconciliation backs off to 30 seconds, pauses publication away from the original
 Run, and stops on disposal. Review cannot override this projection and RunWorkflow
 refuses an opposite cancellation while the decision remains unresolved. Restart
-reconstructs the outcome from the persisted Promotion transaction, never a new AI run.
+reconstructs the outcome from the persisted current Version transaction, never a new AI run.
 Before accepting a submission, Conversation Repository reserves 128 messages, two contexts, one turn and 2 MiB for the bounded execution history, public summary and adoption decision. Near message/context/turn/byte limits it rotates only a settled Conversation, preserving both links and all prior records; interrupted rotation repairs the current index from the archived link. Submission requirements are losslessly split into bounded messages; more than 1 MiB of JSON-encoded requirements is rejected before acceptance or provider contact. Progress is capped before projection, while Request/Promotion terminal facts remain authoritative and replayable.
 Every RunWorkflow submit exit before a known Request settles the original submission identity in finally, including stale navigation after receipt or ticket arrival. A dispatched unknown Request is excluded and stays with existing reconciliation. The in-memory pending run is removed only after this pre-Request settlement path; navigation never changes its target.
 

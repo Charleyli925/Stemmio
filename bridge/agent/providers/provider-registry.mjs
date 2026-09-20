@@ -41,7 +41,7 @@ function assertResolvedSelection(selection, provider) {
       mode: "managed-agent",
       selection,
       trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-    }, { allowLegacy: false }).selection;
+    }).selection;
   } catch {
     throw agentProviderError(
       "AGENT_SELECTION_UNSUPPORTED",

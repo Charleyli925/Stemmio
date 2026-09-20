@@ -19,7 +19,6 @@ import {
   agentRecoveryKindForError,
   CLIPBOARD_DELIVERY_MODE,
   MANAGED_AGENT_MODE,
-  TRUSTED_LOCAL_AGENT_POLICY_VERSION,
   normalizeAgentDelivery,
 } from "../../shared/agent-delivery.mjs";
 
@@ -357,24 +356,14 @@ function frozenDeliveryForMode(deliveryMode, selection, provider) {
       trustPolicyVersion: provider.trustPolicyVersion,
     });
   }
-  return normalizeAgentDelivery({
-    mode: deliveryMode,
-    trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-  });
+  throw responseError("RUN_DELIVERY_MODE_INVALID", "选择的 Agent 交接方式无效。");
 }
 
 function deliveryForRun(run) {
   try {
     return normalizeAgentDelivery(run?.agentDelivery);
   } catch {
-    try {
-      return normalizeAgentDelivery({
-        ...run?.agentDelivery,
-        trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-      });
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -449,10 +438,7 @@ export class RunWorkflow {
       || typeof bridgeClient.createRequest !== "function"
       || typeof bridgeClient.workspace !== "function"
       || typeof bridgeClient.status !== "function"
-      || (
-        typeof bridgeClient.agentAvailability !== "function"
-        && typeof bridgeClient.qoderAvailability !== "function"
-      )
+      || typeof bridgeClient.agentAvailability !== "function"
       || typeof bridgeClient.preflightAgent !== "function"
       || typeof bridgeClient.startAgent !== "function"
       || typeof bridgeClient.cancelActiveRun !== "function"
@@ -610,7 +596,7 @@ export class RunWorkflow {
       pendingReconciliations: frozenArray(this.#uncertainSubmissions.keys()),
       agentCatalog: this.#agentCatalog.getSnapshot(),
       agentPresentation: this.#agentCatalog.presentation(),
-      qoderAvailability: this.#agentCatalog.displayAvailability(),
+      agentAvailability: this.#agentCatalog.displayAvailability(),
       accessRepair: this.#accessRepair,
       providerAccessImpact: this.#providerAccessImpact(),
     });
@@ -775,54 +761,6 @@ export class RunWorkflow {
     }
   }
 
-  #qoderSelection() {
-    return this.#agentCatalog.freezeProviderSelection("qoder");
-  }
-
-  refreshQoderAvailability() {
-    const selection = this.#qoderSelection();
-    if (!selection) {
-      return Promise.resolve(rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。"));
-    }
-    if (this.#disposed) {
-      return Promise.resolve(blocked("RUN_WORKFLOW_DISPOSED", "Qoder CLI 状态检查已经停止。"));
-    }
-    return this.#agentCatalog.refreshAvailability(selection)
-      .then((refreshed) => {
-        if (this.#disposed) return stale({ kind: "agent-availability" });
-        if (String(refreshed?.result?.status || "") === "ready") {
-          return succeeded({ availability: this.#agentCatalog.availability(selection) });
-        }
-        return succeeded({ availability: this.#agentCatalog.availability(selection) });
-      })
-      .catch((cause) => rejected(
-        errorCode(cause, "AGENT_AVAILABILITY_FAILED"),
-        this.#codecs.errorMessage(cause, "暂时无法检查 Qoder CLI。"),
-      ));
-  }
-
-  async checkQoderUsability() {
-    const selection = this.#qoderSelection();
-    return this.checkAgentUsability(selection);
-  }
-
-  async copyQoderGuidance({ kind } = {}) {
-    if (kind !== "install" && kind !== "login") {
-      return rejected("AGENT_GUIDANCE_INVALID", "选择的 Qoder 引导无效。");
-    }
-    const selection = this.#qoderSelection();
-    if (!selection) return rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。");
-    try {
-      const result = await this.#agentCatalog.copyGuidance(kind, selection);
-      return succeeded(result);
-    } catch (cause) {
-      return rejected(
-        errorCode(cause, "AGENT_GUIDANCE_COPY_FAILED"),
-        this.#codecs.errorMessage(cause, "Qoder 引导指令暂时无法复制，请重试。"),
-      );
-    }
-  }
-
   async startAgentLogin(selection = this.#agentCatalog.freezeSelected()) {
     const frozen = selection || this.#agentCatalog.freezeSelected();
     const displayName = this.#agentCatalog.presentation(frozen).displayName || "Agent";
@@ -913,24 +851,6 @@ export class RunWorkflow {
       return rejected(
         errorCode(cause, "AGENT_INSTALL_FAILED"),
         this.#codecs.errorMessage(cause, `暂时无法安装 ${displayName}。`),
-      );
-    }
-  }
-
-  async installQoder() {
-    const selection = this.#qoderSelection();
-    if (!selection) return rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。");
-    if (this.#disposed) {
-      return blocked("RUN_WORKFLOW_DISPOSED", "Qoder CLI 安装已经停止。");
-    }
-    try {
-      await this.#agentCatalog.install(selection);
-      if (this.#disposed) return stale({ kind: "agent-install" });
-      return succeeded({ availability: this.#agentCatalog.availability(selection) });
-    } catch (cause) {
-      return rejected(
-        errorCode(cause, "AGENT_INSTALL_FAILED"),
-        this.#codecs.errorMessage(cause, "暂时无法安装 Qoder CLI。"),
       );
     }
   }

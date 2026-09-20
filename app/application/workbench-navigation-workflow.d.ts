@@ -35,6 +35,7 @@ export class WorkbenchNavigationWorkflow {
     title: string;
     status?: WorkbenchTabStatus;
     force?: boolean;
+    intentKind?: string;
     committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<WorkbenchNavigationOutcome>;
   commitCurrentVersionAuthority(input: {

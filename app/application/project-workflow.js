@@ -319,16 +319,8 @@ function documentIsStable(session) {
 }
 
 function documentProtectionEvidence(workflow, input) {
-  if (typeof workflow?.verifiedProtectionEvidence === "function") {
-    return workflow.verifiedProtectionEvidence(input) || null;
-  }
-  if (typeof workflow?.hasVerifiedProtectionEvidence === "function") {
-    return workflow.hasVerifiedProtectionEvidence(input) === true
-      ? Object.freeze({ kind: "legacyVerified", htmlSha256: null })
-      : null;
-  }
-  return workflow?.hasVerifiedRecoveryCheckpoint?.(input) === true
-    ? Object.freeze({ kind: "legacyVerified", htmlSha256: null })
+  return typeof workflow?.verifiedProtectionEvidence === "function"
+    ? workflow.verifiedProtectionEvidence(input) || null
     : null;
 }
 
@@ -3980,7 +3972,6 @@ export class ProjectWorkflow {
       let authoritativeHtml = currentDocument.html;
       let authoritativeHash = currentDocument.persistedSourceSha256 || workspaceHash;
       let authoritativeLastModifiedAt = String(payload.lastModifiedAt || "");
-      let legacyVersionAuthority = null;
       if (preparedTransition?.activatedProject) {
         authoritativeHtml = preparedTransition.activatedProject.html;
         authoritativeHash = preparedTransition.activatedProject.sha256;
@@ -4008,7 +3999,6 @@ export class ProjectWorkflow {
         authoritativeHtml = String(resolvedSource.content || "");
         authoritativeHash = String(resolvedSource.sourceSha256 || "");
         authoritativeLastModifiedAt = String(resolvedSource.lastModifiedAt || "");
-        legacyVersionAuthority = resolvedSource.legacyVersionAuthority;
       } else if (currentDocumentClean && workspaceHash) {
         authoritativeHash = workspaceHash;
       } else if (
@@ -4024,13 +4014,9 @@ export class ProjectWorkflow {
       const publishVersion = () => this.#versionSession.hydrate({
         versions: decodedWorkspace.versions,
         latestVersionId: payload.latestVersionId,
-        currentBasedOnVersionId:
-          legacyVersionAuthority?.currentBasedOnVersionId || payload.currentBasedOnVersionId,
-        currentExactVersionId:
-          legacyVersionAuthority?.currentExactVersionId || payload.currentExactVersionId,
-        restoredFromVersionId:
-          legacyVersionAuthority?.restoredFromVersionId
-          || payload.restoredFromVersionId,
+        currentBasedOnVersionId: payload.currentBasedOnVersionId,
+        currentExactVersionId: payload.currentExactVersionId,
+        restoredFromVersionId: payload.restoredFromVersionId,
       });
       let context = null;
       this.#markHydrationStage("publication-start", operationId);

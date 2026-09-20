@@ -6,21 +6,11 @@ function record(value) {
     : null;
 }
 
-function flatEnvelope(payload, operationId) {
-  return Object.freeze({
-    operationId,
-    snapshotRevision: null,
-    core: payload,
-    supplemental: payload,
-    performanceTiming: record(payload.performanceTiming),
-  });
-}
-
 export function normalizeProjectOpenWorkspaceEnvelope(payload, operationId) {
   const response = record(payload);
   if (!response) throw new Error("项目状态返回了无效响应。");
   if (Number(response.workspaceEnvelopeVersion || 0) !== 1) {
-    return flatEnvelope(response, operationId);
+    throw new Error("项目状态返回了不支持的响应格式。");
   }
   const responseOperationId = String(response.operationId || "");
   const snapshotRevision = String(response.snapshotRevision || "");
@@ -52,16 +42,13 @@ export async function acquireProjectOpenWorkspace({
   operationId,
   isCurrent,
 } = {}) {
-  if (!bridgeClient || typeof bridgeClient.workspace !== "function") {
+  if (!bridgeClient || typeof bridgeClient.workspaceEnvelope !== "function") {
     throw new TypeError("Project open procedure requires a workspace Bridge port.");
   }
   if (typeof isCurrent !== "function") {
     throw new TypeError("Project open procedure requires a stale fence.");
   }
-  const read = typeof bridgeClient.workspaceEnvelope === "function"
-    ? bridgeClient.workspaceEnvelope.bind(bridgeClient)
-    : bridgeClient.workspace.bind(bridgeClient);
-  const payload = await read(sourcePath, { operationId });
+  const payload = await bridgeClient.workspaceEnvelope(sourcePath, { operationId });
   if (!isCurrent()) return Object.freeze({ kind: "stale" });
   return Object.freeze({
     kind: "ready",
@@ -106,13 +93,8 @@ export async function verifyProjectOpenCoreSource({
 
 export async function resolveProjectOpenSource({
   core,
-  bridgeClient,
-  canonicalSourcePath,
   hashPort,
   expectedSourceSha256,
-  projectId,
-  documentId,
-  isCurrent,
   markStage = () => {},
 } = {}) {
   if (typeof core?.content === "string") {
@@ -122,43 +104,9 @@ export async function resolveProjectOpenSource({
       hashPort,
       expectedSourceSha256,
     });
-    return Object.freeze({
-      ...verified,
-      legacyVersionAuthority: null,
-    });
+    return Object.freeze(verified);
   }
-
-  // Injected legacy Bridge ports may still return the historical flat
-  // workspace without content. Production always takes the Core branch above.
-  markStage("source-request");
-  const payload = await bridgeClient.source(canonicalSourcePath);
-  markStage("source-response");
-  if (!isCurrent()) return Object.freeze({ stale: true });
-  if (
-    String(payload.projectId || "") !== String(projectId || "")
-    || String(payload.documentId || "") !== String(documentId || "")
-  ) {
-    throw new Error("读取期间源文件身份发生变化，已保持只读；请重新打开该文件。");
-  }
-  const content = String(payload.content || "");
-  const sourceSha256 = String(payload.sha256 || "");
-  if (
-    !SHA256.test(sourceSha256)
-    || await hashPort.sha256(content) !== sourceSha256
-    || (expectedSourceSha256 && expectedSourceSha256 !== sourceSha256)
-  ) {
-    throw new Error("源 HTML 内容与服务端 Hash 不一致，已拒绝开放编辑。");
-  }
-  return Object.freeze({
-    content,
-    sourceSha256,
-    lastModifiedAt: String(payload.lastModifiedAt || core?.lastModifiedAt || ""),
-    legacyVersionAuthority: Object.freeze({
-      currentBasedOnVersionId: payload.currentBasedOnVersionId || null,
-      currentExactVersionId: payload.currentExactVersionId || null,
-      restoredFromVersionId: payload.restoredFromVersionId || null,
-    }),
-  });
+  throw new Error("项目 Core 状态缺少当前源 HTML 内容。");
 }
 
 export function prepareProjectOpenCore({

@@ -3,7 +3,7 @@
 /** @typedef {import("./agent-credential-operation-contract.js").AgentCredentialOperationResult} AgentCredentialOperationResult */
 /** @typedef {import("./agent-credential-operation-contract.js").AgentCredentialOperationStatus} AgentCredentialOperationStatus */
 
-const SAFE_RECORD_ID = /^(?:cred|legacy)_[a-f0-9]{24,32}$/u;
+const SAFE_RECORD_ID = /^cred_[a-f0-9]{24,32}$/u;
 const STATUS_PRIORITY = Object.freeze([
   "unreadable",
   "unavailable",

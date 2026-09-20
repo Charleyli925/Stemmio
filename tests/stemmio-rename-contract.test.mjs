@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -162,8 +163,11 @@ function trackedPaths() {
 
 function currentContractPaths() {
   return trackedPaths().filter((relativePath) => (
+    existsSync(path.join(productRoot, relativePath))
+    && (
     CURRENT_CONTRACT_ROOT_FILES.has(relativePath)
     || CURRENT_CONTRACT_ROOTS.some((prefix) => relativePath.startsWith(prefix))
+    )
   ));
 }
 

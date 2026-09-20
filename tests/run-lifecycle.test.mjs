@@ -392,7 +392,7 @@ test("candidate assessment exposes only the renderer fields needed for review", 
   assert.equal(candidateAssessmentFromRecord({ status: "unknown" }), null);
 });
 
-test("candidate assessment projects retired full-array impact into bounded Review facts", () => {
+test("candidate assessment rejects retired full-array impact", () => {
   const changedId = "sm1_00000000000040008000000000000000";
   const outsideId = "sm1_11111111111141118000000000000000";
   const assessment = candidateAssessmentFromRecord({
@@ -405,24 +405,10 @@ test("candidate assessment projects retired full-array impact into bounded Revie
     outsideRequestedTargetElementIds: [outsideId],
     requestedTargetCount: 1,
   });
-  assert.deepEqual(assessment, {
-    status: "ready",
-    issueCodes: [],
-    health: { completeDocument: true, bodyHasContent: true },
-    continuity: { status: "related" },
-    changedElementCount: 2,
-    requestedTargetCount: 1,
-    outsideTargetCount: 1,
-    changedElementIdSample: [changedId, outsideId],
-    outsideTargetElementIdSample: [outsideId],
-    truncated: false,
-  });
-  assert.equal("changedStableElementIds" in assessment, false);
-  assert.equal("requestedTargetElementIds" in assessment, false);
-  assert.equal("outsideRequestedTargetElementIds" in assessment, false);
+  assert.equal(assessment, null);
 });
 
-test("candidate assessment truncates historical full-array impact at the sample limit", () => {
+test("candidate assessment rejects oversized retired full-array impact", () => {
   const changed = Array.from({ length: 101 }, (_item, index) => (
     `sm1_${index.toString(16).padStart(12, "0")}40008${"0".repeat(15)}`
   ));
@@ -436,13 +422,7 @@ test("candidate assessment truncates historical full-array impact at the sample 
     outsideRequestedTargetElementIds: [changed[100]],
     requestedTargetCount: 1,
   });
-  assert.equal(assessment.changedElementCount, 101);
-  assert.equal(assessment.outsideTargetCount, 1);
-  assert.equal(assessment.changedElementIdSample.length, 100);
-  assert.deepEqual(assessment.changedElementIdSample, changed.slice(0, 100));
-  assert.deepEqual(assessment.outsideTargetElementIdSample, [changed[100]]);
-  assert.equal(assessment.truncated, true);
-  assert.equal("changedStableElementIds" in assessment, false);
+  assert.equal(assessment, null);
 });
 
 test("candidate assessment ignores mixed legacy and bounded impact facts", () => {
@@ -462,12 +442,7 @@ test("candidate assessment ignores mixed legacy and bounded impact facts", () =>
     outsideTargetElementIdSample: [],
     truncated: false,
   });
-  assert.deepEqual(assessment, {
-    status: "ready",
-    issueCodes: [],
-    health: { completeDocument: true, bodyHasContent: true },
-    continuity: { status: "related" },
-  });
+  assert.equal(assessment, null);
 });
 
 test("bounded Candidate impact facts reach Review without expanding the renderer payload", () => {

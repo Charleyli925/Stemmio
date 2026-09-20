@@ -20,26 +20,26 @@ import {
 const SOURCE_PATH = "/tmp/workspace-controller.html";
 const NEXT_SOURCE_PATH = "/tmp/workspace-controller-next.html";
 
-test("Qoder compatibility actions stay pinned to the Qoder workflow", () => {
+test("Agent access actions stay on the generic workflow", () => {
   const source = readFileSync(
     new URL("../app/application/workspace-controller.js", import.meta.url),
     "utf8",
   );
   assert.match(
     source,
-    /refreshQoderAvailability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.refreshQoderAvailability\(\);\s+\}/u,
+    /refreshAgentAvailability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.refreshAgentAvailability\(\);\s+\}/u,
   );
   assert.match(
     source,
-    /checkQoderUsability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.checkQoderUsability\(\);\s+\}/u,
+    /checkAgentUsability\(selection\) \{\s+return this\.#requireRunWorkflow\(\)\.checkAgentUsability\(selection\);\s+\}/u,
   );
   assert.match(
     source,
-    /copyQoderGuidance\(input\) \{\s+return this\.#requireRunWorkflow\(\)\.copyQoderGuidance\(input\);\s+\}/u,
+    /copyAgentGuidance\(input\) \{\s+return this\.#requireRunWorkflow\(\)\.copyAgentGuidance\(input\);\s+\}/u,
   );
   assert.match(
     source,
-    /installQoder\(\) \{\s+return this\.#requireRunWorkflow\(\)\.installQoder\(\);\s+\}/u,
+    /installAgent\(selection\) \{\s+return this\.#requireRunWorkflow\(\)\.installAgent\(selection\);\s+\}/u,
   );
   assert.match(
     source,

@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectFileRepository } from '../bridge/project-file-repository.mjs';
 import { sha256 } from '../bridge/lifecycle-core.mjs';
+import { compileTaskSpec } from '../shared/task-spec.mjs';
 import { fixture, html, importSource, json, promoteNextVersion } from './project-file-repository-harness.mjs';
 const manifestPath = (t) => path.join(t.projectRootPath, '.stemmio/manifest.json');
 const statePath = (t) => path.join(t.projectRootPath, '.stemmio/working-copies', t.workingCopyId + '.json');
@@ -178,38 +179,10 @@ for(const stage of ['current-version-prepared','current-version-snapshot-written
   const manifest=await json(manifestPath(target));assert.equal(manifest.versions.length,2);assert.equal(manifest.workingCopies.length,1);assert.equal(await readFile(target.exactSourcePath,'utf8'),html('V1'));
  });
 }
-test('migration preserves actual older active draft and removes inactive write authority',async(t)=>{
- const v=await fixture(t);const {target}=await importSource(v);const first=await json(manifestPath(target));delete first.currentDraftSchemaVersion;await writeFile(manifestPath(target),JSON.stringify(first));
- const second=await promoteNextVersion(v.repository,target,'V2-legacy');const runtimePath=path.join(target.projectRootPath,'.stemmio/runtime-state.json');const runtime=await json(runtimePath);runtime.activeWorkingCopyId=target.workingCopyId;await writeFile(runtimePath,JSON.stringify(runtime));
- await v.repository.saveWorkingCopy({target,html:html('active-old-local'),expectedSourceSha256:target.sourceSha256,editRevision:1});
- const restarted=new ProjectFileRepository({projectsRoot:v.projects});await restarted.initialize();const opened=await restarted.resolveRegisteredProjectOpenTarget({projectId:target.projectId});
- assert.equal(opened.target.workingCopyId,target.workingCopyId);assert.equal(opened.html,html('active-old-local'));assert.equal((await json(manifestPath(target))).workingCopies.length,1);
- const records=await restarted.listPreservedDrafts({projectId:target.projectId});assert.equal(records.length,1);assert.equal((await restarted.readPreservedDraft({projectId:target.projectId,recoveryId:records[0].recoveryId})).html,html('V2-legacy'));
- await assert.rejects(restarted.saveWorkingCopy({target:second,html:html('denied'),expectedSourceSha256:second.sourceSha256}));
-});
 test('only confirmed absent folder is hidden; returning folder preserves identity and duplicates remain visible',async(t)=>{
  const v=await fixture(t);const a=await importSource(v,'A.html');const b=await importSource(v,'B.html');const away=path.join(v.root,'away');await rename(a.target.projectRootPath,away);
  assert.deepEqual((await v.repository.listRegisteredProjects()).map((r)=>r.projectId),[b.target.projectId]);await rename(away,a.target.projectRootPath);assert.equal((await v.repository.listRegisteredProjects()).length,2);
  await cp(a.target.projectRootPath,path.join(v.projects,'duplicate'),{recursive:true});const rows=await v.repository.listRegisteredProjects();assert.equal(rows.length,2);assert.equal(rows.find((r)=>r.projectId===a.target.projectId).sourceStatus,'duplicate');
-});
-
-test('manual save rejects active Candidate and legacy migration waits without rebinding the frozen job', async (t) => {
- const v=await fixture(t);const {target}=await importSource(v);const file=manifestPath(target);const manifest=await json(file);delete manifest.currentDraftSchemaVersion;await writeFile(file,JSON.stringify(manifest));
- const candidateId='candidate_migration_pending_0001';await v.repository.createCandidate({target,requestId:'req_migration_pending_0001',candidateId,html:html('next'),expectedSourceSha256:target.sourceSha256});
- const runtimePath=path.join(target.projectRootPath,'.stemmio/runtime-state.json');const runtime=await json(runtimePath);
- const restarted=new ProjectFileRepository({projectsRoot:v.projects});await restarted.initialize();
- assert.equal((await json(file)).currentDraftSchemaVersion,undefined);assert.deepEqual((await json(runtimePath)).activeRequest,runtime.activeRequest);
- await assert.rejects(restarted.createVersionFromCurrent({target,operationId:'manual_pending_0001',expectedSourceSha256:target.sourceSha256}),{code:'HISTORY_CREATION_RUN_LOCKED'});
- const adopted=await restarted.promoteCandidate({target,candidateId,decisionOperationId:`promote_${candidateId}`});const current=await restarted.resolveRegisteredProjectOpenTarget({projectId:target.projectId});
- assert.equal(current.target.workingCopyId,adopted.target.workingCopyId);assert.equal((await json(file)).workingCopies.length,1);
-});
-
-test('migration ignores initial Stable ID materialization when deciding whether a local Version is needed',async(t)=>{
- const v=await fixture(t);const {target}=await importSource(v,'legacy.html',html('V1').replace(/ data-stemmio-id="[^"]*"/g,''));
- const manifest=await json(manifestPath(target));delete manifest.currentDraftSchemaVersion;await writeFile(manifestPath(target),JSON.stringify(manifest));
- const state=await json(statePath(target));delete state.snapshotBaselineSha256;await writeFile(statePath(target),JSON.stringify(state));
- const restarted=new ProjectFileRepository({projectsRoot:v.projects});await restarted.initialize();
- assert.equal((await restarted.createVersionFromCurrent({target,operationId:'legacy_no_user_edit',expectedSourceSha256:target.sourceSha256})).status,'unchanged');
 });
 
 for(const marker of ['2.0.0',null,'multiple'])test('unsupported or inconsistent current marker is rejected: '+marker,async(t)=>{
@@ -255,17 +228,6 @@ test('a renamed project with a corrupt manifest stays visible instead of becomin
  const rows=await v.repository.listRegisteredProjects();assert.equal(rows.length,1);assert.equal(rows[0].projectId,target.projectId);assert.equal(rows[0].availability,'invalid');
 });
 
-for(const stage of ['current-draft-migration-preserved','current-draft-migration-committed'])test('migration resumes '+stage+' with all inactive HTML and comment drafts intact',async(t)=>{
- const v=await fixture(t);const {target}=await importSource(v);const before=await json(manifestPath(target));delete before.currentDraftSchemaVersion;await writeFile(manifestPath(target),JSON.stringify(before));
- await v.repository.saveDraft({target,operationId:'draftop_legacy_inactive_01',expectedDraftRevision:0,comments:[{id:'comment_inactive',body:'inactive local requirements'}],changeEvents:[],deletedCommentIds:[]});
- const active=await promoteNextVersion(v.repository,target,'legacy_migration_next');
- const interrupted=new ProjectFileRepository({projectsRoot:v.projects,failpoint:(name)=>name===stage});await interrupted.initialize();
- const restarted=new ProjectFileRepository({projectsRoot:v.projects});await restarted.initialize();
- const manifest=await json(manifestPath(target));assert.equal(manifest.workingCopies.length,1);assert.equal(manifest.workingCopies[0].workingCopyId,active.workingCopyId);assert.equal(await readFile(active.exactSourcePath,'utf8'),html('legacy_migration_next'));
- const records=await restarted.listPreservedDrafts({projectId:target.projectId});assert.equal(records.length,1);const record=await restarted.readPreservedDraft({projectId:target.projectId,recoveryId:records[0].recoveryId});assert.equal(record.html,html('V1'));assert.equal(record.draft.comments[0].body,'inactive local requirements');
- await assert.rejects(readFile(target.exactSourcePath),{code:'ENOENT'});
-});
-
 for(const [field,mutate] of [
  ['current path',(transaction)=>{transaction.afterMember.sourceRelativePath='unrelated.html';}],
  ['Candidate digest',(transaction)=>{transaction.version.contentSha256='sha256:'+'f'.repeat(64);transaction.afterState.baseSha256=transaction.version.contentSha256;}],
@@ -281,10 +243,11 @@ for(const [field,mutate] of [
 test('completed adoption replay preserves a newer real Request and Candidate through restart', async (t) => {
   const value = await fixture(t);
   const { target } = await importSource(value);
+  const comments = [{ commentId: 'comment_replay', text: 'Revise heading', target: { targetId: 'target_replay' }, attachments: [] }];
+  const targets = [{ targetId: 'target_replay' }];
   const prepare = async (active, requestId) => value.repository.prepareRequest({
     target: active, requestId, attemptId: 'attempt_001', expectedSourceSha256: active.sourceSha256,
-    request: { comments: [{ commentId: 'comment_replay', text: 'Revise heading', target: { targetId: 'target_replay' }, attachments: [] }],
-      targets: [{ targetId: 'target_replay' }], agentDelivery: { mode: 'clipboard' } }, prompt: 'Frozen request',
+    request: { comments, targets, taskSpec: compileTaskSpec({ comments, targets }), agentDelivery: { mode: 'clipboard' } }, prompt: 'Frozen request',
   });
   await prepare(target, 'req_adoption_replay_a');
   const first = await value.repository.completeRequest({ target, requestId: 'req_adoption_replay_a',

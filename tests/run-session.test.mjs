@@ -194,7 +194,14 @@ test("run session treats a recovered interrupted Qoder handoff as unmanaged risk
     sourcePath,
     requestId: "req_recovered_qoder",
     agentDelivery: {
-      mode: "qoder-acp",
+      mode: "managed-agent",
+      selection: {
+        providerId: "qoder",
+        runtimeId: "acp",
+        requestedModelId: null,
+        resolvedModelId: null,
+        reasoning: { requested: null, applied: null, resolution: "provider-default" },
+      },
       trustPolicyVersion: "trusted-local-agent-v1",
     },
   });
@@ -217,7 +224,7 @@ test("run session treats a recovered interrupted Qoder handoff as unmanaged risk
 
   session.publishHandoff({
     ...current,
-    mode: "qoder-acp",
+    mode: "managed-agent",
     status: "failed",
     errorCode: "AGENT_RESTART_RECOVERY_REQUIRED",
     retryable: false,

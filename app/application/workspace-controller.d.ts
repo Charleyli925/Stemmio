@@ -461,7 +461,7 @@ export class WorkspaceController {
   updateConversationDraftText(text: string): void;
   updateConversationDraftIntent(intent: string): void;
   flushConversationDraft(): Promise<boolean>;
-  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number }): Promise<WorkbenchNavigationOutcome>;
+  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number; intentKind?: string }): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchStartTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchSettingsTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
@@ -475,6 +475,7 @@ export class WorkspaceController {
     documentId: string;
     title: string;
     status?: WorkbenchTabStatus;
+    intentKind?: string;
   }): Promise<WorkbenchNavigationOutcome>;
   updateWorkbenchTabStatus(
     projectId: string,
@@ -712,11 +713,6 @@ export class WorkspaceController {
     selection: import("../domain/agent-provider-state.js").AgentSelection,
     options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
-  refreshQoderAvailability(): Promise<RunWorkflowOutcome>;
-  checkQoderUsability(): Promise<RunWorkflowOutcome>;
-  copyQoderGuidance(input: {
-    kind: import("../domain/agent-provider-state.js").AgentProviderGuidanceKind;
-  }): Promise<RunWorkflowOutcome>;
   startAgentLogin(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
@@ -726,7 +722,6 @@ export class WorkspaceController {
   startAgentLogout(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
-  installQoder(): Promise<RunWorkflowOutcome>;
   installAgent(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;

@@ -67,6 +67,7 @@ const APP_FILE_ALLOWLIST = [
   "desktop/runtime-project-storage-contract.mjs",
   "shared/agent-vendor-key-url.mjs",
   "shared/agent-configuration-preferences.mjs",
+  "shared/workspace-preferences.mjs",
   "app/domain/edit-runtime-contract.js",
   "public/brand-logo.png",
   "dist-desktop/renderer/**/*",
@@ -190,7 +191,6 @@ const SCHEMA_FILES = [
   "project-registry.v4.schema.json",
   "project-manifest.v4.schema.json",
   "project-runtime-state.v4.schema.json",
-  "promotion-transaction.v4.schema.json",
   "runtime-state.v3.schema.json",
   "scope-report.v1.schema.json",
   "source-element-identity-migration.v1.schema.json",
@@ -198,7 +198,6 @@ const SCHEMA_FILES = [
   "task-spec.v1.schema.json",
   "user-supplement.v1.schema.json",
   "version-manifest.v3.schema.json",
-  "version-transaction.v1.schema.json",
   "working-copy-state.v4.schema.json",
 ];
 

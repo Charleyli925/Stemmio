@@ -160,13 +160,6 @@ test("downloaded candidate verification rejects changed release bytes and malfor
     "latest-mac.yml": Buffer.from(
       `version: ${packageVersion}\nfiles:\n  - url: ${zipName}\n    sha512: synthetic\n`,
     ),
-    "update-manifest.json": Buffer.from(`${JSON.stringify({
-      schemaVersion: 1,
-      version: packageVersion,
-      minimumMacOS: "12.0",
-      architectures: ["arm64"],
-      publishedAt: builtAt,
-    }, null, 2)}\n`),
     "build-info.json": Buffer.from(
       JSON.stringify(fixtureBuildInfo({
         version: packageVersion,

@@ -101,8 +101,8 @@ export type ProjectWorkflowConstruction = Readonly<{
   getCatalogRevision?: () => number;
   bridgeClient: Pick<
     BridgeClient,
-    "workspace" | "source" | "conflictCandidate"
-  > & Partial<Pick<BridgeClient, "workspaceEnvelope">>;
+    "workspaceEnvelope" | "conflictCandidate"
+  >;
   projectSession: ProjectSession;
   documentSession: DocumentSession;
   commentSession: CommentSession;

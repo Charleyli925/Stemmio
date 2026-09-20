@@ -67,6 +67,9 @@ export function defineAgentProvider(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Agent provider must be an object.");
   }
+  if (Object.hasOwn(value, "legacyDrivers")) {
+    throw new TypeError("Agent provider legacy driver mappings are unsupported.");
+  }
   const providerId = assertComponentId(value.providerId, "providerId");
   const runtimeId = assertComponentId(value.runtimeId, "runtimeId");
   const displayName = typeof value.displayName === "string" && value.displayName.trim()
@@ -97,9 +100,8 @@ export function defineAgentProvider(value) {
       throw new TypeError(`Agent provider ${providerId} requires ${method}().`);
     }
   }
-  const { legacyDrivers: _ignoredLegacyDrivers, ...rest } = value;
   return Object.freeze({
-    ...rest,
+    ...value,
     providerId,
     runtimeId,
     displayName,

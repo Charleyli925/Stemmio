@@ -1,6 +1,5 @@
 export const MANAGED_AGENT_MODE = "managed-agent";
 export const CLIPBOARD_DELIVERY_MODE = "clipboard";
-export const LEGACY_QODER_ACP_MODE = "qoder-acp";
 export const TRUSTED_LOCAL_AGENT_POLICY_VERSION = "trusted-local-agent-v1";
 export const AGENT_RECOVERY_KINDS = Object.freeze([
   "retry",
@@ -179,16 +178,10 @@ export function defaultManagedAgentDelivery() {
   });
 }
 
-export function normalizeAgentDelivery(value, { allowLegacy = true } = {}) {
+export function normalizeAgentDelivery(value) {
   const input = record(value, "Agent delivery");
   if (input.mode === CLIPBOARD_DELIVERY_MODE) {
     return Object.freeze({ mode: CLIPBOARD_DELIVERY_MODE });
-  }
-  if (allowLegacy && input.mode === LEGACY_QODER_ACP_MODE) {
-    if (input.trustPolicyVersion !== TRUSTED_LOCAL_AGENT_POLICY_VERSION) {
-      throw deliveryError("Legacy Agent delivery trust policy is invalid.");
-    }
-    return defaultManagedAgentDelivery();
   }
   if (input.mode !== MANAGED_AGENT_MODE) {
     throw deliveryError("Agent delivery mode is unsupported.");
@@ -245,9 +238,9 @@ export function agentDeliveryIsManaged(value) {
 }
 
 const SHIPPED_MANAGED_BINDINGS = Object.freeze([
-  Object.freeze({ providerId: "qoder", runtimeId: "acp", legacyDriver: LEGACY_QODER_ACP_MODE }),
-  Object.freeze({ providerId: "codex", runtimeId: "acp", legacyDriver: null }),
-  Object.freeze({ providerId: "stemmio", runtimeId: "http", legacyDriver: null }),
+  Object.freeze({ providerId: "qoder", runtimeId: "acp" }),
+  Object.freeze({ providerId: "codex", runtimeId: "acp" }),
+  Object.freeze({ providerId: "stemmio", runtimeId: "http" }),
 ]);
 
 function shippedManagedBinding(selection) {
@@ -270,19 +263,8 @@ function assertShippedManagedSelection(selection) {
   return binding;
 }
 
-export function legacyDriverForAgentDelivery(value) {
-  const delivery = normalizeAgentDelivery(value);
-  if (delivery.mode !== MANAGED_AGENT_MODE) return null;
-  return assertShippedManagedSelection(delivery.selection).legacyDriver;
-}
-
-// New durable writes are narrower than historical reads. Unknown providers are
-// retained by normalizeAgentDelivery so their records remain inspectable and
-// cancellable, but a build may create a managed Request only for a binding it
-// can actually dispatch now. That check is the shipped provider/runtime pair,
-// not the presence of a legacy driver alias.
 export function normalizeNewAgentDelivery(value) {
-  const delivery = normalizeAgentDelivery(value, { allowLegacy: false });
+  const delivery = normalizeAgentDelivery(value);
   if (delivery.mode === MANAGED_AGENT_MODE) {
     assertShippedManagedSelection(delivery.selection);
     if (!delivery.configuration) {

@@ -283,7 +283,9 @@ test("Bridge client exposes the Agent catalog, install and execution routes", as
   await client.agentAvailability({
     selection: { providerId: "synthetic", runtimeId: "runtime" },
   });
-  await client.qoderAvailability();
+  await client.agentDiagnose({
+    selection: { providerId: "synthetic", runtimeId: "runtime" },
+  });
   assert.deepEqual(requests.map(({ url, method }) => [method, url.pathname]), [
     ["GET", "/agent/providers"],
     ["POST", "/agent/install"],
@@ -299,13 +301,16 @@ test("Bridge client exposes the Agent catalog, install and execution routes", as
     ["GET", "/agent/status"],
     ["POST", "/agent/cancel"],
     ["GET", "/agent/availability"],
-    ["GET", "/agent/availability"],
+    ["GET", "/agent/diagnose"],
   ]);
   assert.deepEqual(
     JSON.parse(requests.at(-2).url.searchParams.get("selection")),
     { providerId: "synthetic", runtimeId: "runtime" },
   );
-  assert.equal(requests.at(-1).url.searchParams.has("selection"), false);
+  assert.deepEqual(
+    JSON.parse(requests.at(-1).url.searchParams.get("selection")),
+    { providerId: "synthetic", runtimeId: "runtime" },
+  );
   assert.equal("startDiscussion" in client, false);
   assert.equal("discussionStatus" in client, false);
   assert.equal("cancelDiscussion" in client, false);

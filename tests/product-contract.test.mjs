@@ -158,7 +158,7 @@ test("Prompt, protocol, helper, and finalizer agree on frozen input plus control
   assert.match(protocol, /Prompt 只引用\s*这份通用合同，不重复 Stable ID 或 Runtime 规则/);
   assert.match(protocol, /新项目首次打开时默认创建包含“项目目标、目标受众、内容与事实规则、视觉与表达、AI 修改边界”五段/);
   assert.match(protocol, /^# Stemmio Change Request 协议$/m);
-  assert.match(protocol, /v3 Attempt \/ finalizer CLI `--workspace` \/ `--project-id` 是历史归档/);
+  assert.match(protocol, /发现其他主版本、缺失必填字段或旧\s*目录结构时直接返回/);
   assert.match(protocol, /finalize-attempt\.mjs --project-root/);
   assert.match(protocol, /record-user-supplement\.mjs --project-root/);
   assert.match(interactionFlow, /^# Stemmio 交互流程$/m);

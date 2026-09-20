@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 
 export function html(label) {
   return `<!doctype html><html data-stemmio-id="sm1_11111111111141118111111111111111"><head data-stemmio-id="sm1_22222222222242229222222222222222"><title data-stemmio-id="sm1_3333333333334333a333333333333333">${label}</title></head><body data-stemmio-id="sm1_4444444444444444b444444444444444"><h1 data-stemmio-id="sm1_55555555555545558555555555555555">${label}</h1></body></html>`;
@@ -52,16 +53,6 @@ export async function importSource(fixtureValue, name = "原文件.html", conten
     importSourceSha256: imported.importSourceSha256,
     target: imported.target,
   };
-}
-
-// Used only to model projects written by a pre-current-draft build.
-export async function importLegacySource(value, name, content) {
-  const imported = await importSource(value, name, content);
-  const file = path.join(imported.target.projectRootPath, ".stemmio/manifest.json");
-  const manifest = await json(file);
-  delete manifest.currentDraftSchemaVersion;
-  await writeFile(file, JSON.stringify(manifest));
-  return imported;
 }
 
 export async function promoteNextVersion(repository, target, label) {
@@ -114,6 +105,13 @@ export function wait(ms) {
 }
 
 export async function prepareAiTaskRequest(repository, target, requestId) {
+  const comments = [{
+    commentId: "comment_candidate_page",
+    text: "生成一份可审阅的候选页面",
+    target: { targetId: "target_candidate_page" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_candidate_page" }];
   return repository.prepareRequest({
     target,
     requestId,
@@ -122,14 +120,10 @@ export async function prepareAiTaskRequest(repository, target, requestId) {
     request: {
       freezeCutoffRevision: 0,
       summary: "生成一份可审阅的候选页面",
-      comments: [{
-        commentId: "comment_candidate_page",
-        text: "生成一份可审阅的候选页面",
-        target: { targetId: "target_candidate_page" },
-        attachments: [],
-      }],
+      comments,
       changeEvents: [],
-      targets: [{ targetId: "target_candidate_page" }],
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
     },
     prompt: `# ${requestId}\n\n只生成本轮候选页面。\n`,
   });
