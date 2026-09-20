@@ -16,6 +16,126 @@ Use the user's requested authorization level:
 
 An implementation PR is not a release. Merging to `main` updates the canonical source; only an immutable version tag may create an official installer.
 
+## Task lifecycle
+
+One lifecycle covers analysis, implementation and delivery. Scale its record to
+the change: a small task needs a few sentences, not a filled-in form. A planning
+request stays planning, a review request stays read-only, and a problem found
+while investigating is recorded and handled under the existing authorization
+instead of turning into an implementation task on its own.
+
+| Stage | Judgement required | Record |
+| --- | --- | --- |
+| Intake | Does the user want analysis, planning, implementation or delivery? How far may this task go? | outcome, allowed scope, behavior to preserve, completion standard, delivery authority |
+| Investigation | What does the current source actually do? Which assumptions were checked? | relevant files, call paths, current rules, known problems |
+| Planning | Which behavior changes? How will correctness and the absence of regression be proven? | key decisions, acceptance claims, verification method |
+| Implementation | Is the change in the owning module? Did it add unnecessary mechanism? | focused code or document diff with local checks |
+| Verification | What actually ran? Does the evidence match the current source? | version-bound results, first failure, uncovered items |
+| Review | Is the implementation correct, rather than merely as planned? | evidenced defects, suggestions and verification gaps |
+| Delivery | What do the current evidence and authorization support? | actual deliverable, evidence, remaining limits |
+| Retention | What is worth keeping long-term so the same mistake cannot return? | regression test, rule update or ADR |
+
+### Intake
+
+State the outcome, the allowed scope, the behavior that must be preserved, the
+completion standard and the delivery authority. A small task can settle these in
+a few sentences; multi-module, asynchronous or public-protocol work adds the
+detail that changes the work. Notice a related problem, record it, and leave it
+outside this scope.
+
+### Investigation
+
+Separate three things: a verified fact backed by current code, callers,
+configuration, test output or normative documentation; an inference together
+with its reasoning; and an open question. Source code proves how something runs
+today, while accepted product and security rules define what it must satisfy;
+when the two conflict, report the conflict instead of adopting the current code
+or an old test as the answer. An open question must not be used as an
+established fact later in the same report.
+
+For a third-party protocol, dependency, tool capability or public default, check
+the official material for the applicable version. Do not design an interface
+from model memory.
+
+### Planning
+
+Before a significant change, answer: which behavior must be proven, through
+which real entry point, observing what result, and which failure or
+counterexample would refute it. "The tests pass" is not an acceptance claim; "a
+completed older operation cannot overwrite a newer result" is.
+
+This is not a mandatory failing test first. Reproduce an existing defect where
+possible, define the observable result first for new capability, and for a
+documentation change check the rule, its references and the consistency of the
+entry points. When the required verification capability does not exist, surface
+that during planning instead of closing the task with "there is no test yet".
+
+### Implementation
+
+The implementer owns local choices, necessary tests and self-checks inside the
+agreed scope and does not request approval for ordinary details; worker handoffs
+keep following `CODEX_SUBAGENT_ROUTING_WORKSHEET.md` section 5.3 instead of
+growing a second task-state system.
+
+Pause the affected part and report evidence when new facts change the target
+behavior, a public interface, authority, the write scope or the validity of the
+acceptance. The parts that remain clearly safe may continue. Never continue on a
+plan that has been shown invalid and then describe the result as delivered as
+planned.
+
+### Verification
+
+Report what actually ran, on which source, with which command and result. Keep
+the first failure and distinguish passed, failed, skipped, not executed,
+cancelled and blocked. `tests/TEST_STRATEGY.md` owns the evidence required per
+change type, test reliability, failure classification and evidence reuse.
+
+### Review
+
+Independent review checks the correctness of the actual implementation against
+the current source, not its conformity to the plan, and may find the plan itself
+wrong. A useful finding states the location, the trigger, the requirement that
+broke, the actual impact, the evidence and the fix direction, and separates
+verified defects, unverified suspicion and optional suggestions. Review quality
+is not measured by the number of comments.
+
+### Delivery
+
+State what the current evidence supports and where authorization ends. The
+existing boundaries do not change: an ordinary implementation stops at a tested
+Draft PR unless the user authorized more.
+
+### Retention
+
+Something worth keeping long-term becomes a regression test, an update to the
+owning rule or an ADR. A routine change needs none.
+
+## Evidence and reports
+
+Evidence lives in the existing carriers: the session and the Pull Request for a
+simple task, `output/` reports and test artifacts for a complex one. Do not
+transcribe machine-generated commands, counts and results into a second store.
+
+A reader must be able to answer which source and baseline were verified, with
+which method, in which environment, with which result, and how far the
+conclusion reaches. When relevant uncommitted changes exist, bind the evidence
+to the content actually tested instead of only `HEAD`. If a hook or another step
+changes files after verification, re-check the diff and the affected evidence.
+
+Results keep their own vocabulary: planned, discovered, executed, passed,
+failed, skipped, not executed and missing are reported separately, and a missing
+count is unknown rather than zero. A provider test without credentials reports
+skipped, never passed.
+
+Evidence supports its own conclusion and nothing wider. A local test pass is not
+a complete CI pass, source verification is not a packaged-app verification, and
+a third-party tool's own summary is not a verified result. Test counts alone do
+not establish quality.
+
+Private material follows the existing privacy rules: never commit or publish
+real user HTML, attachments, project records, credentials, personal paths or raw
+sensitive logs, and include only the desensitized minimum a public report needs.
+
 ## Stemmio Agent runtime boundary
 
 Qoder and Codex both use the shared ACP runtime. Codex is discovered as an
@@ -200,7 +320,10 @@ for Ready, packaging, installation, merge, and publication.
 1. Use a short-lived branch with an approved prefix.
 2. Keep one coherent outcome per PR.
 3. Open every PR as Draft. Draft opens, pushes and reopens run impact-selected `pr-feedback` (`gate:draft`: Node plus the selected capability canary) inside `ci.yml`.
-4. The PR body must state outcome, boundary, verification, documentation impact and release impact.
+4. The PR body follows `.github/PULL_REQUEST_TEMPLATE.md`: goal and scope, key
+   decisions, verification evidence bound to the source, review and
+   documentation, remaining limits and delivery state. Reference reports instead
+   of pasting logs and matrices.
 5. Keep the PR Draft while implementation and focused feedback converge. Batch accepted P0/P1 product fixes before promotion. The review service status, absence and unverified comments are informational. Root-agent-verified P0/P1 defects still block delivery, even when the review job and `release-gate` are green. Apply the mandatory scope-stop rule above; P2/P3 and unclassified minor findings do not require a new SHA or another repair cycle unless the developer explicitly escalates them.
 6. When the head is ready, update it onto current `main` and mark the PR Ready once. That starts the complete source matrix. A PR opened already Ready also takes this path because `draft == false`. Codex review is requested automatically for that head, shown on the PR, and never included in `release-gate`.
 7. Wait for the required `release-gate` and review the final GitHub diff, not only the local working diff. Do not restart already-green source lanes merely because `github.run_attempt` changed. A failed product suite on the same SHA cannot be washed green by rerunning; classify a true `ci_environment` failure first.
@@ -271,6 +394,40 @@ tag 以来的提交和文件变化绑定，并从 GitHub 实时解析每个关�
 令以刷新可变的 PR 状态；无法取得实时 GitHub 元数据时，不得把安装包交付称
 为完成。
 
+## Documentation, decisions and retrospectives
+
+Normative documents describe current requirements and current behavior. Planned,
+accepted-but-unimplemented, implemented and retired material stay
+distinguishable, and a future plan must not sit in an owner document written in
+the present tense.
+
+Comments keep the non-obvious contract: behavior, failure, timing, ownership,
+exceptions and consequences. Delete a comment that restates the code, narrates
+the change or repeats the architecture rationale, and keep the limit a
+maintainer actually needs.
+
+Write an ADR only for a decision with long-term value: the problem, the choice,
+the alternatives that were really considered, the benefits, the costs and the
+condition that would reopen it. Small mechanical changes need none. When a
+related ADR already exists, update its current facts or name its successor
+instead of creating a duplicate. `docs/decisions/README.md` is the living index
+and `docs/ADR_CURATION.md` owns curation.
+
+A retrospective exists to prevent a repeat: an important escaped defect states
+why the existing evidence did not catch it and which regression, rule or process
+step will catch it next time. Not every small bug becomes an incident report.
+
+History is neither disguised as a current rule nor rewritten. Superseded
+material may be marked, archived or merged, but a trade-off with long-term value
+must not survive only in Git history.
+
+## Adding a workflow step
+
+Every new workflow step states which real problem it solves, who executes it,
+what useful evidence it produces and why the existing steps are not enough. If
+that cannot be stated, it is not added. This applies to this document, to
+`.agents/skills/`, to the templates and to automation.
+
 ## Documentation impact
 
 Behavior and its documentation form one change. Use this routing table:
@@ -291,6 +448,10 @@ Behavior and its documentation form one change. Use this routing table:
 If no document changes, the final report and PR must say why existing documentation remains accurate.
 
 ## Agent final report
+
+Report evidence under the rules in `## Evidence and reports`: bind it to the
+verified source, keep counts in their own categories, and do not widen the
+conclusion past what was proven.
 
 Match the report to the task:
 

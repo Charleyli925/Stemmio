@@ -1,20 +1,30 @@
-## Summary
+<!-- Keep this short. Reference reports and machine output instead of pasting
+     full logs or matrices; durable results stay in output/ and are linked here.
+     A Draft PR does not have to claim that everything is finished. -->
 
-Describe the user-visible outcome and why this change is needed.
+## Goal and scope
 
-## Boundary
+What this change makes true, and what it explicitly leaves unchanged.
 
-List the files or subsystems intentionally changed and anything explicitly left unchanged.
+## Key decisions
 
-## Verification
+The trade-offs that matter for review, and their reason. Omit this section for a
+small mechanical change.
 
-- [ ] The PR opened as Draft and ordinary pushes used only PR Feedback
-- [ ] The final head is updated onto current `main` and is Ready exactly once for final review
-- [ ] P0/P1 user-impact findings and P0/P1 `CHANGES_REQUESTED` reviews are addressed; P2/P3/unclassified debt is linked or left for the weekly roll-up
-- [ ] Any later commit returns this PR to Draft before one new final promotion
-- [ ] PR scope/size is coherent; it is an advisory discussion, not a mechanical merge limit
-- [ ] `npm run gate:task`
-- [ ] Relevant manual observation is documented, if automation cannot cover it
-- [ ] No secrets, personal paths, user files, build output or release binaries are included
-- [ ] Tests and documentation were updated where behavior or contracts changed
-- [ ] `CHANGELOG.md` was updated when the change affects a release
+## Verification evidence
+
+- Source verified (commit, tree, or working-tree hash when uncommitted changes were tested):
+- Acceptance claim → method or command → result → report location:
+- Skipped, not executed, failed or reused evidence, and why:
+- The change contains no secrets, personal paths, user files, build output or release binaries.
+
+## Review and documentation
+
+- Confirmed findings and how they were handled:
+- Normative documents updated in this PR, or why existing documentation stays accurate:
+
+## Remaining limits and delivery state
+
+What is still unverified, blocked or unknown, and the authorization stage this
+Pull Request has actually reached. Ready, merge, packaging and release each need
+their own authorization; ordinary delivery stops at a tested Draft PR.
