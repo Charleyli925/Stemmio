@@ -23,7 +23,7 @@ listed under Progressive disclosure.
 
 ## Shared testing and independent review
 
-- Outside native Ultra delegation, use tester for long existing test batches and reviewer for independent review when useful; short self-checks stay with the implementer/root. Follow `tests/TEST_STRATEGY.md`; the root owns coverage, gate level, failure classification and acceptance.
+- Outside native Ultra delegation, use tester for long existing test batches and reviewer for independent review when useful; short self-checks stay with the implementer/root. Follow `tests/TEST_STRATEGY.md` and, for asynchronous, harness or resource tests and failure triage, `.agents/skills/stemmio-test-reliability/SKILL.md`; the root owns coverage, gate level, failure classification and acceptance.
 - `task:finish` already owns `gate:task`; never run both as separate completion gates. Reuse applicable evidence; repeat affected checks only for relevant changes, missing coverage, failure or a specific risk.
 - Pass the task-specific reviewer/tester contracts: frozen source, authorized test output only, first-failure evidence and read-only review of actual code. Follow section 5's ownership transfer and acceptance rules; child summaries are not final proof.
 - Verified P0/P1 defects and required deterministic gate failures block delivery; P2/P3 and unclassified minor findings follow the scope-stop rule without expanding the task. Delegation is neither a scheduler nor extra authority.
@@ -39,7 +39,7 @@ listed under Progressive disclosure.
 
 ## Standard task lifecycle
 
-For any implementation or delivery task, the root reads `docs/CODEX_WORKFLOW.md` sections `Standard commands` and `Branch and Pull Request flow`; it reads `docs/RELEASING.md` only for packaging or release work. Children receive only the applicable steps in their task packet. The non-negotiable summary is:
+For any implementation or delivery task, the root reads `docs/CODEX_WORKFLOW.md` sections `Task lifecycle`, `Standard commands` and `Branch and Pull Request flow`, and uses `.agents/skills/stemmio-engineering-workflow/SKILL.md` as the execution method; it reads `docs/RELEASING.md` only for packaging or release work. Children receive only the applicable steps in their task packet. The non-negotiable summary is:
 
 1. Inspect with `npm run task:status`; work on an isolated task branch/worktree and never stash unrelated user changes.
 2. Keep the diff focused. Use `gate:edit` while editing and run `npm run task:finish` once before publication; it already owns `gate:task`.
@@ -78,11 +78,21 @@ Use `ARCHITECTURE_MAP.md` and capability context when locating code ownership; r
 - User-visible behavior: the named `INTERACTION_FLOW.md` section and focused policy. Design work additionally uses `PRODUCT_DESIGN_SYSTEM.md`, `DESIGN_REVIEW_PROTOCOL.md` and `DESIGN_LANGUAGE.md` as applicable.
 - AI requests, schemas or versions: `CHANGE_REQUEST_PROTOCOL.md`, relevant schemas/fixtures and the focused AI or product PRD selected by capability context.
 
+Repository skills live in `.agents/skills/` and provide the execution method for
+their trigger; they reference the normative documents above and never restate
+them. Development planning, implementation, verification and delivery:
+`stemmio-engineering-workflow`. Pull Request, code or architecture review:
+`stemmio-code-review`. Asynchronous test reliability and failure triage:
+`stemmio-test-reliability`. Simplification, dead-code and over-design audit:
+`stemmio-find-simplifications`. Engineering documents, comments, ADRs and
+retrospectives: `stemmio-prose-standard`. Read only the skill that matches the
+current task.
+
 Before finishing, use `CODEX_WORKFLOW.md` section `Documentation impact`; when code makes an owner document inaccurate, update that document in the same PR. Do not duplicate a complex contract here.
 
 ## Code Review Rules
 
-Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes`, `Tests` and `Definition of complete`, then the task-specific contracts routed above. Apply these boundaries:
+Before review, read `docs/ENGINEERING_STANDARDS.md` sections `Defense classes` (including `Validation placement`), `Tests` and `Definition of complete`, then the task-specific contracts routed above and `.agents/skills/stemmio-code-review/SKILL.md`. For asynchronous, lifecycle or resource work, also read `Asynchronous ownership and cleanup` and `Ownership and commit points`; for abstractions, dependencies or compatibility, read `Requirements before mechanism` and `Defaults, dependencies and compatibility`; for permission, protocol, model or user-facing boundaries, read `Where a limit must be enforced` and `Interfaces, model input and user-facing copy`. Apply these boundaries:
 
 - Fail closed at irreversible filesystem, AI-adoption, identity, persistence and release boundaries; require equivalent protection and negative coverage for any change there.
 - Converge or degrade automatically for reversible coordination failures. Presentation and preflight uncertainty must not block editing.
