@@ -11,7 +11,6 @@ const runtimeSource = fileURLToPath(new URL("../bridge/agent/runtimes/acp-runtim
 test("ACP runtime defaults to the shared process supervisor instead of Qoder symbols", async () => {
   const source = await readFile(runtimeSource, "utf8");
   assert.match(source, /runTask = runAcpProcessTask/u);
-  assert.equal(source.includes("runQoderAcpTask"), false);
   assert.equal(source.includes("Qoder"), false);
 });
 

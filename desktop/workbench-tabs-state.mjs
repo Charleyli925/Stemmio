@@ -3,9 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 const VERSION = 2;
-const LEGACY_VERSION = 1;
 const EXACT_ROOT_KEYS = new Set(["version", "activeTabId", "tabs"]);
-const LEGACY_TAB_KEYS = new Set(["tabId", "projectId", "documentId"]);
 const EXACT_TAB_KEYS = new Set([
   "tabId", "kind", "projectId", "documentId",
   "versionId", "versionOrdinal",
@@ -21,7 +19,7 @@ function cleanString(value, pattern, maxLength) {
 export function normalizeWorkbenchTabsState(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (Object.keys(value).some((key) => !EXACT_ROOT_KEYS.has(key))) return null;
-  if (![LEGACY_VERSION, VERSION].includes(value.version) || !Array.isArray(value.tabs)) {
+  if (value.version !== VERSION || !Array.isArray(value.tabs)) {
     return null;
   }
   const tabs = [];
@@ -29,9 +27,8 @@ export function normalizeWorkbenchTabsState(value) {
   const surfaceIds = new Set();
   for (const candidate of value.tabs) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-    const allowedKeys = value.version === LEGACY_VERSION ? LEGACY_TAB_KEYS : EXACT_TAB_KEYS;
-    if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) return null;
-    const kind = value.version === LEGACY_VERSION ? "document" : String(candidate.kind || "");
+    if (Object.keys(candidate).some((key) => !EXACT_TAB_KEYS.has(key))) return null;
+    const kind = String(candidate.kind || "");
     if (!["document", "project-rules", "history"].includes(kind)) return null;
     const tabId = cleanString(candidate.tabId, /^[A-Za-z0-9:_-]+$/u, 240);
     const projectId = cleanString(candidate.projectId, /^project_[A-Za-z0-9_-]+$/u, 180);

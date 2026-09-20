@@ -20,14 +20,13 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "parse5";
 
-import {
-  captureQoderAcpReviewBoundary,
-  loadQoderAcpTaskPolicy,
-  runQoderAcpTask,
-} from "../bridge/qoder-acp-client.mjs";
+import { loadExecutionPolicy } from "../bridge/agent/policies/execution-policy.mjs";
+import { runAcpProcessTask } from "../bridge/agent/runtimes/acp-process.mjs";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { projectControlPath } from "../shared/project-storage-contract.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
+import { captureAcpReviewBoundary } from "./qoder-acp-spike-support.mjs";
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 const finalizerPath = fileURLToPath(new URL("../bridge/finalize-attempt.mjs", import.meta.url));
@@ -184,7 +183,7 @@ async function run() {
       "The synthetic Project File has no initial Version identity.",
     );
     const projectRoot = await realpath(target.projectRootPath);
-    const workingCopyBefore = await captureQoderAcpReviewBoundary({
+    const workingCopyBefore = await captureAcpReviewBoundary({
       repository,
       target,
       projectRoot,
@@ -237,6 +236,21 @@ After the write succeeds, invoke terminal/create once with this exact structured
 Do not use a shell wrapper and do not write any other path. The result remains a
 Candidate pending Stemmio review; it must not replace or adopt the Working Copy.
 `;
+    const taskSpecComments = [{
+      commentId: "comment_qoder_acp",
+      text: "完成合成 Qoder ACP 验证，并只修改目标页面。",
+      target: { targetId: "target_qoder_acp" },
+      attachments: [],
+    }];
+    const taskSpecTargets = [{
+      targetId: "target_qoder_acp",
+      selector: "body",
+      level: "module",
+    }];
+    const taskSpec = compileTaskSpec({
+      comments: taskSpecComments,
+      targets: taskSpecTargets,
+    });
     const request = await repository.prepareRequest({
       target,
       requestId,
@@ -244,11 +258,9 @@ Candidate pending Stemmio review; it must not replace or adopt the Working Copy.
       expectedSourceSha256: target.sourceSha256,
       request: {
         freezeCutoffRevision: 0,
-        summary: "Synthetic Qoder ACP Candidate validation",
-        comments: [],
+        taskSpec,
+        comments: taskSpecComments,
         changeEvents: [],
-        instructions: [],
-        targets: [],
       },
       prompt,
     });
@@ -258,7 +270,7 @@ Candidate pending Stemmio review; it must not replace or adopt the Working Copy.
       "REQUEST_PATH_NOT_CANONICAL",
       "The synthetic Request path was not canonical.",
     );
-    const policy = await loadQoderAcpTaskPolicy({
+    const policy = await loadExecutionPolicy({
       requestPath,
       promptPath: path.join(requestPath, "PROMPT.md"),
       outputPath,
@@ -272,7 +284,7 @@ Candidate pending Stemmio review; it must not replace or adopt the Working Copy.
       "The frozen prompt finalizer does not match the derived policy finalizer.",
     );
     const events = [];
-    const result = await runQoderAcpTask({
+    const result = await runAcpProcessTask({
       command: qoderCommand,
       args: ["--acp"],
       policy,
@@ -335,7 +347,7 @@ Candidate pending Stemmio review; it must not replace or adopt the Working Copy.
       "EXTERNAL_SOURCE_CHANGED",
       "The synthetic external source changed during the ACP run.",
     );
-    const workingCopyAfter = await captureQoderAcpReviewBoundary({
+    const workingCopyAfter = await captureAcpReviewBoundary({
       repository,
       target,
       projectRoot,
