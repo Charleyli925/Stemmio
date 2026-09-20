@@ -9,6 +9,7 @@ import {
   createSemanticElementPrecondition,
 } from "../app/lib/semantic-operation-kernel.js";
 import {
+  createDeleteElementOperation,
   createDuplicateElementOperation,
   createInsertElementOperation,
   createMoveElementOperation,
@@ -35,6 +36,10 @@ const ids = {
 };
 
 const SOURCE = `<!doctype html><html data-stemmio-id="${ids.html}"><head data-stemmio-id="${ids.head}"><title data-stemmio-id="${ids.title}">Managed</title></head><body data-stemmio-id="${ids.body}"><section data-stemmio-id="${ids.left}"><p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p><p data-stemmio-id="${ids.second}">B</p></section><aside data-stemmio-id="${ids.right}"><div data-stemmio-id="${ids.module}">module</div></aside></body></html>`;
+const COMMENT_GAP_SOURCE = SOURCE.replace(
+  `</p><p data-stemmio-id="${ids.second}">`,
+  `</p>\n<!-- authored gap -->\n<p data-stemmio-id="${ids.second}">`,
+);
 
 function precondition(source, elementId) {
   return createSemanticElementPrecondition(source, elementId);
@@ -195,6 +200,79 @@ test("managed Working Copy persists every authorized semantic identity transitio
     reopened.workingCopyState.sourceElementIdentityBindingSha256,
     /^sha256:[a-f0-9]{64}$/u,
   );
+});
+
+test("comment-gap duplicate undo redo move and delete stay replayable across Repository saves", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(
+    value,
+    "semantic-comment-gap-closure.html",
+    COMMENT_GAP_SOURCE,
+  );
+  let target = imported.target;
+  let source = await readFile(target.exactSourcePath, "utf8");
+
+  const duplicateOperation = createDuplicateElementOperation(source, {
+    baseRevision: 0,
+    operationId: "sourceop_comment_duplicate_001",
+    elementId: ids.second,
+  });
+  const duplicated = await applySave(
+    value.repository,
+    target,
+    source,
+    duplicateOperation,
+    {
+      editRevision: 1,
+      randomUUID: sequentialUuidFactory("44000000-"),
+    },
+  );
+  ({ target, source } = duplicated);
+
+  const undone = applySemanticOperation(
+    duplicated.result.nextState,
+    duplicated.result.inverseOperation,
+  );
+  assert.equal(undone.html, COMMENT_GAP_SOURCE);
+  const redone = applySemanticOperation(undone.nextState, undone.inverseOperation);
+  assert.equal(redone.html, source);
+
+  const moveOperation = createMoveElementOperation(redone.html, {
+    baseRevision: 0,
+    operationId: "sourceop_comment_move_002",
+    elementId: duplicated.result.insertedRootElementId,
+    parentElementId: ids.left,
+    beforeElementId: ids.second,
+  });
+  ({ target, source } = await applySave(
+    value.repository,
+    target,
+    redone.html,
+    moveOperation,
+    { editRevision: 2 },
+  ));
+  const reopenedAfterMove = await new ProjectFileRepository({
+    projectsRoot: value.projects,
+  }).workspace({ sourcePath: target.exactSourcePath });
+  assert.equal(reopenedAfterMove.content, source);
+
+  const deleteOperation = createDeleteElementOperation(source, {
+    baseRevision: 0,
+    operationId: "sourceop_comment_delete_003",
+    elementId: duplicated.result.insertedRootElementId,
+  });
+  ({ target, source } = await applySave(
+    value.repository,
+    target,
+    source,
+    deleteOperation,
+    { editRevision: 3 },
+  ));
+  assert.equal(source, COMMENT_GAP_SOURCE);
+  const reopenedAfterDelete = await new ProjectFileRepository({
+    projectsRoot: value.projects,
+  }).workspace({ sourcePath: target.exactSourcePath });
+  assert.equal(reopenedAfterDelete.content, COMMENT_GAP_SOURCE);
 });
 
 test("session-local undo and redo carry system-derived identity evidence into Repository saves", async (t) => {

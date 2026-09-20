@@ -1039,7 +1039,7 @@ test("capability probe excludes a source-proven wrapper covered by unique author
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
 });
 
-test("capability probe keeps a wrapper in the denominator when sparse descendants cover only the sample grid", HARNESS_TEST_OPTIONS, async ({ page }) => {
+test("capability probe still validates selection when bounded geometry finds an exact sparse-wrapper point", HARNESS_TEST_OPTIONS, async ({ page }) => {
   const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
   const descendantIds = fractions.flatMap((_, row) => fractions.map((__, column) => (
     `sm1_${(row * fractions.length + column + 100).toString(16).padStart(32, "0")}`
@@ -1136,7 +1136,7 @@ test("capability probe accepts exact rectangular union coverage from proven auth
   });
 });
 
-test("capability probe excludes a parent wholly claimed by a dedicated child hit tolerance", HARNESS_TEST_OPTIONS, async ({ page }) => {
+test("capability probe keeps an unproved dedicated-child wrapper explicit", HARNESS_TEST_OPTIONS, async ({ page }) => {
   await page.setContent(`
     <main data-runtime-root>
       <div id="target" data-stemmio-id="${PARENT_ID}" style="width:204px">
@@ -1193,11 +1193,10 @@ test("capability probe excludes a parent wholly claimed by a dedicated child hit
 
   expect(observed).toMatchObject({
     stableId: PARENT_ID,
-    probeReason: "AUTHORED_POINTER_OCCLUSION",
+    probeReason: "NO_EXACT_HIT_POINT",
     visible: false,
     hitTest: {
-      kind: "valid-pointer-occlusion",
-      coverageVerified: true,
+      kind: "blocked",
     },
   });
 });
@@ -1352,7 +1351,7 @@ test("capability probe rejects a foreign hit interceptor without force-clicking"
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
 });
 
-test("capability probe excludes complete mixed authored pointer occlusion only after a full hit map", HARNESS_TEST_OPTIONS, async ({ page }) => {
+test("capability probe leaves mixed authored pointer occlusion explicitly unproven", HARNESS_TEST_OPTIONS, async ({ page }) => {
   await page.setContent(`
     <main data-runtime-root style="position:relative;width:240px;height:80px">
       <section data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
@@ -1401,12 +1400,11 @@ test("capability probe excludes complete mixed authored pointer occlusion only a
   });
   expect(observed).toMatchObject({
     stableId: PARENT_ID,
-    probeReason: "AUTHORED_POINTER_OCCLUSION",
+    probeReason: "NO_EXACT_HIT_POINT",
     hitTest: {
-      kind: "valid-pointer-occlusion",
-      blockingStableIdCount: 2,
-      coverageVerified: true,
-      coverageModel: "complete-device-pixel-hit-map",
+      kind: "blocked",
+      hitKind: "stable-id-non-descendant",
+      foreignCoverageDiagnostic: { coverageVerified: false },
     },
   });
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);

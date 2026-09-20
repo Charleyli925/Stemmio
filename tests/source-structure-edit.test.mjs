@@ -173,7 +173,6 @@ test("same-parent copy move and delete preserve unrelated authored comments exac
       createSemanticDocumentState(duplicated.html, {
         revision: duplicated.nextRevision,
         lineage: duplicated.nextState.lineage,
-        insertedElementIds: duplicated.identityDelta.addedElementIds,
       }),
       createMoveElementOperation(duplicated.html, {
         baseRevision: duplicated.nextRevision,
@@ -187,7 +186,6 @@ test("same-parent copy move and delete preserve unrelated authored comments exac
       createSemanticDocumentState(moved.html, {
         revision: moved.nextRevision,
         lineage: moved.nextState.lineage,
-        insertedElementIds: duplicated.identityDelta.addedElementIds,
       }),
       createDeleteElementOperation(moved.html, {
         baseRevision: moved.nextRevision,

@@ -50,6 +50,19 @@ test("preflight requires an explicit corpus and does not fall back to discovery"
 });
 
 test("isolated capability preflight reports aggregate only matching source provenance", () => {
+  const expectedFile = (index) => ({
+    childIndex: index,
+    selectedFileIndex: index + 1,
+    fileId: `H0${index + 1}`,
+    originalSha256: `${index + 1}`.repeat(64),
+    originalSize: 10 + index,
+    frozenSeedRelativePath: `${index}/frozen-managed-seed.html`,
+    frozenSeed: {
+      relativePath: `${index}/frozen-managed-seed.html`,
+      sha256: `${index + 3}`.repeat(64),
+      size: 20 + index,
+    },
+  });
   const report = (index) => ({
     schemaVersion: 4,
     mode: "capability-preflight-only",
@@ -66,10 +79,27 @@ test("isolated capability preflight reports aggregate only matching source prove
       originalSize: 10 + index,
       originalUnchanged: true,
       status: "PENDING_REVIEW",
+      preflightWorkingCopy: {
+        beforeSha256: `${index + 3}`.repeat(64),
+        beforeSize: 20 + index,
+        afterSha256: `${index + 3}`.repeat(64),
+        afterSize: 20 + index,
+        unchanged: true,
+        frozenSeed: {
+          relativePath: `${index}/frozen-managed-seed.html`,
+          sha256: `${index + 3}`.repeat(64),
+          size: 20 + index,
+          exactManagedCopy: true,
+        },
+      },
       capabilityManifest: { fingerprint: `f${index}`, draft: { issues: [] } },
     }],
   });
-  const aggregate = aggregateCapabilityPreflightReports([report(0), report(1)]);
+  const expectedFiles = [expectedFile(0), expectedFile(1)];
+  const aggregate = aggregateCapabilityPreflightReports(
+    [report(0), report(1)],
+    expectedFiles,
+  );
   assert.equal(aggregate.planned, 2);
   assert.equal(aggregate.pendingReview, 2);
   assert.equal(aggregate.originalsUnchanged, true);
@@ -82,8 +112,38 @@ test("isolated capability preflight reports aggregate only matching source prove
     () => aggregateCapabilityPreflightReports([
       report(0),
       { ...report(1), workspaceSourceSha256: "d".repeat(64) },
-    ]),
+    ], expectedFiles),
     { code: "FROZEN_ENTRY_PREFLIGHT_PROVENANCE_MISMATCH" },
+  );
+  assert.throws(
+    () => aggregateCapabilityPreflightReports([report(0), report(0)], expectedFiles),
+    { code: "FROZEN_ENTRY_PREFLIGHT_FILE_DUPLICATE" },
+  );
+  assert.throws(
+    () => aggregateCapabilityPreflightReports([
+      report(0),
+      {
+        ...report(1),
+        results: [{ ...report(1).results[0], originalSize: 99 }],
+      },
+    ], expectedFiles),
+    { code: "FROZEN_ENTRY_PREFLIGHT_FILE_BINDING_MISMATCH" },
+  );
+  assert.throws(
+    () => aggregateCapabilityPreflightReports([
+      report(0),
+      {
+        ...report(1),
+        results: [{
+          ...report(1).results[0],
+          preflightWorkingCopy: {
+            ...report(1).results[0].preflightWorkingCopy,
+            afterSha256: "f".repeat(64),
+          },
+        }],
+      },
+    ], expectedFiles),
+    { code: "FROZEN_ENTRY_PREFLIGHT_SEED_BINDING_MISMATCH" },
   );
 });
 

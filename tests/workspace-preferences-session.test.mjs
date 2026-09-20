@@ -1234,15 +1234,113 @@ test("an unconfirmed rollback remains unknown and does not claim restoration", a
   session.dispose();
 });
 
-test("an unconfirmed Agent commit reports an honest pending unknown", async () => {
+test("an expired Agent patch that was not written cannot replay with an unrelated update", async () => {
+  let durable = structuredClone(persisted);
+  let current = true;
   let reads = 0;
+  let authorityAvailable = false;
+  const calls = [];
   const session = new WorkspacePreferencesSession({ port: {
     async get() {
       reads += 1;
-      if (reads <= 2) return persisted;
+      if (reads <= 2 || authorityAvailable) return durable;
       throw new Error("authority unavailable");
     },
-    async record() { throw new Error("write response unavailable"); },
+    async record(input) {
+      calls.push(input);
+      if (Object.hasOwn(input.workspace, "defaultAgentProviderId")) {
+        current = false;
+        throw new Error("write never reached storage");
+      }
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
+  } });
+  await session.load();
+  assert.deepEqual(await session.commitDefaultAgent({
+    intentId: "expired-not-written",
+    providerId: "stemmio",
+    isCurrent: () => current,
+  }), {
+    status: "unknown",
+    intentId: "expired-not-written",
+    phase: "commit",
+    pending: true,
+  });
+  assert.equal(session.retry(), false);
+
+  authorityAvailable = true;
+  assert.equal(await session.update({ sidebarWidth: 320 }), true);
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { sidebarWidth: 320 } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "codex");
+  assert.equal(durable.workspace.sidebarWidth, 320);
+  session.dispose();
+});
+
+test("an expired lost-reply Agent patch cannot overwrite a later same-field replacement", async () => {
+  let durable = structuredClone(persisted);
+  let current = true;
+  let reads = 0;
+  let authorityAvailable = false;
+  const calls = [];
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() {
+      reads += 1;
+      if (reads <= 2 || authorityAvailable) return durable;
+      throw new Error("authority unavailable");
+    },
+    async record(input) {
+      calls.push(input);
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      if (calls.length === 1) {
+        current = false;
+        throw new Error("durable write reply lost");
+      }
+      return durable;
+    },
+  } });
+  await session.load();
+  assert.deepEqual(await session.commitDefaultAgent({
+    intentId: "expired-lost-reply",
+    providerId: "stemmio",
+    isCurrent: () => current,
+  }), {
+    status: "unknown",
+    intentId: "expired-lost-reply",
+    phase: "commit",
+    pending: true,
+  });
+  assert.equal(durable.workspace.defaultAgentProviderId, "stemmio");
+  assert.equal(session.retry(), false);
+
+  authorityAvailable = true;
+  assert.equal(await session.update({ defaultAgentProviderId: "qoder" }), true);
+  assert.deepEqual(calls, [
+    { workspace: { defaultAgentProviderId: "stemmio" } },
+    { workspace: { defaultAgentProviderId: "qoder" } },
+  ]);
+  assert.equal(durable.workspace.defaultAgentProviderId, "qoder");
+  session.dispose();
+});
+
+test("an unconfirmed Agent commit reports an honest pending unknown", async () => {
+  let durable = structuredClone(persisted);
+  let reads = 0;
+  let authorityAvailable = false;
+  const session = new WorkspacePreferencesSession({ port: {
+    async get() {
+      reads += 1;
+      if (reads <= 2 || authorityAvailable) return durable;
+      throw new Error("authority unavailable");
+    },
+    async record(input) {
+      if (!authorityAvailable) throw new Error("write response unavailable");
+      durable = { ...durable, workspace: { ...durable.workspace, ...input.workspace } };
+      return durable;
+    },
   } });
   await session.load();
   assert.deepEqual(await session.commitDefaultAgent({
@@ -1257,6 +1355,11 @@ test("an unconfirmed Agent commit reports an honest pending unknown", async () =
   });
   assert.equal(session.snapshot.workspace.defaultAgentProviderId, "stemmio");
   assert.ok(session.snapshot.error);
+  authorityAvailable = true;
+  assert.equal(session.retry(), true);
+  assert.equal(await session.flush({ deadlineAt: Date.now() + 1_000 }), true);
+  assert.equal(durable.workspace.defaultAgentProviderId, "stemmio");
+  assert.equal(session.snapshot.error, null);
   session.dispose();
 });
 

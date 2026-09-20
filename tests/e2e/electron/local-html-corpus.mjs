@@ -901,7 +901,6 @@ async function freezeCapabilityManifest(
         "AUTHORED_DEDICATED_SURFACE_OCCLUSION",
         "AUTHORED_MIXED_DESCENDANT_OCCLUSION",
         "AUTHORED_FOREIGN_SURFACE_OCCLUSION",
-        "AUTHORED_POINTER_OCCLUSION",
         "AUTHORED_VIEWPORT_UNREACHABLE",
       ].includes(observation.probeReason)) {
         // A wrapper wholly covered by proven descendants and the explicit
@@ -951,7 +950,6 @@ async function freezeCapabilityManifest(
       const classified = classifyCapabilityProbeFailure(cause);
       const failureStack = String(cause?.stack || "");
       const failureSubstage = [
-        ["completeAuthoredPointerMap", "complete-pointer-map"],
         ["authoredHitTest", "authored-hit-test"],
         ["pageSpaceAuthoredHitPoint", "page-space-hit-point"],
         ["resetAuthoredProbeSelection", "selection-reset"],

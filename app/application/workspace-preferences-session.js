@@ -526,7 +526,7 @@ export class WorkspacePreferencesSession {
           const authority = await this.#readAuthorityInTurn();
           if (authority.ok && workspaceMatchesPatch(patch, authority.workspace)) {
             this.#markConfirmed(generations);
-            this.#dropConfirmedPendingFields(patch, generations);
+            this.#dropPendingFields(patch, generations);
             this.#publishPumpAuthority(authority.workspace);
             continue;
           }
@@ -760,6 +760,11 @@ export class WorkspacePreferencesSession {
       if (!this.#operationAttempted(operation.generations, evidence)) {
         return this.#notStartedResult(intentId);
       }
+      // A superseded Agent intent must never remain in the ordinary retry
+      // queue. Its durable outcome may still be unknown, and the rollback
+      // below still owns reconciliation/compensation, but a later unrelated
+      // update must not execute the expired mutation again.
+      this.#dropPendingFields(ownedPatch, operation.generations);
       const rollback = await this.#rollbackAgentMutation({
         ownedPatch,
         restorePatch,
@@ -924,7 +929,7 @@ export class WorkspacePreferencesSession {
    * @param {WorkspacePreferenceGenerations} generations
    */
   #finishSupersededAgentMutation(outcome, authority, ownedPatch, generations) {
-    this.#dropConfirmedPendingFields(ownedPatch, generations);
+    this.#dropPendingFields(ownedPatch, generations);
     this.#publishAuthority(authority);
     return outcome;
   }
@@ -947,7 +952,7 @@ export class WorkspacePreferencesSession {
    * @param {WorkspacePreferencesPatch} confirmedPatch
    * @param {WorkspacePreferenceGenerations} generations
    */
-  #dropConfirmedPendingFields(confirmedPatch, generations) {
+  #dropPendingFields(confirmedPatch, generations) {
     if (!this.#pendingPatch) return;
     const confirmed = /** @type {Record<string, unknown>} */ (confirmedPatch);
     const remaining = Object.fromEntries(Object.entries(this.#pendingPatch).filter(

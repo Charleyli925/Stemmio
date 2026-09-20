@@ -91,6 +91,27 @@ function canonicalPatches(patches) {
   ));
 }
 
+function identityNeutralElementSource(source, root, elements) {
+  let neutral = source.slice(root.startOffset, root.endOffset);
+  const descendants = elements.filter((element) => (
+    element.startOffset >= root.startOffset
+    && element.endOffset <= root.endOffset
+    && Number.isInteger(element.contentStartOffset)
+    && element.contentStartOffset >= element.startOffset
+    && element.contentStartOffset <= element.endOffset
+  )).sort((left, right) => right.startOffset - left.startOffset);
+  for (const element of descendants) {
+    const start = element.startOffset - root.startOffset;
+    const end = element.contentStartOffset - root.startOffset;
+    const startTag = neutral.slice(start, end).replace(
+      /\s+data-stemmio-id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/giu,
+      "",
+    );
+    neutral = `${neutral.slice(0, start)}${startTag}${neutral.slice(end)}`;
+  }
+  return neutral;
+}
+
 function insertionPoint(byId, operation) {
   const parentElementId = operationElementId(operation, "parent");
   const beforeElementId = operationElementId(operation, "before");
@@ -194,7 +215,7 @@ function trailingCommentBoundary(source, parent, lastElement) {
   return commentCount > 0 ? startOffset + cursor : startOffset;
 }
 
-function siblingReorderPlan(source, elements, target, insertion, operation) {
+function siblingReorderPlan(source, elements, target, insertion) {
   const parent = insertion.parent;
   if (!parent.boundarySafe || !parent.explicitEndTag) {
     fail(
@@ -289,8 +310,13 @@ function siblingReorderPlan(source, elements, target, insertion, operation) {
     const movingUnit = byElementId.get(target.elementId);
     const ownedPrefix = source.slice(movingUnit.startOffset, target.startOffset);
     const ownedSuffix = source.slice(target.endOffset, movingUnit.endOffset);
+    const targetSourceShape = identityNeutralElementSource(source, target, elements);
+    const hasSourceEquivalentSibling = siblings.some((sibling) => (
+      sibling.elementId !== target.elementId
+      && identityNeutralElementSource(source, sibling, elements) === targetSourceShape
+    ));
     if (
-      operation?.preserveSourceGaps === true
+      hasSourceEquivalentSibling
       && !ownedPrefix.includes("<!--")
       && !ownedSuffix.includes("<!--")
     ) {
@@ -444,13 +470,7 @@ export function planSemanticStructurePatches({
     );
   }
   if (target.parentElementId === insertion.parent.elementId) {
-    return siblingReorderPlan(
-      source,
-      elements,
-      target,
-      insertion,
-      operation,
-    );
+    return siblingReorderPlan(source, elements, target, insertion);
   }
   const raw = source.slice(target.startOffset, target.endOffset);
   return {

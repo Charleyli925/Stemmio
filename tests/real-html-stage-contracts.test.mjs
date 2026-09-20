@@ -355,7 +355,7 @@ test("capability normalization admits only complete proven authored denominator 
 });
 
 test("capability normalization requires complete proof for every reviewed reachability exclusion", () => {
-  const ids = Array.from({ length: 7 }, (_, index) => (
+  const ids = Array.from({ length: 6 }, (_, index) => (
     `sm1_${String(index + 5).padStart(32, "0")}`
   ));
   const observations = [
@@ -429,20 +429,6 @@ test("capability normalization requires complete proof for every reviewed reacha
       stableId: ids[5],
       capabilityFamilies: [],
       behaviorFamilies: [],
-      probeReason: "AUTHORED_POINTER_OCCLUSION",
-      hitTest: {
-        kind: "valid-pointer-occlusion",
-        sampleCount: 5,
-        blockingStableIdCount: 2,
-        hitMapPointCount: 400,
-        coverageVerified: true,
-        coverageModel: "complete-device-pixel-hit-map",
-      },
-    },
-    {
-      stableId: ids[6],
-      capabilityFamilies: [],
-      behaviorFamilies: [],
       probeReason: "AUTHORED_VIEWPORT_UNREACHABLE",
       hitTest: {
         kind: "valid-viewport-unreachable",
@@ -460,7 +446,7 @@ test("capability normalization requires complete proof for every reviewed reacha
     normalized.denominatorExclusions.map((entry) => entry.reason),
     observations.map((entry) => entry.probeReason),
   );
-  for (const observation of observations.slice(1, 6)) {
+  for (const observation of observations.slice(1, 5)) {
     assert.throws(
       () => normalizeCapabilityProbeObservations([{
         ...observation,
@@ -473,8 +459,8 @@ test("capability normalization requires complete proof for every reviewed reacha
     hitTest: { ...observations[0].hitTest, tag: "div" },
   }]));
   assert.throws(() => normalizeCapabilityProbeObservations([{
-    ...observations[6],
-    hitTest: { ...observations[6].hitTest, scrollAttemptCount: 2 },
+    ...observations[5],
+    hitTest: { ...observations[5].hitTest, scrollAttemptCount: 2 },
   }]));
 });
 

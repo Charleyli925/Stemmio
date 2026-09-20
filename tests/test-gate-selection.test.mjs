@@ -53,6 +53,29 @@ test("real HTML observer changes select the paired Browser trust probe", () => {
   assert.ok(plan.selectedNodeTests.includes("tests/real-html-stage-contracts.test.mjs"));
 });
 
+test("the shared semantic structure planner routes directly to source and Repository proofs", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["shared/semantic-structure-plan.mjs"],
+  });
+  for (const nodeTest of [
+    "tests/source-patch-engine.test.mjs",
+    "tests/source-structure-edit.test.mjs",
+    "tests/semantic-operation-kernel.test.mjs",
+    "tests/project-semantic-identity-save.test.mjs",
+  ]) assert.ok(plan.selectedNodeTests.includes(nodeTest), nodeTest);
+  assert.deepEqual(suiteIds(plan), [
+    "typecheck",
+    "lint",
+    "node-targeted",
+    "build-web",
+    "browser-editing-smoke",
+    "build-desktop",
+    "electron-editing-smoke",
+  ]);
+});
+
 test("browser-open workflow changes select its application, Desktop and presentation proofs", () => {
   const plan = selectGatePlan({
     map,

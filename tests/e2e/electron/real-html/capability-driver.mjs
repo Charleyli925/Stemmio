@@ -237,166 +237,6 @@ function rectangleUnionCoversBox(rectangles, width, height, epsilon = 0.5) {
   return clipped.length > 0;
 }
 
-async function completeAuthoredPointerMap({ frame, target, sourceElements }) {
-  const hitMap = await target.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    const visible = {
-      left: Math.max(0, rect.left),
-      top: Math.max(0, rect.top),
-      right: Math.min(innerWidth, rect.right),
-      bottom: Math.min(innerHeight, rect.bottom),
-    };
-    const scale = Math.max(1, devicePixelRatio || 1);
-    const columns = Math.floor(Math.max(0, visible.right - visible.left) * scale);
-    const rows = Math.floor(Math.max(0, visible.bottom - visible.top) * scale);
-    const pointCount = columns * rows;
-    if (pointCount === 0 || pointCount > 2_000_000) {
-      return {
-        complete: false,
-        pointCount,
-        exactPoint: null,
-        unownedProbePoints: [],
-        noHitPointCount: 0,
-        blockingStableIds: [],
-      };
-    }
-    const blockingStableIds = new Set();
-    const unownedProbePoints = [];
-    let noHitPointCount = 0;
-    const dedicatedSelector = "iframe, audio, video, canvas, object, embed, svg, math, input, textarea, select";
-    const dedicatedDescendants = [...element.querySelectorAll(dedicatedSelector)]
-      .filter((candidate) => candidate.hasAttribute("data-stemmio-id"))
-      .map((candidate) => {
-        const candidateRect = candidate.getBoundingClientRect();
-        return {
-          candidate,
-          left: candidateRect.left - 2,
-          top: candidateRect.top - 2,
-          right: candidateRect.right + 2,
-          bottom: candidateRect.bottom + 2,
-          usable: candidateRect.width > 0 && candidateRect.height > 0,
-        };
-      });
-    const productStableHitAtPoint = (x, y) => {
-      const hit = element.ownerDocument.elementFromPoint(x, y);
-      const stableHit = hit?.closest?.("[data-stemmio-id]") || null;
-      if (stableHit !== element) return stableHit;
-      return dedicatedDescendants.find((candidate) => (
-        candidate.usable
-        && x >= candidate.left
-        && x <= candidate.right
-        && y >= candidate.top
-        && y <= candidate.bottom
-      ))?.candidate || stableHit;
-    };
-    for (let row = 0; row < rows; row += 1) {
-      const y = visible.top + (row + 0.5) / scale;
-      for (let column = 0; column < columns; column += 1) {
-        const x = visible.left + (column + 0.5) / scale;
-        const hit = element.ownerDocument.elementFromPoint(x, y);
-        const stableHit = productStableHitAtPoint(x, y);
-        if (stableHit === element) {
-          return {
-            complete: true,
-            pointCount: row * columns + column + 1,
-            exactPoint: {
-              targetX: x - rect.left,
-              targetY: y - rect.top,
-              clientX: x,
-              clientY: y,
-            },
-            unownedProbePoints,
-            noHitPointCount,
-            blockingStableIds: [...blockingStableIds],
-          };
-        }
-        const stableId = stableHit?.getAttribute("data-stemmio-id") || null;
-        if (!stableId && hit instanceof Element) {
-          if (unownedProbePoints.length < 100) {
-            unownedProbePoints.push({
-              targetX: x - rect.left,
-              targetY: y - rect.top,
-              clientX: x,
-              clientY: y,
-              unownedRuntimeHit: true,
-            });
-          }
-          continue;
-        }
-        if (!stableId) {
-          noHitPointCount += 1;
-          continue;
-        }
-        blockingStableIds.add(stableId);
-      }
-    }
-    return {
-      complete: true,
-      pointCount,
-      exactPoint: null,
-      unownedProbePoints,
-      noHitPointCount,
-      blockingStableIds: [...blockingStableIds].sort(),
-    };
-  });
-  const diagnostic = {
-    complete: hitMap.complete,
-    pointCount: hitMap.pointCount,
-    exactPointFound: Boolean(hitMap.exactPoint),
-    unownedProbePointCount: hitMap.unownedProbePoints.length,
-    noHitPointCount: hitMap.noHitPointCount || 0,
-    blockingStableIdCount: hitMap.blockingStableIds.length,
-  };
-  if (hitMap.exactPoint) {
-    return {
-      result: { kind: "exact", points: [hitMap.exactPoint], pointCount: 1 },
-      diagnostic,
-    };
-  }
-  if (hitMap.unownedProbePoints.length > 0) {
-    return {
-      result: {
-        kind: "exact",
-        points: hitMap.unownedProbePoints,
-        pointCount: hitMap.unownedProbePoints.length,
-      },
-      diagnostic,
-    };
-  }
-  if (hitMap.complete && hitMap.blockingStableIds.length > 0) {
-    const validations = await Promise.all(
-      hitMap.blockingStableIds.map(async (stableId) => ({
-        stableId,
-        sourceMatches: sourceElements.filter((entry) => (
-          entry.stemmioId === stableId && entry.stemmioIdentityStatus === "valid"
-        )).length,
-        liveCount: await frame.locator(
-          `[data-stemmio-id=${JSON.stringify(stableId)}]`,
-        ).count(),
-      })),
-    );
-    if (validations.every(({ stableId, sourceMatches, liveCount }) => (
-      CAPABILITY_STABLE_ID_PATTERN.test(stableId)
-      && sourceMatches === 1
-      && liveCount === 1
-    ))) {
-      return {
-        result: {
-          kind: "valid-pointer-occlusion",
-          blockingStableIdCount: hitMap.blockingStableIds.length,
-          coverageRectangleCount: 0,
-          hitMapPointCount: hitMap.pointCount,
-          noHitPointCount: hitMap.noHitPointCount || 0,
-          coverageVerified: true,
-          coverageModel: "complete-device-pixel-hit-map",
-        },
-        diagnostic,
-      };
-    }
-  }
-  return { result: null, diagnostic };
-}
-
 async function authoredHitTest(frame, target, sourceElements) {
   const sampled = await target.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -791,20 +631,6 @@ async function authoredHitTest(frame, target, sourceElements) {
         coverageModel: "visible-viewport-proven-foreign-box-union",
       };
     }
-    if (sampled.descendantStableIds.length === 0) {
-      const completeHitMap = await completeAuthoredPointerMap({
-        frame,
-        target,
-        sourceElements,
-      });
-      sampled.completeHitMapDiagnostic = completeHitMap.diagnostic;
-      if (completeHitMap.result) {
-        return {
-          ...completeHitMap.result,
-          sampleCount: sampled.sampleCount,
-        };
-      }
-    }
   }
   if (
     sampled.kind !== "descendant-candidate"
@@ -812,24 +638,6 @@ async function authoredHitTest(frame, target, sourceElements) {
     || sampled.sampleCount <= 0
     || sampled.descendantStableIds.length === 0
   ) {
-    if (
-      Number.isInteger(sampled.sampleCount)
-      && sampled.sampleCount > 0
-      && sampled.descendantStableIds.length > 0
-    ) {
-      const completeHitMap = await completeAuthoredPointerMap({
-        frame,
-        target,
-        sourceElements,
-      });
-      sampled.completeHitMapDiagnostic = completeHitMap.diagnostic;
-      if (completeHitMap.result) {
-        return {
-          ...completeHitMap.result,
-          sampleCount: sampled.sampleCount,
-        };
-      }
-    }
     return { ...sampled, kind: "blocked" };
   }
   const targetStableId = await target.getAttribute("data-stemmio-id");
@@ -992,25 +800,11 @@ async function authoredHitTest(frame, target, sourceElements) {
     };
   }, proofStableIds);
   if (!coverage.verified) {
-    const completeHitMap = await completeAuthoredPointerMap({
-      frame,
-      target,
-      sourceElements,
-    });
-    if (completeHitMap.result) {
-      return {
-        ...completeHitMap.result,
-        sampleCount: sampled.sampleCount,
-      };
-    }
     return {
       ...sampled,
       kind: "blocked",
       hitKind: "descendant-coverage-unproven",
-      coverageDiagnostic: {
-        ...coverage,
-        completeHitMap: completeHitMap.diagnostic,
-      },
+      coverageDiagnostic: coverage,
     };
   }
   return {
@@ -1462,35 +1256,6 @@ export function normalizeCapabilityProbeObservations(
         });
         continue;
       }
-      if (observation?.probeReason === "AUTHORED_POINTER_OCCLUSION") {
-        const hitTest = observation?.hitTest;
-        const completePointerProof = Boolean(
-          CAPABILITY_STABLE_ID_PATTERN.test(observation?.stableId || "")
-          && hitTest?.kind === "valid-pointer-occlusion"
-          && Number.isInteger(hitTest.sampleCount)
-          && hitTest.sampleCount > 0
-          && Number.isInteger(hitTest.blockingStableIdCount)
-          && hitTest.blockingStableIdCount > 0
-          && Number.isInteger(hitTest.hitMapPointCount)
-          && hitTest.hitMapPointCount > 0
-          && hitTest.coverageVerified === true
-          && hitTest.coverageModel === "complete-device-pixel-hit-map"
-          && !observation?.probeStableId
-          && !observation?.operationStableId
-          && (observation?.capabilityFamilies?.length || 0) === 0
-          && (observation?.behaviorFamilies?.length || 0) === 0
-        );
-        if (!completePointerProof) {
-          const error = new Error("Pointer occlusion exclusion is missing complete proof.");
-          error.code = "CAPABILITY_PROBE_POINTER_OCCLUSION_EXCLUSION_INVALID";
-          throw error;
-        }
-        denominatorExclusions.push({
-          elementId: observation.stableId,
-          reason: observation.probeReason,
-        });
-        continue;
-      }
       if (observation?.probeReason === "AUTHORED_FOREIGN_SURFACE_OCCLUSION") {
         const hitTest = observation?.hitTest;
         const completeForeignCoverageProof = Boolean(
@@ -1502,17 +1267,8 @@ export function normalizeCapabilityProbeObservations(
           && hitTest.foreignStableIdCount > 0
           && Number.isInteger(hitTest.coverageRectangleCount)
           && hitTest.coverageVerified === true
-          && (
-            (
-              hitTest.coverageRectangleCount > 0
-              && hitTest.coverageModel === "visible-viewport-proven-foreign-box-union"
-            )
-            || (
-              Number.isInteger(hitTest.hitMapPointCount)
-              && hitTest.hitMapPointCount > 0
-              && hitTest.coverageModel === "complete-device-pixel-hit-map"
-            )
-          )
+          && hitTest.coverageRectangleCount > 0
+          && hitTest.coverageModel === "visible-viewport-proven-foreign-box-union"
           && !observation?.probeStableId
           && !observation?.operationStableId
           && (observation?.capabilityFamilies?.length || 0) === 0
@@ -2464,7 +2220,6 @@ export async function probeAuthoredCapability({
     initialPoints.kind !== "exact"
     && initialPoints.kind !== "valid-descendant-occlusion"
     && initialPoints.kind !== "valid-foreign-occlusion"
-    && initialPoints.kind !== "valid-pointer-occlusion"
   ) {
     for (const block of ["start", "end"]) {
       await target.evaluate((element, position) => {
@@ -2484,7 +2239,6 @@ export async function probeAuthoredCapability({
         alternatePoints.kind === "exact"
         || alternatePoints.kind === "valid-descendant-occlusion"
         || alternatePoints.kind === "valid-foreign-occlusion"
-        || alternatePoints.kind === "valid-pointer-occlusion"
       ) {
         initialPoints = alternatePoints;
         break;
@@ -2497,7 +2251,7 @@ export async function probeAuthoredCapability({
   if (
     pointSearches.length === 3
     && pointSearches.every((entry) => (
-      entry.completeHitMapDiagnostic?.pointCount === 0
+      entry.kind === "blocked" && (entry.sampleCount || 0) === 0
     ))
   ) {
     const viewportState = await target.evaluate((element) => {
@@ -2544,17 +2298,6 @@ export async function probeAuthoredCapability({
       behaviorFamilies: [],
       visible: false,
       probeReason: "AUTHORED_FOREIGN_SURFACE_OCCLUSION",
-      hitTest: initialPoints,
-      selectionReset,
-    };
-  }
-  if (initialPoints.kind === "valid-pointer-occlusion") {
-    return {
-      ...candidate,
-      capabilityFamilies: [],
-      behaviorFamilies: [],
-      visible: false,
-      probeReason: "AUTHORED_POINTER_OCCLUSION",
       hitTest: initialPoints,
       selectionReset,
     };

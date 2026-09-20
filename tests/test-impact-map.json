@@ -1164,6 +1164,7 @@
         "^app/components/html-canvas-source-commands\\.(?:js|d\\.ts)$",
         "^shared/stemmio-element-identity\\.mjs$",
         "^shared/semantic-identity-delta\\.mjs$",
+        "^shared/semantic-structure-plan\\.mjs$",
         "^schemas/(?:stemmio-element-identity|semantic-operation)\\.v1\\.schema\\.json$",
         "^scripts/(?:source-index|target-resolver)\\.mjs$"
       ],

@@ -1630,7 +1630,6 @@ export function planSiblingReorderPatch(indexOrHtml, command) {
       targetElementId: moving.stemmioId,
       parentElementId: parent.stemmioId,
       beforeElementId: nextSibling?.stemmioId ?? null,
-      preserveSourceGaps: command.preserveSourceGaps === true,
     });
   } else {
     let firstChanged = -1;
@@ -1677,7 +1676,6 @@ export function planSiblingReorderPatch(indexOrHtml, command) {
       parentNodeId: parent.nodeId,
       beforeOrder: oldOrder,
       nextOrder,
-      preserveSourceGaps: command.preserveSourceGaps === true,
     },
   );
 }
@@ -2181,7 +2179,6 @@ function authorizePatchPlan(plan, index, patches) {
           : { toIndex: desiredIndex }),
         beforeOrder: plan.metadata?.beforeOrder,
         expectedSourceSha256: index.sourceSha256,
-        preserveSourceGaps: plan.metadata?.preserveSourceGaps === true,
       });
       if (!patchesEqual(patches, expected.patches)) {
         fail(
