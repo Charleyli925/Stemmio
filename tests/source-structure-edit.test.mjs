@@ -143,6 +143,62 @@ test("same-parent move and delete preserve surrounding authored whitespace exact
   assert.equal(deleted.html, formatted);
 });
 
+test("same-parent copy move and delete preserve unrelated authored comments exactly", () => {
+  const commentCases = [
+    `<section data-stemmio-id="${ids.left}"><!--leading-->\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <p data-stemmio-id="${ids.second}">B</p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <!--between-->\n  <p data-stemmio-id="${ids.second}">B</p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <!--between-->\n  <p data-stemmio-id="${ids.second}">B<!--inside--></p>\n</section>`,
+    `<section data-stemmio-id="${ids.left}">\n  <p data-stemmio-id="${ids.first}">A <strong data-stemmio-id="${ids.strong}">one</strong></p>\n  <p data-stemmio-id="${ids.second}">B</p><!--trailing-->\n</section>`,
+  ];
+  const originalSection = html.slice(
+    html.indexOf(`<section data-stemmio-id="${ids.left}">`),
+    html.indexOf("</section>") + "</section>".length,
+  );
+  for (const [caseIndex, section] of commentCases.entries()) {
+    const source = html.replace(originalSection, section);
+    const duplicated = applySemanticOperation(
+      createSemanticDocumentState(source),
+      createDuplicateElementOperation(source, {
+        baseRevision: 0,
+        operationId: `op_duplicate_comment_${caseIndex}`,
+        elementId: ids.second,
+      }),
+      {
+        randomUUID: uuidFactory(
+          `22000000-0000-4000-8000-00000000000${caseIndex + 1}`,
+        ),
+      },
+    );
+    const moved = applySemanticOperation(
+      createSemanticDocumentState(duplicated.html, {
+        revision: duplicated.nextRevision,
+        lineage: duplicated.nextState.lineage,
+        insertedElementIds: duplicated.identityDelta.addedElementIds,
+      }),
+      createMoveElementOperation(duplicated.html, {
+        baseRevision: duplicated.nextRevision,
+        operationId: `op_move_comment_${caseIndex}`,
+        elementId: duplicated.insertedRootElementId,
+        parentElementId: ids.left,
+        beforeElementId: ids.second,
+      }),
+    );
+    const deleted = applySemanticOperation(
+      createSemanticDocumentState(moved.html, {
+        revision: moved.nextRevision,
+        lineage: moved.nextState.lineage,
+        insertedElementIds: duplicated.identityDelta.addedElementIds,
+      }),
+      createDeleteElementOperation(moved.html, {
+        baseRevision: moved.nextRevision,
+        operationId: `op_delete_comment_${caseIndex}`,
+        elementId: duplicated.insertedRootElementId,
+      }),
+    );
+    assert.equal(deleted.html, source, `comment case ${caseIndex + 1}`);
+  }
+});
+
 test("cross-parent move refuses a cycle into the moving element's descendants", () => {
   const baseline = createSemanticDocumentState(html);
   assert.throws(() => applySemanticOperation(

@@ -133,6 +133,7 @@ export declare function createSemanticDocumentState(
     revision?: number;
     lineage?: SemanticLineageEntry[];
     sourceIndex?: unknown;
+    insertedElementIds?: readonly string[];
   },
 ): SemanticDocumentState;
 
@@ -164,7 +165,11 @@ export declare function deriveSemanticOperationIdentityDelta(
 export declare class SemanticOperationKernel {
   createState(
     html: string,
-    options?: { revision?: number; lineage?: SemanticLineageEntry[] },
+    options?: {
+      revision?: number;
+      lineage?: SemanticLineageEntry[];
+      insertedElementIds?: readonly string[];
+    },
   ): SemanticDocumentState;
   createTarget(indexOrHtml: unknown, elementId: string): SemanticElementPrecondition;
   apply(

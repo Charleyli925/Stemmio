@@ -1304,6 +1304,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     receiptSequence: sourceReceipt?.sequence ?? null,
   });
   const semanticRevisionRef = useRef(semanticRevision);
+  const insertedSemanticElementIdsRef = useRef<Set<string>>(new Set());
   const lastSemanticRevisionPropRef = useRef(semanticRevision);
   const onChangeRef = useRef(onChange);
   const onSelectRef = useRef(onSelect);
@@ -1526,6 +1527,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   onChangeRef.current = onChange;
   if (lastSemanticRevisionPropRef.current !== semanticRevision) {
     lastSemanticRevisionPropRef.current = semanticRevision;
+    if (semanticRevisionRef.current !== semanticRevision) {
+      insertedSemanticElementIdsRef.current.clear();
+    }
     semanticRevisionRef.current = semanticRevision;
   }
   onSelectRef.current = onSelect;
@@ -4363,6 +4367,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       const documentState = createSemanticDocumentState(currentSource, {
         revision: semanticRevisionRef.current,
         sourceIndex,
+        insertedElementIds: [...insertedSemanticElementIdsRef.current],
       });
       const semanticOperation = command.operation;
       const operationTargetRefs = [sourceTargetRefForSelection(mutation.target)];
@@ -4670,6 +4675,12 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       };
       sourceIndexRef.current = result.sourceIndex;
       frameSourceHtmlRef.current = result.html;
+      for (const elementId of semanticResult?.identityDelta?.removedElementIds ?? []) {
+        insertedSemanticElementIdsRef.current.delete(elementId);
+      }
+      for (const elementId of semanticResult?.identityDelta?.addedElementIds ?? []) {
+        insertedSemanticElementIdsRef.current.add(elementId);
+      }
       semanticRevisionRef.current = semanticResult?.nextRevision
         ?? semanticRevisionRef.current + 1;
       advanceRuntimeRefreshPending(result.sourceSha256);
@@ -8284,6 +8295,14 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         receiptSequence,
       };
       return;
+    }
+    if (
+      !sameSessionIncarnation
+      || !previousReceipt
+      || !sameSourceReceiptContext(sourceReceipt, previousReceipt)
+      || sourceReceipt.origin !== "local-edit"
+    ) {
+      insertedSemanticElementIdsRef.current.clear();
     }
     if (sourceReceipt.origin !== "authority") {
       if (sameSessionIncarnation && previousReceipt && !sameSourceReceiptContext(sourceReceipt, previousReceipt)) return;

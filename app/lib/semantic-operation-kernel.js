@@ -38,6 +38,7 @@ const OPERATION_TYPES = new Set([
 const OPERATION_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{7,95}$/u;
 const TRUSTED_RESTORE_OPERATIONS = new WeakMap();
 const STATE_SOURCE_INDEXES = new WeakMap();
+const STATE_INSERTED_ELEMENT_IDS = new WeakMap();
 
 export class SemanticOperationError extends Error {
   constructor(code, message, details = {}) {
@@ -122,6 +123,10 @@ export function createSemanticDocumentState(html, options = {}) {
     lineage,
   };
   STATE_SOURCE_INDEXES.set(state, index);
+  STATE_INSERTED_ELEMENT_IDS.set(
+    state,
+    new Set(options.insertedElementIds ?? []),
+  );
   return state;
 }
 
@@ -137,6 +142,7 @@ function assertState(state) {
     revision: state.revision,
     lineage: state.lineage,
     sourceIndex: STATE_SOURCE_INDEXES.get(state) ?? null,
+    insertedElementIds: STATE_INSERTED_ELEMENT_IDS.get(state) ?? [],
   });
 }
 
@@ -522,6 +528,12 @@ function appliedResult(
     revision: nextRevision,
     lineage: [...state.lineage, lineageEntry],
     sourceIndex: afterIndex,
+    insertedElementIds: [
+      ...new Set([
+        ...(STATE_INSERTED_ELEMENT_IDS.get(state) ?? []),
+        ...(identityDelta?.addedElementIds ?? []),
+      ].filter((elementId) => !identityDelta?.removedElementIds?.includes(elementId))),
+    ],
   });
   const inverseOperation = createTrustedRestoreOperation(
     inverseOperationId(operation.operationId, nextRevision, state.sourceSha256),
@@ -654,6 +666,9 @@ export function applySemanticOperation(inputState, operation, options = {}) {
           }
         : {}),
       expectedSourceSha256: state.sourceSha256,
+      preserveSourceGaps: STATE_INSERTED_ELEMENT_IDS.get(state)?.has(
+        operation.target.elementId,
+      ) === true,
     })
     : operation.type === "setText" && operation.contentHtml !== undefined
     ? (operation.createdStemmioIds !== undefined

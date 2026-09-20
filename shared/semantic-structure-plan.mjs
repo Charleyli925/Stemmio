@@ -194,7 +194,7 @@ function trailingCommentBoundary(source, parent, lastElement) {
   return commentCount > 0 ? startOffset + cursor : startOffset;
 }
 
-function siblingReorderPlan(source, elements, target, insertion) {
+function siblingReorderPlan(source, elements, target, insertion, operation) {
   const parent = insertion.parent;
   if (!parent.boundarySafe || !parent.explicitEndTag) {
     fail(
@@ -286,6 +286,42 @@ function siblingReorderPlan(source, elements, target, insertion) {
       };
     });
     const byElementId = new Map(units.map((unit) => [unit.elementId, unit]));
+    const movingUnit = byElementId.get(target.elementId);
+    const ownedPrefix = source.slice(movingUnit.startOffset, target.startOffset);
+    const ownedSuffix = source.slice(target.endOffset, movingUnit.endOffset);
+    if (
+      operation?.preserveSourceGaps === true
+      && !ownedPrefix.includes("<!--")
+      && !ownedSuffix.includes("<!--")
+    ) {
+      const raw = source.slice(target.startOffset, target.endOffset);
+      const insertionOffset = insertion.before
+        ? byElementId.get(insertion.before.elementId).startOffset
+        : insertion.offset;
+      return {
+        // A comment owned by another sibling stays at its exact source gap.
+        // Move only the target bytes, but insert before the destination's
+        // owned prefix so duplicate -> move -> delete remains byte-exact.
+        patches: canonicalPatches([
+          sourcePatch(
+            target.startOffset,
+            target.endOffset,
+            source,
+            "",
+            "sibling-reorder",
+          ),
+          sourcePatch(
+            insertionOffset,
+            insertionOffset,
+            source,
+            raw,
+            "sibling-reorder",
+          ),
+        ]),
+        beforeOrder: oldOrder,
+        nextOrder,
+      };
+    }
     const startOffset = units[firstChanged].startOffset;
     const endOffset = units[lastChanged].endOffset;
     return {
@@ -413,6 +449,7 @@ export function planSemanticStructurePatches({
       elements,
       target,
       insertion,
+      operation,
     );
   }
   const raw = source.slice(target.startOffset, target.endOffset);
