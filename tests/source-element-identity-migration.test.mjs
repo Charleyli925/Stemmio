@@ -523,6 +523,128 @@ test("restart recovery completes every published migration crash window", async 
   }
 });
 
+test("restart recovery resumes after the force-unlock receipt is completed", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "identity-recovery-after-receipt.html", RAW_HTML);
+  await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+  const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
+  const interrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint(name) {
+      return name === "identity-migration-prepared";
+    },
+  });
+  await interrupted.initialize();
+  await assert.rejects(
+    interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      expectedSourceSha256: acceptedSourceSha256,
+      operationId: "force_unlock_receipt_recovery_0001",
+    }),
+    (error) => error?.code === "INJECTED_FAILPOINT",
+  );
+
+  const receiptInterrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint(name) {
+      return name === "identity-migration-recovery-receipt-written";
+    },
+  });
+  await receiptInterrupted.initialize();
+  await assert.rejects(
+    receiptInterrupted.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error?.code === "INJECTED_FAILPOINT",
+  );
+
+  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
+  const manifestPath = path.join(controlRoot, "manifest.json");
+  const interruptedManifest = await json(manifestPath);
+  const statePath = path.join(
+    controlRoot,
+    interruptedManifest.workingCopies[0].stateRelativePath,
+  );
+  const afterReceiptState = await json(statePath);
+  assert.equal(afterReceiptState.forceUnlockReceipt.status, "completed");
+  const transactionName = (await readdir(path.join(controlRoot, "transactions"))).find(
+    (name) => name.startsWith("identity_") && name.endsWith(".json"),
+  );
+  assert.ok(transactionName);
+  const transactionPath = path.join(controlRoot, "transactions", transactionName);
+  const afterReceiptTransaction = await json(transactionPath);
+  assert.equal(afterReceiptTransaction.state, "prepared");
+
+  const recoveredRepository = new ProjectFileRepository({ projectsRoot: value.projects });
+  await recoveredRepository.initialize();
+  const recovered = await recoveredRepository.workspace({
+    sourcePath: imported.target.exactSourcePath,
+  });
+  const recoveredIdentity = inspectSourceElementIdentity(recovered.content);
+  assert.equal(recoveredIdentity.complete, true);
+  assert.equal(
+    recovered.workingCopyState.sourceElementIdentityBindingSha256,
+    sourceElementIdentityBindingSha256(recoveredIdentity),
+  );
+  assert.equal(recovered.workingCopyState.forceUnlockReceipt.status, "completed");
+  assert.equal(
+    recovered.workingCopyState.currentSha256,
+    sha256(Buffer.from(recovered.content, "utf8")),
+  );
+
+  const completedTransaction = await json(transactionPath);
+  assert.equal(completedTransaction.state, "committed");
+  const finalManifest = await json(manifestPath);
+  assert.equal(finalManifest.versions.length, interruptedManifest.versions.length);
+  assert.equal(
+    new Set(finalManifest.versions.map((version) => version.versionId)).size,
+    finalManifest.versions.length,
+  );
+});
+
+test("restart rejects a completed force-unlock receipt without target evidence", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "identity-recovery-invalid-completed.html", RAW_HTML);
+  await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+  const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
+  const interrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint(name) {
+      return name === "identity-migration-prepared";
+    },
+  });
+  await interrupted.initialize();
+  await assert.rejects(
+    interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      expectedSourceSha256: acceptedSourceSha256,
+      operationId: "force_unlock_invalid_completed_0001",
+    }),
+    (error) => error?.code === "INJECTED_FAILPOINT",
+  );
+
+  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
+  const manifest = await json(path.join(controlRoot, "manifest.json"));
+  const statePath = path.join(controlRoot, manifest.workingCopies[0].stateRelativePath);
+  const state = await json(statePath);
+  state.forceUnlockReceipt = {
+    ...state.forceUnlockReceipt,
+    status: "completed",
+    sourceSha256: acceptedSourceSha256,
+    completedAt: state.forceUnlockReceipt.preparedAt,
+  };
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+  const recoveredRepository = new ProjectFileRepository({ projectsRoot: value.projects });
+  await recoveredRepository.initialize();
+  await assert.rejects(
+    recoveredRepository.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error?.code === "UNSUPPORTED_TRANSACTION_FORMAT",
+  );
+});
+
 test("restart recovery rejects a migration record whose staged paths do not match its recovery ID", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "tampered-recovery-path.html", RAW_HTML);

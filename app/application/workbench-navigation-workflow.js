@@ -1311,14 +1311,25 @@ export class WorkbenchNavigationWorkflow {
       this.#startupHistoryContinuationSequence += 1;
       this.#cancelStartupHistoryContinuation();
     }
+    const startupHistoryContinuationSequence = this.#startupHistoryContinuationSequence;
     const predecessor = this.#admissionTail.catch(() => {});
     let release;
     const completion = new Promise((resolve) => { release = resolve; });
     this.#admissionTail = predecessor.then(() => completion);
     if (!this.#busy) {
-      return this.#beginAdmission(intent, execute, release);
+      return this.#beginAdmission(
+        intent,
+        execute,
+        release,
+        startupHistoryContinuationSequence,
+      );
     }
-    return predecessor.then(() => this.#beginAdmission(intent, execute, release));
+    return predecessor.then(() => this.#beginAdmission(
+      intent,
+      execute,
+      release,
+      startupHistoryContinuationSequence,
+    ));
   }
 
   #cancelStartupHistoryContinuation() {
@@ -1328,7 +1339,12 @@ export class WorkbenchNavigationWorkflow {
     }
   }
 
-  #beginAdmission(intent, execute, release) {
+  #beginAdmission(
+    intent,
+    execute,
+    release,
+    startupHistoryContinuationSequence,
+  ) {
     if (this.#disposed) {
       release();
       return rejected("WORKBENCH_NAVIGATION_DISPOSED", "导航已停止。");
@@ -1355,7 +1371,7 @@ export class WorkbenchNavigationWorkflow {
       applicationId: null,
       applicationAuthorityOpen: true,
       currentSurfaceCommitScope: Object.freeze({}),
-      startupHistoryContinuationSequence: this.#startupHistoryContinuationSequence,
+      startupHistoryContinuationSequence,
       cancelReceiptWait: null,
       cancelSettlementWait: null,
       release: () => {

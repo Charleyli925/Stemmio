@@ -1913,12 +1913,12 @@ export class ProjectFileRepository {
       { projectRootPath: loaded.paths.projectRootPath },
     );
     assertWorkingCopyState(state, loaded, workingCopy);
-    const pendingForceUnlock = state.forceUnlockReceipt;
+    const forceUnlockReceipt = state.forceUnlockReceipt;
     if (
-      pendingForceUnlock?.status !== "pending"
-      || !SAFE_OPERATION_ID.test(String(pendingForceUnlock.operationId || ""))
-      || pendingForceUnlock.expectedSourceSha256 !== transaction.expectedSourceSha256
-      || pendingForceUnlock.acceptedSourceSha256 !== transaction.expectedSourceSha256
+      !["pending", "completed"].includes(forceUnlockReceipt?.status)
+      || !SAFE_OPERATION_ID.test(String(forceUnlockReceipt.operationId || ""))
+      || forceUnlockReceipt.expectedSourceSha256 !== transaction.expectedSourceSha256
+      || forceUnlockReceipt.acceptedSourceSha256 !== transaction.expectedSourceSha256
     ) {
       throw new ProjectFileRepositoryError(
         "UNSUPPORTED_TRANSACTION_FORMAT",
@@ -1961,6 +1961,26 @@ export class ProjectFileRepository {
         "The source element identity replacement bytes do not match the target Hash.",
       );
     }
+    if (forceUnlockReceipt.status === "completed") {
+      const identity = inspectSourceElementIdentity(source.html);
+      const matchesCompletedCurrentOperation =
+        forceUnlockReceipt.sourceSha256 === source.sha256
+        && source.sha256 === transaction.targetSourceSha256
+        && state.saveState === "saved"
+        && state.currentSha256 === source.sha256
+        && state.sourceElementIdentitySchemaVersion
+          === STEMMIO_ELEMENT_ID_SCHEMA_VERSION
+        && identity.complete
+        && state.sourceElementIdentityBindingSha256
+          === sourceElementIdentityBindingSha256(identity);
+      if (!matchesCompletedCurrentOperation) {
+        throw new ProjectFileRepositoryError(
+          "UNSUPPORTED_TRANSACTION_FORMAT",
+          "Legacy source element identity migrations are not supported.",
+          { workingCopyId: workingCopy.workingCopyId },
+        );
+      }
+    }
 
     let migratedSource = source;
     if (source.sha256 === transaction.expectedSourceSha256) {
@@ -2000,10 +2020,10 @@ export class ProjectFileRepository {
       }
     } else if (source.sha256 !== transaction.targetSourceSha256) {
       if (
-        pendingForceUnlock?.status === "pending"
-        && SAFE_OPERATION_ID.test(String(pendingForceUnlock.operationId || ""))
-        && pendingForceUnlock.expectedSourceSha256 === transaction.expectedSourceSha256
-        && pendingForceUnlock.acceptedSourceSha256 === transaction.expectedSourceSha256
+        forceUnlockReceipt.status === "pending"
+        && SAFE_OPERATION_ID.test(String(forceUnlockReceipt.operationId || ""))
+        && forceUnlockReceipt.expectedSourceSha256 === transaction.expectedSourceSha256
+        && forceUnlockReceipt.acceptedSourceSha256 === transaction.expectedSourceSha256
       ) {
         await this.#finishSourceElementIdentityMigration({
           loaded,
@@ -2043,6 +2063,7 @@ export class ProjectFileRepository {
       source: migratedSource,
       acceptedSourceSha256: transaction.expectedSourceSha256,
     });
+    await this.#hit("identity-migration-recovery-receipt-written", { transactionPath });
     await this.#finishSourceElementIdentityMigration({
       loaded,
       transactionPath,
