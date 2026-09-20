@@ -1,6 +1,6 @@
 {
   "name": "stemmio",
-  "version": "0.9.89",
+  "version": "0.9.90",
   "description": "源页（Stemmio）— Editable islands with byte-exact source outside every edited region.",
   "author": "源页",
   "license": "UNLICENSED",
