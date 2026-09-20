@@ -3669,9 +3669,13 @@ export default function Workbench() {
       context,
       expectedSourceReceipt: currentDocumentSessionSnapshot().sourceReceipt,
     });
+    const restoredContext = outcome.status === "succeeded"
+      ? outcome.value.source.receipt?.context || null
+      : null;
     const restored = outcome.status === "succeeded"
       && outcome.value.page.status === "restored"
-      && isCurrentProjectContext(context);
+      && restoredContext !== null
+      && isCurrentProjectContext(restoredContext);
     if (restored) {
       setFileStatusNotice("页面已重新加载，可以继续编辑");
     }
