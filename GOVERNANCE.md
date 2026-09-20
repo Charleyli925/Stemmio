@@ -1,10 +1,20 @@
-# Governance
+# Internal source governance
 
-Stemmio currently uses a maintainer-led governance model. The public source
-repository is `Charleyli925/Stemmio`.
+Stemmio uses a maintainer-led private-source model. `Charleyli925/Stemmio` is
+the internal source repository; `Charleyli925/Stemmio-Releases` is the public
+binary, support and security-reporting surface.
 
-The repository owner is responsible for project direction, security releases, merge decisions, release signing policy and the use of project branding. Contributors participate through Issues, Discussions and Pull Requests. Significant protocol, persistence, security or compatibility changes should be proposed before implementation and documented as an architecture decision when accepted.
+The repository owner is responsible for product direction, authorized source
+access, security releases, merge decisions, release-signing policy and use of
+the product branding. Significant protocol, persistence, security or
+compatibility changes should be proposed before implementation and documented
+as an architecture decision when accepted.
 
-Routine changes are merged after review and required CI. The maintainer may use squash merging to keep `main` linear and may close changes that conflict with the source-fidelity or security model. Releases are created only from immutable tags on `main`; published release assets are never silently replaced.
+Routine internal changes are merged after review and required CI. The
+maintainer may use squash merging to keep `main` linear and may close changes
+that conflict with the source-fidelity or security model. Source tags are
+created only by the governed release workflow; public release assets are
+published only in `Stemmio-Releases` and are never silently replaced.
 
-Governance can evolve as the contributor base grows. Material changes to this document should be discussed publicly in the repository.
+Public product feedback belongs in `Stemmio-Releases` Issues. This internal
+governance document may change without a public source-governance process.

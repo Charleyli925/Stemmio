@@ -1395,8 +1395,8 @@ test("preload exposes update status, restart installation, and the fixed release
   await updates.openLatestRelease();
   assert.deepEqual(calls[4], ["html-updates:open-latest-release"]);
 
-  await updates.openRepository();
-  assert.deepEqual(calls[5], ["html-updates:open-repository"]);
+  await updates.openPublicReleases();
+  assert.deepEqual(calls[5], ["html-updates:open-public-releases"]);
   assert.deepEqual(Object.keys(updates).sort(), [
     "checkNow",
     "downloadAvailable",
@@ -1404,7 +1404,7 @@ test("preload exposes update status, restart installation, and the fixed release
     "installDownloaded",
     "onStatus",
     "openLatestRelease",
-    "openRepository",
+    "openPublicReleases",
   ]);
 });
 

@@ -353,6 +353,14 @@ test("installer workflows generate a live delivery report after package verifica
   assert.match(candidate, /package-delivery-report\.mjs/u);
   assert.match(candidate, /output\/package-delivery/u);
   assert.match(release, /package-delivery-report\.mjs/u);
+  assert.match(release, /STEMMIO_PUBLIC_RELEASES_TOKEN/u);
+  assert.match(release, /PUBLIC_RELEASES_REPOSITORY:\s*Charleyli925\/Stemmio-Releases/u);
+  assert.match(release, /LEGACY_UPDATE_BRIDGE_REPOSITORY:\s*Charleyli925\/PageRoot/u);
+  assert.match(release, /LEGACY_UPDATE_BRIDGE_VERSION:\s*0\.9\.90/u);
+  assert.match(release, /--repo "\$repository"/u);
+  assert.match(release, /publish_release "\$PUBLIC_RELEASES_REPOSITORY" false/u);
+  assert.match(release, /--target main/u);
+  assert.doesNotMatch(release, /--verify-tag/u);
   assert.match(agentGuide, /docs\/CODEX_WORKFLOW\.md/u);
   assert.match(codexWorkflow, /every associated Pull Request/u);
   assert.match(codexWorkflow, /latest head of every[\s\S]*applicable Stemmio Pull Request/u);

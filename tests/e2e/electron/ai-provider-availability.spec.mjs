@@ -42,7 +42,9 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
   const fixture = createSourceFixture("qoder-acp-agent-bridge.html");
   const qoderCommand = createQoderAcpE2ECommand(fixture.sourceDirectory, {
     visibleText: true,
-    visibleTextGateMs: 700,
+    // Keep the first public chunk live long enough for the renderer to prove
+    // its in-progress state before the synthetic Agent reaches finalization.
+    visibleTextGateMs: 5_000,
   });
   const launched = await launchStemmio({
     activeSourcePath: fixture.sourcePath,
@@ -88,10 +90,14 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       .toHaveCount(0);
     await deliveryDialog.getByRole("button", { name: /交给 Qoder 修改/u }).click();
 
+    // The compact thinking marker intentionally yields to public narration as
+    // soon as the first Agent chunk arrives. Observe that pre-narration phase
+    // before proving the separately rendered public chunks below.
+    const thinking = launched.page.getByTestId("ai-conversation-thinking");
+    await expect(thinking).toBeVisible({ timeout: 60_000 });
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
     await expect(narration).toHaveCount(1);
-    await expect(launched.page.getByTestId("ai-conversation-thinking")).toBeVisible();
     await expect(narration).toContainText("正在读取冻结任务。");
     await expect(narration).not.toContainText("正在等待校验。");
     await expect(narration).toContainText(
