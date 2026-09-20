@@ -451,6 +451,9 @@ function createHarness({
       hash: { sha256: hashSource },
       canvas: {
         checkpointSource,
+        requestFrame(callback) {
+          queueMicrotask(callback);
+        },
         freezeWorkingSource: () => ({ ok: true }),
         freeze: () => {
           calls.freeze += 1;
@@ -1281,6 +1284,64 @@ test("history preview never publishes historical bytes or renders the working Ca
   assert.equal(harness.calls.render.length, 0);
 });
 
+test("detached history reads and exports its project without replacing or draining the runtime project", async () => {
+  const detachedHistory = "<!doctype html><html><body><p>detached B</p></body></html>";
+  const exports = [];
+  const harness = createHarness({
+    versionRead: async (sourcePath, versionId) => ({
+      projectId: "project_b",
+      documentId: "document_b",
+      versionId,
+      content: detachedHistory,
+      sha256: sha256(detachedHistory),
+    }),
+    exportHtmlCopy: async (input) => {
+      exports.push(input);
+      return { path: "/tmp/detached-history.html", sha256: sha256(input.html) };
+    },
+  });
+  harness.runSession.trackRun({
+    projectId: "project_a",
+    documentId: "document_a",
+    sourcePath: SOURCE_A,
+    requestId: "request_a",
+    attemptId: "attempt_a",
+    status: "processing",
+  }, { activate: "always" });
+  const context = Object.freeze({
+    surfaceContextId: "surface:history:project_b:document_b",
+    epoch: 4,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: SOURCE_B,
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_b",
+    versionId: "ver_0002",
+    exactSourcePath: SOURCE_B,
+    sourceSha256: sha256(B_HTML),
+    sessionEpoch: 4,
+  });
+
+  const outcome = await harness.workflow.viewHistory({
+    version: { id: "ver_0001", contentSha256: sha256(detachedHistory) },
+    context,
+    switchPrepared: true,
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(harness.projectSession.projectId, "project_a");
+  assert.equal(harness.calls.drain.length, 0);
+  assert.equal(harness.calls.freeze, 0);
+  assert.equal(harness.versionSession.snapshot.historyPreview.projectId, "project_b");
+  assert.equal(harness.versionSession.snapshot.historyPreview.context.surfaceContextId, context.surfaceContextId);
+  assert.equal((await harness.workflow.exportHtml({ suggestedName: "detached-b" })).status, "succeeded");
+  assert.equal(exports.length, 1);
+  assert.equal(exports[0].html, detachedHistory);
+  assert.equal(exports[0].sourcePath, SOURCE_B);
+  assert.equal(exports[0].suggestedName, "detached-b-V1.html");
+});
+
 test("failed history read retains persistence advanced by a successful drain", async () => {
   let write;
   const harness = createHarness({
@@ -1429,6 +1490,63 @@ test("manual creation reconciles a lost receipt without repeating the command or
   assert.deepEqual(harness.documentSession.snapshot, before);
   assert.equal(harness.versionSession.snapshot.viewMode, "history");
   assert.equal(harness.workflow.getSnapshot().creation.phase, "created");
+});
+
+test("detached history creation uses its own source identity without draining the runtime project", async () => {
+  const operationId = "history_create_detached_0001";
+  const detachedHistory = "<!doctype html><html><body><p>detached history</p></body></html>";
+  const context = Object.freeze({
+    surfaceContextId: "surface:create:project_b:document_b",
+    epoch: 0,
+    projectId: "project_b",
+    documentId: "document_b",
+    sourcePath: SOURCE_B,
+    projectRootPath: "/tmp/project-b",
+    targetKind: "working-copy",
+    workingCopyId: "work_ver_0001",
+    versionId: "ver_0001",
+    exactSourcePath: SOURCE_B,
+    sourceSha256: sha256(B_HTML),
+    sessionEpoch: 0,
+  });
+  const created = {
+    status: "created",
+    operationId,
+    projectId: context.projectId,
+    documentId: context.documentId,
+    versionId: "ver_0002",
+    versionOrdinal: 2,
+    workingCopyId: "work_ver_0002",
+    basedOnVersionId: "ver_0001",
+    previousVersionId: "ver_0001",
+    contentSha256: sha256(detachedHistory),
+    sourcePath: "/tmp/version-workflow-b-v2.html",
+    openedAt: null,
+    recoveryState: "pending",
+  };
+  const harness = createHarness({
+    versionRead: async (_sourcePath, versionId) => ({
+      projectId: context.projectId,
+      documentId: context.documentId,
+      versionId,
+      content: detachedHistory,
+      sha256: sha256(detachedHistory),
+    }),
+    createHistory: async () => created,
+  });
+  await harness.workflow.viewHistory({
+    version: { id: "ver_0001", contentSha256: sha256(detachedHistory) },
+    context,
+    switchPrepared: true,
+  });
+
+  const outcome = await harness.workflow.createVersionFromHistory({ operationId, context });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(harness.calls.drain.length, 0);
+  assert.equal(harness.calls.createHistory[0].expectedSourceSha256, sha256(B_HTML));
+  assert.equal(harness.calls.createHistory[0].expectedSnapshotSha256, sha256(detachedHistory));
+  assert.equal(harness.projectSession.projectId, "project_a");
 });
 
 test("unknown manual creation stays queryable with the same operation", async () => {
@@ -1640,6 +1758,51 @@ test("restart restores an unacknowledged creation and leaves acknowledged operat
   await harness.workflow.restoreHistoryCreation({ operationId: "history_open_0001", context: harness.context });
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
   assert.equal(harness.calls.createHistory.length, 0);
+});
+
+test("restart acknowledges a created Version after the hydrated current Canvas settles", async () => {
+  let acknowledgements = 0;
+  const operationId = "history_open_0001";
+  const harness = createHarness({
+    currentDraft: true,
+    queryCreation: async () => historyCreatedResult(operationId),
+    confirmCreation: async () => { acknowledgements += 1; },
+  });
+  const locator = harness.projectSession.openLocator(HISTORY_WORKING_COPY_PATH);
+  const context = harness.projectSession.register({
+    ...locator,
+    projectId: "project_a",
+    documentId: "document_a",
+    openTarget: {
+      projectId: "project_a",
+      documentId: "document_a",
+      projectRootPath: "/tmp/project-a",
+      targetKind: "working-copy",
+      workingCopyId: "work_ver_0002",
+      versionId: "ver_0002",
+      exactSourcePath: HISTORY_WORKING_COPY_PATH,
+      sourceSha256: sha256(HISTORY_HTML),
+    },
+  });
+  harness.documentSession.publishAuthority({
+    html: HISTORY_HTML,
+    persistedSourceSha256: sha256(HISTORY_HTML),
+  });
+  harness.versionSession.hydrate({
+    versions: decodedVersions([
+      versionRecord({ id: "ver_0001", content: BASE_HTML }),
+      versionRecord({ id: "ver_0002", content: HISTORY_HTML }),
+    ]),
+    latestVersionId: "ver_0002",
+    currentBasedOnVersionId: "ver_0002",
+    currentExactVersionId: "ver_0002",
+  });
+
+  await harness.workflow.restoreHistoryCreation({ operationId, context });
+
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
+  assert.equal(acknowledgements, 1);
+  assert.equal(harness.calls.render.length, 1);
 });
 
 test("return-current reconciles committed creation rather than re-exposing the old working file", async () => {

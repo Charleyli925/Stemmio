@@ -772,6 +772,7 @@
     {
       "id": "project-surface-boundary",
       "patterns": [
+        "^app/application/project-surface-context\\.(?:js|d\\.ts)$",
         "^app/workbench/(?:workbench-sidebar-container|project-version-tree|project-sidebar-state)\\.(?:d\\.ts|js|tsx|ts)$"
       ],
       "suites": [
@@ -781,6 +782,9 @@
       "nodeTests": [
         "tests/project-rules-session.test.mjs",
         "tests/project-rules-workflow.test.mjs",
+        "tests/project-workflow.test.mjs",
+        "tests/version-workflow.test.mjs",
+        "tests/workbench-navigation-workflow.test.mjs",
         "tests/workspace-controller.test.mjs",
         "tests/project-sidebar-state.test.mjs"
       ]

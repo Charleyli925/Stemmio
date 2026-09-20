@@ -1,4 +1,11 @@
+import {
+  copyProjectSurfaceContext,
+  isProjectSurfaceContext,
+} from "./project-surface-context.js";
+
 function copyContext(context) {
+  const surface = copyProjectSurfaceContext(context);
+  if (surface) return surface;
   if (
     !context
     || !Number.isSafeInteger(Number(context.epoch))
@@ -17,6 +24,13 @@ function copyContext(context) {
 }
 
 function sameContext(left, right) {
+  if (isProjectSurfaceContext(left) || isProjectSurfaceContext(right)) {
+    return Boolean(
+      isProjectSurfaceContext(left)
+      && isProjectSurfaceContext(right)
+      && left.surfaceContextId === right.surfaceContextId,
+    );
+  }
   return Boolean(
     left
     && right
@@ -109,6 +123,22 @@ export class ProjectRulesSession {
       savedContent: "正在读取…",
     });
     return operationToken(nextContext, generation);
+  }
+
+  commitOpen(context, payload) {
+    const nextContext = copyContext(context);
+    if (!nextContext) return false;
+    this.#generation += 1;
+    this.#context = nextContext;
+    this.#composition = null;
+    const content = String(payload?.content || "");
+    this.#emit({
+      ...emptySnapshot(this.#snapshot.editorGeneration),
+      open: true,
+      content,
+      savedContent: content,
+    });
+    return true;
   }
 
   completeOpen(token, payload) {
@@ -288,6 +318,10 @@ export class ProjectRulesSession {
 
   get compositionActive() {
     return Boolean(this.#composition);
+  }
+
+  get context() {
+    return this.#context;
   }
 
   inspect({ locked = false } = {}) {

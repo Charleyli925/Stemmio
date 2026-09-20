@@ -654,6 +654,20 @@ export default function Workbench() {
   const projectSnapshot = shellSnapshot?.projectSession
     ?? INITIAL_PROJECT_SESSION_SNAPSHOT;
   const { sourcePath, projectId, documentId } = projectSnapshot;
+  const activeSurfaceProjectId = activeWorkbenchTab?.kind === "project-rules"
+    || activeWorkbenchTab?.kind === "history"
+    ? activeWorkbenchTab.projectId
+    : projectId;
+  const activeSurfaceDocumentId = activeWorkbenchTab?.kind === "project-rules"
+    || activeWorkbenchTab?.kind === "history"
+    ? activeWorkbenchTab.documentId
+    : documentId;
+  const activeProjectRulesScope = activeWorkbenchTab?.kind === "project-rules"
+    ? Object.freeze({
+      projectId: activeWorkbenchTab.projectId || "",
+      documentId: activeWorkbenchTab.documentId || "",
+    })
+    : null;
   const activeDocumentPresentation = documentSurfaceCacheSnapshot.presentations.find((entry) => (
     activeWorkbenchTab?.kind === "document"
     && entry.tabId === activeWorkbenchTab.tabId
@@ -2451,15 +2465,16 @@ export default function Workbench() {
       ) ?? null
     : null;
   const historyPreview = viewMode === "history"
-    && versionSnapshot.historyPreview?.projectId === projectId
-    && versionSnapshot.historyPreview?.documentId === documentId
-    && versionSnapshot.historyPreview?.sourcePath === sourcePath
+    && activeWorkbenchTab?.kind === "history"
+    && versionSnapshot.historyPreview?.projectId === activeWorkbenchTab.projectId
+    && versionSnapshot.historyPreview?.documentId === activeWorkbenchTab.documentId
+    && versionSnapshot.historyPreview?.versionId === activeWorkbenchTab.versionId
     ? versionSnapshot.historyPreview : null;
   const displayedCanvasMode = historyPreview ? "preview" : canvasMode;
   const interactionPreviewHtml = historyPreview?.content || externalSourcePreview?.html || html;
   const pageViewDocumentKey = [
     viewMode,
-    sourcePath || documentId || projectId || "memory",
+    historyPreview?.sourcePath || sourcePath || activeSurfaceDocumentId || activeSurfaceProjectId || "memory",
   ].join(":");
   const activePageViewContext = (
     pageViewContext?.documentKey === pageViewDocumentKey
@@ -3383,41 +3398,45 @@ export default function Workbench() {
   }, [navigationCapability, presentWorkbenchTabOutcome]);
 
   const updateProjectRules = useCallback((content: string) => {
-    workspaceController?.updateProjectRules({ content });
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.updateProjectRules({ content, scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const beginProjectRulesComposition = useCallback((input: {
     target: HTMLTextAreaElement;
     baselineValue: string;
   }) => {
-    workspaceController?.beginProjectRulesComposition(input);
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.beginProjectRulesComposition({
+      ...input,
+      scope: activeProjectRulesScope,
+    });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const finishProjectRulesComposition = useCallback((input: {
     target: HTMLTextAreaElement;
   }) => {
-    workspaceController?.finishProjectRulesComposition(input);
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.finishProjectRulesComposition({
+      ...input,
+      scope: activeProjectRulesScope,
+    });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const saveProjectRules = useCallback(() => {
-    void workspaceController?.saveProjectRules();
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    void workspaceController?.saveProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const restoreProjectRules = useCallback(() => {
-    workspaceController?.restoreProjectRules();
-  }, [workspaceController]);
+    if (!activeProjectRulesScope) return;
+    workspaceController?.restoreProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   const retryProjectRules = useCallback(() => {
-    if (!workspaceController || !projectId || !documentId || !sourcePath) return;
-    void workspaceController.openProjectRules({
-      context: {
-        epoch: projectSnapshot.epoch,
-        projectId,
-        documentId,
-        sourcePath,
-      },
-    });
-  }, [documentId, projectId, projectSnapshot.epoch, sourcePath, workspaceController]);
+    if (!activeProjectRulesScope) return;
+    void workspaceController?.retryProjectRules({ scope: activeProjectRulesScope });
+  }, [activeProjectRulesScope, workspaceController]);
 
   useEffect(() => {
     workspaceController?.reconcileProjectTransitions();
@@ -5314,20 +5333,39 @@ export default function Workbench() {
   ]);
 
   const requestHistoryCreation = () => {
-    if (historyCreation?.context.projectId === projectId && historyCreation.context.documentId === documentId
-      && !["opened", "superseded", "not-created"].includes(historyCreation.phase)) {
+    const pendingCreation = historyCreation;
+    if (pendingCreation && pendingCreation.context.projectId === activeSurfaceProjectId && pendingCreation.context.documentId === activeSurfaceDocumentId
+      && !["opened", "superseded", "not-created"].includes(pendingCreation.phase)) {
       setFileStatusNotice("请先查询或打开上一次创建操作的结果。");
       return;
     }
     if (viewMode === "history" && viewingVersionId && !isViewTransitioning()
-      && !runInProgress && !projectHydrating && !projectLoadError) {
-      setHistoryCreationConfirmation(`${projectId}:${documentId}:${viewingVersionId}`);
+      && !activeSurfaceRunLocked) {
+      setHistoryCreationConfirmation(`${activeSurfaceProjectId}:${activeSurfaceDocumentId}:${viewingVersionId}`);
     }
   };
-  const openCreatedHistory = async (operationId: string) => {
-    const context = captureProjectContext();
+  const openCreatedHistory = async (
+    operationId: string,
+    requestedContext: ProjectContext | null = null,
+  ) => {
+    const liveContext = captureProjectContext();
+    const context = requestedContext
+      && liveContext?.projectId === requestedContext.projectId
+      && liveContext.documentId === requestedContext.documentId
+      ? liveContext
+      : requestedContext || liveContext;
     const navigation = navigationCapability;
     if (!context || !workspaceController || !navigation) return;
+    if (!isCurrentProjectContext(context)) {
+      const outcome = await navigation.commands.openRegisteredProject({
+        projectId: context.projectId,
+        documentId: context.documentId,
+        title: activeWorkbenchTab?.title || "当前稿",
+        force: true,
+      });
+      presentWorkbenchTabOutcome(outcome);
+      return;
+    }
     const opened = await workspaceController.openCreatedHistoryVersion({ operationId, context });
     if (opened.status === "stale") return;
     const outcome = await navigation.commands.openRegisteredProject({
@@ -5354,21 +5392,24 @@ export default function Workbench() {
   const createHistoryVersion = async () => {
     const versionId = historyCreationConfirmation;
     setHistoryCreationConfirmation(null);
-    const context = captureProjectContext();
+    const context = historyPreview?.context || captureProjectContext();
     if (!context || !workspaceController || versionId !== `${context.projectId}:${context.documentId}:${viewingVersionId}` || viewMode !== "history") return;
     const operationId = `history_${crypto.randomUUID()}`;
     const outcome = await workspaceController.createVersionFromHistory({ operationId, context });
     if (outcome.status === "succeeded") {
-      if (isCurrentProjectContext(context)) await openCreatedHistory(operationId);
+      await openCreatedHistory(operationId, context);
     } else if (outcome.status !== "stale") setFileStatusNotice(outcome.reason);
   };
   const recoverHistoryCreation = async () => {
-    if (!historyCreation || historyCreation.context.projectId !== projectId
-      || historyCreation.context.documentId !== documentId) return;
+    if (!historyCreation || historyCreation.context.projectId !== activeSurfaceProjectId
+      || historyCreation.context.documentId !== activeSurfaceDocumentId) return;
     if (historyCreation.phase === "unknown") {
-      const outcome = await workspaceController?.queryHistoryCreation({ operationId: historyCreation.operationId, context: captureProjectContext() });
+      const outcome = await workspaceController?.queryHistoryCreation({
+        operationId: historyCreation.operationId,
+        context: historyCreation.context,
+      });
       if (outcome && outcome.status !== "succeeded" && outcome.status !== "stale") setFileStatusNotice(outcome.reason);
-    } else await openCreatedHistory(historyCreation.operationId);
+    } else await openCreatedHistory(historyCreation.operationId, historyCreation.context);
   };
 
   const canvasAuthority = documentSnapshot.canvasAuthority;
@@ -5384,7 +5425,11 @@ export default function Workbench() {
   );
   const hasDocumentHistoryAction = Boolean(shellSnapshot?.hasDocumentHistoryAction);
   const presentation = useMemo(() => deriveWorkbenchPresentation({
-    project: { projectId, documentId, sourcePath }, version: versionSnapshot,
+    project: historyPreview ? {
+      projectId: historyPreview.projectId,
+      documentId: historyPreview.documentId,
+      sourcePath: historyPreview.sourcePath,
+    } : { projectId, documentId, sourcePath }, version: versionSnapshot,
     activeTab: activeWorkbenchTab || null, runtimeOwnerTabId: workbenchTabsSnapshot.runtimeOwnerTabId, canvasMode: displayedCanvasMode,
     reviewActive: Boolean(presentedReadyReviewSession), activeRunStatus: activeRun?.status,
     hasReadyPayload: Boolean(activeRun?.readyPayload), hasReadyReviewSession: Boolean(presentedReadyReviewSession),
@@ -5393,7 +5438,7 @@ export default function Workbench() {
     projectHydrating, projectLoadError: Boolean(projectLoadError), viewTransitioning,
     runInProgress, workspaceIssue: Boolean(workspaceIssue), externalSourcePreview: Boolean(externalSourcePreview),
     hasDocumentHistoryAction, interactionLocked,
-  }), [projectId, documentId, sourcePath, versionSnapshot, activeWorkbenchTab, workbenchTabsSnapshot.runtimeOwnerTabId, displayedCanvasMode,
+  }), [projectId, documentId, sourcePath, historyPreview, versionSnapshot, activeWorkbenchTab, workbenchTabsSnapshot.runtimeOwnerTabId, displayedCanvasMode,
     activeRun?.status, activeRun?.readyPayload, presentedReadyReviewSession,
     reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, workspaceController, projectHydrating,
@@ -5774,7 +5819,7 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  const { visibleCachedSurface, candidateCachedSurface, retainPresentedTab, completeHandoff, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, renderedSourceSha256: canvasMode === "preview" && canvasRenderAcks.preview?.generation === canvasGeneration ? canvasRenderAcks.preview.sha256 : renderedContentSha256, canvasAuthority, canvasGeneration, controller: workspaceController });
+  const { visibleCachedSurface, candidateCachedSurface, retainPresentedTab, completeHandoff, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, renderedSourceSha256: canvasMode === "preview" && canvasRenderAcks.preview?.generation === canvasGeneration ? canvasRenderAcks.preview.sha256 : renderedContentSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, controller: workspaceController });
   const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface);
   const retryProjectHydrationFromCommentRail = useCallback(() => {
     void workspaceController?.retryProjectHydration();
@@ -5869,6 +5914,17 @@ export default function Workbench() {
     && canMountUnboundCanvas
   );
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
+  const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
+    || activeWorkbenchTab?.kind === "history"
+    ? activeWorkbenchTab.title
+    : currentProjectDisplayName;
+  const activeSurfaceRunLocked = Boolean(
+    runSnapshot.activeLocked
+    && (!activeRun || (
+      activeRun.projectId === activeSurfaceProjectId
+      && activeRun.documentId === activeSurfaceDocumentId
+    )),
+  );
   const workbenchStyle = useMemo(() => ({
     "--workbench-sidebar-width-saved": `${workspacePreferencesController.panelWidths.sidebarWidth}px`,
     "--workbench-inspector-width": `${workspacePreferencesController.panelWidths.inspectorWidth}px`,
@@ -6139,8 +6195,8 @@ export default function Workbench() {
         />
       ) : null}
 
-      {historyCreation && historyCreation.context.projectId === projectId
-        && historyCreation.context.documentId === documentId && !["opened", "superseded"].includes(historyCreation.phase) ? (
+      {historyCreation && historyCreation.context.projectId === activeSurfaceProjectId
+        && historyCreation.context.documentId === activeSurfaceDocumentId && !["opened", "superseded"].includes(historyCreation.phase) ? (
         <PreviewNavigationBanner
           icon={<ClockCounterClockwiseIcon aria-hidden="true" size={18} />}
           title={historyCreation.phase === "unknown" ? "创建结果暂时未知"
@@ -6169,13 +6225,13 @@ export default function Workbench() {
       ) : projectCatalogCapability ? <WorkbenchGlobalSidebarContainer
         capability={projectCatalogCapability}
         open={globalSidebarOpen}
-        currentProjectId={projectId}
-        currentProjectName={currentProjectDisplayName}
-        currentProjectDocumentId={documentId || null}
-        currentProjectSourcePath={sourcePath || null}
+        currentProjectId={activeSurfaceProjectId || null}
+        currentProjectName={activeSurfaceProjectName}
+        currentProjectDocumentId={activeSurfaceDocumentId || null}
+        currentProjectSourcePath={historyPreview?.sourcePath || (activeWorkbenchTab?.kind === "document" ? sourcePath : null)}
         activeVersionId={presentation.isHistory ? viewingVersionId : null}
         currentDraftActive={!presentation.isHistory && !projectRulesPageActive && !startPageActive && !settingsPageActive}
-        currentProjectBusy={projectHydrating || Boolean(projectLoadError) || viewTransitioning || runInProgress}
+        currentProjectBusy={viewTransitioning || activeSurfaceRunLocked || (activeWorkbenchTab?.kind === "document" && (projectHydrating || Boolean(projectLoadError)))}
         projectRulesActive={projectRulesPageActive}
         onToggle={() => {
           setGlobalSidebarOpen((open) => !open);
@@ -6282,7 +6338,7 @@ export default function Workbench() {
         <ProjectRulesEditorPage
           activeTabId={activeWorkbenchTab.tabId}
           capability={workspaceController!.projectRules}
-          runLocked={runSnapshot.activeLocked || runInProgress}
+          runLocked={activeSurfaceRunLocked}
           onChange={updateProjectRules}
           onBeginComposition={beginProjectRulesComposition}
           onFinishComposition={finishProjectRulesComposition}
@@ -6439,15 +6495,17 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {displayedCanvasMode === "preview" && documentRuntimeTabId ? (
+          {displayedCanvasMode === "preview" && (historyPreview || documentRuntimeTabId) ? (
             <HtmlInteractionPreview
               key={`preview-authority-${canvasGeneration}-${historyPreview?.versionId || "current"}`}
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}
               staticFallbackOnFailure={Boolean(historyPreview)}
               documentKey={historyPreview ? `${pageViewDocumentKey}:${historyPreview.versionId}` : pageViewDocumentKey}
-              sourcePath={sourcePath || undefined}
-              height="100%"
+              sourcePath={historyPreview?.sourcePath || sourcePath || undefined}
+              height={historyPreview
+                ? "calc(100vh - 88px)"
+                : "100%"}
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
               onReady={historyPreview ? undefined : handlePreviewReady}
@@ -6509,7 +6567,7 @@ export default function Workbench() {
         contextKey={`${projectId}:${documentId}`} onClose={() => setPreservedDraftDialogOpen(false)}
         onLoad={loadPreservedDrafts} onRestore={(recoveryId) => workspaceController.restorePreservedDraft({ recoveryId })} /> : null}
       <HistoryCreationDialog
-        open={Boolean(historyCreationConfirmation && historyCreationConfirmation === `${projectId}:${documentId}:${viewingVersionId}` && viewMode === "history")}
+        open={Boolean(historyCreationConfirmation && historyCreationConfirmation === `${activeSurfaceProjectId}:${activeSurfaceDocumentId}:${viewingVersionId}` && viewMode === "history")}
         versionLabel={viewingVersion?.label || "历史版本"}
         onClose={() => setHistoryCreationConfirmation(null)}
         onConfirm={() => void createHistoryVersion()}

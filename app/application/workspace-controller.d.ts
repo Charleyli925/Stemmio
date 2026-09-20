@@ -591,25 +591,58 @@ export class WorkspaceController {
   refreshRecentProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   refreshRegisteredProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   openProjectRules(input: {
-    context: ProjectContext;
+    context: import("./project-rules-session.js").ProjectRulesContext;
   }): Promise<ProjectRulesWorkflowOutcome<{
     opened: boolean;
     reused?: boolean;
   }>>;
-  updateProjectRules(input: { content: string }): ProjectRulesWorkflowOutcome<{
+  prepareProjectRules(input: {
+    context: import("./project-rules-session.js").ProjectRulesContext;
+  }): Promise<ProjectRulesWorkflowOutcome<{
+    prepared: boolean;
+    preparationId: string;
+    reused?: boolean;
+  }>>;
+  commitPreparedProjectRules(input: {
+    preparationId: string;
+  }): ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>;
+  discardPreparedProjectRules(input: { preparationId: string }): boolean;
+  retryProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): Promise<ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>>;
+  updateProjectRules(input: {
+    content: string;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): ProjectRulesWorkflowOutcome<{
     updated: boolean;
   }>;
   beginProjectRulesComposition(input: {
     target: unknown;
     baselineValue: string;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
   }): number | null;
-  finishProjectRulesComposition(input: { target: unknown }): boolean;
-  leaveProjectRulesEditor(): boolean;
-  restoreProjectRules(): ProjectRulesWorkflowOutcome<{
+  finishProjectRulesComposition(input: {
+    target: unknown;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): boolean;
+  leaveProjectRulesEditor(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): boolean;
+  restoreProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): ProjectRulesWorkflowOutcome<{
     restored: boolean;
     editorGeneration: number;
   }>;
-  saveProjectRules(): Promise<ProjectRulesWorkflowOutcome<{
+  saveProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): Promise<ProjectRulesWorkflowOutcome<{
     saved: boolean;
     reconciled?: boolean;
   }>>;

@@ -155,6 +155,7 @@ test("the Bridge exposes every Registry member and opens one only by projectId",
   assert.equal(opened.body.sourceSha256, opened.body.openTarget.sourceSha256);
   assert.equal(opened.body.content, html("B"));
   assert.equal(typeof opened.body.lastModifiedAt, "string");
+  assert.equal(opened.body.historyCreation, null);
 
   const finderRenamedWorkingCopy = join(
     b.body.projectRoot,

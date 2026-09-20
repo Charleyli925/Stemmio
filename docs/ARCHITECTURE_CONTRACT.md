@@ -107,12 +107,14 @@ The renderer's main workspace facts are partitioned as follows:
   recovery projection, attachment staging/upload count and stale/cancel
   compensation; it publishes through `CommentSession` and `DraftSession` and
   is not a second Draft aggregate owner;
-- `ProjectRulesSession`: `PROJECT.md` working copy, generation, composition
-  fence and save projection facts and the verified immutable history preview bytes;
-- `ProjectRulesWorkflow`: `PROJECT.md` Bridge read/write, 700ms autosave,
-  unknown-write authority reconciliation, close/switch drain and narrow native
-  editor-restore host port. It publishes through `ProjectRulesSession` and is
-  not a second editor-state owner;
+- `ProjectRulesSession`: `PROJECT.md` working copy, exact surface context,
+  generation, composition fence and save projection facts;
+- `ProjectRulesWorkflow`: staged `PROJECT.md` Bridge read, one-use preparation
+  identity, Bridge write, 700ms autosave, unknown-write authority reconciliation,
+  close/switch drain and narrow native editor-restore host port. A prepared read
+  remains private until `WorkbenchNavigationWorkflow` commits the matching tab;
+  only then does the workflow publish the same context and content through
+  `ProjectRulesSession`. It is not a second editor-state owner;
 - `RunSession`: current/background run projections, per-Request Agent delivery
   status, background outcomes, the one preparing/frozen/uncertain submission
   lock, and operation locks. ACP events remain bounded presentation facts and

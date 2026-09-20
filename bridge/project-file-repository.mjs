@@ -5723,6 +5723,9 @@ export class ProjectFileRepository {
       sourceSha256: resolved.source.sha256,
       html: resolved.source.html,
       lastModifiedAt: resolved.source.lastModifiedAt,
+      historyCreation: resolved.runtime.historyCreation
+        ? Object.freeze({ ...resolved.runtime.historyCreation })
+        : null,
     };
   }
 

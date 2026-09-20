@@ -9,6 +9,7 @@ import type { RunSession } from "./run-session.js";
 import type { VersionSession } from "./version-session.js";
 import type { ExternalFileOpenSnapshot } from "./external-file-open-session.js";
 import type { ProjectApplicationSnapshot } from "./project-application-session.js";
+import type { ProjectSurfaceContext } from "./project-surface-context.js";
 
 export type ProjectWorkflowOutcome<T = Record<string, unknown>> =
   | Readonly<{ status: "succeeded"; value: T }>
@@ -146,6 +147,14 @@ export class ProjectWorkflow {
   readonly projectLoadError: string | null;
   reportLoadFailure(message: string): void;
   refreshWorkspace(input?: Record<string, unknown>): Promise<ProjectWorkflowOutcome>;
+  resolveRegisteredSurfaceTarget(input: {
+    projectId: string;
+    documentId: string;
+    transactionId?: string | null;
+  }): Promise<ProjectWorkflowOutcome<{
+    context: ProjectSurfaceContext;
+    historyCreation?: Readonly<{ operationId: string; versionId: string }>;
+  }>>;
   retryHydration(): Promise<ProjectWorkflowOutcome>;
   prepareSwitch(input?: { fromDeferred?: boolean }): Promise<ProjectWorkflowOutcome>;
   openProject(input?: {

@@ -76,7 +76,7 @@ export class WorkbenchNavigationWorkflow {
   onPreparedOpenSettled(input: { transactionId?: string; requestId?: string; outcome?: ProjectWorkflowOutcome }): boolean;
   onTerminalFailure(input: { transactionId?: string; reason?: string }): boolean;
   prepareClose(input: { deadlineAt: number }): Promise<boolean>;
-  waitForIdle(input: { deadlineAt: number }): Promise<boolean>;
+  waitForIdle(input?: { deadlineAt?: number }): Promise<boolean>;
   waitForTerminal(transactionId: string): Promise<Readonly<Record<string, unknown>> | null>;
   dispose(): void;
 }

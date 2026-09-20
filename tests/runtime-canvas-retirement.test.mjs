@@ -16,6 +16,10 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
     new URL("../app/workbench/document-surface-presentation.ts", import.meta.url),
     "utf8",
   );
+  const displaySurface = readFileSync(
+    new URL("../app/components/HtmlDisplaySurface.tsx", import.meta.url),
+    "utf8",
+  );
   assert.equal(
     existsSync(new URL("../app/workbench/WorkbenchDocumentCanvasPool.tsx", import.meta.url)),
     false,
@@ -41,6 +45,11 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
   assert.doesNotMatch(activeHost, /cloneElement/u);
   assert.doesNotMatch(handoff, /\bactiveCandidate\b/u);
   assert.match(handoff, /pendingToken/u);
+  assert.match(handoff, /sameSourceReceipt/u);
+  assert.match(handoff, /eligibleCandidateRef/u);
+  assert.match(displaySurface, /const \{ resourceBase, ready \} = usePreviewResourceBase/u);
+  assert.match(displaySurface, /\{frameHtml \? <iframe/u);
+  assert.match(displaySurface, /key=\{presentationKey/u);
   assert.match(activeHost, /data-testid="workbench-active-document-canvas-host"/u);
   assert.match(activeHost, /data-runtime-hot-limit=\{1\}/u);
   assert.doesNotMatch(
