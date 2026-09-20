@@ -50,6 +50,9 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
   assert.match(handoff, /sameSourceReceipt/u);
   assert.match(handoff, /eligibleCandidateRef/u);
   assert.match(handoff, /acceptDisplayReady/u);
+  assert.match(handoff, /presentedHandoffToken/u);
+  assert.match(handoff, /visibleHandoffId/u);
+  assert.match(handoff, /sameDocumentSurfaceHandoffToken\(current, exactToken\)/u);
   assert.doesNotMatch(handoff, /completeHandoff|retainPresentedTab/u);
   assert.match(displaySurface, /const \{ resourceBase, ready \} = usePreviewResourceBase/u);
   assert.match(displaySurface, /\{frameHtml \? <iframe/u);

@@ -21,6 +21,7 @@ export default function WorkbenchDocumentSurfaceCache({
   snapshot,
   visibleTabId,
   visibleSourceSha256,
+  visibleHandoffId = null,
   candidateTabId = null,
   candidateSourceSha256 = null,
   candidateHandoffId = null,
@@ -32,6 +33,7 @@ export default function WorkbenchDocumentSurfaceCache({
   snapshot: DocumentSurfaceCacheSnapshot;
   visibleTabId: string | null;
   visibleSourceSha256: string | null;
+  visibleHandoffId?: string | null;
   candidateTabId?: string | null;
   candidateSourceSha256?: string | null;
   candidateHandoffId?: string | null;
@@ -40,13 +42,6 @@ export default function WorkbenchDocumentSurfaceCache({
   onFirstScroll: (tabId: string, scrollTop: number) => void;
   height: string;
 }) {
-  // Source projections are data-only until an exact tab-switch handoff asks
-  // for them. Normal inactive and active tabs own no display iframe.
-  const isExplicitHandoffSurface = (entry: DocumentSurfaceCacheSnapshot["entries"][number]) => (
-    (entry.tabId === candidateTabId && entry.sourceSha256 === candidateSourceSha256)
-    || (entry.tabId === visibleTabId && entry.sourceSha256 === visibleSourceSha256)
-  );
-  const handoffEntries = snapshot.entries.filter(isExplicitHandoffSurface);
   const visibleToken = useMemo(() => (
     visibleTabId && visibleSourceSha256
       ? documentSurfaceCacheToken({ tabId: visibleTabId, sourceSha256: visibleSourceSha256 })
@@ -62,6 +57,11 @@ export default function WorkbenchDocumentSurfaceCache({
       ? Object.freeze({ ...candidateToken, handoffId: candidateHandoffId })
       : null
   ), [candidateHandoffId, candidateToken]);
+  const visibleHandoffToken = useMemo<DocumentSurfaceHandoffToken | null>(() => (
+    visibleToken && visibleHandoffId
+      ? Object.freeze({ ...visibleToken, handoffId: visibleHandoffId })
+      : null
+  ), [visibleHandoffId, visibleToken]);
   const reportScrollableReady = useCallback((token: DocumentSurfaceHandoffToken) => {
     // Scroll wiring is observable separately, but it never admits a cache
     // cover. Static-frame readiness alone asks the existing handoff owner.
@@ -77,27 +77,42 @@ export default function WorkbenchDocumentSurfaceCache({
       detail: Object.freeze(token),
     });
   }, [acceptDisplayReady, candidateHandoffToken]);
-  // The parent hook is the single presentation owner. This component mounts a
-  // hidden candidate and renders only the exact token it has accepted.
-  const renderedPresentedToken = visibleToken
-    && candidateToken
-    && sameDocumentSurfaceCacheToken(visibleToken, candidateToken)
-    && handoffEntries.some((entry) => (
-      entry.tabId === visibleToken.tabId
-      && entry.sourceSha256 === visibleToken.sourceSha256
-    ))
-    ? visibleToken
-    : null;
+  // The parent hook is the single presentation owner. It can legitimately
+  // retain one accepted iframe while a distinct candidate is still loading.
+  // Keep those physical instances separate even when their cache identity is
+  // the same: the newer iframe must never inherit the older ready state.
+  const handoffSurfaces = useMemo(() => {
+    const surfaces: Array<Readonly<{
+      entry: DocumentSurfaceCacheSnapshot["entries"][number];
+      token: DocumentSurfaceHandoffToken;
+    }>> = [];
+    const append = (token: DocumentSurfaceHandoffToken | null) => {
+      if (!token || surfaces.some((surface) => (
+        sameDocumentSurfaceHandoffToken(surface.token, token)
+      ))) return;
+      const entry = snapshot.entries.find((candidate) => (
+        sameDocumentSurfaceCacheToken(candidate, token)
+      ));
+      if (entry) surfaces.push(Object.freeze({ entry, token }));
+    };
+    append(visibleHandoffToken);
+    append(candidateHandoffToken);
+    return Object.freeze(surfaces);
+  }, [candidateHandoffToken, snapshot.entries, visibleHandoffToken]);
+  const renderedPresentedSurface = handoffSurfaces.find((surface) => (
+    sameDocumentSurfaceHandoffToken(surface.token, visibleHandoffToken)
+  )) || null;
   return (
     <div
       className={styles.cache}
       data-testid="workbench-document-surface-cache"
-      data-visible={renderedPresentedToken ? "true" : undefined}
-      data-visible-tab-id={renderedPresentedToken?.tabId || undefined}
-      data-visible-source-sha256={renderedPresentedToken?.sourceSha256 || undefined}
+      data-visible={renderedPresentedSurface ? "true" : undefined}
+      data-visible-tab-id={renderedPresentedSurface?.token.tabId || undefined}
+      data-visible-source-sha256={renderedPresentedSurface?.token.sourceSha256 || undefined}
+      data-visible-handoff-id={renderedPresentedSurface?.token.handoffId || undefined}
       data-candidate-tab-id={candidateHandoffToken?.tabId || undefined}
       data-candidate-handoff-id={candidateHandoffToken?.handoffId || undefined}
-      data-mounted-count={handoffEntries.length}
+      data-mounted-count={handoffSurfaces.length}
       data-cache-entry-count={snapshot.entries.length}
       data-cold-count={snapshot.coldTabIds.length}
       data-cache-bytes={snapshot.totalBytes}
@@ -105,22 +120,23 @@ export default function WorkbenchDocumentSurfaceCache({
       data-presentation-bytes={snapshot.presentationBytes}
       data-max-cache-entries={snapshot.limits.maxEntries}
       data-max-cache-bytes={snapshot.limits.maxBytes}
-      aria-hidden={!renderedPresentedToken}
+      aria-hidden={!renderedPresentedSurface}
     >
-      {handoffEntries.map((entry) => {
-        const entryToken = documentSurfaceCacheToken(entry);
-        const isCandidate = sameDocumentSurfaceCacheToken(entryToken, candidateToken);
-        const displayReadyToken = isCandidate ? candidateHandoffToken : null;
-        const presentationKey = `${entry.tabId}:${entry.sourceSha256}:${displayReadyToken?.handoffId || "presented"}`;
+      {handoffSurfaces.map(({ entry, token }) => {
+        const isPresented = sameDocumentSurfaceHandoffToken(token, visibleHandoffToken);
+        const isCandidate = sameDocumentSurfaceHandoffToken(token, candidateHandoffToken);
+        const displayReadyToken = isCandidate ? token : null;
+        const presentationKey = `${entry.tabId}:${entry.sourceSha256}:${token.handoffId}`;
         return (
           <div
             className={styles.entry}
             data-tab-id={entry.tabId}
             data-source-sha256={entry.sourceSha256}
+            data-handoff-id={token.handoffId}
+            data-surface-role={isPresented ? "presented" : "candidate"}
             data-scroll-top={entry.scrollTop}
-            hidden={entry.tabId !== renderedPresentedToken?.tabId
-              || entry.sourceSha256 !== renderedPresentedToken?.sourceSha256}
-            key={`${entry.tabId}:${entry.sourceSha256}`}
+            hidden={!isPresented}
+            key={presentationKey}
           >
             <HtmlDisplaySurface
               presentationKey={presentationKey}
