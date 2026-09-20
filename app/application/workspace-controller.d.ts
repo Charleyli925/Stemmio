@@ -459,7 +459,7 @@ export class WorkspaceController {
   updateConversationDraftText(text: string): void;
   updateConversationDraftIntent(intent: string): void;
   flushConversationDraft(): Promise<boolean>;
-  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number }): Promise<WorkbenchNavigationOutcome>;
+  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number; intentKind?: string }): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchStartTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchSettingsTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
@@ -473,6 +473,7 @@ export class WorkspaceController {
     documentId: string;
     title: string;
     status?: WorkbenchTabStatus;
+    intentKind?: string;
   }): Promise<WorkbenchNavigationOutcome>;
   updateWorkbenchTabStatus(
     projectId: string,

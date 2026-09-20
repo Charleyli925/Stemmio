@@ -392,81 +392,94 @@ test("a new import writes identified Working Copy bytes without changing the ext
   assert.equal(state.sourceElementIdentitySchemaVersion, 1);
 });
 
-test("a legacy Working Copy migrates once and records an auditable committed transaction", async (t) => {
+test("an ordinary load rejects a Working Copy missing required element identities", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "legacy.html", RAW_HTML);
   const legacy = await rewriteAsLegacyWorkingCopy(imported, RAW_HTML);
 
-  const workspace = await value.repository.workspace({
-    sourcePath: imported.target.exactSourcePath,
-  });
-  assert.equal(workspace.workingCopyIdentityMigrated, true);
-  assert.equal(workspace.workingCopyIdentityAdopted, false);
-  assert.equal(inspectSourceElementIdentity(workspace.content).complete, true);
-  assert.equal(workspace.workingCopyState.sourceElementIdentitySchemaVersion, 1);
-  assert.notEqual(workspace.sourceSha256, legacy.sourceSha256);
-
-  const transactionsRoot = path.join(legacy.controlRoot, "transactions");
-  const identityTransactions = (await readdir(transactionsRoot)).filter(
-    (name) => name.startsWith("identity_") && name.endsWith(".json"),
+  await assert.rejects(
+    value.repository.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error?.code === "SOURCE_ELEMENT_IDENTITY_UNSUPPORTED",
   );
-  assert.equal(identityTransactions.length, 1);
-  const transaction = await json(path.join(transactionsRoot, identityTransactions[0]));
-  await assertMigrationSchema(transaction);
-  assert.equal(transaction.schemaVersion, "1.0.0");
-  assert.equal(transaction.state, "committed");
-  assert.equal(transaction.outcome, "migrated");
-  assert.equal(transaction.expectedSourceSha256, legacy.sourceSha256);
-  assert.equal(transaction.targetSourceSha256, workspace.sourceSha256);
-  assert.ok(transaction.addedElementCount > 0);
+  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), RAW_HTML);
+  const state = await json(legacy.statePath);
+  assert.equal(state.sourceElementIdentitySchemaVersion, undefined);
   assert.equal(
-    await readFile(path.join(
-      imported.target.projectRootPath,
-      ".stemmio",
-      (await json(legacy.manifestPath)).versions[0].snapshotRelativePath,
-    ), "utf8"),
-    RAW_HTML,
-  );
-
-  const reopened = await value.repository.workspace({
-    sourcePath: imported.target.exactSourcePath,
-  });
-  assert.equal(reopened.workingCopyIdentityMigrated, false);
-  assert.equal(reopened.workingCopyIdentityAdopted, false);
-  assert.equal(reopened.content, workspace.content);
-  assert.equal(
-    (await readdir(transactionsRoot)).filter((name) => name.startsWith("identity_")).length,
-    1,
+    (await readdir(path.join(legacy.controlRoot, "transactions")))
+      .filter((name) => name.startsWith("identity_")).length,
+    0,
   );
 });
 
-test("a complete legacy identity set is adopted without rewriting Working Copy HTML", async (t) => {
+test("explicit external adoption may materialize identities with a current operation", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "adopt-existing.html", RAW_HTML);
-  const before = await readFile(imported.target.exactSourcePath, "utf8");
-  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
-  const manifest = await json(path.join(controlRoot, "manifest.json"));
-  const workingCopy = manifest.workingCopies[0];
-  const statePath = path.join(controlRoot, workingCopy.stateRelativePath);
-  const state = await json(statePath);
-  delete state.sourceElementIdentitySchemaVersion;
-  delete state.sourceElementIdentityBindingSha256;
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-
-  const workspace = await value.repository.workspace({
+  await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+  const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
+  const result = await value.repository.forceUnlockWorkingCopy({
+    projectId: imported.target.projectId,
+    documentId: imported.target.documentId,
     sourcePath: imported.target.exactSourcePath,
+    expectedSourceSha256: acceptedSourceSha256,
+    operationId: "force_unlock_identity_0001",
   });
-  assert.equal(workspace.workingCopyIdentityMigrated, false);
-  assert.equal(workspace.workingCopyIdentityAdopted, true);
-  assert.equal(workspace.content, before);
-  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), before);
+  assert.equal(result.status, "force-unlocked");
+  const workspace = await value.repository.workspace({ sourcePath: imported.target.exactSourcePath });
+  assert.equal(inspectSourceElementIdentity(workspace.content).complete, true);
+  assert.equal(workspace.workingCopyState.sourceElementIdentitySchemaVersion, 1);
+  assert.equal(workspace.workingCopyState.forceUnlockReceipt.status, "completed");
+  assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), workspace.content);
+  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
   const transactionName = (await readdir(path.join(controlRoot, "transactions"))).find(
     (name) => name.startsWith("identity_") && name.endsWith(".json"),
   );
   assert.ok(transactionName);
   const transaction = await json(path.join(controlRoot, "transactions", transactionName));
-  assert.equal(transaction.outcome, "adopted-existing");
-  assert.equal(transaction.expectedSourceSha256, transaction.targetSourceSha256);
+  await assertMigrationSchema(transaction);
+  assert.equal(transaction.outcome, "migrated");
+  assert.equal(transaction.expectedSourceSha256, acceptedSourceSha256);
+  assert.notEqual(transaction.expectedSourceSha256, transaction.targetSourceSha256);
+});
+
+test("restart rejects an identity recovery record without explicit adoption authority", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "identity-recovery-without-adoption.html", RAW_HTML);
+  await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+  const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
+  const interrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint(name) {
+      return name === "identity-migration-prepared";
+    },
+  });
+  await interrupted.initialize();
+  await assert.rejects(
+    interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      expectedSourceSha256: acceptedSourceSha256,
+      operationId: "force_unlock_missing_authority_0001",
+    }),
+    (error) => error?.code === "INJECTED_FAILPOINT",
+  );
+
+  const manifest = await json(path.join(imported.target.projectRootPath, ".stemmio", "manifest.json"));
+  const statePath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    manifest.workingCopies[0].stateRelativePath,
+  );
+  const state = await json(statePath);
+  delete state.forceUnlockReceipt;
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+  const recoveredRepository = new ProjectFileRepository({ projectsRoot: value.projects });
+  await recoveredRepository.initialize();
+  await assert.rejects(
+    recoveredRepository.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error?.code === "UNSUPPORTED_TRANSACTION_FORMAT",
+  );
 });
 
 test("restart recovery completes every published migration crash window", async (t) => {
@@ -478,7 +491,8 @@ test("restart recovery completes every published migration crash window", async 
     await t.test(failpoint, async (child) => {
       const value = await fixture(child);
       const imported = await importSource(value, `${failpoint}.html`, RAW_HTML);
-      await rewriteAsLegacyWorkingCopy(imported, RAW_HTML);
+      await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+      const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
       const interrupted = new ProjectFileRepository({
         projectsRoot: value.projects,
         failpoint(name) {
@@ -487,7 +501,13 @@ test("restart recovery completes every published migration crash window", async 
       });
       await interrupted.initialize();
       await assert.rejects(
-        interrupted.workspace({ sourcePath: imported.target.exactSourcePath }),
+        interrupted.forceUnlockWorkingCopy({
+          projectId: imported.target.projectId,
+          documentId: imported.target.documentId,
+          sourcePath: imported.target.exactSourcePath,
+          expectedSourceSha256: acceptedSourceSha256,
+          operationId: `force_unlock_${failpoint.replaceAll("-", "_")}_0001`,
+        }),
         (error) => error?.code === "INJECTED_FAILPOINT",
       );
 
@@ -506,7 +526,8 @@ test("restart recovery completes every published migration crash window", async 
 test("restart recovery rejects a migration record whose staged paths do not match its recovery ID", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "tampered-recovery-path.html", RAW_HTML);
-  const legacy = await rewriteAsLegacyWorkingCopy(imported, RAW_HTML);
+  await writeFile(imported.target.exactSourcePath, RAW_HTML, "utf8");
+  const acceptedSourceSha256 = sha256(Buffer.from(RAW_HTML));
   const interrupted = new ProjectFileRepository({
     projectsRoot: value.projects,
     failpoint(name) {
@@ -515,15 +536,22 @@ test("restart recovery rejects a migration record whose staged paths do not matc
   });
   await interrupted.initialize();
   await assert.rejects(
-    interrupted.workspace({ sourcePath: imported.target.exactSourcePath }),
+    interrupted.forceUnlockWorkingCopy({
+      projectId: imported.target.projectId,
+      documentId: imported.target.documentId,
+      sourcePath: imported.target.exactSourcePath,
+      expectedSourceSha256: acceptedSourceSha256,
+      operationId: "force_unlock_tampered_path_0001",
+    }),
     (error) => error?.code === "INJECTED_FAILPOINT",
   );
 
-  const transactionName = (await readdir(path.join(legacy.controlRoot, "transactions"))).find(
+  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
+  const transactionName = (await readdir(path.join(controlRoot, "transactions"))).find(
     (name) => name.startsWith("identity_") && name.endsWith(".json"),
   );
   assert.ok(transactionName);
-  const transactionPath = path.join(legacy.controlRoot, "transactions", transactionName);
+  const transactionPath = path.join(controlRoot, "transactions", transactionName);
   const transaction = await json(transactionPath);
   transaction.previousRelativePath = transaction.nextRelativePath;
   await writeFile(transactionPath, `${JSON.stringify(transaction, null, 2)}\n`, "utf8");

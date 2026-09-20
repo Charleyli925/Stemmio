@@ -18,7 +18,10 @@ old-data recovery entry point, or old-client distribution path.
 - Current save, Version creation, Request freeze and adoption transactions keep
   their complete crash recovery, idempotent retry and source-identity checks.
   Source-element identity materialization for a newly imported external HTML is
-  current behavior, not historical-data recovery.
+  current behavior, not historical-data recovery. An existing Working Copy
+  without the current identity contract is rejected; only an explicit current
+  force-unlock adoption may materialize identities, with its crash recovery
+  journal intact.
 - Candidate impact is stored and read only as bounded counts and samples.
   Records containing the retired full-array impact members are rejected.
 - Preferences use the current schema and validation rules. An unsupported or
