@@ -506,16 +506,29 @@ function assertNoSourceMapArtifacts(relativePaths, label) {
   );
 }
 
+function isSourceMapArtifact(relativePath) {
+  return /\.map$/iu.test(relativePath);
+}
+
 async function assertDirectoryMatches({
   sourceRoot,
   packagedRoot,
-  predicate,
+  predicate = () => true,
   label,
   compareFile = assertFilesEqual,
 }) {
   const [sourceFiles, packagedFiles] = await Promise.all([
-    listFiles(sourceRoot, predicate),
-    listFiles(packagedRoot, predicate),
+    // Source maps remain available in the source dependency tree for ordinary
+    // development, but afterPack removes them from the product boundary.
+    // Packaged Resources are separately required to contain no source maps.
+    listFiles(
+      sourceRoot,
+      (relativePath) => predicate(relativePath) && !isSourceMapArtifact(relativePath),
+    ),
+    listFiles(
+      packagedRoot,
+      (relativePath) => predicate(relativePath) && !isSourceMapArtifact(relativePath),
+    ),
   ]);
   assert.deepEqual(packagedFiles, sourceFiles, `${label} file list does not match source`);
   for (const relativePath of sourceFiles) {

@@ -17,6 +17,7 @@ import {
   REQUIRED_APP_SOURCE_FILES,
   REQUIRED_SHARED_FILES,
 } from "../scripts/verify-packaged-artifact.mjs";
+import { removePackagedSourceMaps } from "../desktop/after-pack.mjs";
 import { evaluatePackagedSourceRuntimeClosure } from "../scripts/packaged-runtime-closure.mjs";
 import { APP_SOURCE_FILES } from "./helpers/release-evidence-fixtures.mjs";
 import { stagePackagedApplicationForLaunch } from "./e2e/electron/helpers/packaged-app-launch.mjs";
@@ -465,6 +466,28 @@ test("package security boundaries retain CSP, entitlements and final plist clean
   assert.match(afterPack, /NSMicrophoneUsageDescription/u);
   assert.match(afterPack, /NSAudioCaptureUsageDescription/u);
   assert.match(afterPack, /Delete/u);
+});
+
+test("after-pack removes nested source maps from staged resources", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "stemmio-source-map-prune-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const nestedMap = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js.map");
+  const rootMap = path.join(temporaryRoot, "renderer.js.map");
+  const runtimeFile = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js");
+  await Promise.all([
+    mkdir(path.dirname(nestedMap), { recursive: true }),
+    writeFile(rootMap, "source map\n", "utf8"),
+  ]);
+  await Promise.all([
+    writeFile(nestedMap, "source map\n", "utf8"),
+    writeFile(runtimeFile, "runtime bytes\n", "utf8"),
+  ]);
+
+  await removePackagedSourceMaps(temporaryRoot);
+
+  await assert.rejects(stat(rootMap), { code: "ENOENT" });
+  await assert.rejects(stat(nestedMap), { code: "ENOENT" });
+  assert.equal(await readFile(runtimeFile, "utf8"), "runtime bytes\n");
 });
 
 test("packaged legal notice and icon remain available as reviewed resources", async () => {

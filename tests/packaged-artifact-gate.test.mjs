@@ -99,6 +99,16 @@ async function verifySyntheticAppBundle(fixture, { allowUnsigned = true } = {}) 
   });
 }
 
+test("runtime source maps are intentionally absent from the packaged dependency closure", async (t) => {
+  const fixture = await createSyntheticAppBundle(t, { profile: "candidate" });
+  await writeFile(
+    path.join(fixture.productRoot, "node_modules", "acorn", "dist", "acorn.js.map"),
+    "{\"version\":3}\n",
+  );
+
+  await verifySyntheticAppBundle(fixture);
+});
+
 test("release commands use one automated artifact lane with full tests and packaged runtime verification", async () => {
   const [
     packageText,
