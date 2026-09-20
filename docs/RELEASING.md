@@ -8,6 +8,12 @@ source `main`:
    tag and publishes the same files to the public
    `Charleyli925/Stemmio-Releases` distribution repository.
 
+For the one-time `0.9.90` migration only, Publication mirrors those exact
+verified bytes to the public `Charleyli925/PageRoot` legacy updater bridge
+before publishing the normal user-facing release. That bridge exists solely so
+signed pre-`0.9.90` applications can discover the release that moves future
+checks to `Stemmio-Releases`; later versions do not target it.
+
 Do not push a release tag manually. A source tag is an output of successful
 candidate verification, not the input that starts packaging. The private source
 repository never hosts formal public release assets.
@@ -253,13 +259,14 @@ or test-script fix creates a new Tree and invalidates the old checkpoint.
 ## Publish the candidate
 
 Before the first public publication, create a fine-grained GitHub token limited
-to `Charleyli925/Stemmio-Releases` with **Contents: write** only, give it a
-short expiry/rotation owner, and save it as the private source repository
-Actions secret `STEMMIO_PUBLIC_RELEASES_TOKEN`. Do not reuse an administrator
-token, the source repository `GITHUB_TOKEN`, or a personal broad-scope token.
-The source `GITHUB_TOKEN` can create the immutable source tag but cannot write
-to a different repository. The public distribution repository must remain
-public and contain no source checkout or Actions artifact.
+to `Charleyli925/Stemmio-Releases` and the one-time
+`Charleyli925/PageRoot` legacy updater bridge, with **Contents: write** only.
+Give it a short expiry/rotation owner and save it as the private source
+repository Actions secret `STEMMIO_PUBLIC_RELEASES_TOKEN`. Do not reuse an
+administrator token, the source repository `GITHUB_TOKEN`, or a personal
+broad-scope token. The source `GITHUB_TOKEN` can create the immutable source
+tag but cannot write to a different repository. Both public destinations must
+remain public and contain no source checkout or Actions artifact.
 
 After reviewing the candidate run:
 
@@ -280,10 +287,12 @@ The workflow:
 6. checks that no public Release or public tag for the version already exists;
 7. creates or verifies an annotated source `v<version>` tag at the exact
    private source commit;
-8. creates the public `v<version>` Release tag from
-   `Stemmio-Releases` `main`, then publishes the candidate DMG, ZIP, ZIP
-   blockmap, `latest-mac.yml`, checksum, build provenance and candidate
-   attestation without rebuilding.
+8. for `0.9.90` only, first creates or byte-verifies the same immutable Release
+   in the legacy updater bridge, so a partial prior bridge publication can be
+   safely resumed without replacing assets or tags; then creates the public
+   `v<version>` Release tag from `Stemmio-Releases` `main` and publishes the
+   candidate DMG, ZIP, ZIP blockmap, `latest-mac.yml`, checksum, build
+   provenance and candidate attestation without rebuilding.
 
 Release notes are the curated CHANGELOG section for that version, never an
 automatically generated commit or Pull Request list: the in-app “查看更新内容”

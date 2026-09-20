@@ -100,6 +100,26 @@ const SURGICAL_CONTENT_EXCEPTIONS = Object.freeze({
     // Capability routing keeps the historical ADR filename as a stable reference.
     /docs\/decisions\/0069-pageroot-native-openai-compatible-agent\.md/gu,
   ],
+  ".github/workflows/release.yml": [
+    // Only the fixed one-time legacy updater bridge retains the former repository name.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/PRIVATE_SOURCE_BOUNDARY.md": [
+    // The former repository name is only the one-time updater bridge for signed older clients.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/PRIVATE_SOURCE_CUTOVER.md": [
+    // The cutover must name the bridge it verifies without reintroducing a source endpoint.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/RELEASING.md": [
+    // Publication guidance names the bridge only for the one transition version.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/RELEASE_PIPELINE_GOVERNANCE.md": [
+    // The release credential is scoped to the fixed temporary bridge as well as the public channel.
+    /Charleyli925\/PageRoot/gu,
+  ],
   "AGENTS.md": [],
   "TRADEMARKS.md": [
     // The former brand is named once to identify historical builds only.
@@ -146,6 +166,7 @@ const RETIRED_PRODUCT_IDENTIFIERS = /(?:PageRoot|pageroot|PAGEROOT|HTML AI|HTML_
 const CURRENT_SOURCE_REPOSITORY_URL = "https://github.com/Charleyli925/Stemmio";
 const PUBLIC_RELEASES_REPOSITORY_URL =
   "https://github.com/Charleyli925/Stemmio-Releases";
+const LEGACY_UPDATE_BRIDGE_REPOSITORY = "Charleyli925/PageRoot";
 
 function removeContractExceptions(contents, relativePath = "") {
   let normalized = String(contents);
@@ -233,9 +254,12 @@ test("private source provenance stays separate from public distribution endpoint
 });
 
 test("private source policy keeps the user-facing release channel public", async () => {
-  const [agentGuide, boundary, license, security, about, releaseWorkflow] = await Promise.all([
+  const [agentGuide, boundary, cutover, releasing, governance, license, security, about, releaseWorkflow] = await Promise.all([
     source("AGENTS.md"),
     source("docs/PRIVATE_SOURCE_BOUNDARY.md"),
+    source("docs/PRIVATE_SOURCE_CUTOVER.md"),
+    source("docs/RELEASING.md"),
+    source("docs/RELEASE_PIPELINE_GOVERNANCE.md"),
     source("LICENSE"),
     source("SECURITY.md"),
     source("app/components/AboutStemmioDialog.tsx"),
@@ -251,7 +275,19 @@ test("private source policy keeps the user-facing release channel public", async
   assert.match(about, /Stemmio Releases on GitHub/u);
   assert.doesNotMatch(about, /查看源代码/u);
   assert.match(releaseWorkflow, /STEMMIO_PUBLIC_RELEASES_TOKEN/u);
-  assert.match(releaseWorkflow, /--repo "\$PUBLIC_RELEASES_REPOSITORY"/u);
+  assert.match(releaseWorkflow, /--repo "\$repository"/u);
+  assert.match(releaseWorkflow, /publish_release "\$PUBLIC_RELEASES_REPOSITORY" false/u);
+  assert.match(releaseWorkflow, /LEGACY_UPDATE_BRIDGE_REPOSITORY:\s*Charleyli925\/PageRoot/u);
+  assert.match(releaseWorkflow, /LEGACY_UPDATE_BRIDGE_VERSION:\s*0\.9\.90/u);
+  assert.match(releaseWorkflow, /--jq '\.full_name'/u);
+  assert.match(
+    releaseWorkflow,
+    /if \[ "\$VERSION" = "\$LEGACY_UPDATE_BRIDGE_VERSION" \]; then[\s\S]+publish_release "\$LEGACY_UPDATE_BRIDGE_REPOSITORY" true/u,
+  );
+  for (const contents of [boundary, cutover, releasing, governance]) {
+    assert.match(contents, /legacy updater bridge/u);
+    assert.match(contents, new RegExp(LEGACY_UPDATE_BRIDGE_REPOSITORY.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+  }
 });
 
 test("retired-identifier exceptions are surgical rather than file-wide", async () => {

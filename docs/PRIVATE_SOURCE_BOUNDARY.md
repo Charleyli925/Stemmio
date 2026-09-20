@@ -22,6 +22,23 @@ repository's Release workflow verifies a frozen
 candidate there through a narrowly scoped distribution credential; it never
 publishes formal release assets from the private source repository itself.
 
+## One-time legacy updater bridge
+
+`Charleyli925/PageRoot` is a public legacy updater bridge, not a source
+repository or a second user-facing product channel. Signed Stemmio versions
+through `0.9.89` embed that GitHub provider endpoint and would otherwise stop
+discovering updates after the canonical source repository becomes private.
+The `0.9.90` publication mirrors the exact verified candidate release there
+once, including the installer, ZIP, blockmap, `latest-mac.yml`, checksums and
+provenance. The newly installed `0.9.90` application then checks only
+`Stemmio-Releases`; later releases never target the bridge.
+
+The bridge may contain only a short public README and that exact `0.9.90`
+release. It has no source checkout, Actions workflows, Issues, source archives
+or user-support role. The release workflow fails closed if the bridge is not
+public, if its pre-existing transition release differs byte-for-byte from the
+frozen candidate, or if a transition tag exists without its immutable Release.
+
 An Electron installer is a user-controlled client artifact, not a secrecy
 boundary: its packaged JavaScript (including `app.asar`) can be inspected.
 Never place API secrets, signing material, license-private keys, server-only
