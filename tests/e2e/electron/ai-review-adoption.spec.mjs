@@ -1125,8 +1125,46 @@ ${REVIEW_MASK_UNION_BEFORE}
     const afterRewriteHole = afterReviewFrame.locator(
       `[data-stemmio-review-mask-hole][data-text-group="${afterRewriteGroup}"]`,
     );
-    await expect(beforeRewriteHole).toHaveCount(1);
-    await expect(afterRewriteHole).toHaveCount(1);
+    try {
+      await expect(beforeRewriteHole).toHaveCount(1);
+      await expect(afterRewriteHole).toHaveCount(1);
+    } catch (failure) {
+      // Preserve the actual region/atom evidence before Electron teardown;
+      // the locator failure alone cannot distinguish a missing mask from a
+      // different representative atom in a valid aggregated region.
+      try {
+        const projection = await Promise.all([beforeReviewFrame, afterReviewFrame].map((frame) => (
+          frame.locator("html").evaluate((root) => {
+            const attributes = (node) => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {
+                ...Object.fromEntries([...node.attributes]
+                  .filter((attribute) => attribute.name.startsWith("data-"))
+                  .map((attribute) => [attribute.name, attribute.value])),
+                bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                display: style.display, visibility: style.visibility, opacity: style.opacity,
+              };
+            };
+            return {
+              root: attributes(root),
+              fonts: document.fonts.status,
+              viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },
+              holes: [...document.querySelectorAll("[data-stemmio-review-mask-hole]")].map(attributes),
+              bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map(attributes),
+              markers: [...document.querySelectorAll("[data-review-readable-rewrite] [data-stemmio-review-text]")]
+                .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+            };
+          })
+        )));
+        await test.info().attach("rewrite-mask-failure.json", {
+          body: Buffer.from(JSON.stringify(projection, null, 2)), contentType: "application/json",
+        });
+      } catch (diagnosticFailure) {
+        console.warn("Review mask diagnostics unavailable:", String(diagnosticFailure));
+      }
+      throw failure;
+    }
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect(frame.locator('[data-stemmio-review-overlay-box][data-tone^="text-"]'))
         .toHaveCount(0);
