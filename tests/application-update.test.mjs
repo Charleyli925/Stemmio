@@ -13,9 +13,20 @@ class FakeUpdater extends EventEmitter {
     super();
     this.checkCount = 0;
     this.downloadCount = 0;
+    this.downloadTargets = [];
+    this.availableVersion = null;
     this.installCount = 0;
     this.checkResult = Promise.resolve();
     this.downloadResult = Promise.resolve();
+  }
+
+  emit(eventName, ...args) {
+    if (eventName === "update-available") {
+      this.availableVersion = args[0]?.version || null;
+    } else if (eventName === "update-not-available") {
+      this.availableVersion = null;
+    }
+    return super.emit(eventName, ...args);
   }
 
   checkForUpdates() {
@@ -25,12 +36,27 @@ class FakeUpdater extends EventEmitter {
 
   downloadUpdate() {
     this.downloadCount += 1;
+    this.downloadTargets.push(this.availableVersion || null);
     return this.downloadResult;
   }
 
   quitAndInstall() {
     this.installCount += 1;
   }
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function flushMicrotasks() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function controller(options = {}) {
@@ -123,6 +149,7 @@ test("an available update downloads only after one coalesced user intent", async
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(updater.downloadCount, 1);
+  assert.deepEqual(updater.downloadTargets, ["0.10.0"]);
   assert.equal(value.getStatus().status, "downloading");
   updater.emit("update-downloaded", { version: "0.10.0" });
   finishDownload();
@@ -180,6 +207,288 @@ test("concurrent checks share one provider request and errors stay unavailable",
   assert.equal(warnings.length, 1);
 });
 
+test("manual and scheduled checks share one provider request", async () => {
+  const updater = new FakeUpdater();
+  const checkResult = deferred();
+  updater.checkResult = checkResult.promise;
+  const timers = [];
+  const cancelled = [];
+  const { value } = controller({
+    updater,
+    scheduleTimer: (callback, delay) => {
+      const timer = {
+        callback,
+        delay,
+        unref() {},
+      };
+      timers.push(timer);
+      return timer;
+    },
+    cancelTimer: (timer) => cancelled.push(timer),
+  });
+
+  value.startAutomaticChecks();
+  const manual = value.checkForUpdates();
+  await flushMicrotasks();
+  assert.equal(timers.length, 1);
+  assert.equal(updater.checkCount, 1);
+
+  const scheduled = timers[0].callback();
+  await flushMicrotasks();
+  assert.equal(updater.checkCount, 1);
+  updater.emit("update-available", { version: "0.10.0" });
+  checkResult.resolve();
+
+  assert.equal((await manual).status, "available");
+  await scheduled;
+  assert.equal(value.getStatus().status, "available");
+  assert.equal(updater.checkCount, 1);
+  value.stopAutomaticChecks();
+  assert.deepEqual(cancelled, [timers[1]]);
+});
+
+test("an available candidate can be refreshed from B to C without downloading", async () => {
+  const updater = new FakeUpdater();
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const { value } = controller({ updater });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  assert.equal(updater.checkCount, 1);
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  assert.equal((await first).latestVersion, "0.10.0");
+
+  const secondCheck = deferred();
+  updater.checkResult = secondCheck.promise;
+  const second = value.checkForUpdates();
+  await flushMicrotasks();
+  assert.equal(updater.checkCount, 2);
+  assert.equal(value.getStatus().status, "checking");
+  assert.equal(value.getStatus().latestVersion, "0.10.0");
+  updater.emit("update-available", { version: "0.11.0" });
+  secondCheck.resolve();
+
+  assert.deepEqual(await second, value.getStatus());
+  assert.equal(value.getStatus().status, "available");
+  assert.equal(value.getStatus().latestVersion, "0.11.0");
+  assert.equal(updater.downloadCount, 0);
+});
+
+test("rechecking the same candidate does not trigger duplicate downloads or reminders", async () => {
+  const updater = new FakeUpdater();
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const statuses = [];
+  const { value } = controller({ updater, onStatus: (status) => statuses.push(status) });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  await first;
+
+  const repeatedCheck = deferred();
+  updater.checkResult = repeatedCheck.promise;
+  const repeated = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  repeatedCheck.resolve();
+  await repeated;
+
+  assert.deepEqual(
+    statuses.map((status) => status.status),
+    ["checking", "available", "checking", "available"],
+  );
+  assert.equal(updater.downloadCount, 0);
+  assert.deepEqual(updater.downloadTargets, []);
+
+  const downloadResult = deferred();
+  updater.downloadResult = downloadResult.promise;
+  const download = value.downloadAvailableUpdate();
+  await flushMicrotasks();
+  assert.equal(updater.downloadCount, 1);
+  assert.deepEqual(updater.downloadTargets, ["0.10.0"]);
+  updater.emit("update-downloaded", { version: "0.10.0" });
+  downloadResult.resolve();
+  await download;
+  assert.equal(updater.downloadCount, 1);
+});
+
+test("a download click during a check waits for that round's confirmed candidate", async () => {
+  const updater = new FakeUpdater();
+  const downloadResult = deferred();
+  updater.downloadResult = downloadResult.promise;
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const { value } = controller({ updater });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  await first;
+
+  const secondCheck = deferred();
+  updater.checkResult = secondCheck.promise;
+  const second = value.checkForUpdates();
+  await flushMicrotasks();
+  const download = value.downloadAvailableUpdate();
+  await flushMicrotasks();
+  assert.equal(updater.downloadCount, 0);
+
+  updater.emit("update-available", { version: "0.11.0" });
+  secondCheck.resolve();
+  await second;
+  await flushMicrotasks();
+  assert.equal(updater.downloadCount, 1);
+  assert.deepEqual(updater.downloadTargets, ["0.11.0"]);
+  assert.equal(value.getStatus().status, "downloading");
+  assert.equal(value.getStatus().latestVersion, "0.11.0");
+
+  updater.emit("update-downloaded", { version: "0.11.0" });
+  downloadResult.resolve();
+  assert.equal((await download).status, "downloaded");
+  assert.equal(value.getStatus().latestVersion, "0.11.0");
+});
+
+test("an explicit no-update result retires the old downloadable candidate", async () => {
+  const updater = new FakeUpdater();
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const { value } = controller({ updater });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  await first;
+
+  const secondCheck = deferred();
+  updater.checkResult = secondCheck.promise;
+  const second = value.checkForUpdates();
+  await flushMicrotasks();
+  const download = value.downloadAvailableUpdate();
+  updater.emit("update-not-available", { version: "0.9.0" });
+  secondCheck.resolve();
+
+  assert.equal((await second).status, "current");
+  assert.equal(value.getStatus().latestVersion, null);
+  assert.equal((await download).status, "current");
+  assert.equal(updater.downloadCount, 0);
+});
+
+test("a no-update response with current version metadata does not become a candidate", async () => {
+  const updater = new FakeUpdater();
+  const { value } = controller({ updater });
+
+  updater.checkResult = Promise.resolve({
+    isUpdateAvailable: false,
+    updateInfo: { version: "0.9.0" },
+  });
+  const result = await value.checkForUpdates();
+
+  assert.equal(result.status, "current");
+  assert.equal(result.latestVersion, null);
+  assert.equal((await value.downloadAvailableUpdate()).status, "current");
+  assert.equal(updater.downloadCount, 0);
+});
+
+test("a failed refresh is unavailable rather than claiming the old candidate is current", async () => {
+  const updater = new FakeUpdater();
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const { value } = controller({ updater });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  await first;
+
+  const failedCheck = deferred();
+  updater.checkResult = failedCheck.promise;
+  const second = value.checkForUpdates();
+  await flushMicrotasks();
+  failedCheck.reject(new Error("network down"));
+
+  const result = await second;
+  assert.equal(result.status, "unavailable");
+  assert.notEqual(result.status, "current");
+  assert.equal(updater.downloadCount, 0);
+});
+
+test("a failed check retires an event candidate before a waiting download can start", async () => {
+  const updater = new FakeUpdater();
+  const firstCheck = deferred();
+  updater.checkResult = firstCheck.promise;
+  const { value } = controller({ updater });
+
+  const first = value.checkForUpdates();
+  await flushMicrotasks();
+  updater.emit("update-available", { version: "0.10.0" });
+  firstCheck.resolve();
+  await first;
+
+  const failedCheck = deferred();
+  updater.checkResult = failedCheck.promise;
+  const second = value.checkForUpdates();
+  await flushMicrotasks();
+  const download = value.downloadAvailableUpdate();
+  updater.emit("update-available", { version: "0.11.0" });
+  failedCheck.reject(new Error("provider disconnected after response"));
+
+  assert.equal((await second).status, "unavailable");
+  assert.equal((await download).status, "unavailable");
+  assert.equal(updater.downloadCount, 0);
+  assert.deepEqual(updater.downloadTargets, []);
+});
+
+test("checks during download or after download do not replace the fixed artifact", async () => {
+  const updater = new FakeUpdater();
+  const downloadResult = deferred();
+  updater.downloadResult = downloadResult.promise;
+  const { value } = controller({ updater });
+
+  updater.emit("update-available", { version: "0.10.0" });
+  const download = value.downloadAvailableUpdate();
+  assert.equal(value.getStatus().status, "downloading");
+  assert.equal((await value.checkForUpdates()).status, "downloading");
+  assert.equal(updater.checkCount, 0);
+  await flushMicrotasks();
+  assert.deepEqual(updater.downloadTargets, ["0.10.0"]);
+
+  updater.emit("update-downloaded", { version: "0.10.0" });
+  downloadResult.resolve();
+  await download;
+  assert.equal(value.getStatus().status, "downloaded");
+  assert.equal((await value.checkForUpdates()).status, "downloaded");
+  updater.emit("update-available", { version: "0.11.0" });
+  assert.equal(value.getStatus().latestVersion, "0.10.0");
+  assert.equal(value.getStatus().status, "downloaded");
+});
+
+test("late updater events and results cannot change a disposed controller", async () => {
+  const updater = new FakeUpdater();
+  const checkResult = deferred();
+  updater.checkResult = checkResult.promise;
+  const statuses = [];
+  const { value } = controller({ updater, onStatus: (status) => statuses.push(status) });
+
+  const check = value.checkForUpdates();
+  await flushMicrotasks();
+  const beforeDispose = value.getStatus();
+  value.dispose();
+  updater.emit("update-available", { version: "0.10.0" });
+  updater.emit("update-not-available", { version: "0.9.0" });
+  checkResult.resolve();
+
+  assert.deepEqual(await check, beforeDispose);
+  assert.deepEqual(value.getStatus(), beforeDispose);
+  assert.deepEqual(statuses.at(-1), beforeDispose);
+});
+
 test("controller releases every updater listener", () => {
   const { updater, value } = controller();
 
@@ -219,8 +528,14 @@ test("automatic checks run after startup and then every four hours", async () =>
   assert.equal(timers[1].delay, APPLICATION_UPDATE_INTERVAL_MS);
   assert.equal(timers[1].unrefCalled, true);
 
+  updater.emit("update-available", { version: "0.10.0" });
+  await timers[1].callback();
+  assert.equal(updater.checkCount, 2);
+  assert.equal(timers.length, 3);
+  assert.equal(timers[2].delay, APPLICATION_UPDATE_INTERVAL_MS);
+
   value.stopAutomaticChecks();
-  assert.deepEqual(cancelled, [timers[1]]);
+  assert.deepEqual(cancelled, [timers[2]]);
 });
 
 test("restarting or disposing automatic checks cancels the previous schedule", () => {

@@ -50,6 +50,7 @@ corruption or lost user work.
 | `PROJECT.md` unsaved close/switch | Rules must land before fold/switch | authority | blocks close/switch | no | autosave/drain | keep |
 | Browser preview read-only | Pure browser has no edit/comment/AI write | authority | permanent read-only | runtime capabilities | no | keep |
 | Cancel AI run dialog | Do not silently drop an Agent that may still be writing | authority | modal | no | no | keep |
+| Available update check suppression | Refresh metadata without replacing an in-flight or downloaded artifact | reversible | stale version remained until download | shared check/download promises | allow available-state rechecks; download waits for the confirmed candidate | remove available-state block; retain downloading/downloaded/installing locks |
 | Restart-update dialog | Installing an update exits the process | authority | non-blocking badge + close drain | close drain | no | degrade |
 | Canvas ACK vs “safely saved” | Visible canvas Hash must match authoritative HTML before direct edit | reversible | header pending; projection non-editable or static degrade; never roll back published source | Workbench effect + DocumentWorkflow | one reread + rebuild | merge to DocumentSession; Toast deleted |
 | Deferred external/application retry | Switch only after drain/Canvas is safe | reversible | session auto-resume with one-shot bound | Session auto-resume | blocker-transition resume | cancel user block; Toast deleted |
