@@ -41,7 +41,7 @@ test("workbench tab persistence accepts many identity-only tabs", () => {
   assert.deepEqual(normalizeWorkbenchTabsState(state), state);
 });
 
-test("workbench tab persistence migrates legacy document tabs and accepts project surfaces", () => {
+test("workbench tab persistence rejects legacy document tabs and accepts project surfaces", () => {
   const legacy = {
     version: 1,
     activeTabId: "document:project_alpha:doc_alpha",
@@ -51,7 +51,7 @@ test("workbench tab persistence migrates legacy document tabs and accepts projec
       documentId: "doc_alpha",
     }],
   };
-  assert.deepEqual(normalizeWorkbenchTabsState(legacy), valid);
+  assert.equal(normalizeWorkbenchTabsState(legacy), null);
   const surfaces = {
     version: 2,
     activeTabId: "history:project_alpha:doc_alpha",
@@ -75,6 +75,18 @@ test("workbench tab state is atomically written and malformed state fails visibl
   await writeWorkbenchTabsState({ userDataPath, state: valid });
   assert.deepEqual(await readWorkbenchTabsState({ userDataPath }), valid);
   const filePath = path.join(userDataPath, "workbench-tabs.json");
+  const retired = JSON.stringify({
+    version: 1,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [{
+      tabId: "document:project_alpha:doc_alpha",
+      projectId: "project_alpha",
+      documentId: "doc_alpha",
+    }],
+  });
+  await writeFile(filePath, retired, "utf8");
+  await assert.rejects(readWorkbenchTabsState({ userDataPath }), /无效/u);
+  assert.equal(await readFile(filePath, "utf8"), retired);
   await writeFile(filePath, "{not json", "utf8");
   await assert.rejects(readWorkbenchTabsState({ userDataPath }), SyntaxError);
   assert.equal((await readFile(filePath, "utf8")), "{not json");
