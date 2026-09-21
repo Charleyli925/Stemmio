@@ -1118,16 +1118,35 @@ ${REVIEW_MASK_UNION_BEFORE}
     );
     expect(beforeRewriteGroup).toBeTruthy();
     expect(afterRewriteGroup).toBeTruthy();
+    // Source text atoms can have several marker occurrences. The mask belongs
+    // to the analyzer's focus region; its representative visible atom may
+    // change with layout and is not the region's identity.
+    const rewriteRegions = [];
+    for (const [frame, marker] of [
+      [beforeReviewFrame, beforeRewriteMarker],
+      [afterReviewFrame, afterRewriteMarker],
+    ]) {
+      const groupId = await resolvedMarkerRegion(marker);
+      expect(groupId).toBeTruthy();
+      const bar = frame.locator(
+        `[data-stemmio-review-region-bar][data-stemmio-review-focus-group="${groupId}"]`,
+      );
+      await expect(bar).toHaveCount(1);
+      const regionId = await bar.getAttribute("data-stemmio-review-focus-region");
+      expect(regionId).toBeTruthy();
+      rewriteRegions.push({ frame, groupId, regionId });
+    }
     await activateReviewMarkerGroup(beforeReviewFrame, beforeRewriteMarker);
-    const beforeRewriteHole = beforeReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${beforeRewriteGroup}"]`,
-    );
-    const afterRewriteHole = afterReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${afterRewriteGroup}"]`,
-    );
     try {
-      await expect(beforeRewriteHole).toHaveCount(1);
-      await expect(afterRewriteHole).toHaveCount(1);
+      for (const { frame, groupId, regionId } of rewriteRegions) {
+        await expect(frame.locator("html"))
+          .toHaveAttribute("data-stemmio-review-focus-group", groupId);
+        await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(1);
+        await expect(frame.locator(
+          `[data-stemmio-review-mask-hole][data-stemmio-review-focus-group="${groupId}"]`
+            + `[data-stemmio-review-focus-region="${regionId}"]`,
+        )).toHaveCount(1);
+      }
     } catch (failure) {
       // Preserve the actual region/atom evidence before Electron teardown;
       // the locator failure alone cannot distinguish a missing mask from a
