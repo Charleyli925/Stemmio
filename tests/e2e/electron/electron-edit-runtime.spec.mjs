@@ -3296,7 +3296,7 @@ test("Runtime text history ignores unrelated disposable clone drift", {
       const evidence = await page.evaluate(() => ({
         events: window.__STEMMIO_TEXT_HISTORY_RUNTIME_EVENTS__ || [],
         steps: window.__STEMMIO_TEXT_HISTORY_RUNTIME_STEPS__ || [],
-      }));
+      })).catch((error) => ({ diagnosticsUnavailable: String(error) }));
       await test.info().attach("runtime-history-execution-evidence.json", {
         body: Buffer.from(JSON.stringify(evidence, null, 2)), contentType: "application/json",
       });
