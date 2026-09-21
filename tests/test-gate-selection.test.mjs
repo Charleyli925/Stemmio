@@ -952,7 +952,7 @@ test("Qoder ACP transport changes select Qoder and ACP owners without the packag
   const plan = selectGatePlan({
     map,
     lane: "task",
-    changedFiles: ["bridge/qoder-acp-client.mjs"],
+    changedFiles: ["bridge/agent/runtimes/acp-process.mjs"],
   });
   assert.deepEqual(suiteIds(plan), [
     "typecheck",
@@ -962,7 +962,7 @@ test("Qoder ACP transport changes select Qoder and ACP owners without the packag
     "ai-provider-smoke",
   ]);
   assert.deepEqual(plan.selectedNodeTests, [
-    "tests/agent-provider-contract.test.mjs",
+    "tests/acp-runtime.test.mjs",
     "tests/qoder-acp-spike-client.test.mjs",
   ]);
   assert.equal(plan.selectedNodeTests.includes("tests/desktop-package.test.mjs"), false);

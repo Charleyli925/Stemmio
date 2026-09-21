@@ -49,28 +49,26 @@ see `driver: qoder-acp` and the established safe fields only.
 
 The Qoder provider retains the exact ADR 0032 installation and trust rules. The
 ACP runtime owns the protocol state machine, detached process-group supervisor
-and immutable standard event adapter. `qoder-acp-client.mjs` remains a
-compatibility façade for legacy names, error copy and spike tests. Restricted
-execution hosts and filesystem policy live in `bridge/agent/policies/` and
-`bridge/agent/hosts/`.
+and immutable standard event adapter. Qoder calls the provider-neutral runtime
+and restricted execution host directly. Restricted execution hosts and
+filesystem policy live in `bridge/agent/policies/` and `bridge/agent/hosts/`.
 PR3 converges Run/Discussion coordination in `AgentRuntimeCoordinator`; the old
 Service classes remain stateless compatibility façades.
 
 The immediately following PR2 completed that planned extraction without
 changing this decision: `bridge/agent/policies/` owns the one branded
 execution policy family, and `bridge/agent/hosts/` owns the
-permission-separated Host Ports. `qoder-acp-client.mjs` retains the legacy
-exports as compatibility adapters and owns the legacy error name/code/copy
-mapping as well as transport/provider behavior.
+permission-separated Host Ports. No provider-specific error or host adapter is
+maintained around that shared contract.
 The shared Host/Policy sources contain no provider or transport identifier.
 They constrain requests mediated by the ACP Client Host; they do not constrain
 native filesystem or command operations inside an Agent process.
 
 ## Compatibility and security
 
-`qoder-acp` is a versioned compatibility adapter for the existing renderer,
-Request records and Bridge routes. New provider/runtime identifiers are
-Bridge-internal metadata, not a new renderer choice or persisted authority.
+`qoder-acp` remains the current Qoder execution descriptor for the existing
+renderer, Request records and Bridge routes. New provider/runtime identifiers
+are Bridge-internal metadata, not a new renderer choice or persisted authority.
 The registry cannot grant filesystem or task authority: provider policy still
 derives from the runtime-sealed Request, the ACP host remains allowlisted, and
 only the official finalizer plus Repository validation may publish a pending
@@ -104,9 +102,9 @@ is intentionally kept at its behavioral owners:
 - `qoder-acp-spike-client`: the existing restricted host, completion and
   process-cleanup boundary.
 
-The PR2 contract supplements that golden baseline with legacy behavior mapping
-and shared-brand assertions, a source-literal ownership gate, removed-purpose
-denial, execution single-output/fixed-finalizer/completion proof, and
+The shared runtime contract supplements that golden baseline with neutral policy
+and host assertions, a source-literal ownership gate, removed-purpose denial,
+execution single-output/fixed-finalizer/completion proof, and
 cancel-before-late-mutation coverage.
 
 These tests use synthetic fixtures only. A real installed Qoder account remains
