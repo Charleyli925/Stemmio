@@ -151,8 +151,6 @@ const LEGACY_CONTENT_PATHS = new Set([
   "docs/VERSION_TREE_HOVER_PRD.md",
   "docs/WORKBENCH_ORCHESTRATION_REFACTOR_PLAN.md",
   "examples/change-request.insert-section.example.json",
-  "schemas/conversation.v1.schema.json",
-  "schemas/conversation.v2.schema.json",
   "schemas/scope-report.v1.schema.json",
   "tests/stemmio-rename-contract.test.mjs",
 ]);

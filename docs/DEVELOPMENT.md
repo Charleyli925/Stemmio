@@ -57,7 +57,8 @@ removed delivery aliases. The registry registers both Qoder and Codex through th
 provider/runtime IDs fail closed. The restricted Host Ports now live in
 `bridge/agent/hosts/`, while frozen execution policy lives in
 `bridge/agent/policies/`.
-`bridge/qoder-acp-client.mjs` owns the current Qoder ACP transport adapter
+The shared ACP runtime modules under `bridge/agent/runtimes/` own the current
+Qoder ACP transport path
 without a second policy brand. The renderer can request
 `POST /agent/preflight` and `POST /agent/start` with
 registered task identity, the explicit canonical
