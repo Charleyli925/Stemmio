@@ -147,6 +147,9 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await expect(launched.page.getByTestId("ai-conversation-message").filter({ hasText: "正在读取冻结任务。正在写入 Candidate。正在等待校验。" })).toHaveCount(1);
     await expect(process.locator("li").first()).toBeVisible();
     const processTime = process.locator("time").first();
+    await expect(process.locator("summary")).toBeFocused();
+    await expect(processTime).toHaveCSS("opacity", "1");
+    await launched.page.getByRole("textbox", { name: "修改要求草稿" }).focus();
     await launched.page.mouse.move(0, 0);
     await expect(processTime).toHaveCSS("opacity", "0");
     await processTime.hover();
