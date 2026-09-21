@@ -241,7 +241,7 @@ test("DocumentWorkflow detaches a failed source only after Main journal readback
     async commit(input) {
       committed.push(structuredClone(input));
       return {
-        schemaVersion: "1.0.0",
+        schemaVersion: "2.0.0",
         ...input,
         recoveryHtmlSha256: sha256(input.html),
         journalSha256: sha256(JSON.stringify(input)),
@@ -2360,7 +2360,7 @@ test("DocumentWorkflow restores only verified Main journal HTML", async () => {
   const recoveryJournal = {
     async readVerified() {
       return {
-        schemaVersion: "1.0.0",
+        schemaVersion: "2.0.0",
         projectId: PROJECT_ID,
         documentId: DOCUMENT_ID,
         sourcePath: SOURCE_PATH,
@@ -3766,7 +3766,7 @@ test("first registration may leave through fresh recovery evidence when source s
     ensureRegistered: async () => succeededRegistration(),
     bridge: { async autosave() { throw new BridgeRequestError("SOURCE_WRITE_FAILED", "disk denied"); } },
     recoveryJournal: {
-      async commit(input) { return { schemaVersion: "1.0.0", ...input,
+      async commit(input) { return { schemaVersion: "2.0.0", ...input,
         recoveryHtmlSha256: sha256(input.html), journalSha256: sha256(JSON.stringify(input)),
         updatedAt: "2026-09-12T00:00:00.000Z", byteLength: Buffer.byteLength(input.html) }; },
       async readVerified() { return null; },
