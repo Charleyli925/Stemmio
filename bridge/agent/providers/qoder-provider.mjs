@@ -14,11 +14,9 @@ import { promisify } from "node:util";
 import semver from "semver";
 
 import { sha256 } from "../../lifecycle-core.mjs";
-import {
-  loadQoderAcpTaskPolicy,
-  qoderAcpEnvironment,
-  runVerifiedQoderJavaScript,
-} from "../../qoder-acp-client.mjs";
+import { loadExecutionPolicy } from "../policies/execution-policy.mjs";
+import { acpProcessEnvironment } from "../runtimes/acp-protocol.mjs";
+import { runVerifiedJavaScript } from "../runtimes/acp-verified-javascript.mjs";
 import {
   AgentProviderError,
   agentProviderError,
@@ -133,6 +131,7 @@ export function qoderFailure(code) {
       return "Qoder CLI 的 ACP 协议未通过连接检查。当前 HTML 与 Request 均未改变。";
     case "ACP_PROCESS_CLEANUP_UNCONFIRMED":
       return "Qoder 连接检查进程未确认停止。Stemmio 已停止继续操作。";
+    case "AGENT_RUNTIME_AUTHORITY_DRIFT":
     case "ACP_RUNTIME_AUTHORITY_DRIFT":
       return "本轮 Request 权限已经变化，Qoder 的后续写入已被拒绝。";
     case "AGENT_RETRY_OUTPUT_PRESENT":
@@ -510,7 +509,7 @@ function installationDigest(command) {
 
 async function executePreflightCommand(command, args, environment, timeout) {
   if (command.source === "verified-npm-package") {
-    return runVerifiedQoderJavaScript({
+    return runVerifiedJavaScript({
       command: command.command,
       expectedExecutable: { path: command.command, identity: command.identity },
       args,
@@ -520,7 +519,7 @@ async function executePreflightCommand(command, args, environment, timeout) {
     });
   }
   return execFileAsync(command.command, args, {
-    env: qoderAcpEnvironment({}, environment),
+    env: acpProcessEnvironment({}, environment),
     encoding: "utf8",
     timeout,
     maxBuffer: 128 * 1024,
@@ -669,7 +668,7 @@ export async function startQoderLogin(command, {
       args: ["login"],
       // Keep one browser owner: Qoder prints the URL and Stemmio opens the
       // validated destination through Main.
-      env: { ...qoderAcpEnvironment({}, environment), NO_BROWSER: "1" },
+      env: { ...acpProcessEnvironment({}, environment), NO_BROWSER: "1" },
       providerId: QODER_PROVIDER_ID,
       signal,
       timeoutMs,
@@ -702,7 +701,7 @@ export async function startQoderLogout(command, {
   await logoutRunner({
     executable: command.command,
     args: ["logout"],
-    env: qoderAcpEnvironment({}, environment),
+    env: acpProcessEnvironment({}, environment),
     providerId: QODER_PROVIDER_ID,
     signal,
     timeoutMs,
@@ -715,7 +714,7 @@ export function createQoderProvider({
   diagnoseRunner = diagnoseQoder,
   preflightRunner = preflightQoder,
   loginRunner = startQoderLogin,
-  policyLoader = loadQoderAcpTaskPolicy,
+  policyLoader = loadExecutionPolicy,
   managedCandidates,
 } = {}) {
   if (
