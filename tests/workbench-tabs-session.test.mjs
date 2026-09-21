@@ -57,112 +57,6 @@ test("same-batch authoritative project events retain every identity and focus th
   assert.equal(session.snapshot.mountedDocumentTabId, documents[1].tabId);
 });
 
-test("missing project-surface titles use the HTML display fallback without changing identity", () => {
-  for (const title of [undefined, "", "   "]) {
-    const session = new WorkbenchTabsSession();
-    session.bindDocument({ ...a, title: "Alpha", focus: true });
-    const rules = session.createProjectRules({
-      projectId: a.projectId,
-      documentId: a.documentId,
-      title,
-      focus: false,
-    });
-    const history = session.createHistory({
-      projectId: a.projectId,
-      documentId: a.documentId,
-      title,
-      versionId: "ver_0001",
-      versionOrdinal: 1,
-      focus: false,
-    });
-
-    assert.equal(rules.title, "HTML");
-    assert.equal(history.title, "HTML");
-    assert.equal(rules.tabId, `project-rules:${a.projectId}:${a.documentId}`);
-    assert.equal(history.tabId, `history:${a.projectId}:${a.documentId}`);
-    assert.equal(session.snapshot.activeTabId, `document:${a.projectId}:${a.documentId}`);
-  }
-});
-
-test("project-surface title fallback preserves malformed and overlong display rejection", () => {
-  const malformedTitles = [123, false, {}, []];
-  for (const title of malformedTitles) {
-    const session = new WorkbenchTabsSession();
-    assert.throws(
-      () => session.createProjectRules({ ...a, title }),
-      /valid project rules tab identity is required/u,
-    );
-  }
-
-  const session = new WorkbenchTabsSession();
-  assert.throws(
-    () => session.createHistory({
-      ...a,
-      title: "x".repeat(181),
-      versionId: "ver_0001",
-      versionOrdinal: 1,
-    }),
-    /valid project history tab identity is required/u,
-  );
-});
-
-test("late project title updates existing surfaces without adding or focusing a tab", () => {
-  const session = new WorkbenchTabsSession();
-  session.bindDocument({ ...a, title: "HTML" });
-  session.createProjectRules({ ...a, title: "   ", focus: false });
-  session.createHistory({
-    ...a,
-    title: "",
-    versionId: "ver_0001",
-    versionOrdinal: 1,
-    focus: false,
-  });
-  const activeTabId = session.snapshot.activeTabId;
-  const tabCount = session.snapshot.tabs.length;
-
-  session.updateTitle(a.projectId, a.documentId, "Alpha from Registry");
-
-  assert.equal(session.snapshot.tabs.length, tabCount);
-  assert.equal(session.snapshot.activeTabId, activeTabId);
-  assert.deepEqual(
-    session.snapshot.tabs
-      .filter((tab) => tab.projectId === a.projectId && tab.documentId === a.documentId)
-      .map((tab) => tab.title),
-    ["Alpha from Registry", "Alpha from Registry", "Alpha from Registry"],
-  );
-});
-
-test("late registry titles refresh live rules and history labels without changing focus", () => {
-  const session = new WorkbenchTabsSession();
-  session.bindDocument({ ...a, title: "Alpha", focus: true });
-  session.createProjectRules({ ...a, title: "   ", focus: false });
-  session.createHistory({
-    ...a,
-    title: "",
-    versionId: "ver_0001",
-    versionOrdinal: 1,
-    focus: false,
-  });
-  const activeTabId = session.snapshot.activeTabId;
-  const tabCount = session.snapshot.tabs.length;
-
-  const reconciled = session.reconcileRegisteredProjects([{
-    ...a,
-    projectName: "Alpha from Registry",
-    availability: "ready",
-  }]);
-
-  assert.deepEqual(reconciled.missing, []);
-  assert.equal(reconciled.snapshot.tabs.length, tabCount);
-  assert.equal(reconciled.snapshot.activeTabId, activeTabId);
-  assert.deepEqual(
-    reconciled.snapshot.tabs
-      .filter((tab) => tab.kind === "project-rules" || tab.kind === "history")
-      .map((tab) => tab.title),
-    ["Alpha from Registry", "Alpha from Registry"],
-  );
-});
-
 test("AI background status and Candidate adoption remain on the same project document tab", () => {
   const session = new WorkbenchTabsSession();
   session.bindDocument(a);
@@ -347,10 +241,11 @@ test("serialized state contains identity and presentation only", () => {
 test("persisted null active identity restores Start without selecting a legacy document", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -362,6 +257,262 @@ test("persisted null active identity restores Start without selecting a legacy d
   assert.equal(session.serialize().activeTabId, null);
 });
 
+test("tab hydration rejects missing or unknown kinds instead of assuming a document", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [
+      {
+        tabId: "document:project_alpha:doc_alpha",
+        projectId: "project_alpha",
+        documentId: "doc_alpha",
+      },
+      {
+        tabId: "unknown:project_beta:doc_beta",
+        kind: "unknown",
+        projectId: "project_beta",
+        documentId: "doc_beta",
+      },
+    ],
+  });
+  assert.deepEqual(session.snapshot.tabs.map((tab) => tab.kind), ["start"]);
+  assert.equal(session.snapshot.pendingTabId, null);
+});
+
+test("restored document titles are projected from the registry and never persisted", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [
+      {
+        tabId: "document:project_alpha:doc_alpha",
+        kind: "document",
+        projectId: "project_alpha",
+        documentId: "doc_alpha",
+      },
+      {
+        tabId: "document:project_beta:doc_beta",
+        kind: "document",
+        projectId: "project_beta",
+        documentId: "doc_beta",
+      },
+    ],
+  });
+  const reconciled = session.reconcileRegisteredProjects([
+    { ...a, projectName: "Alpha from registry", availability: "ready" },
+    { ...b, projectName: "Beta from registry", availability: "ready" },
+  ]);
+  assert.deepEqual(
+    reconciled.snapshot.tabs.filter((tab) => tab.kind === "document").map((tab) => tab.title),
+    ["Alpha from registry", "Beta from registry"],
+  );
+  assert.deepEqual(reconciled.missing, []);
+  assert.doesNotMatch(JSON.stringify(session.serialize()), /Alpha from registry|Beta from registry/u);
+});
+
+test("missing restored documents are removed and leave a usable Start tab", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [{
+      tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
+      projectId: "project_alpha",
+      documentId: "doc_alpha",
+    }],
+  });
+  const reconciled = session.reconcileRegisteredProjects([]);
+  assert.equal(reconciled.missing.length, 1);
+  assert.equal(reconciled.snapshot.tabs.length, 1);
+  assert.equal(reconciled.snapshot.tabs[0].kind, "start");
+  assert.equal(reconciled.snapshot.activeTabId, reconciled.snapshot.tabs[0].tabId);
+  assert.equal(reconciled.snapshot.pendingTabId, null);
+  assert.equal(reconciled.snapshot.mountedDocumentTabId, null);
+});
+
+test("restore reconciliation is deterministic when catalog readiness arrives first", () => {
+  const session = new WorkbenchTabsSession();
+  const registeredProjects = [
+    { ...a, projectName: "Catalog first", availability: "ready" },
+  ];
+  assert.equal(reconcileWorkbenchTabsWhenReady({
+    session,
+    tabsPersistenceReady: false,
+    registeredProjectsReady: true,
+    registeredProjects,
+  }), null);
+  session.hydrate({
+    version: 2,
+    activeTabId: null,
+    tabs: [{
+      tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
+      projectId: "project_alpha",
+      documentId: "doc_alpha",
+    }],
+  });
+  const reconciled = reconcileWorkbenchTabsWhenReady({
+    session,
+    tabsPersistenceReady: true,
+    registeredProjectsReady: true,
+    registeredProjects,
+  });
+  assert.equal(reconciled.snapshot.tabs.find((tab) => tab.kind === "document")?.title, "Catalog first");
+});
+
+test("restore reconciliation is deterministic when tabs hydration arrives first", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: null,
+    tabs: [{
+      tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
+      projectId: "project_alpha",
+      documentId: "doc_alpha",
+    }],
+  });
+  assert.equal(reconcileWorkbenchTabsWhenReady({
+    session,
+    tabsPersistenceReady: true,
+    registeredProjectsReady: false,
+    registeredProjects: [],
+  }), null);
+  const reconciled = reconcileWorkbenchTabsWhenReady({
+    session,
+    tabsPersistenceReady: true,
+    registeredProjectsReady: true,
+    registeredProjects: [],
+  });
+  assert.equal(reconciled.missing.length, 1);
+  assert.equal(reconciled.snapshot.tabs.every((tab) => tab.kind === "start"), true);
+});
+
+test("tab order remains identity-deduplicated across many open documents", () => {
+  const session = new WorkbenchTabsSession();
+  for (let index = 0; index < 40; index += 1) {
+    assert.ok(session.bindDocument({
+      projectId: `project_unlimited_${index}`,
+      documentId: `doc_unlimited_${index}`,
+      title: `Unlimited ${index}`,
+      focus: index === 0,
+    }));
+  }
+  assert.equal(session.snapshot.tabs.length, 40);
+  session.bindDocument({
+    projectId: "project_unlimited_39",
+    documentId: "doc_unlimited_39",
+    title: "Unlimited renamed",
+  });
+  assert.equal(session.snapshot.tabs.length, 40);
+  assert.equal(session.snapshot.tabs.find((tab) => tab.projectId === "project_unlimited_39")?.title, "Unlimited renamed");
+});
+
+test("missing project-surface titles use the HTML display fallback without changing identity", () => {
+  for (const title of [undefined, "", "   "]) {
+    const session = new WorkbenchTabsSession();
+    session.bindDocument({ ...a, title: "Alpha", focus: true });
+    const rules = session.createProjectRules({
+      projectId: a.projectId,
+      documentId: a.documentId,
+      title,
+      focus: false,
+    });
+    const history = session.createHistory({
+      projectId: a.projectId,
+      documentId: a.documentId,
+      title,
+      versionId: "ver_0001",
+      versionOrdinal: 1,
+      focus: false,
+    });
+
+    assert.equal(rules.title, "HTML");
+    assert.equal(history.title, "HTML");
+    assert.equal(rules.tabId, `project-rules:${a.projectId}:${a.documentId}`);
+    assert.equal(history.tabId, `history:${a.projectId}:${a.documentId}`);
+    assert.equal(session.snapshot.activeTabId, `document:${a.projectId}:${a.documentId}`);
+  }
+});
+test("project-surface title fallback preserves malformed and overlong display rejection", () => {
+  const malformedTitles = [123, false, {}, []];
+  for (const title of malformedTitles) {
+    const session = new WorkbenchTabsSession();
+    assert.throws(
+      () => session.createProjectRules({ ...a, title }),
+      /valid project rules tab identity is required/u,
+    );
+  }
+
+  const session = new WorkbenchTabsSession();
+  assert.throws(
+    () => session.createHistory({
+      ...a,
+      title: "x".repeat(181),
+      versionId: "ver_0001",
+      versionOrdinal: 1,
+    }),
+    /valid project history tab identity is required/u,
+  );
+});
+test("late project title updates existing surfaces without adding or focusing a tab", () => {
+  const session = new WorkbenchTabsSession();
+  session.bindDocument({ ...a, title: "HTML" });
+  session.createProjectRules({ ...a, title: "   ", focus: false });
+  session.createHistory({
+    ...a,
+    title: "",
+    versionId: "ver_0001",
+    versionOrdinal: 1,
+    focus: false,
+  });
+  const activeTabId = session.snapshot.activeTabId;
+  const tabCount = session.snapshot.tabs.length;
+
+  session.updateTitle(a.projectId, a.documentId, "Alpha from Registry");
+
+  assert.equal(session.snapshot.tabs.length, tabCount);
+  assert.equal(session.snapshot.activeTabId, activeTabId);
+  assert.deepEqual(
+    session.snapshot.tabs
+      .filter((tab) => tab.projectId === a.projectId && tab.documentId === a.documentId)
+      .map((tab) => tab.title),
+    ["Alpha from Registry", "Alpha from Registry", "Alpha from Registry"],
+  );
+});
+test("late registry titles refresh live rules and history labels without changing focus", () => {
+  const session = new WorkbenchTabsSession();
+  session.bindDocument({ ...a, title: "Alpha", focus: true });
+  session.createProjectRules({ ...a, title: "   ", focus: false });
+  session.createHistory({
+    ...a,
+    title: "",
+    versionId: "ver_0001",
+    versionOrdinal: 1,
+    focus: false,
+  });
+  const activeTabId = session.snapshot.activeTabId;
+  const tabCount = session.snapshot.tabs.length;
+
+  const reconciled = session.reconcileRegisteredProjects([{
+    ...a,
+    projectName: "Alpha from Registry",
+    availability: "ready",
+  }]);
+
+  assert.deepEqual(reconciled.missing, []);
+  assert.equal(reconciled.snapshot.tabs.length, tabCount);
+  assert.equal(reconciled.snapshot.activeTabId, activeTabId);
+  assert.deepEqual(
+    reconciled.snapshot.tabs
+      .filter((tab) => tab.kind === "project-rules" || tab.kind === "history")
+      .map((tab) => tab.title),
+    ["Alpha from Registry", "Alpha from Registry"],
+  );
+});
 test("restored project-surface titles remain HTML until a real registry title arrives", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
@@ -403,130 +554,4 @@ test("restored project-surface titles remain HTML until a real registry title ar
       .map((tab) => tab.title),
     ["HTML", "HTML"],
   );
-});
-
-test("restored document titles are projected from the registry and never persisted", () => {
-  const session = new WorkbenchTabsSession();
-  session.hydrate({
-    version: 1,
-    activeTabId: "document:project_alpha:doc_alpha",
-    tabs: [
-      {
-        tabId: "document:project_alpha:doc_alpha",
-        projectId: "project_alpha",
-        documentId: "doc_alpha",
-      },
-      {
-        tabId: "document:project_beta:doc_beta",
-        projectId: "project_beta",
-        documentId: "doc_beta",
-      },
-    ],
-  });
-  const reconciled = session.reconcileRegisteredProjects([
-    { ...a, projectName: "Alpha from registry", availability: "ready" },
-    { ...b, projectName: "Beta from registry", availability: "ready" },
-  ]);
-  assert.deepEqual(
-    reconciled.snapshot.tabs.filter((tab) => tab.kind === "document").map((tab) => tab.title),
-    ["Alpha from registry", "Beta from registry"],
-  );
-  assert.deepEqual(reconciled.missing, []);
-  assert.doesNotMatch(JSON.stringify(session.serialize()), /Alpha from registry|Beta from registry/u);
-});
-
-test("missing restored documents are removed and leave a usable Start tab", () => {
-  const session = new WorkbenchTabsSession();
-  session.hydrate({
-    version: 1,
-    activeTabId: "document:project_alpha:doc_alpha",
-    tabs: [{
-      tabId: "document:project_alpha:doc_alpha",
-      projectId: "project_alpha",
-      documentId: "doc_alpha",
-    }],
-  });
-  const reconciled = session.reconcileRegisteredProjects([]);
-  assert.equal(reconciled.missing.length, 1);
-  assert.equal(reconciled.snapshot.tabs.length, 1);
-  assert.equal(reconciled.snapshot.tabs[0].kind, "start");
-  assert.equal(reconciled.snapshot.activeTabId, reconciled.snapshot.tabs[0].tabId);
-  assert.equal(reconciled.snapshot.pendingTabId, null);
-  assert.equal(reconciled.snapshot.mountedDocumentTabId, null);
-});
-
-test("restore reconciliation is deterministic when catalog readiness arrives first", () => {
-  const session = new WorkbenchTabsSession();
-  const registeredProjects = [
-    { ...a, projectName: "Catalog first", availability: "ready" },
-  ];
-  assert.equal(reconcileWorkbenchTabsWhenReady({
-    session,
-    tabsPersistenceReady: false,
-    registeredProjectsReady: true,
-    registeredProjects,
-  }), null);
-  session.hydrate({
-    version: 1,
-    activeTabId: null,
-    tabs: [{
-      tabId: "document:project_alpha:doc_alpha",
-      projectId: "project_alpha",
-      documentId: "doc_alpha",
-    }],
-  });
-  const reconciled = reconcileWorkbenchTabsWhenReady({
-    session,
-    tabsPersistenceReady: true,
-    registeredProjectsReady: true,
-    registeredProjects,
-  });
-  assert.equal(reconciled.snapshot.tabs.find((tab) => tab.kind === "document")?.title, "Catalog first");
-});
-
-test("restore reconciliation is deterministic when tabs hydration arrives first", () => {
-  const session = new WorkbenchTabsSession();
-  session.hydrate({
-    version: 1,
-    activeTabId: null,
-    tabs: [{
-      tabId: "document:project_alpha:doc_alpha",
-      projectId: "project_alpha",
-      documentId: "doc_alpha",
-    }],
-  });
-  assert.equal(reconcileWorkbenchTabsWhenReady({
-    session,
-    tabsPersistenceReady: true,
-    registeredProjectsReady: false,
-    registeredProjects: [],
-  }), null);
-  const reconciled = reconcileWorkbenchTabsWhenReady({
-    session,
-    tabsPersistenceReady: true,
-    registeredProjectsReady: true,
-    registeredProjects: [],
-  });
-  assert.equal(reconciled.missing.length, 1);
-  assert.equal(reconciled.snapshot.tabs.every((tab) => tab.kind === "start"), true);
-});
-
-test("tab order remains identity-deduplicated across many open documents", () => {
-  const session = new WorkbenchTabsSession();
-  for (let index = 0; index < 40; index += 1) {
-    assert.ok(session.bindDocument({
-      projectId: `project_unlimited_${index}`,
-      documentId: `doc_unlimited_${index}`,
-      title: `Unlimited ${index}`,
-      focus: index === 0,
-    }));
-  }
-  assert.equal(session.snapshot.tabs.length, 40);
-  session.bindDocument({
-    projectId: "project_unlimited_39",
-    documentId: "doc_unlimited_39",
-    title: "Unlimited renamed",
-  });
-  assert.equal(session.snapshot.tabs.length, 40);
-  assert.equal(session.snapshot.tabs.find((tab) => tab.projectId === "project_unlimited_39")?.title, "Unlimited renamed");
 });

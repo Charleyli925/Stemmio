@@ -1,4 +1,5 @@
 const STATUS = new Set(["normal", "processing", "review-ready", "error", "opening"]);
+const PROJECT_TAB_KINDS = new Set(["document", "project-rules", "history"]);
 const DEFAULT_PROJECT_TAB_TITLE = "HTML";
 
 function documentKey(projectId, documentId) {
@@ -33,8 +34,8 @@ function settingsTab(tabId = "settings:1") {
 
 function normalizedProjectTab(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const kind = String(value.kind || "document");
-  if (!["document", "project-rules", "history"].includes(kind)) return null;
+  const kind = typeof value.kind === "string" ? value.kind : "";
+  if (!PROJECT_TAB_KINDS.has(kind)) return null;
   const projectId = String(value.projectId || "");
   const documentId = String(value.documentId || "");
   const tabId = String(value.tabId || "");
@@ -150,10 +151,8 @@ export class WorkbenchTabsSession {
     const seenSurfaces = new Set();
     const tabs = [];
     for (const candidate of Array.isArray(source.tabs) ? source.tabs : []) {
-      const kind = ["document", "project-rules", "history"].includes(candidate?.kind)
-        ? candidate.kind
-        : "document";
-      const tab = normalizedProjectTab({ ...candidate, kind, title: "HTML" });
+      if (!PROJECT_TAB_KINDS.has(candidate?.kind)) continue;
+      const tab = normalizedProjectTab({ ...candidate, title: "HTML" });
       if (!tab || seenTabs.has(tab.tabId)) continue;
       const key = surfaceKey(tab.kind, tab.projectId, tab.documentId);
       if (seenSurfaces.has(key)) continue;
