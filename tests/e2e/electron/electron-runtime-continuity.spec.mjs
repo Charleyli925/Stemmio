@@ -1,3 +1,4 @@
+import { withRuntimeFailureEvidence } from "./helpers/runtime-failure-evidence.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
@@ -1029,7 +1030,7 @@ test("owned composition snapshots keep formatted source nodes editable but autho
 });
 
 test("the read-only recovery notice reloads source authority even when dynamic preparation fails", async ({}, testInfo) => {
-  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => {
+  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => withRuntimeFailureEvidence(page, testInfo, async () => {
     await loadedDiskFrame(page, sourcePath, 'format-chart');
     await disableStructuralInPlace(page);
     const editor = page.getByTestId('html-canvas-editor');
@@ -1081,7 +1082,7 @@ test("the read-only recovery notice reloads source authority even when dynamic p
     await page.keyboard.press(keyShortcut('s'));
     await expect.poll(() => readPublishedWorkingCopy(working)).toContain('RECOVERED');
     await page.screenshot({ path: testInfo.outputPath('reload-editing-restored.png') });
-  }, {
+  }), {
     injectedEnv: {
       STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
       STEMMIO_E2E_STATIC_CANDIDATE_FAILURE: "1",
