@@ -1594,3 +1594,84 @@ test("comment reveal and layout alignment preserve the latest reading intent", a
     await page.screenshot({ path: testInfo.outputPath("reading-after-comment-and-resize.png") });
   });
 });
+
+for (const input of ["outer-wheel", "iframe-wheel", "keyboard-home", "scrollbar"]) {
+  test(`reading intent cancels a comment reveal waiting for its frame: ${input}`, async () => {
+    const html = `<!doctype html><html><head><title>Delayed comment</title>
+      <style>p { height: 120px; margin: 0; }</style></head><body>
+      ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+      </body></html>`;
+    await withRuntimeProject("stemmio-reading-pending-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
+      const stage = page.locator(".review-scroll-stage");
+      await stage.evaluate(element => { element.scrollTop = 1500; });
+      await frame.locator('[data-native-case="reading-14"]').click();
+      await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
+      await page.getByRole("textbox", { name: "评论内容" }).fill("Delayed reading comment");
+      await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeGreaterThan(1400);
+      await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.evaluate(() => {
+        const request = window.requestAnimationFrame.bind(window);
+        const cancel = window.cancelAnimationFrame.bind(window);
+        let sequence = 0;
+        const pending = new Map();
+        window.requestAnimationFrame = callback => {
+          const id = --sequence;
+          pending.set(id, callback);
+          return id;
+        };
+        window.cancelAnimationFrame = id => {
+          if (id < 0) pending.delete(id);
+          else cancel(id);
+        };
+        window.__releaseReadingFrames = () => {
+          window.requestAnimationFrame = request;
+          window.cancelAnimationFrame = cancel;
+          for (const callback of pending.values()) request(callback);
+          pending.clear();
+        };
+      });
+      try {
+        await page.getByRole("button", { name: "评论", exact: true }).dispatchEvent("click");
+        await expect(page.getByRole("textbox", { name: "评论内容" })).toBeHidden();
+        const bounds = await stage.boundingBox();
+        if (input === "outer-wheel" || input === "iframe-wheel") {
+          await page.mouse.move(bounds.x + (input === "outer-wheel" ? 8 : 300), bounds.y + bounds.height / 2);
+          await page.mouse.wheel(0, -900);
+        } else if (input === "keyboard-home") {
+          await page.mouse.click(bounds.x + 8, bounds.y + bounds.height / 2);
+          await page.keyboard.press("Home");
+        } else {
+          const metrics = await stage.evaluate(element => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, top: element.scrollTop }));
+          const thumbHeight = metrics.height * metrics.height / metrics.scrollHeight;
+          const thumbTop = metrics.top * metrics.height / metrics.scrollHeight;
+          await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbTop + thumbHeight / 2);
+          await page.mouse.down();
+          await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbHeight / 2 + 30);
+          await page.mouse.up();
+        }
+        if (input === "keyboard-home") await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(0);
+        else await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
+        const before = await stage.evaluate(element => element.scrollTop);
+        await page.evaluate(() => window.__releaseReadingFrames());
+        await expect(page.getByRole("textbox", { name: "评论内容" })).toBeHidden();
+        const card = page.locator(".comment-card").filter({ hasText: "Delayed reading comment" });
+        await expect(card).toHaveCount(1);
+        await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+        expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        const token = await documentToken(page);
+        await page.getByRole("button", { name: "更多", exact: true }).click();
+        await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+        await expect.poll(() => documentToken(page)).not.toBe(token);
+        await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        await card.click();
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
+      } finally {
+        await page.evaluate(() => window.__releaseReadingFrames());
+
+      }
+    });
+  });
+}

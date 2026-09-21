@@ -1066,6 +1066,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     onEditRuntimeLoadOutcome,
     onRuntimeDegradationChange,
     onCommentLayout,
+    onReadingIntent,
     onRequestComment,
     onReady,
     onRequestFlush,
@@ -1300,6 +1301,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const onEditRuntimeLoadOutcomeRef = useRef(onEditRuntimeLoadOutcome);
   const onRuntimeDegradationChangeRef = useRef(onRuntimeDegradationChange);
   const onCommentLayoutRef = useRef(onCommentLayout);
+  const onReadingIntentRef = useRef(onReadingIntent);
   const onRequestCommentRef = useRef(onRequestComment);
   const onRequestFlushRef = useRef(onRequestFlush);
 
@@ -1522,6 +1524,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   onEditRuntimeLoadOutcomeRef.current = onEditRuntimeLoadOutcome;
   onRuntimeDegradationChangeRef.current = onRuntimeDegradationChange;
   onCommentLayoutRef.current = onCommentLayout;
+  onReadingIntentRef.current = onReadingIntent;
   onRequestCommentRef.current = onRequestComment;
   onRequestFlushRef.current = onRequestFlush;
   onRequestExportRef.current = onRequestExport;
@@ -9250,6 +9253,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ? new LayoutResizeObserver(() => updateOverlayPosition())
       : null;
     if (documentNode.body) layoutObserver?.observe(documentNode.body);
+    // Input inside the iframe does not bubble to the outer reading stage.
+    const handleReadingIntent = () => onReadingIntentRef.current?.();
+    documentNode.addEventListener("wheel", handleReadingIntent, { capture: true, passive: true });
+    documentNode.addEventListener("pointerdown", handleReadingIntent, true);
+    documentNode.addEventListener("keydown", handleReadingIntent, true);
     documentNode.addEventListener("click", handleClick, true);
     documentNode.addEventListener("mousedown", handleMouseDown, true);
     documentNode.addEventListener("mouseup", handleMouseUp, true);
@@ -9396,6 +9404,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
 
     cleanupFrameRef.current = () => {
       cancelPendingHoverResolution();
+      documentNode.removeEventListener("wheel", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", handleReadingIntent, true);
+      documentNode.removeEventListener("keydown", handleReadingIntent, true);
       documentNode.removeEventListener("click", handleClick, true);
       documentNode.removeEventListener("mousedown", handleMouseDown, true);
       documentNode.removeEventListener("mouseup", handleMouseUp, true);
