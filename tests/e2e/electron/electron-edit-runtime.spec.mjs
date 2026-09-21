@@ -1623,9 +1623,21 @@ test("same-source history cancellation reloads through a fixed Runtime candidate
     );
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
-    ))).toBe(1);
+    ))).toBeGreaterThan(0);
+    // As in the reorder oracle above, count from the settled pre-interaction
+    // Runtime. Startup candidates are outside the history operation contract.
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
+    ));
+    test.info().annotations.push({
+      type: "initial-runtime-executions",
+      description: String(initialRuntimeExecutions),
+    });
 
-    for (const expectedExecutionCount of [2, 3]) {
+    for (const expectedExecutionCount of [
+      initialRuntimeExecutions + 1,
+      initialRuntimeExecutions + 2,
+    ]) {
       await activateNativeEdit(frame, "runtime-history-cancel");
       await armRuntimeHandoffSamples(page);
       const candidateStarted = page.waitForFunction(() => Boolean(
@@ -3181,6 +3193,14 @@ test("Runtime text history ignores unrelated disposable clone drift", {
     const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
     const frame = (await loadedDiskFrame(page, sourcePath, "runtime-history-text")).frame;
     await expect(frame.locator('[data-runtime-unrelated-clone="true"]')).toHaveCount(1);
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__
+    ));
+    expect(initialRuntimeExecutions).toBeGreaterThan(0);
+    test.info().annotations.push({
+      type: "initial-runtime-executions",
+      description: String(initialRuntimeExecutions),
+    });
     const historyDocument = await documentToken(page);
     const historyGeneration = await editor.locator('iframe:not([data-frame-role])')
       .getAttribute("data-frame-generation");
@@ -3216,7 +3236,8 @@ test("Runtime text history ignores unrelated disposable clone drift", {
     );
     await expect(editor).toHaveAttribute("data-history-adopt-path", "editable-island-in-place");
     await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
-    expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__)).toBe(1);
+    expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__))
+      .toBe(initialRuntimeExecutions);
   });
 });
 

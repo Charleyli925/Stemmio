@@ -15,6 +15,11 @@
   已修复。其余夹具修正区分只读等待、合法导航与纯阅读的 iframe 身份，并等待稳定回访页面。
   完整门禁还发现历史展开后焦点仍在 summary，旧测试错误地仅移开鼠标就要求时间戳隐藏；
   已分开检查 focus-within 可见与焦点移出后隐藏。历次结果保留于本地 `output/agent-interaction/`，不将失败尝试改写成通过。
+- Hosted CI: 首轮 #599 的 Linux 通过，Electron 75/77；两个既有 history 测试把交互前累计 Runtime 执行数
+  写死为 1。改为同文件 reorder oracle 已采用的 settled frame 基线：history cancel 每次严格 +1，
+  原位 undo/redo 次数严格不变，并继续核对 document、generation 与无 Candidate；初始次数写入测试注解。
+  原测试精确提交本地 2/2 通过，修正后定向 2/2 通过。隐藏/可见窗口探针各观察到一个 Candidate；
+  hosted 初始替换的具体原因仍未复现，不将其归为环境或确定产品缺陷。独立复核确认操作约束未放宽。
 - Review: 只读源码审查未发现 P0/P1；历史公开文本保留真实截断提示。显式新 Request 带活动选区时仍可能
   保留原阅读位置，此低风险细节不扩展本次范围。完整任务门禁由 `task:finish` 记录；未做发布或打包。
 
