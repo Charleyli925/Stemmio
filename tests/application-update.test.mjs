@@ -572,3 +572,15 @@ test("unsupported builds never schedule automatic checks", () => {
   assert.equal(value.startAutomaticChecks(), false);
   assert.deepEqual(timers, []);
 });
+
+test("an asynchronous installation error is reported instead of remaining installing", () => {
+  const updater = new FakeUpdater();
+  const warnings = [];
+  const { value } = controller({ updater, logger: { warn: (...args) => warnings.push(args) } });
+  updater.emit("update-downloaded", { version: "0.10.0" });
+  assert.equal(value.installDownloadedUpdate(), true);
+  assert.equal(value.getStatus().status, "installing");
+  updater.emit("error", new Error("native install failed"));
+  assert.equal(value.getStatus().status, "unavailable");
+  assert.equal(warnings.length, 1);
+});

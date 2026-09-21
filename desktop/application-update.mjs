@@ -180,7 +180,7 @@ export function createApplicationUpdateController({
       publish("unavailable", { downloadPercent: null });
     }],
     ["error", (error) => {
-      if (disposed || status.status === "downloaded" || status.status === "installing") return;
+      if (disposed || status.status === "downloaded") return;
       logger.warn(
         "[application-update:unavailable]",
         error instanceof Error ? error.message : String(error),
