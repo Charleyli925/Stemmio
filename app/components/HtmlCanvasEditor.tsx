@@ -23,6 +23,7 @@ import {
   editRuntimeRegistrationProperty,
   isEditRuntimeFrameToken,
   type EditRuntimeDocumentAnalysis,
+  type EditRuntimeGrant,
 } from "../domain/edit-runtime-contract.js";
 import {
   decideEditRuntimeRefresh,
@@ -1253,7 +1254,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const runtimeSourceElementsRef = useRef<RuntimeSourceElements | null>(null);
   const runtimeSourceRegistrationCleanupRef = useRef<() => void>(emptyRuntimeRegistrationCleanup);
   const runtimeRefreshPendingRef = useRef<RuntimeRefreshPending | null>(null);
-  const lastEditRuntimeGrantRef = useRef(editRuntimeGrant);
+  const lastEditRuntimeGrantRef = useRef<EditRuntimeGrant | null>(null);
   const runtimeFrameCoordinatorRef = useRef<RuntimeFrameCoordinator | null>(null);
   if (!runtimeFrameCoordinatorRef.current) {
     runtimeFrameCoordinatorRef.current = new RuntimeFrameCoordinator();
