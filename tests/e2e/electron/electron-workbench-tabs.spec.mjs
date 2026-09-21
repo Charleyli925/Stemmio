@@ -918,6 +918,7 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
   });
+  let releaseARead = () => {};
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
     await openRecentProject(launched.page, projectB.sourcePath);
@@ -931,6 +932,41 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
     const tabBId = String(await tabB.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
     const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
 
+    await launched.page.evaluate(() => {
+      const main = document.querySelector("main.workbench");
+      let fiber = main[Object.keys(main).find((key) => key.startsWith("__reactFiber$"))];
+      let controller;
+      while (fiber && !controller) {
+        let hook = fiber.memoizedState;
+        while (hook && !controller) {
+          const value = hook.memoizedState;
+          if (value && typeof value.activateWorkbenchTab === "function") controller = value;
+          hook = hook.next;
+        }
+        fiber = fiber.return;
+      }
+      if (!controller) throw new Error("Controller unavailable");
+      const initial = controller.navigation.getSnapshot();
+      const tabIds = initial.tabs.tabs.map((tab) => tab.tabId);
+      const missingIds = new Set();
+      const off = controller.navigation.subscribe(() => {
+        const currentIds = new Set(controller.navigation.getSnapshot().tabs.tabs.map((tab) => tab.tabId));
+        for (const tabId of tabIds) if (!currentIds.has(tabId)) missingIds.add(tabId);
+      });
+      window.__STEMMIO_TEST_CACHE_NAVIGATION__ = {
+        refresh: () => controller.projectCatalog.commands.refreshRegistered(),
+        read: () => {
+          const current = controller.navigation.getSnapshot();
+          return {
+            missingIds: [...missingIds],
+            tabIds: current.tabs.tabs.map((tab) => tab.tabId),
+            initialTabIds: tabIds,
+            admissions: current.workflow.admissionOrdinal - initial.workflow.admissionOrdinal,
+          };
+        },
+        stop: off,
+      };
+    });
     await holdCacheAndCanvasLoads(launched.page);
     await tabB.click();
     await expect(tabB).toHaveAttribute("aria-selected", "true");
@@ -950,9 +986,23 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
     // cover remains on screen. Observe A as the first candidate before
     // selecting B: this preserves the real navigation order without giving
     // the held Canvas enough time to reach its timeout path.
+    let aReadEntered = false;
+    // Hold the real A read while B is queued. A catalog refresh at this
+    // boundary is a projection update, not permission to replay startup.
+    await launched.page.route("**/workspace?*", async (route) => {
+      const source = new URL(route.request().url()).searchParams.get("sourcePath");
+      if (!aReadEntered && source && path.basename(source) === path.basename(projectA.sourcePath)) {
+        aReadEntered = true;
+        await new Promise((resolve) => { releaseARead = resolve; });
+      }
+      await route.continue();
+    });
     await tabA.dispatchEvent("click");
     await expect(surfaceCache).toHaveAttribute("data-candidate-tab-id", tabAId);
     await tabB.dispatchEvent("click");
+    await expect.poll(() => aReadEntered).toBe(true);
+    await launched.page.evaluate(() => window.__STEMMIO_TEST_CACHE_NAVIGATION__.refresh());
+    releaseARead();
     await expect(surfaceCache).toHaveAttribute("data-candidate-tab-id", tabBId);
     await expect(surfaceCache).toHaveAttribute("data-mounted-count", "2");
     const repeatHandoffState = await launched.page.evaluate(() => {
@@ -1007,7 +1057,16 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
     await expect(tabB).toHaveAttribute("aria-selected", "true");
     await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
 
+    const navigation = await launched.page.evaluate(() => window.__STEMMIO_TEST_CACHE_NAVIGATION__.read());
+    expect(navigation.missingIds).toEqual([]);
+    expect(navigation.tabIds).toEqual(navigation.initialTabIds);
+    expect(navigation.admissions).toBe(3);
   } finally {
+    releaseARead();
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_CACHE_NAVIGATION__?.stop();
+      delete window.__STEMMIO_TEST_CACHE_NAVIGATION__;
+    }).catch(() => {});
     await releaseCacheAndCanvasLoadHold(launched.page);
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
