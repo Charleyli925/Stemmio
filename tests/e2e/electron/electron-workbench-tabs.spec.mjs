@@ -2229,3 +2229,162 @@ test("Electron local current draft saves immutable versions and exports with an 
     removeSourceFixture(fixture.sourceDirectory);
   }
 });
+
+for (const barrier of ["none", "create", "close"]) {
+  test(`Electron held B navigation settles every C/D intent across ${barrier} barrier`, {
+    tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+  }, async () => {
+    test.setTimeout(180_000);
+    const projects = ["a", "b", "c", "d"].map((id) => (
+      createSourceFixture(`navigation-intent-${id}.html`)
+    ));
+    const [a, b, c, d] = projects;
+    const launched = await launchStemmio({ activeSourcePath: a.sourcePath });
+    let releaseB;
+    let heldB = false;
+    const requests = [];
+    const hold = async (route) => {
+      const url = new URL(route.request().url());
+      requests.push({
+        source: path.basename(url.searchParams.get("sourcePath") || ""),
+        path: url.searchParams.get("path"),
+      });
+      if (!heldB) {
+        heldB = true;
+        await new Promise((resolve) => { releaseB = resolve; });
+      }
+      await route.continue();
+    };
+    try {
+      await loadedDiskFrame(launched.page, a.sourcePath, "list-item");
+      const managedA = await managedWorkingCopyPath(launched.page, a.sourcePath);
+      const repository = new ProjectFileRepository({
+        projectsRoot: path.dirname(path.dirname(managedA)),
+      });
+      for (const project of [b, c, d]) {
+        await repository.importExternal({
+          sourcePath: project.sourcePath,
+          expectedSourceSha256: sha256(readFileSync(project.sourcePath)),
+        });
+      }
+      await launched.page.getByRole("button", { name: "展开左侧边栏" }).click();
+      const sidebar = launched.page.locator(".workbench-global-sidebar");
+      const item = (project) => sidebar.locator(".sidebar-project-item").filter({
+        hasText: path.basename(project.sourcePath, ".html"),
+      }).first();
+      const expand = async (project) => {
+        const row = item(project).locator(".sidebar-project-row");
+        if (await row.getAttribute("aria-expanded") !== "true") await row.click();
+      };
+      const rulesTab = (project) => launched.page.getByRole("tab", {
+        name: `${path.basename(project.sourcePath, ".html")} · 长期规则`, exact: true,
+      });
+      for (const project of [c, d]) {
+        await expand(project);
+        await item(project).locator(".sidebar-project-rules-row").click();
+        await expect(rulesTab(project)).toHaveAttribute("aria-selected", "true");
+        await expect(launched.page.getByRole("textbox", { name: "长期规则内容" })).toBeVisible();
+      }
+      await item(a).locator(".sidebar-project-current-row").click();
+      await loadedDiskFrame(launched.page, a.sourcePath, "list-item");
+      const tabA = launched.page.getByRole("tab", { name: "navigation-intent-a · 当前稿", exact: true });
+      const tabAId = String(await tabA.getAttribute("id")).replace(/^workbench-tab-/u, "");
+      const tabCId = String(await rulesTab(c).getAttribute("id")).replace(/^workbench-tab-/u, "");
+      const tabDId = String(await rulesTab(d).getAttribute("id")).replace(/^workbench-tab-/u, "");
+      await expand(b);
+
+      // Observe the real command promises without replacing navigation or its
+      // outcomes. The UI clicks below still enter through the React handlers.
+      // React access is test-local, as in the saved iframe-handler tests above.
+      await launched.page.evaluate(() => {
+        const main = document.querySelector('main.workbench');
+        const key = Object.keys(main).find((name) => name.startsWith("__reactFiber$"));
+        let fiber = main[key];
+        let controller;
+        while (fiber && !controller) {
+          let hook = fiber.memoizedState;
+          while (hook && !controller) {
+            const value = hook.memoizedState;
+            if (value && typeof value.activateWorkbenchTab === "function"
+              && typeof value.getSnapshot === "function") controller = value;
+            hook = hook.next;
+          }
+          fiber = fiber.return;
+        }
+        if (!controller) throw new Error("Navigation Controller was not mounted");
+        const records = [];
+        const originals = new Map();
+        for (const method of ["activateWorkbenchTab", "createWorkbenchProjectRulesTab", "createWorkbenchStartTab", "closeWorkbenchTab"]) {
+          const original = controller[method];
+          originals.set(method, original);
+          controller[method] = function observeNavigation(...args) {
+            const record = { method, target: args[0]?.projectId || args[0] || null, terminal: false };
+            records.push(record);
+            const result = original.apply(this, args);
+            Promise.resolve(result).then((outcome) => {
+              record.outcome = outcome;
+              record.terminal = true;
+            }, (error) => {
+              record.error = String(error);
+              record.terminal = true;
+            });
+            return result;
+          };
+        }
+        window.__STEMMIO_TEST_NAVIGATION_OBSERVER__ = {
+          records,
+          snapshot: () => controller.navigation.getSnapshot(),
+          restore: () => {
+            for (const [method, original] of originals) controller[method] = original;
+          },
+        };
+      });
+      await launched.page.route("**/file?*", hold);
+      await item(b).locator(".sidebar-project-rules-row").click();
+      await expect.poll(() => heldB).toBe(true);
+      await rulesTab(c).click();
+      if (barrier === "create") await launched.page.getByRole("button", { name: "新标签页", exact: true }).click();
+      if (barrier === "close") await launched.page.getByRole("button", { name: "关闭 navigation-intent-a · 当前稿", exact: true }).click();
+      await rulesTab(d).click();
+      expect(requests).toEqual([{ source: "navigation-intent-b.html", path: "PROJECT.md" }]);
+      const expectedCommandCount = barrier === "none" ? 3 : 4;
+      const records = () => launched.page.evaluate(() => (
+        window.__STEMMIO_TEST_NAVIGATION_OBSERVER__.records
+      ));
+      await expect.poll(async () => (await records()).length).toBe(expectedCommandCount);
+      expect((await records()).every((record) => record.terminal === false)).toBe(true);
+      releaseB();
+      await expect.poll(async () => (await records()).filter((record) => record.terminal).length)
+        .toBe(expectedCommandCount);
+      const settled = await records();
+      expect(settled.every((record) => !record.error && record.outcome.status === "succeeded")).toBe(true);
+      const cOutcome = settled.find((record) => record.target === tabCId).outcome;
+      if (barrier === "none") {
+        expect(cOutcome.value).toMatchObject({ activated: false, superseded: true, supersededByTabId: tabDId });
+      } else {
+        expect(cOutcome.value.superseded).not.toBe(true);
+      }
+      const expectedSources = barrier === "none" ? ["b", "d"] : ["b", "c", "d"];
+      expect(requests).toEqual(expectedSources.map((id) => ({
+        source: `navigation-intent-${id}.html`, path: "PROJECT.md",
+      })));
+      await expect(rulesTab(d)).toHaveAttribute("aria-selected", "true");
+      await expect(launched.page.getByRole("textbox", { name: "长期规则内容" })).toBeVisible();
+      await expect.poll(() => launched.page.evaluate(() => {
+        const snapshot = window.__STEMMIO_TEST_NAVIGATION_OBSERVER__.snapshot();
+        return { phase: snapshot.workflow.phase, active: snapshot.tabs.activeTabId,
+          mounted: snapshot.tabs.mountedDocumentTabId, runtime: snapshot.tabs.runtimeOwnerTabId };
+      })).toEqual({ phase: "idle", active: tabDId, mounted: null, runtime: barrier === "close" ? null : tabAId });
+      await expect(launched.page.getByRole("tab")).toHaveCount(barrier === "create" ? 5 : barrier === "close" ? 3 : 4);
+    } finally {
+      releaseB?.();
+      await launched.page.unroute("**/file?*", hold).catch(() => {});
+      await launched.page.evaluate(() => {
+        window.__STEMMIO_TEST_NAVIGATION_OBSERVER__?.restore();
+        delete window.__STEMMIO_TEST_NAVIGATION_OBSERVER__;
+      }).catch(() => {});
+      await stopStemmio(launched.electronApp, launched.isolatedUserData);
+      for (const project of projects) removeSourceFixture(project.sourceDirectory);
+    }
+  });
+}
