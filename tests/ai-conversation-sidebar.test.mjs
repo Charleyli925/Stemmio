@@ -15,12 +15,14 @@ import {
   sidebarConversationGroups,
   sidebarExecutionStatus,
   sidebarModePresentation,
+  sidebarNarrationPreview,
   sidebarResolvedIntent,
   sidebarSendState,
   sidebarCopyTaskState,
   sidebarRunProgress,
   sidebarStateFromRun,
   sidebarTimestampLabel,
+  sidebarTurnPresentation,
 } from "../app/workbench/ai-conversation-model.js";
 
 function factMessage(overrides = {}) {
@@ -1069,7 +1071,6 @@ test("adoption uncertainty takes precedence over Review and exposes no opposite 
 });
 
 test("turn presentation preserves Conversation sequence across Agent and Stemmio facts", async () => {
-  const { sidebarTurnPresentation } = await import("../app/workbench/ai-conversation-model.js");
   const requirements = factMessage({ actor: "user", text: "调整标题" });
   const progress = factMessage({ kind: "progress", text: "正在生成修改。" });
   const summary = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
@@ -1082,6 +1083,27 @@ test("turn presentation preserves Conversation sequence across Agent and Stemmio
   assert.deepEqual(presentation.timeline.map((block) => block.messages), [
     [requirements], [progress], [summary], [result], [ended], [decision],
   ]);
+});
+
+test("ordinary Agent text stays in the collapsible process timeline while typed results stay visible", () => {
+  const ordinary = factMessage({ actor: "agent", kind: "text", text: "先读取页面结构。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
+  const presentation = sidebarTurnPresentation([ordinary, result]);
+  assert.deepEqual(presentation.process, [ordinary]);
+  assert.deepEqual(presentation.primary, [result]);
+  assert.deepEqual(presentation.timeline.map((block) => block.process), [true, false]);
+});
+
+test("the compact narration preview picks the latest non-empty paragraph without rewriting it", () => {
+  assert.equal(
+    sidebarNarrationPreview([
+      { id: "one", text: "第一段。\n\n第二段。" },
+      { id: "two", text: "   \n\n 最后一段  有空格 " },
+    ]),
+    "最后一段 有空格",
+  );
+  assert.equal(sidebarNarrationPreview([{ id: "blank", text: " \n\n " }]), null);
+  assert.equal(sidebarNarrationPreview([{ id: "line", text: "一行公开说明。" }]), "一行公开说明。");
 });
 
 

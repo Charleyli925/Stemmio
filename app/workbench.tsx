@@ -216,7 +216,11 @@ import {
   PreviewNavigationBanner,
 } from "./workbench/presentation";
 import { deriveWorkbenchInspector } from "./workbench/inspector-presentation.js";
-import { RunConversationOutlet } from "./workbench/run-conversation-outlet";
+import {
+  RunConversationOutlet,
+  type SidebarReadingState,
+  type SidebarReadingStateStore,
+} from "./workbench/run-conversation-outlet";
 import { WorkbenchReviewOverlay } from "./workbench/workbench-review-overlay";
 import WorkbenchActiveDocumentCanvas from "./workbench/WorkbenchActiveDocumentCanvas";
 import WorkbenchDocumentSurfaceCache from "./workbench/WorkbenchDocumentSurfaceCache";
@@ -568,6 +572,7 @@ export default function Workbench() {
   const pendingSidebarHistoryRef = useRef<ProjectVersionSummary | null>(null);
   const pendingSidebarHistoryAttemptRef = useRef<ProjectVersionSummary | null>(null);
   const pendingPresentationCaptureRef = useRef<string | null>(null);
+  const conversationReadingStateRef = useRef(new Map<string, SidebarReadingState>());
   useEffect(() => () => {
     pendingSidebarHistoryRef.current = null;
     pendingSidebarHistoryAttemptRef.current = null;
@@ -593,6 +598,18 @@ export default function Workbench() {
     : null;
   const workbenchTabsSnapshot = shellSnapshot?.workbenchTabs
     ?? INITIAL_WORKBENCH_TABS_SNAPSHOT;
+  const conversationReadingStateStore = useMemo<SidebarReadingStateStore>(() => ({
+    get: (key) => conversationReadingStateRef.current.get(key) || null,
+    set: (key, state) => {
+      conversationReadingStateRef.current.set(key, state);
+    },
+  }), []);
+  useEffect(() => {
+    const openTabIds = new Set(workbenchTabsSnapshot.tabs.map((tab) => tab.tabId));
+    for (const key of conversationReadingStateRef.current.keys()) {
+      if (!openTabIds.has(key)) conversationReadingStateRef.current.delete(key);
+    }
+  }, [workbenchTabsSnapshot.tabs, workbenchTabsSnapshot.revision]);
   const activeWorkbenchTab = workbenchTabsSnapshot.tabs.find(
     (tab) => tab.tabId === workbenchTabsSnapshot.activeTabId,
   ) || workbenchTabsSnapshot.tabs[0];
@@ -5801,6 +5818,8 @@ export default function Workbench() {
           capability={runCapability}
           conversationCapability={workspaceController!.conversation}
           conversationContext={aiConversation.context}
+          readingStateKey={presentedReadyReviewSession.tabId}
+          readingStateStore={conversationReadingStateStore}
           sidebarProps={{
             ...aiConversation.sidebarProps,
             onAction: handleAiDecision,
@@ -6571,6 +6590,8 @@ export default function Workbench() {
               capability={runCapability}
               conversationCapability={workspaceController!.conversation}
               conversationContext={aiConversation.context}
+              readingStateKey={activeWorkbenchTab.tabId}
+              readingStateStore={conversationReadingStateStore}
               sidebarProps={{
                 ...aiConversation.sidebarProps,
                 onAction: handleAiDecision,

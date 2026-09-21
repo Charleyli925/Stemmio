@@ -6,14 +6,20 @@ import type { RunControllerCapability, ConversationReaderCapability } from "../a
 import { deriveRunProgressPresentation } from "../domain/run-lifecycle.js";
 import AiConversationSidebar, {
   type AiConversationSidebarProps,
+  type SidebarReadingState,
+  type SidebarReadingStateStore,
 } from "./AiConversationSidebar";
 import { sidebarConversationPresentation, sidebarConversationGroups, sidebarStateFromRun } from "./ai-conversation-model.js";
+
+export type { SidebarReadingState, SidebarReadingStateStore } from "./AiConversationSidebar";
 
 export const RunConversationOutlet = memo(function RunConversationOutlet({
   capability,
   conversationCapability,
   conversationContext,
   sidebarProps,
+  readingStateKey,
+  readingStateStore,
   reviewing,
   deliveryMode,
 }: {
@@ -21,6 +27,8 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
   conversationCapability: ConversationReaderCapability;
   conversationContext: Readonly<{ projectId: string; documentId: string; draftReadOnly: boolean }>;
   sidebarProps: Omit<AiConversationSidebarProps, "state" | "title" | "messages">;
+  readingStateKey?: string;
+  readingStateStore?: SidebarReadingStateStore;
   reviewing: boolean;
   deliveryMode: "managed-agent" | "clipboard";
 }) {
@@ -68,8 +76,10 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
 
   return (
     <AiConversationSidebar
-      key={sidebarProps.documentKey}
+      key={`${readingStateKey || sidebarProps.documentKey || "conversation"}:${sidebarProps.documentKey || ""}`}
       {...sidebarProps}
+      readingStateKey={readingStateKey}
+      readingStateStore={readingStateStore}
       title={conversation.title}
       messages={conversation.messages}
       draftText={conversation.draftText}
@@ -100,6 +110,8 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
         : runSession?.submissionPending
           ? `pending:${runSession.activeSourcePath || "unknown"}`
           : null}
+      roundKey={activeRun?.requestId
+        || (runSession?.activeSubmission ? `submission:${runSession.activeSubmission.token}` : null)}
       runCommentCount={activeRun?.commentCount ?? sidebarProps.pendingCommentCount}
       runSteps={progress.steps}
       deliveryMode={deliveryMode}

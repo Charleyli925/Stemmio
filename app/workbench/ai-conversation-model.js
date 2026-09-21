@@ -324,7 +324,14 @@ export function sidebarTurnPresentation(messages = []) {
   const process = [];
   const primary = [];
   for (const message of messages) {
-    if (message.kind === "progress" || (message.actor === "stemmio" && LEGACY_EXECUTION_PROGRESS.has(message.text))) process.push(message);
+    // A typed result-summary is a settled fact and remains visible. Other Agent
+    // text has no reliable keyword contract, so it follows the process disclosure
+    // just like a typed progress fact instead of being guessed into a result.
+    if (
+      message.kind === "progress"
+      || (message.actor === "stemmio" && LEGACY_EXECUTION_PROGRESS.has(message.text))
+      || (message.actor === "agent" && message.kind !== "result-summary")
+    ) process.push(message);
     else primary.push(message);
   }
   const timeline = [];
@@ -1063,6 +1070,25 @@ export function sidebarNarrationParagraphs(text) {
   return String(text || "").split(/\n\s*\n/u).flatMap((paragraph) =>
     paragraph.split(/(?<=[。！？])\s*|(?<=[.!?])\s+(?=[A-Z])/u)
   ).map((part) => part.trim()).filter(Boolean);
+}
+
+/**
+ * The compact process row is a view of the latest public paragraph, not a new
+ * model summary. Keep the complete redacted narration elsewhere for copy; this
+ * helper only normalizes whitespace and picks the final non-empty paragraph.
+ */
+export function sidebarNarrationPreview(updates = []) {
+  if (!Array.isArray(updates)) return null;
+  for (let index = updates.length - 1; index >= 0; index -= 1) {
+    const update = updates[index];
+    const text = typeof update === "string" ? update : update?.text;
+    const paragraphs = String(text || "")
+      .split(/\n\s*\n/u)
+      .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
+      .filter(Boolean);
+    if (paragraphs.length > 0) return paragraphs.at(-1);
+  }
+  return null;
 }
 
 export function sidebarProcessRows(messages = []) {

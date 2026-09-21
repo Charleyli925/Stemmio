@@ -3,12 +3,16 @@
 import { UserIcon } from "@phosphor-icons/react/dist/csr/User";
 import { RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
 import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
 
 import { createExecutionClock } from "./execution-clock.js";
 import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,6 +23,7 @@ import {
   sidebarMessageStream,
   sidebarTurnPresentation,
   sidebarNarrationParagraphs,
+  sidebarNarrationPreview,
   sidebarProcessRows,
   sidebarModePresentation,
   sidebarResolvedIntent,
@@ -54,6 +59,8 @@ import styles from "./ai-conversation-sidebar.module.css";
 
 export type AiConversationSidebarProps = {
   documentKey?: string;
+  readingStateKey?: string;
+  readingStateStore?: SidebarReadingStateStore;
   state: string;
   title: string;
   messages: readonly unknown[];
@@ -134,6 +141,8 @@ export type AiConversationSidebarProps = {
   agentUpdatedAt?: string | null;
   /** A frozen Request identity, used solely to follow the round the user started. */
   runKey?: string | null;
+  /** The Request identity used for per-round reading preferences. */
+  roundKey?: string | null;
   runCommentCount?: number | null;
   agentPresentation?: Readonly<{
     providerId: string;
@@ -154,6 +163,26 @@ type CopyFeedback = Readonly<{
   key: string;
   label: "已复制" | "复制失败";
 }> | null;
+
+export type SidebarReadingAnchor = Readonly<{
+  messageId: string;
+  offset: number;
+}>;
+
+export type SidebarReadingState = Readonly<{
+  documentKey: string;
+  roundKey: string | null;
+  processExpanded: boolean;
+  following: boolean;
+  anchor: SidebarReadingAnchor | null;
+  /** Stable historical process disclosures restored with the open tab. */
+  expandedHistoryKeys?: readonly string[];
+}>;
+
+export type SidebarReadingStateStore = Readonly<{
+  get(key: string): SidebarReadingState | null | undefined;
+  set(key: string, state: SidebarReadingState): void;
+}>;
 
 const FOLLOW_THRESHOLD_PX = 48;
 
@@ -209,10 +238,77 @@ function AgentChoiceMark({
   );
 }
 
+function ExecutionStatusLeaf({
+  state,
+  providerName,
+  startedAt,
+  receivedBytes,
+  runKey,
+}: {
+  state: string;
+  providerName: string;
+  startedAt: string | null;
+  receivedBytes: number;
+  runKey: string | null;
+}) {
+  const [clockNow, setClockNow] = useState(0);
+  const executionClockRef = useRef<{
+    key: string;
+    running: boolean;
+    clock: ReturnType<typeof createExecutionClock>;
+  } | null>(null);
+  const clockKey = `${runKey || ""}:${startedAt || ""}`;
+
+  useEffect(() => {
+    if (!executionClockRef.current || executionClockRef.current.key !== clockKey
+      || !executionClockRef.current.running) {
+      executionClockRef.current = {
+        key: clockKey,
+        running: true,
+        clock: createExecutionClock({ startedAt }),
+      };
+    }
+    const clock = executionClockRef.current.clock;
+    setClockNow(clock.sample());
+    const timer = window.setInterval(() => setClockNow(clock.sample()), 1_000);
+    const resume = () => {
+      if (document.visibilityState === "visible") setClockNow(clock.sample({ resume: true }));
+    };
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", resume);
+      if (executionClockRef.current?.key === clockKey) {
+        executionClockRef.current.running = false;
+      }
+    };
+  }, [clockKey, startedAt]);
+
+  const status = sidebarExecutionStatus({
+    state,
+    providerName,
+    startedAt,
+    receivedBytes,
+    now: clockNow,
+  });
+  if (!status) return null;
+  return (
+    <small
+      className={styles.executionMeta}
+      data-testid="ai-conversation-execution-status"
+    >
+      {status.meta}
+    </small>
+  );
+}
+
 export default function AiConversationSidebar({
   state,
   title,
   messages,
+  documentKey = "",
+  readingStateKey = documentKey || "conversation",
+  readingStateStore,
   draftText = "",
   draftAvailable = false,
   onDraftTextChange,
@@ -251,6 +347,7 @@ export default function AiConversationSidebar({
   agentStartedAt = null,
   agentReceivedBytes = 0,
   runKey = null,
+  roundKey = runKey,
   runCommentCount = null,
   agentPresentation = null,
   runSteps = [],
@@ -258,18 +355,35 @@ export default function AiConversationSidebar({
   handoffStatus = null,
 }: AiConversationSidebarProps) {
 
+  const storedReadingState = readingStateStore?.get(readingStateKey) || null;
+  const initialReadingState = storedReadingState?.documentKey === documentKey
+    ? storedReadingState
+    : null;
   const [hasUnseenContent, setHasUnseenContent] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(null);
-  const [clockNow, setClockNow] = useState(0);
-  const executionClockRef = useRef<{ key: string; running: boolean; clock: ReturnType<typeof createExecutionClock> } | null>(null);
-  const clockEnabled = agentWorking || handoffStatus === "cancelling";
+  const [processExpanded, setProcessExpanded] = useState(
+    () => initialReadingState?.processExpanded === true,
+  );
+  const processExpandedRef = useRef(processExpanded);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
   const liveMessageRef = useRef<HTMLElement | null>(null);
-  const followingRef = useRef(true);
+  const followingRef = useRef(initialReadingState?.following !== false);
+  const readingAnchorRef = useRef<SidebarReadingAnchor | null>(initialReadingState?.anchor || null);
+  const pendingReadingAnchorRef = useRef<SidebarReadingAnchor | null>(null);
+  const [expandedHistoryKeys, setExpandedHistoryKeys] = useState(
+    () => new Set(initialReadingState?.expandedHistoryKeys || []),
+  );
+  const expandedHistoryKeysRef = useRef(expandedHistoryKeys);
   const contentKeyRef = useRef<string | null>(null);
-  const runKeyRef = useRef<string | null>(null);
+  const roundKeyRef = useRef<string | null>(initialReadingState?.roundKey || null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followFrameRef = useRef<number | null>(null);
+  const followBehaviorRef = useRef<ScrollBehavior>("auto");
+  const followForceRef = useRef(false);
+  const restoreFrameRef = useRef<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const narrationPanelId = `ai-conversation-narration-panel-${useId().replace(/:/gu, "")}`;
   const resolvedAgentActionName = agentPresentation?.agentName
     || agentActionName
     || "Agent";
@@ -336,19 +450,15 @@ export default function AiConversationSidebar({
     agentUpdates,
     agentTextTruncated,
   });
-  const executionStatus = agentWorking
-    ? sidebarExecutionStatus({
-        state,
-        providerName: executionDisplayName
-          || agentDisplayName
-          || agentPresentation?.displayName
-          || agentPresentation?.agentName
-          || resolvedAgentActionName,
-        startedAt: agentStartedAt,
-        receivedBytes: agentReceivedBytes,
-        now: clockNow,
-      })
-    : null;
+  // The clock/status leaf follows the existing public status contract: it is
+  // present only while the durable sidebar state is processing. A cancelling
+  // or failed handoff must keep the existing decision/recovery surface.
+  const executionStatusActive = agentWorking && state === "processing";
+  const executionProviderName = executionDisplayName
+    || agentDisplayName
+    || agentPresentation?.displayName
+    || agentPresentation?.agentName
+    || resolvedAgentActionName;
   const selectedModel = models.find((model) => model.id === selectedModelId) || models[0] || null;
   const schemeName = (typeof agentDisplayName === "string" && agentDisplayName.trim())
     || resolvedAgentActionName;
@@ -408,6 +518,7 @@ export default function AiConversationSidebar({
   const contentKey = [
     runKey || "",
     state,
+    loading ? "loading" : "ready",
     runProgress?.liveLabel || runProgress?.headline || "",
     runProgress?.narrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
     agentWorking ? "working" : "idle",
@@ -417,6 +528,72 @@ export default function AiConversationSidebar({
     historyGroups.map((group) => `${group.key}:${group.label}`).join(","),
     stream.map((message) => `${message.messageId}:${message.sequence}:${message.text.length}`).join(","),
   ].join("|");
+  const liveNarrationUpdates = runProgress?.narrationUpdates || null;
+  const liveNarrationPreview = sidebarNarrationPreview(liveNarrationUpdates || []);
+
+  const persistReadingState = useCallback(() => {
+    if (!readingStateStore) return;
+    readingStateStore.set(readingStateKey, {
+      documentKey,
+      roundKey: roundKeyRef.current,
+      processExpanded: processExpandedRef.current,
+      following: followingRef.current,
+      anchor: readingAnchorRef.current,
+      expandedHistoryKeys: Object.freeze([...expandedHistoryKeysRef.current]),
+    });
+  }, [documentKey, readingStateKey, readingStateStore]);
+
+  const findVisibleAnchor = useCallback((): SidebarReadingAnchor | null => {
+    const streamElement = streamRef.current;
+    if (!streamElement) return null;
+    const streamTop = streamElement.getBoundingClientRect().top;
+    const elements = Array.from(
+      streamElement.querySelectorAll<HTMLElement>("[data-reading-anchor-id]"),
+    );
+    const visible = elements.find((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > streamTop + 1;
+    }) || elements.at(-1);
+    const messageId = visible?.dataset.readingAnchorId;
+    if (!visible || !messageId) return null;
+    return Object.freeze({
+      messageId,
+      offset: visible.getBoundingClientRect().top - streamTop,
+    });
+  }, []);
+
+  const queueRestoreAnchor = useCallback((anchor: SidebarReadingAnchor | null) => {
+    if (!anchor || typeof window === "undefined") return;
+    pendingReadingAnchorRef.current = anchor;
+    if (restoreFrameRef.current !== null) return;
+    restoreFrameRef.current = window.requestAnimationFrame(() => {
+      restoreFrameRef.current = null;
+      const streamElement = streamRef.current;
+      const currentAnchor = pendingReadingAnchorRef.current;
+      pendingReadingAnchorRef.current = null;
+      if (!streamElement || !currentAnchor || followingRef.current) return;
+      const selection = window.getSelection?.();
+      if (selection && !selection.isCollapsed
+        && (streamElement.contains(selection.anchorNode) || streamElement.contains(selection.focusNode))) return;
+      const element = Array.from(
+        streamElement.querySelectorAll<HTMLElement>("[data-reading-anchor-id]"),
+      ).find((candidate) => candidate.dataset.readingAnchorId === currentAnchor.messageId);
+      if (!element) return;
+      const streamTop = streamElement.getBoundingClientRect().top;
+      const offset = element.getBoundingClientRect().top - streamTop;
+      streamElement.scrollTop += offset - currentAnchor.offset;
+    });
+  }, []);
+
+  const captureReadingAnchor = useCallback(() => {
+    if (followingRef.current) return readingAnchorRef.current;
+    const anchor = findVisibleAnchor();
+    if (anchor) {
+      readingAnchorRef.current = anchor;
+      persistReadingState();
+    }
+    return anchor;
+  }, [findVisibleAnchor, persistReadingState]);
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "auto") => {
     const streamElement = streamRef.current;
@@ -427,10 +604,30 @@ export default function AiConversationSidebar({
     streamElement.scrollTo({ top: streamElement.scrollHeight, behavior: resolvedBehavior });
   }, []);
 
-  const scheduleFollow = useCallback((behavior: ScrollBehavior = "auto") => {
+  const scheduleFollow = useCallback((behavior: ScrollBehavior = "auto", force = false) => {
     if (typeof window === "undefined") return;
-    window.requestAnimationFrame(() => scrollToLatest(behavior));
-  }, [scrollToLatest]);
+    followBehaviorRef.current = behavior;
+    followForceRef.current = followForceRef.current || force;
+    if (followFrameRef.current !== null) return;
+    followFrameRef.current = window.requestAnimationFrame(() => {
+      followFrameRef.current = null;
+      const forceFollow = followForceRef.current;
+      followForceRef.current = false;
+      const streamElement = streamRef.current;
+      if (!streamElement || (!followingRef.current && !forceFollow)) return;
+      const selection = window.getSelection?.();
+      if (!forceFollow && selection && !selection.isCollapsed
+        && (streamElement.contains(selection.anchorNode) || streamElement.contains(selection.focusNode))) {
+        followingRef.current = false;
+        const anchor = findVisibleAnchor();
+        if (anchor) readingAnchorRef.current = anchor;
+        setHasUnseenContent(true);
+        persistReadingState();
+        return;
+      }
+      scrollToLatest(followBehaviorRef.current);
+    });
+  }, [findVisibleAnchor, persistReadingState, scrollToLatest]);
 
   const onStreamScroll = useCallback(() => {
     const streamElement = streamRef.current;
@@ -440,14 +637,48 @@ export default function AiConversationSidebar({
       streamElement.scrollHeight - streamElement.clientHeight - streamElement.scrollTop,
     );
     followingRef.current = distanceFromBottom <= FOLLOW_THRESHOLD_PX;
-    if (followingRef.current) setHasUnseenContent(false);
-  }, []);
+    if (followingRef.current) {
+      readingAnchorRef.current = null;
+      setHasUnseenContent(false);
+    } else {
+      captureReadingAnchor();
+      setHasUnseenContent(true);
+    }
+    persistReadingState();
+  }, [captureReadingAnchor, persistReadingState]);
 
   const revealLatest = useCallback(() => {
     followingRef.current = true;
+    readingAnchorRef.current = null;
     setHasUnseenContent(false);
-    scheduleFollow("smooth");
-  }, [scheduleFollow]);
+    persistReadingState();
+    scheduleFollow("smooth", true);
+  }, [persistReadingState, scheduleFollow]);
+
+  const toggleProcess = useCallback(() => {
+    captureReadingAnchor();
+    const next = !processExpandedRef.current;
+    processExpandedRef.current = next;
+    setProcessExpanded(next);
+    persistReadingState();
+    if (followingRef.current) scheduleFollow("auto");
+    else queueRestoreAnchor(readingAnchorRef.current);
+  }, [captureReadingAnchor, persistReadingState, queueRestoreAnchor, scheduleFollow]);
+
+  const prepareDisclosure = useCallback(() => {
+    captureReadingAnchor();
+  }, [captureReadingAnchor]);
+
+  const settleDisclosure = useCallback((key: string, open: boolean) => {
+    const next = new Set(expandedHistoryKeysRef.current);
+    if (open) next.add(key);
+    else next.delete(key);
+    expandedHistoryKeysRef.current = next;
+    setExpandedHistoryKeys(next);
+    persistReadingState();
+    if (followingRef.current) scheduleFollow("auto");
+    else queueRestoreAnchor(readingAnchorRef.current);
+  }, [persistReadingState, queueRestoreAnchor, scheduleFollow]);
 
   const copyMessage = useCallback((key: string, value: string) => {
     if (!value) return;
@@ -459,66 +690,74 @@ export default function AiConversationSidebar({
       if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopyFeedback(null), 1_800);
     });
-  }, []);
+  }, [setCopyFeedback]);
 
   useEffect(() => () => {
     if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
   }, []);
 
-
-
   useEffect(() => {
-    const key = `${runKey || ""}:${agentStartedAt || ""}`;
-    if (!executionClockRef.current || executionClockRef.current.key !== key || (clockEnabled && !executionClockRef.current.running)) {
-      executionClockRef.current = { key, running: clockEnabled, clock: createExecutionClock({ startedAt: agentStartedAt }) };
-    }
-    const clock = executionClockRef.current.clock;
-    if (!clockEnabled) {
-      executionClockRef.current.running = false;
-      setClockNow(clock.stop());
-      return undefined;
-    }
-    setClockNow(clock.sample());
-    const timer = window.setInterval(() => setClockNow(clock.sample()), 1_000);
-    const resume = () => {
-      if (document.visibilityState === "visible") setClockNow(clock.sample({ resume: true }));
-    };
-    document.addEventListener("visibilitychange", resume);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", resume);
-    };
-  }, [clockEnabled, runKey, agentStartedAt]);
-
-  useEffect(() => {
-    if (runKey && runKey !== runKeyRef.current) {
+    if (roundKey && roundKey !== roundKeyRef.current) {
+      roundKeyRef.current = roundKey;
+      processExpandedRef.current = false;
+      setProcessExpanded(false);
       followingRef.current = true;
+      readingAnchorRef.current = null;
+      pendingReadingAnchorRef.current = null;
       setHasUnseenContent(false);
+      persistReadingState();
       scheduleFollow("auto");
     }
-    runKeyRef.current = runKey;
-  }, [runKey, scheduleFollow]);
+  }, [persistReadingState, roundKey, scheduleFollow]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (contentKeyRef.current === null) {
       contentKeyRef.current = contentKey;
+      if (followingRef.current) scheduleFollow("auto");
+      else queueRestoreAnchor(readingAnchorRef.current);
       return;
     }
     if (contentKeyRef.current === contentKey) return;
     contentKeyRef.current = contentKey;
     if (followingRef.current) scheduleFollow("auto");
-    else setHasUnseenContent(true);
-  }, [contentKey, scheduleFollow]);
+    else {
+      setHasUnseenContent(true);
+      queueRestoreAnchor(readingAnchorRef.current);
+    }
+  }, [contentKey, queueRestoreAnchor, scheduleFollow]);
 
-  useEffect(() => {
-    const liveMessage = liveMessageRef.current;
-    if (!liveMessage || typeof ResizeObserver === "undefined") return undefined;
+  const bindLiveMessageRef = useCallback((node: HTMLElement | null) => {
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+    liveMessageRef.current = node;
+    if (!node || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (followingRef.current) scheduleFollow("auto");
+      else {
+        const anchor = readingAnchorRef.current || findVisibleAnchor();
+        if (!readingAnchorRef.current && anchor) {
+          readingAnchorRef.current = anchor;
+          persistReadingState();
+        }
+        queueRestoreAnchor(readingAnchorRef.current);
+      }
     });
-    observer.observe(liveMessage);
-    return () => observer.disconnect();
-  }, [contentKey, scheduleFollow]);
+    observer.observe(node);
+    resizeObserverRef.current = observer;
+  }, [findVisibleAnchor, persistReadingState, queueRestoreAnchor, scheduleFollow]);
+
+  useLayoutEffect(() => () => {
+    captureReadingAnchor();
+    persistReadingState();
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+    if (followFrameRef.current !== null) window.cancelAnimationFrame(followFrameRef.current);
+    if (restoreFrameRef.current !== null) window.cancelAnimationFrame(restoreFrameRef.current);
+    followFrameRef.current = null;
+    restoreFrameRef.current = null;
+    followForceRef.current = false;
+    pendingReadingAnchorRef.current = null;
+  }, [captureReadingAnchor, persistReadingState]);
 
 
 
@@ -571,16 +810,49 @@ export default function AiConversationSidebar({
               {group.label ? <div className={styles.historyGroup} data-kind={group.kind} data-testid="ai-conversation-history-group">{group.label}</div> : null}
               {group.timeline.map((block) => {
             if (block.process) return (
-              <article key={block.messages[0].messageId} className={`${styles.message} ${styles.turnProcess}`} data-actor={block.messages[0].actor} data-testid="ai-turn-process" aria-label={`${block.messages[0].actorLabel} 处理记录`}>
+              <article key={block.messages[0].messageId} className={`${styles.message} ${styles.turnProcess}`} data-actor={block.messages[0].actor} data-testid="ai-turn-process" data-reading-anchor-id={`process:${block.messages[0].messageId}`} aria-label={`${block.messages[0].actorLabel} 处理记录`}>
                 <>{block.messages[0].actor === "agent" ? <AgentAvatar presentation={null} /> : <StemmioAvatar />}</>
                 <span className={styles.actor}>{block.messages[0].actorLabel} <span className={styles.actorDetail}>处理记录</span></span>
-                <ol>{sidebarProcessRows(block.messages).map(({ message, count }) => (
-                  <li key={message.messageId}>
-                    <CheckIcon size={13} aria-hidden="true" />
-                    <span>{message.text === "执行已结束，结果仍需校验。" ? "本轮执行已结束。" : message.text}{count > 1 ? ` · ${count} 次` : ""}</span>
-                    <time dateTime={message.createdAt}>{sidebarTimestampLabel(message.createdAt)}</time>
-                  </li>
-                ))}</ol>
+                {(() => {
+                  const disclosureKey = `process:${block.messages[0].messageId}`;
+                  return (
+                    <details
+                      className={styles.processDisclosure}
+                      open={expandedHistoryKeys.has(disclosureKey)}
+                      onToggle={(event) => settleDisclosure(disclosureKey, event.currentTarget.open)}
+                    >
+                    <summary onClick={prepareDisclosure} data-testid="ai-conversation-history-process-toggle">
+                    <span className={styles.processDisclosureLabel}>查看处理过程</span>
+                    <span className={styles.processDisclosurePreview}>
+                      {sidebarNarrationPreview(block.messages) || `${block.messages.length} 条记录`}
+                    </span>
+                    </summary>
+                    <ol>{sidebarProcessRows(block.messages).map(({ message, count }) => (
+                      <li key={message.messageId}>
+                        {message.actor === "stemmio" ? <CheckIcon size={13} aria-hidden="true" /> : null}
+                        <span>{message.text === "执行已结束，结果仍需校验。" ? "本轮执行已结束。" : message.text}{count > 1 ? ` · ${count} 次` : ""}</span>
+                        <time dateTime={message.createdAt}>{sidebarTimestampLabel(message.createdAt)}</time>
+                      </li>
+                    ))}</ol>
+                    {block.messages.some((message) => message.truncated) ? (
+                      <small className={styles.truncated}>部分内容已省略</small>
+                    ) : null}
+                    {block.messages.some((message) => message.actor === "agent" && message.text) ? (
+                      <div className={styles.messageMeta}>
+                        <button
+                          type="button"
+                          onClick={() => copyMessage(
+                            `process:${block.messages[0].messageId}`,
+                            block.messages.filter((message) => message.actor === "agent" && message.text).map((message) => message.text).join("\n\n"),
+                          )}
+                        >
+                          {copyFeedback?.key === `process:${block.messages[0].messageId}` ? copyFeedback.label : "复制"}
+                        </button>
+                      </div>
+                    ) : null}
+                    </details>
+                  );
+                })()}
               </article>
             );
             const message = block.messages[0];
@@ -593,6 +865,7 @@ export default function AiConversationSidebar({
                   data-actor={message.actor}
                   data-kind={message.kind}
                   data-status={message.status}
+                  data-reading-anchor-id={`message:${message.messageId}`}
                   data-testid="ai-conversation-message"
                 >
                   {message.actor === "stemmio" ? (
@@ -643,38 +916,70 @@ export default function AiConversationSidebar({
         {/* Public Agent narration and its compact execution metadata share one
             stable article. Later Stemmio verification facts can then follow it
             in chronological order. */}
-        {(runProgress?.narrationUpdates || executionStatus) && !displayedGroups.some((group) => group.kind === "current" && group.primary.some((message) => message.actor === "agent" && message.kind === "result-summary")) ? (
+        {(liveNarrationUpdates || executionStatusActive) ? (
           <article
-            ref={liveMessageRef}
+            ref={bindLiveMessageRef}
             className={styles.message}
             data-actor="agent"
+            data-reading-anchor-id="live-agent"
             data-testid="ai-conversation-narration-message"
             aria-label={`${resolvedAgentActionName} 的说明`}
             aria-live="off"
           >
             <AgentAvatar presentation={agentPresentation} />
             <span className={`${styles.actor} ${styles.liveActor}`}>
-              <span>{executionStatus?.agentName || executionDisplayName || resolvedAgentActionName}</span>
-              {executionStatus ? (
-                <small
-                  className={styles.executionMeta}
-                  data-testid="ai-conversation-execution-status"
-                >
-                  {executionStatus.meta}
-                </small>
+              <span>{executionProviderName}</span>
+              {executionStatusActive ? (
+                <ExecutionStatusLeaf
+                  state={state}
+                  providerName={executionProviderName}
+                  startedAt={agentStartedAt}
+                  receivedBytes={agentReceivedBytes}
+                  runKey={runKey}
+                />
               ) : null}
             </span>
-            {runProgress?.narrationUpdates ? (
+            {liveNarrationUpdates && liveNarrationPreview ? (
               <div
-                className={styles.narrationText}
+                className={styles.processDisclosure}
                 data-testid="ai-conversation-narration"
               >
-                {runProgress.narrationUpdates.map((update) => (
-                  <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
-                ))}
+                <button
+                  type="button"
+                  className={styles.narrationPreview}
+                  aria-expanded={processExpanded}
+                  aria-controls={narrationPanelId}
+                  aria-label={processExpanded ? "收起处理过程" : "展开处理过程"}
+                  data-testid="ai-conversation-narration-toggle"
+                  onClick={toggleProcess}
+                >
+                  <span className={styles.narrationDisclosureIcon} aria-hidden="true">
+                    {processExpanded ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
+                  </span>
+                  <span>{liveNarrationPreview}</span>
+                </button>
+                <div
+                  id={narrationPanelId}
+                  className={styles.narrationText}
+                  hidden={!processExpanded}
+                >
+                  {liveNarrationUpdates.map((update) => (
+                    <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
+                  ))}
+                  {runProgress?.narration ? (
+                    <div className={styles.messageMeta}>
+                      <button
+                        type="button"
+                        onClick={() => copyMessage("live-agent", runProgress.narration || "")}
+                      >
+                        {copyFeedback?.key === "live-agent" ? copyFeedback.label : "复制"}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
-            {agentWorking && !runProgress?.narrationUpdates ? (
+            {agentWorking && !liveNarrationUpdates ? (
               <span
                 className={styles.thinking}
                 role="status"
@@ -689,16 +994,6 @@ export default function AiConversationSidebar({
                 </span>
               </span>
             ) : null}
-            {runProgress?.narration ? (
-              <div className={styles.messageMeta}>
-                <button
-                  type="button"
-                  onClick={() => copyMessage("live-agent", runProgress?.narration || "")}
-                >
-                  {copyFeedback?.key === "live-agent" ? copyFeedback.label : "复制"}
-                </button>
-              </div>
-            ) : null}
             {runProgress?.narrationTruncated ? (
               <small className={styles.truncated}>部分输出已省略</small>
             ) : null}
@@ -711,7 +1006,7 @@ export default function AiConversationSidebar({
           * (ADR 0037 §4). The selected Agent's public words follow in their
           * own stable article, so the two speakers never blur together.
           */}
-        {!executionStatus && (runProgress?.liveLabel || runProgress?.headline) ? (
+        {!executionStatusActive && (runProgress?.liveLabel || runProgress?.headline) ? (
           <section
             className={`${styles.message} ${styles.runActivity}`}
             data-actor="stemmio"
@@ -756,7 +1051,7 @@ export default function AiConversationSidebar({
 
       <div className={styles.inputDock}>
       <div className={styles.currentActions} data-testid="ai-conversation-current-actions">
-        {actionBar && !executionStatus ? (
+        {actionBar && !executionStatusActive ? (
           <section
             className={`${styles.message} ${styles.actionBar}`}
             data-actor="stemmio"
@@ -796,7 +1091,7 @@ export default function AiConversationSidebar({
                       onAction?.(action.id);
                     }}
                   >
-                    {executionStatus && action.id === "cancel" && !action.disabled ? "停止" : action.label}
+                    {executionStatusActive && action.id === "cancel" && !action.disabled ? "停止" : action.label}
                   </button>
                 ))}
               </div>
@@ -850,7 +1145,7 @@ export default function AiConversationSidebar({
           </span>
           {actionBar?.actions.some((action) => action.id === "cancel") ? <button type="button" className={styles.send}
             data-testid="ai-conversation-stop" onClick={() => onAction?.("cancel")}
-            disabled={actionBar?.actions.find((action) => action.id === "cancel")?.disabled}>{executionStatus ? "停止" : "结束本轮"}</button> : null}
+            disabled={actionBar?.actions.find((action) => action.id === "cancel")?.disabled}>{executionStatusActive ? "停止" : "结束本轮"}</button> : null}
           {(state === "preview-ready" || state === "no-change") ? (
           <div className={styles.deliveryActions}>
             {activeIntent === "modify" && onCopyTask ? (

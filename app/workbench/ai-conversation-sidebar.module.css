@@ -661,6 +661,90 @@
   overflow-wrap: break-word;
 }
 
+.narrationText[hidden] {
+  display: none;
+}
+
+.processDisclosure {
+  min-width: 0;
+}
+
+.processDisclosure summary {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: #6f6c78;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.processDisclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.processDisclosureLabel {
+  flex: none;
+  color: #6f6c78;
+}
+
+.processDisclosurePreview {
+  min-width: 0;
+  overflow: hidden;
+  color: #8a8797;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.processDisclosure summary:focus-visible {
+  outline: 2px solid rgb(90 85 223 / 45%);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.narrationPreview {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #55525f;
+  font: inherit;
+  line-height: 1.55;
+  text-align: left;
+  cursor: pointer;
+}
+
+.narrationPreview > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.narrationPreview:hover > span:last-child {
+  color: #201d31;
+}
+
+.narrationPreview:focus-visible {
+  outline: 2px solid rgb(90 85 223 / 45%);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.narrationDisclosureIcon {
+  flex: none;
+  width: 10px;
+  color: #8a8797;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .narrationLine {
   margin: 0;
   white-space: pre-wrap;

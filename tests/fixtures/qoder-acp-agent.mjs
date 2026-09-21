@@ -35,6 +35,7 @@ if (pidFileArgument) {
 const hang = process.argv.includes("--hang");
 const runtimeFailure = process.argv.includes("--runtime-failure");
 const visibleText = process.argv.includes("--visible-text");
+const visibleTextLong = process.argv.includes("--visible-text-long");
 const visibleTextGateArgument = process.argv.find((argument) => argument.startsWith("--visible-text-gate-ms="));
 const visibleTextGateMs = Math.max(
   0,
@@ -80,7 +81,16 @@ const app = acp.agent({ name: "stemmio-e2e-qoder" })
       throw new Error("Synthetic ACP runtime connection interrupted.");
     }
     if (visibleText) {
-      for (const text of ["正在读取冻结任务。", "正在写入 Candidate。", "正在等待校验。"]) {
+      const publicTexts = visibleTextLong
+        ? Array.from({ length: 18 }, (_, index) => {
+          const marker = `长公开说明 ${index + 1}/18`;
+          const tail = index === 17
+            ? "最终公开段落：结果仍需 Stemmio 校验。"
+            : "本段仍在执行，下一段公开说明随后到达。";
+          return `${marker}：${"公开内容保持稳定并沿用同一条 Agent 消息容器。".repeat(8)}\n\n${tail}`;
+        })
+        : ["正在读取冻结任务。", "正在写入 Candidate。", "正在等待校验。"];
+      for (const text of publicTexts) {
         await client.notify(acp.methods.client.session.update, {
           sessionId,
           update: {
