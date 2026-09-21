@@ -216,7 +216,8 @@ export function sidebarRunProgress({
     const text = String(update.text || "").trim();
     if (!id || !text || seenUpdateIds.has(id)) continue;
     seenUpdateIds.add(id);
-    projectedUpdates.push(Object.freeze({ id, text }));
+    projectedUpdates.push(Object.freeze({ id, text, ...(Number.isSafeInteger(update.firstSequence)
+      ? { firstSequence: update.firstSequence } : {}) }));
   }
   const narrationUpdates = projectedUpdates;
   // Copy and summary consumers derive a full sentence from ordered blocks at
@@ -1099,4 +1100,40 @@ export function sidebarProcessRows(messages = []) {
     else rows.push({ message, count: 1 });
   }
   return rows;
+}
+
+
+const PUBLIC_ACTIVITY_LABELS = Object.freeze({
+  "file-read": "读取本轮资料",
+  "file-written": "写入修改结果",
+  "response-started": "收到服务响应",
+  "generation-started": "生成修改",
+  "response-ended": "服务响应已结束",
+  "html-validation-completed": "已检查 HTML 完整性",
+  "review-preparation-started": "准备审阅",
+  "cancel-requested": "正在停止",
+  "host-cancelling": "正在停止",
+});
+
+/** Activity is read-only evidence; neither grouping nor response end is success. */
+export function sidebarActivityTimeline(updates = [], activities = []) {
+  const entries = updates.map((update, index) => ({
+    id: update.id, kind: "narration", text: update.text,
+    sequence: Number.isSafeInteger(update.firstSequence) ? update.firstSequence : index,
+  }));
+  for (const activity of activities) {
+    const label = PUBLIC_ACTIVITY_LABELS[activity.kind];
+    if (!label || !Number.isSafeInteger(activity.sequence)) continue;
+    entries.push({ id: activity.id, kind: "activity", activityKind: activity.kind,
+      label, sequence: activity.sequence, boundary: activity.boundary });
+  }
+  entries.sort((a, b) => a.sequence - b.sequence);
+  const grouped = [];
+  for (const entry of entries) {
+    const previous = grouped.at(-1);
+    if (entry.kind === "activity" && previous?.kind === "activity"
+      && previous.activityKind === entry.activityKind && previous.boundary === entry.boundary) continue;
+    grouped.push(entry);
+  }
+  return grouped;
 }

@@ -1146,3 +1146,18 @@ test("sidebar local facts reject the previous Document before a new load and pre
   assert.equal(sidebarConversationPresentation(snapshot, context).draftAvailable, true);
   assert.equal(sidebarConversationPresentation({ ...snapshot, status: "failed" }, context).draftAvailable, false);
 });
+
+
+test("activity grouping stays on its first event and never crosses public narration", async () => {
+  const { sidebarActivityTimeline } = await import("../app/workbench/ai-conversation-model.js");
+  const a = { id: "activity:1", kind: "file-read", sequence: 1, boundary: 0 };
+  const b = { id: "activity:2", kind: "file-read", sequence: 2, boundary: 0 };
+  const text = { id: "message:a", text: "公开说明", sequence: 7, firstSequence: 3 };
+  const after = { id: "activity:4", kind: "file-read", sequence: 4, boundary: 3 };
+  assert.equal(sidebarActivityTimeline([], [a])[0].id, sidebarActivityTimeline([], [a, b])[0].id);
+  const rows = sidebarActivityTimeline([text], [a, b, after]);
+  assert.deepEqual(rows.map(row => row.id), ["activity:1", "message:a", "activity:4"]);
+  assert.deepEqual(rows.filter(row => row.kind === "activity").map(row => row.label), ["读取本轮资料", "读取本轮资料"]);
+  assert.equal(rows.some(row => /文件|成功|已完成|[0-9]/u.test(row.label || "")), false);
+  assert.deepEqual(sidebarActivityTimeline([], [a, { ...b, boundary: 2 }]).map(row => row.id), [a.id, b.id]);
+});

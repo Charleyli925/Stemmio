@@ -786,6 +786,17 @@ to fixed labels, with a distinct event identity for each occurrence. HTTP starts
 generation progress only after actual content arrives, separately reporting response
 receipt and validation.
 
+The same event reducer retains at most 80 `publicActivities`, separately from
+public text and private diagnostic events. Its closed kinds project only a
+sequence-derived identity, kind, sequence and boundary; no raw event payload is
+forwarded. Text `firstSequence` stays fixed across deltas. Consecutive activity
+grouping belongs to the sidebar model and retains the first event identity.
+Public text, stop, failure and completion facts break grouping. Activity overflow
+sets `activitiesTruncated`; current Run outcomes stay authoritative independently.
+Only the full runs capability subscribes to activity updates, not the workspace
+shell. Neither activities nor disclosure preferences are written to Conversation;
+restart yields no reconstructed activity detail. HTTP excludes file tool kinds.
+
 For submissions, the durable stop-requested fact fences late completion inside the repository serial writer while cleanup is unconfirmed. A Candidate already authoritative before stop remains available; only an explicit discard intent rejects it. Renderer cancellation reconciles a result-ready receipt instead of clearing that result. The stop-requested fact is not a cancelled result.
 
 ## Document Agent preference
