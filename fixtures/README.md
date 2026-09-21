@@ -2,7 +2,7 @@
 
 活动正例只位于 `v3/`。它们用于 Schema 校验和跨文件语义测试，不是运行时工作区，也不能被当作真实用户记录直接写入。
 
-`targeted-change/` 保存 SourceIndex、TargetResolver、SourcePatchEngine 和 ScopeValidator 的源码边界样本，覆盖 Unicode、CRLF/LF、属性引号、注释、template/table/script、样式来源与模块排序。
+`targeted-change/` 的源码边界样本（SourceIndex、TargetResolver、SourcePatchEngine 和 ScopeValidator）只保留在 `tests/fixtures/targeted-change/`，覆盖 Unicode、CRLF/LF、属性引号、注释、template/table/script、样式来源与模块排序；本目录不重复存放同一份文件。
 
 `candidate-assessment-compat/` 保存一组纯合成的旧 Developer Preview
 assessment、冻结 base 与候选 output。它代表仍受 v1 Schema 支持的省略退役字段形态，
