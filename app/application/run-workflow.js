@@ -310,7 +310,6 @@ function agentHandoffState(run, session) {
     agentVersion: session.agentVersion ? String(session.agentVersion) : null,
     // ADR 0037: narration only. It reaches the view so the user can see what the
     // Agent is doing, and it carries no authority over the Candidate.
-    visibleText: typeof session.visibleText === "string" ? session.visibleText : "",
     visibleTextUpdates: Object.freeze(visibleTextUpdates),
     textTruncated: session.textTruncated === true,
     startedAt: typeof session.startedAt === "string" ? session.startedAt : null,
@@ -327,6 +326,16 @@ function agentHandoffState(run, session) {
       safeToRetry,
     }),
   };
+}
+
+function sameVisibleTextUpdates(left, right) {
+  const leftUpdates = Array.isArray(left) ? left : [];
+  const rightUpdates = Array.isArray(right) ? right : [];
+  return leftUpdates.length === rightUpdates.length && leftUpdates.every((update, index) => (
+    update.id === rightUpdates[index]?.id
+    && update.sequence === rightUpdates[index]?.sequence
+    && update.text === rightUpdates[index]?.text
+  ));
 }
 
 function agentRecoveryRequired(run, handoff) {
@@ -1592,7 +1601,6 @@ export class RunWorkflow {
         runtimeId: delivery.selection.runtimeId,
         agentName: presentation.agentName || presentation.displayName || "Agent",
         agentVersion: null,
-        visibleText: "",
         visibleTextUpdates: [],
         textTruncated: false,
         startedAt: null,
@@ -2112,8 +2120,11 @@ export class RunWorkflow {
         updatedAt: agentState.updatedAt || previousHandoff?.updatedAt || null,
       };
       if (
-        agentState.visibleText
-        && agentState.visibleText !== previousHandoff?.visibleText
+        agentState.visibleTextUpdates.length > 0
+        && !sameVisibleTextUpdates(
+          agentState.visibleTextUpdates,
+          previousHandoff?.visibleTextUpdates,
+        )
       ) {
         this.#lastNarrationAt = this.#clock.now();
       }

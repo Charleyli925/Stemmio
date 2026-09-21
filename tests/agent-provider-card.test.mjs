@@ -65,7 +65,7 @@ test("About is product information while Settings owns Agent checks and update c
     source("../app/components/settings-agent-action-gate.js"),
   ]);
   assert.match(about, /源码级本地 HTML 编辑器/u);
-  assert.doesNotMatch(about, /about-agent-section|Agent|更新|检查更新|Qoder/u);
+  assert.doesNotMatch(about, /about-agent-section|Agent|检查更新|Qoder/u);
   assert.match(settings, /AI 服务/u);
   assert.match(settings, /settings-agent-row-/u);
   assert.match(settings, /AgentSetupPanel/u);

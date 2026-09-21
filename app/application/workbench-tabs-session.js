@@ -185,37 +185,40 @@ export class WorkbenchTabsSession {
     while (ids.has(`start:${sequence}`)) sequence += 1;
     const tab = startTab(`start:${sequence}`);
     const tabs = [...this.#snapshot.tabs, tab];
-    return this.#publish({
+    this.#publish({
       tabs,
       activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
       pendingTabId: null,
       mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
       runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
     });
+    return tab;
   }
 
   createSettings({ focus = true } = {}) {
     const existing = this.#snapshot.tabs.find((tab) => tab.kind === "settings");
     if (existing) {
-      return this.#publish({
+      this.#publish({
         ...this.#snapshot,
         activeTabId: focus ? existing.tabId : this.#snapshot.activeTabId,
         pendingTabId: null,
         mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
         runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
       });
+      return existing;
     }
     let sequence = 1;
     const ids = new Set(this.#snapshot.tabs.map((tab) => tab.tabId));
     while (ids.has(`settings:${sequence}`)) sequence += 1;
     const tab = settingsTab(`settings:${sequence}`);
-    return this.#publish({
+    this.#publish({
       tabs: [...this.#snapshot.tabs, tab],
       activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
       pendingTabId: null,
       mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
       runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
     });
+    return tab;
   }
 
   createProjectRules({ projectId, documentId, title, focus = true } = {}) {
@@ -234,21 +237,23 @@ export class WorkbenchTabsSession {
       && item.documentId === documentId
     ));
     if (existing) {
-      return this.#publish({
+      this.#publish({
         ...this.#snapshot,
         activeTabId: focus ? existing.tabId : this.#snapshot.activeTabId,
         pendingTabId: null,
         mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
         runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
       });
+      return existing;
     }
-    return this.#publish({
+    this.#publish({
       tabs: [...this.#snapshot.tabs, tab],
       activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
       pendingTabId: null,
       mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
       runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
     });
+    return tab;
   }
 
   createHistory({
@@ -282,10 +287,10 @@ export class WorkbenchTabsSession {
     // The existing tab names the snapshot that is actually visible. Keep that
     // identity until WorkbenchNavigationWorkflow has loaded and verified the
     // requested replacement, then commit both facts together in commitHistory.
-    if (existingIndex >= 0) return this.#snapshot;
+    if (existingIndex >= 0) return this.#snapshot.tabs[existingIndex];
     const tabs = [...this.#snapshot.tabs];
     tabs.push(tab);
-    return this.#publish({
+    this.#publish({
       ...this.#snapshot,
       tabs,
       activeTabId: focus ? tab.tabId : this.#snapshot.activeTabId,
@@ -293,6 +298,7 @@ export class WorkbenchTabsSession {
       mountedDocumentTabId: focus ? null : this.#snapshot.mountedDocumentTabId,
       runtimeOwnerTabId: this.#snapshot.runtimeOwnerTabId,
     });
+    return tab;
   }
 
   bindDocument({ projectId, documentId, title, status = "normal", focus = true }) {

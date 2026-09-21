@@ -177,7 +177,6 @@ export type SidebarRunProgress = {
 export function sidebarRunProgress(options?: {
   state?: string;
   steps?: readonly unknown[];
-  agentText?: string;
   agentUpdates?: readonly unknown[];
   agentTextTruncated?: boolean;
 }): SidebarRunProgress | null;

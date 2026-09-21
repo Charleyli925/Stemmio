@@ -17,6 +17,7 @@ import {
   REQUIRED_APP_SOURCE_FILES,
   REQUIRED_SHARED_FILES,
 } from "../scripts/verify-packaged-artifact.mjs";
+import { removePackagedSourceMaps } from "../desktop/after-pack.mjs";
 import { evaluatePackagedSourceRuntimeClosure } from "../scripts/packaged-runtime-closure.mjs";
 import { APP_SOURCE_FILES } from "./helpers/release-evidence-fixtures.mjs";
 import { stagePackagedApplicationForLaunch } from "./e2e/electron/helpers/packaged-app-launch.mjs";
@@ -399,7 +400,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
     {
       provider: "github",
       owner: "Charleyli925",
-      repo: "Stemmio",
+      repo: "Stemmio-Releases",
       releaseType: "release",
     },
   ]);
@@ -425,7 +426,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
   assert.deepEqual(packageJson.build.publish, [{
     provider: "github",
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     releaseType: "release",
   }]);
   assert.equal(packageJson.dependencies["@openai/codex"], undefined);
@@ -463,6 +464,28 @@ test("package security boundaries retain CSP, entitlements and final plist clean
   assert.match(afterPack, /Delete/u);
 });
 
+test("after-pack removes nested source maps from staged resources", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "stemmio-source-map-prune-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const nestedMap = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js.map");
+  const rootMap = path.join(temporaryRoot, "renderer.js.map");
+  const runtimeFile = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js");
+  await Promise.all([
+    mkdir(path.dirname(nestedMap), { recursive: true }),
+    writeFile(rootMap, "source map\n", "utf8"),
+  ]);
+  await Promise.all([
+    writeFile(nestedMap, "source map\n", "utf8"),
+    writeFile(runtimeFile, "runtime bytes\n", "utf8"),
+  ]);
+
+  await removePackagedSourceMaps(temporaryRoot);
+
+  await assert.rejects(stat(rootMap), { code: "ENOENT" });
+  await assert.rejects(stat(nestedMap), { code: "ENOENT" });
+  assert.equal(await readFile(runtimeFile, "utf8"), "runtime bytes\n");
+});
+
 test("packaged legal notice and icon remain available as reviewed resources", async () => {
   const [notice, privacy, iconInfo] = await Promise.all([
     readFile(new URL("../源页 用户声明与免责声明.txt", import.meta.url), "utf8"),
@@ -476,7 +499,7 @@ test("packaged legal notice and icon remain available as reviewed resources", as
   assert.match(notice, /只有用户明确采纳后才成为正式版本/u);
   assert.match(privacy, /用户主动选择源页 Agent、Qoder CLI 或 Codex/u);
   assert.match(privacy, /将完成任务所需的内容发送至 Codex 服务/u);
-  assert.match(notice, /Apache License 2\.0/u);
+  assert.match(notice, /专有许可与担保/u);
   assert.ok(iconInfo.size > 100_000);
 });
 

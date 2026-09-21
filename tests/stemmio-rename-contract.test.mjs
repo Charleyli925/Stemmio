@@ -100,6 +100,26 @@ const SURGICAL_CONTENT_EXCEPTIONS = Object.freeze({
     // Capability routing keeps the historical ADR filename as a stable reference.
     /docs\/decisions\/0069-pageroot-native-openai-compatible-agent\.md/gu,
   ],
+  ".github/workflows/release.yml": [
+    // Only the fixed one-time legacy updater bridge retains the former repository name.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/PRIVATE_SOURCE_BOUNDARY.md": [
+    // The former repository name is only the one-time updater bridge for signed older clients.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/PRIVATE_SOURCE_CUTOVER.md": [
+    // The cutover must name the bridge it verifies without reintroducing a source endpoint.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/RELEASING.md": [
+    // Publication guidance names the bridge only for the one transition version.
+    /Charleyli925\/PageRoot/gu,
+  ],
+  "docs/RELEASE_PIPELINE_GOVERNANCE.md": [
+    // The release credential is scoped to the fixed temporary bridge as well as the public channel.
+    /Charleyli925\/PageRoot/gu,
+  ],
   "AGENTS.md": [],
   "TRADEMARKS.md": [
     // The former brand is named once to identify historical builds only.
@@ -141,7 +161,10 @@ const LEGACY_PATH_EXCEPTIONS = new Set([
 ]);
 
 const RETIRED_PRODUCT_IDENTIFIERS = /(?:PageRoot|pageroot|PAGEROOT|HTML AI|HTML_AI|pr1_|htmlAI|com\.htmlai\.workbench|pageroot\.local|html-change\.local|html-app:|x-html-ai-bridge-token)/u;
-const CURRENT_REPOSITORY_URL = "https://github.com/Charleyli925/Stemmio";
+const CURRENT_SOURCE_REPOSITORY_URL = "https://github.com/Charleyli925/Stemmio";
+const PUBLIC_RELEASES_REPOSITORY_URL =
+  "https://github.com/Charleyli925/Stemmio-Releases";
+const LEGACY_UPDATE_BRIDGE_REPOSITORY = "Charleyli925/PageRoot";
 
 function removeContractExceptions(contents, relativePath = "") {
   let normalized = String(contents);
@@ -198,7 +221,7 @@ test("current Stemmio contracts have no unexplained retired product identifiers"
   }
 });
 
-test("current repository endpoints and provenance use the renamed GitHub source", async () => {
+test("private source provenance stays separate from public distribution endpoints", async () => {
   const [packageText, desktopLinks, workbench, provenance, candidate, checkpoint, issueTemplate, ciIncidentTemplate, readme] = await Promise.all([
     source("package.json"),
     source("desktop/product-links.mjs"),
@@ -211,17 +234,57 @@ test("current repository endpoints and provenance use the renamed GitHub source"
     source("README.md"),
   ]);
   const packageJson = JSON.parse(packageText);
-  assert.equal(packageJson.homepage, `${CURRENT_REPOSITORY_URL}#readme`);
-  assert.equal(packageJson.repository.url, `git+${CURRENT_REPOSITORY_URL}.git`);
-  assert.equal(packageJson.bugs.url, `${CURRENT_REPOSITORY_URL}/issues`);
-  assert.equal(packageJson.build.publish[0].repo, "Stemmio");
-  for (const contents of [desktopLinks, workbench, provenance, issueTemplate, ciIncidentTemplate, readme]) {
-    assert.match(contents, /Charleyli925\/Stemmio/u);
+  assert.equal(packageJson.homepage, `${PUBLIC_RELEASES_REPOSITORY_URL}#readme`);
+  assert.equal(packageJson.repository.url, `git+${CURRENT_SOURCE_REPOSITORY_URL}.git`);
+  assert.equal(packageJson.bugs.url, `${PUBLIC_RELEASES_REPOSITORY_URL}/issues`);
+  assert.equal(packageJson.build.publish[0].repo, "Stemmio-Releases");
+  for (const contents of [desktopLinks, workbench, issueTemplate, readme]) {
+    assert.match(contents, /Charleyli925\/Stemmio-Releases/u);
     assert.doesNotMatch(contents, /Charleyli925\/PageRoot/u);
   }
+  assert.match(provenance, /Charleyli925\/Stemmio/u);
+  assert.doesNotMatch(provenance, /Charleyli925\/Stemmio-Releases/u);
   for (const contents of [candidate, checkpoint]) {
     assert.match(contents, /SOURCE_REPOSITORY_URL/u);
     assert.doesNotMatch(contents, /Charleyli925\/PageRoot/u);
+  }
+  assert.match(ciIncidentTemplate, /Charleyli925\/Stemmio\/actions\/runs/u);
+});
+
+test("private source policy keeps the user-facing release channel public", async () => {
+  const [agentGuide, boundary, cutover, releasing, governance, license, security, about, releaseWorkflow] = await Promise.all([
+    source("AGENTS.md"),
+    source("docs/PRIVATE_SOURCE_BOUNDARY.md"),
+    source("docs/PRIVATE_SOURCE_CUTOVER.md"),
+    source("docs/RELEASING.md"),
+    source("docs/RELEASE_PIPELINE_GOVERNANCE.md"),
+    source("LICENSE"),
+    source("SECURITY.md"),
+    source("app/components/AboutStemmioDialog.tsx"),
+    source(".github/workflows/release.yml"),
+  ]);
+  assert.equal(existsSync(path.join(productRoot, "docs/OPEN_SOURCE_BOUNDARY.md")), false);
+  assert.match(agentGuide, /complete private source boundary/u);
+  assert.match(boundary, /private, canonical source repository/u);
+  assert.match(boundary, /public download and update channel/u);
+  assert.match(license, /Proprietary Source License/u);
+  assert.match(license, /previously published under Apache License 2\.0/u);
+  assert.match(security, /Charleyli925\/Stemmio-Releases\/security\/advisories\/new/u);
+  assert.match(about, /Stemmio Releases on GitHub/u);
+  assert.doesNotMatch(about, /查看源代码/u);
+  assert.match(releaseWorkflow, /STEMMIO_PUBLIC_RELEASES_TOKEN/u);
+  assert.match(releaseWorkflow, /--repo "\$repository"/u);
+  assert.match(releaseWorkflow, /publish_release "\$PUBLIC_RELEASES_REPOSITORY" false/u);
+  assert.match(releaseWorkflow, /LEGACY_UPDATE_BRIDGE_REPOSITORY:\s*Charleyli925\/PageRoot/u);
+  assert.match(releaseWorkflow, /LEGACY_UPDATE_BRIDGE_VERSION:\s*0\.9\.90/u);
+  assert.match(releaseWorkflow, /--jq '\.full_name'/u);
+  assert.match(
+    releaseWorkflow,
+    /if \[ "\$VERSION" = "\$LEGACY_UPDATE_BRIDGE_VERSION" \]; then[\s\S]+publish_release "\$LEGACY_UPDATE_BRIDGE_REPOSITORY" true/u,
+  );
+  for (const contents of [boundary, cutover, releasing, governance]) {
+    assert.match(contents, /legacy updater bridge/u);
+    assert.match(contents, new RegExp(LEGACY_UPDATE_BRIDGE_REPOSITORY.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
   }
 });
 

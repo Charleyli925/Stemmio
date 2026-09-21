@@ -3106,6 +3106,16 @@ test("repairCurrentCanvas joins the existing document save before rebuilding the
   const save = deferred();
   let autosaveCalls = 0;
   let sourceCalls = 0;
+  const openTarget = (sourceSha256) => ({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    projectRootPath: "/tmp/document-workflow-project",
+    targetKind: "working-copy",
+    workingCopyId: "working_document_workflow",
+    versionId: "version_document_workflow",
+    exactSourcePath: SOURCE_PATH,
+    sourceSha256,
+  });
   const harness = createHarness({
     html: before,
     bridge: {
@@ -3119,9 +3129,14 @@ test("repairCurrentCanvas joins the existing document save before rebuilding the
       },
     },
   });
-  harness.workflow.enqueueEdit({ html: after });
+  const requestedContext = harness.projectSession.refreshOpenTarget(openTarget(sha256(before)));
+  const sourceEvents = [];
+  harness.workflow.subscribeEvents((event) => {
+    if (event.type === "document-source-operation") sourceEvents.push(event);
+  });
+  harness.workflow.enqueueEdit({ html: after, context: requestedContext });
 
-  const repair = harness.workflow.repairCurrentCanvas({ context: harness.context });
+  const repair = harness.workflow.repairCurrentCanvas({ context: requestedContext });
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(autosaveCalls, 1);
@@ -3131,15 +3146,79 @@ test("repairCurrentCanvas joins the existing document save before rebuilding the
     sha256: sha256(after),
     persistedRevision: 1,
     lastModifiedAt: "2026-08-11T00:00:01.000Z",
+    openTarget: openTarget(sha256(after)),
   });
 
   const outcome = await repair;
   assert.equal(outcome.status, "succeeded");
   assert.equal(outcome.value.page.status, "restored");
+  assert.equal(harness.projectSession.matches(requestedContext), false);
+  assert.equal(outcome.value.source.receipt.context.sourceSha256, sha256(after));
+  assert.deepEqual(sourceEvents.map((event) => event.phase), ["running", "idle"]);
+  assert.equal(sourceEvents[0].context.sourceSha256, sha256(before));
+  assert.equal(sourceEvents[1].context.sourceSha256, sha256(after));
   assert.equal(harness.documentSession.html, after);
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(after));
   assert.equal(autosaveCalls, 1);
   assert.equal(sourceCalls, 0);
+  assert.equal(harness.canvas.rebuilds, 0);
+  assert.equal(harness.canvas.unlocks, 1);
+});
+
+test("repairCurrentCanvas rejects a hash refresh when an independent edit changes the source", async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const pending = before.replace("one", "pending save");
+  const independent = before.replace("one", "independent edit");
+  const firstSave = deferred();
+  let autosaveCalls = 0;
+  const openTarget = (sourceSha256) => ({
+    projectId: PROJECT_ID,
+    documentId: DOCUMENT_ID,
+    projectRootPath: "/tmp/document-workflow-project",
+    targetKind: "working-copy",
+    workingCopyId: "working_document_workflow",
+    versionId: "version_document_workflow",
+    exactSourcePath: SOURCE_PATH,
+    sourceSha256,
+  });
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async autosave(body) {
+        autosaveCalls += 1;
+        if (autosaveCalls === 1) return firstSave.promise;
+        return {
+          ok: true,
+          content: body.html,
+          sha256: sha256(body.html),
+          persistedRevision: body.editRevision,
+          lastModifiedAt: "2026-08-11T00:00:02.000Z",
+          openTarget: openTarget(sha256(body.html)),
+        };
+      },
+    },
+  });
+  const requestedContext = harness.projectSession.refreshOpenTarget(openTarget(sha256(before)));
+  harness.workflow.enqueueEdit({ html: pending, context: requestedContext });
+  const repair = harness.workflow.repairCurrentCanvas({ context: requestedContext });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(autosaveCalls, 1);
+  harness.workflow.enqueueEdit({ html: independent, context: requestedContext });
+  firstSave.resolve({
+    ok: true,
+    content: pending,
+    sha256: sha256(pending),
+    persistedRevision: 1,
+    lastModifiedAt: "2026-08-11T00:00:01.000Z",
+    openTarget: openTarget(sha256(pending)),
+  });
+
+  const outcome = await repair;
+  assert.equal(outcome.status, "stale");
+  assert.equal(harness.documentSession.html, independent);
+  assert.equal(harness.documentSession.persistedSourceSha256, sha256(independent));
+  assert.equal(autosaveCalls, 2);
   assert.equal(harness.canvas.rebuilds, 0);
 });
 

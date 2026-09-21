@@ -959,7 +959,7 @@ test("the selected Agent narrates the round while Stemmio states the stage", () 
   const progress = sidebarRunProgress({
     state: "processing",
     steps,
-    agentText: "  正在把标题换成 2026 Q2 产品健康度回顾  ",
+    agentUpdates: [{ id: "rename-title", sequence: 1, text: "  正在把标题换成 2026 Q2 产品健康度回顾  " }],
   });
 
   // ADR 0037 §4: the Agent's words are an annotation, and the stage still comes from
@@ -972,7 +972,7 @@ test("the selected Agent narrates the round while Stemmio states the stage", () 
   // with a toggle that opens onto nothing.
   assert.equal(sidebarRunProgress({ state: "processing", steps }).narration, null);
   assert.equal(
-    sidebarRunProgress({ state: "processing", steps, agentText: "   " }).narration,
+    sidebarRunProgress({ state: "processing", steps, agentUpdates: [] }).narration,
     null,
   );
 });
@@ -981,7 +981,7 @@ test("live Agent narration carries its bounded-text fact and local timestamp", (
   const progress = sidebarRunProgress({
     state: "processing",
     steps: [{ key: "agent", label: "Codex 正在修改", state: "current" }],
-    agentText: "已读取冻结的任务。",
+    agentUpdates: [{ id: "read-task", sequence: 1, text: "已读取冻结的任务。" }],
     agentTextTruncated: true,
   });
   assert.equal(progress.narrationTruncated, true);
@@ -1004,7 +1004,7 @@ test("public Agent narration remains available with the completed Candidate deci
       { key: "agent", label: "Codex 已完成", state: "done" },
       { key: "result", label: "AI 修改已完成，可以审阅", state: "current" },
     ],
-    agentText: "Candidate 已交给 Stemmio 校验。",
+    agentUpdates: [{ id: "candidate-ready", sequence: 1, text: "Candidate 已交给 Stemmio 校验。" }],
   });
   assert.equal(progress.narration, "Candidate 已交给 Stemmio 校验。");
   assert.equal(progress.liveLabel, null);
@@ -1015,7 +1015,6 @@ test("canonical Agent updates render as stable rows under one Agent identity", (
   const progress = sidebarRunProgress({
     state: "processing",
     steps,
-    agentText: "先读清单和依赖文件。再写候选 HTML。",
     agentUpdates: [
       { id: "update-1", sequence: 1, text: "先读清单和依赖文件。" },
       { id: "update-2", sequence: 2, text: "再写候选 HTML。" },
@@ -1026,10 +1025,11 @@ test("canonical Agent updates render as stable rows under one Agent identity", (
     { id: "update-1", text: "先读清单和依赖文件。" },
     { id: "update-2", text: "再写候选 HTML。" },
   ]);
+  assert.equal(progress.narration, "先读清单和依赖文件。\n\n再写候选 HTML。");
 
-  assert.deepEqual(
+  assert.equal(
     sidebarRunProgress({ state: "processing", steps, agentText: "只有一句。" }).narrationUpdates,
-    [{ id: "legacy:0", text: "只有一句。" }],
+    null,
   );
   assert.equal(sidebarRunProgress({ state: "processing", steps }).narrationUpdates, null);
 });

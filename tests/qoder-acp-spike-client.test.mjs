@@ -880,7 +880,7 @@ test("ACP ClientApp completes a synthetic Stemmio Candidate turn", async (t) => 
   assert.equal(result.updates[0].type, "tool_call");
   assert.ok(events.some((event) => event.kind === "turn-stopped"));
   // An execution turn passes no Agent prose: its payload is the Candidate file.
-  assert.equal(result.visibleText, "");
+  assert.equal(Object.hasOwn(result, "visibleText"), false);
   assert.equal(result.visibleTextTruncated, false);
   assert.equal(events.some((event) => event.kind === "visible-text"), false);
 });
@@ -924,9 +924,14 @@ test("ACP execution projects public Agent messages and marks a bounded text tail
     turnTimeoutMs: 4_000,
   });
 
-  assert.equal(result.visibleText.startsWith("先读取 capacity、quota 和 model unavailable 说明。再写入 Candidate。"), true);
-  assert.equal(result.visibleText.includes("\u0000"), false);
-  assert.equal(Buffer.byteLength(result.visibleText, "utf8"), 64 * 1024);
+  const publicNarration = events
+    .filter((event) => event.kind === "visible-text")
+    .map((event) => event.text)
+    .join("");
+  assert.equal(publicNarration.startsWith("先读取 capacity、quota 和 model unavailable 说明。再写入 Candidate。"), true);
+  assert.equal(publicNarration.includes("\u0000"), false);
+  assert.equal(Buffer.byteLength(publicNarration, "utf8"), 64 * 1024);
+  assert.equal(Object.hasOwn(result, "visibleText"), false);
   assert.equal(result.visibleTextTruncated, true);
   assert.deepEqual(
     events.filter((event) => event.kind === "visible-text").map((event) => event.text).slice(0, 2),
@@ -1521,7 +1526,7 @@ test("ACP activity watchdog allows a turn to run beyond one window without expos
     turnTimeoutMs: 20,
   });
   assert.equal(result.stopReason, "end_turn");
-  assert.equal(result.visibleText, "");
+  assert.equal(Object.hasOwn(result, "visibleText"), false);
   assert.equal(events.some((event) => event.kind === "visible-text"), false);
 });
 
@@ -1577,7 +1582,7 @@ test("ACP activity watchdog permits valid protocol activity beyond 45 virtual mi
     scheduler: timer.scheduler,
   });
   assert.equal(result.stopReason, "end_turn");
-  assert.equal(result.visibleText, "");
+  assert.equal(Object.hasOwn(result, "visibleText"), false);
   assert.ok(timer.now() > DEFAULT_ACP_TURN_TIMEOUT_MS);
 });
 

@@ -78,6 +78,7 @@
         "^app/application/document-session",
         "^app/application/source-receipt",
         "^scripts/verify-source-receipt-typecheck",
+        "^scripts/typecheck-mutation-verifier",
         "^tests/source-receipt-contract\\.typecheck",
         "^tests/source-receipt-typecheck-verifier",
         "^tsconfig\\.source-receipt",
@@ -139,6 +140,7 @@
         "^app/workbench/use-workspace-preferences",
         "^shared/agent-configuration-preferences",
         "^scripts/verify-workspace-preferences-typecheck",
+        "^scripts/typecheck-mutation-verifier",
         "^tests/(?:workspace-preferences|run-workflow|agent-provider-catalog)",
         "^tsconfig\\.workspace-preferences"
       ],
@@ -531,6 +533,8 @@
         "^app/application/workbench-navigation",
         "^app/application/workbench-tabs",
         "^app/application/browser-document",
+        "^app/workbench/(?:WorkbenchDocumentSurfaceCache|document-surface-presentation)",
+        "^app/components/HtmlDisplaySurface",
         "^app/workbench/workbench-navigation-container",
         "^tests/workbench-navigation",
         "^tests/workbench-tabs"
@@ -703,11 +707,17 @@
       "id": "architecture-policy",
       "patterns": [
         "^AGENTS\\.md$",
+        "^CONTRIBUTING\\.md$",
+        "^\\.agents/skills/",
         "^\\.qoder/skills/",
+        "^\\.codex/agents/",
+        "^\\.github/PULL_REQUEST_TEMPLATE\\.md$",
         "^docs/ARCHITECTURE",
         "^docs/GUARD_LEDGER",
         "^docs/ENGINEERING_STANDARDS",
         "^docs/CODEX_WORKFLOW",
+        "^docs/CODEX_SUBAGENT_ROUTING_WORKSHEET",
+        "^docs/(?:DEVELOPMENT|GIT_WORKFLOW)",
         "^docs/ADR_CURATION",
         "^docs/SIMPLIFICATION_AUDIT",
         "^scripts/check-architecture",
@@ -715,7 +725,9 @@
         "^scripts/capability-context",
         "^tests/architecture-boundaries",
         "^tests/test-gate-selection",
-        "^tests/capability-context-locate"
+        "^tests/capability-context-locate",
+        "^tests/TEST_STRATEGY\\.md$",
+        "^tests/workflow-doc-contract"
       ],
       "entryInterfaces": [
         "docs/ARCHITECTURE_MAP.md",
@@ -734,7 +746,8 @@
       "focusedTests": [
         "tests/architecture-boundaries.test.mjs",
         "tests/test-gate-selection.test.mjs",
-        "tests/capability-context-locate.test.mjs"
+        "tests/capability-context-locate.test.mjs",
+        "tests/workflow-doc-contract.test.mjs"
       ],
       "requiredDocs": [
         "docs/ARCHITECTURE_MAP.md",

@@ -1,11 +1,11 @@
-name: Bug report
-description: Report a reproducible Stemmio problem
+name: Internal bug report
+description: Record a reproducible Stemmio source or CI problem for authorized collaborators
 title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Remove private information and confidential HTML before submitting.
+      value: Internal source issue. Remove personal information and confidential HTML before submitting.
   - type: input
     id: version
     attributes:

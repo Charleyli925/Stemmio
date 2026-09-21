@@ -8,7 +8,7 @@ export function registerUpdateIpc({
   ensureApplicationUpdateController,
   coordinateApplicationUpdateInstall,
   openLatestRelease,
-  openProjectRepository,
+  openPublicReleases,
 }) {
   ipcMain.handle(
     UPDATE_CHANNELS.getStatus,
@@ -45,8 +45,8 @@ export function registerUpdateIpc({
     trustedProject(openLatestRelease),
   );
   ipcMain.handle(
-    UPDATE_CHANNELS.openRepository,
-    trustedProject(openProjectRepository),
+    UPDATE_CHANNELS.openPublicReleases,
+    trustedProject(openPublicReleases),
   );
 }
 

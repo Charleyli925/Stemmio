@@ -403,7 +403,7 @@ export type DesktopUpdatesApi = {
     reason: "not-ready" | "close-blocked" | null;
   }>;
   openLatestRelease: () => Promise<{ opened: boolean }>;
-  openRepository: () => Promise<{ opened: boolean }>;
+  openPublicReleases: () => Promise<{ opened: boolean }>;
 };
 
 declare global {

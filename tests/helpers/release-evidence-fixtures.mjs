@@ -291,7 +291,7 @@ export function fixturePackageJson(profile, overrides = {}) {
         {
           provider: "github",
           owner: "Charleyli925",
-          repo: "Stemmio",
+          repo: "Stemmio-Releases",
           releaseType: "release",
         },
       ],

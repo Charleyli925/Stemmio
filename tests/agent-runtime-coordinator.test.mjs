@@ -18,6 +18,10 @@ function projectPublicText(events) {
   return accumulator.snapshot().visibleTextUpdates;
 }
 
+function narrationText(updates) {
+  return updates.map((update) => update.text).join("\n\n");
+}
+
 const IDENTITY = Object.freeze({
   projectId: `project_${"a".repeat(16)}`,
   documentId: `doc_${"b".repeat(16)}`,
@@ -470,7 +474,8 @@ test("canonical events reject reorder and duplicates while preserving bounded te
   assert.equal(accept("late", 0, "session-update").reason, "late");
   accept("two", 2, "session-update");
   const completed = accept("three", 3, "completion");
-  assert.equal(completed.projection.visibleText, "abcde");
+  assert.equal(narrationText(completed.projection.visibleTextUpdates), "abcde");
+  assert.equal(Object.hasOwn(completed.projection, "visibleText"), false);
   assert.equal(completed.projection.textTruncated, true);
   assert.ok(completed.projection.retainedEvents.some((event) => event.kind === "completion"));
 });
@@ -492,7 +497,7 @@ test("canonical visible-text truncation facts survive a byte-limited runtime", (
     timestamp: 2,
     kind: "visible-text-truncated",
   });
-  assert.equal(result.projection.visibleText, "公开的执行进展。");
+  assert.equal(narrationText(result.projection.visibleTextUpdates), "公开的执行进展。");
   assert.equal(result.projection.textTruncated, true);
 });
 
@@ -598,18 +603,19 @@ test("execution status projects only public Agent text with frozen provider iden
   assert.equal(running.runtimeId, "synthetic-runtime");
   assert.equal(running.agentName, "Synthetic Agent");
   assert.equal(running.state, "running");
-  assert.equal(running.visibleText, "正在读取冻结任务。\n\n正在写入 Candidate。");
+  assert.equal(narrationText(running.visibleTextUpdates), "正在读取冻结任务。\n\n正在写入 Candidate。");
   assert.deepEqual(running.visibleTextUpdates.map((update) => update.text), [
     "正在读取冻结任务。",
     "正在写入 Candidate。",
   ]);
   assert.equal(running.textTruncated, true);
-  assert.equal(running.visibleText.includes("隐藏推理"), false);
+  assert.equal(narrationText(running.visibleTextUpdates).includes("隐藏推理"), false);
   assert.equal(running.eventCount, 7);
   assert.equal(running.receivedBytes, 12);
   assert.equal(typeof running.lastActivityAt, "string");
   assert.equal(Object.hasOwn(running, "command"), false);
-  assert.equal(running.visibleText.includes("迟到事件"), false);
+  assert.equal(Object.hasOwn(running, "visibleText"), false);
+  assert.equal(narrationText(running.visibleTextUpdates).includes("迟到事件"), false);
 
   finish.resolve();
   await new Promise((resolve) => setImmediate(resolve));
@@ -653,8 +659,8 @@ test("cancellation keeps late Agent narration out of the public session", async 
   await coordinator.cancelExecution(IDENTITY);
   const cancelled = coordinator.executionStatus(IDENTITY);
   assert.equal(cancelled.state, "cancelled");
-  assert.equal(cancelled.visibleText, "正在修改候选。");
-  assert.equal(cancelled.visibleText.includes("取消后的文本"), false);
+  assert.equal(narrationText(cancelled.visibleTextUpdates), "正在修改候选。");
+  assert.equal(narrationText(cancelled.visibleTextUpdates).includes("取消后的文本"), false);
   await coordinator.shutdown();
 });
 
@@ -851,12 +857,14 @@ test("public narration survives the diagnostic event cap through sealed summary"
   await new Promise((resolve) => setImmediate(resolve));
   const running = coordinator.executionStatus(IDENTITY);
   assert.ok(running.eventCount > 2048);
-  assert.equal(running.visibleText, "开始读取。\n\n最后一段确已保留。");
-  assert.equal(running.visibleText, running.visibleTextUpdates.map((update) => update.text).join("\n\n"));
+  assert.equal(narrationText(running.visibleTextUpdates), "开始读取。\n\n最后一段确已保留。");
   assert.equal(running.textTruncated, false);
   finish.resolve();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(persistedFacts.find((event) => event.kind === "public-summary").publicSummary, running.visibleText);
+  assert.equal(
+    persistedFacts.find((event) => event.kind === "public-summary").publicSummary,
+    narrationText(running.visibleTextUpdates),
+  );
   assert.doesNotMatch(JSON.stringify(persistedFacts), /private-tool-output/);
   await coordinator.shutdown();
 });
@@ -873,13 +881,14 @@ test("public messages preserve whitespace, assembled redaction and first appeara
   assert.deepEqual(value.visibleTextUpdates.map(({ id }) => id), ["message:a:0", "message:b:0"]);
   assert.equal(value.visibleTextUpdates[0].sequence, 7);
   assert.equal(value.visibleTextUpdates[0].text, "一 二\n\n三 api_key=[已隐藏]");
-  assert.equal(value.visibleText, value.visibleTextUpdates.map((update) => update.text).join("\n\n"));
-  assert.doesNotMatch(value.visibleText, /synthetic-secret/);
+  assert.equal(narrationText(value.visibleTextUpdates), "一 二\n\n三 api_key=[已隐藏]\n\n第二条消息。");
+  assert.doesNotMatch(narrationText(value.visibleTextUpdates), /synthetic-secret/);
+  assert.equal(Object.hasOwn(value, "visibleText"), false);
   assert.equal(accumulator.snapshot(), value);
   for (const raw of ["前\n\n后", "前\n\n\n\n后", "\n\n前\n\n", "前 \n后"]) {
     const ungrouped = createPublicAgentTextAccumulator();
     ungrouped.append({ kind: "visible-text", eventId: "paragraphs", text: raw });
-    assert.equal(ungrouped.snapshot().visibleText, raw);
+    assert.equal(narrationText(ungrouped.snapshot().visibleTextUpdates), raw);
   }
 });
 
@@ -895,7 +904,7 @@ test("80 public updates is a lossless presentation budget with stable earlier id
   const value = accumulator.snapshot();
   assert.equal(value.visibleTextUpdates.length, 80);
   assert.equal(value.visibleTextUpdates[0].id, first.visibleTextUpdates[0].id);
-  assert.equal(value.visibleText, Array.from({ length: 100 }, (_, index) => `第${index + 1}条。${index ? "" : "补充。"}`).join("\n\n"));
+  assert.equal(narrationText(value.visibleTextUpdates), Array.from({ length: 100 }, (_, index) => `第${index + 1}条。${index ? "" : "补充。"}`).join("\n\n"));
   assert.equal(value.textTruncated, false);
 });
 
@@ -912,10 +921,9 @@ test("one text budget includes separators and redaction expansion without partia
     messages.forEach((text, index) => accumulator.append({ kind: "visible-text", text,
       eventId: `event-${index}`, messageId: `message-${index}`, sequence: index }));
     const value = accumulator.snapshot();
-    assert.equal(value.visibleText, expected);
-    assert.equal(value.visibleText, value.visibleTextUpdates.map((update) => update.text).join("\n\n"));
+    assert.equal(narrationText(value.visibleTextUpdates), expected);
     assert.equal(value.textTruncated, truncated);
-    assert.ok(value.visibleText.length <= limit);
+    assert.ok(narrationText(value.visibleTextUpdates).length <= limit);
   }
 });
 
@@ -927,8 +935,7 @@ test("ungrouped provider chunks keep their existing whitespace separators", () =
     chunks.forEach((text, sequence) => accumulator.append({ kind: "visible-text", text,
       sequence, eventId: `whitespace-${sequence}` }));
     const value = accumulator.snapshot();
-    assert.equal(value.visibleText, chunks.join(""));
-    assert.equal(value.visibleText, value.visibleTextUpdates.map(({ text }) => text).join("\n\n"));
+    assert.equal(narrationText(value.visibleTextUpdates), chunks.join(""));
     assert.equal(value.textTruncated, false);
   }
 });

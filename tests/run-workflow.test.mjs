@@ -1842,7 +1842,6 @@ test("recursive polling is single-flight and speeds up only after public Agent t
       state: "running",
       phase: "reading-task",
       agentName: "runtime-internal-name",
-      visibleText: "正在读取冻结任务。",
       visibleTextUpdates: [{
         id: "message-read",
         sequence: 3,
@@ -1855,7 +1854,7 @@ test("recursive polling is single-flight and speeds up only after public Agent t
   await new Promise((resolve) => setImmediate(resolve));
   const [nextTimer] = harness.scheduler.ids();
   assert.equal(harness.scheduler.delay(nextTimer), 250);
-  assert.equal(harness.runSession.activeHandoff?.visibleText, "正在读取冻结任务。");
+  assert.equal(Object.hasOwn(harness.runSession.activeHandoff, "visibleText"), false);
   assert.deepEqual(harness.runSession.activeHandoff?.visibleTextUpdates, [{
     id: "message-read",
     sequence: 3,
@@ -1912,7 +1911,11 @@ test("a transient status failure preserves the last public Agent narration", asy
             agentSession: {
               state: "running",
               phase: "writing-candidate",
-              visibleText: "正在写入 Candidate。",
+              visibleTextUpdates: [{
+                id: "message-write",
+                sequence: 1,
+                text: "正在写入 Candidate。",
+              }],
               textTruncated: false,
             },
           };
@@ -1926,7 +1929,11 @@ test("a transient status failure preserves the last public Agent narration", asy
   await harness.workflow.pollNow();
   await harness.workflow.pollNow();
   assert.equal(statusReads, 2);
-  assert.equal(harness.runSession.activeHandoff?.visibleText, "正在写入 Candidate。");
+  assert.deepEqual(harness.runSession.activeHandoff?.visibleTextUpdates, [{
+    id: "message-write",
+    sequence: 1,
+    text: "正在写入 Candidate。",
+  }]);
   assert.equal(harness.runSession.activeHandoff?.status, "running");
   harness.workflow.dispose();
 });

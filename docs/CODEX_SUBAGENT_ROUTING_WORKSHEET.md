@@ -1,6 +1,6 @@
 # Codex Subagent 路由决策
 
-> 这是当前决策记录。生效配置位于 `.codex/config.toml`、`.codex/agents/` 和 `AGENTS.md`。
+> 这是当前决策记录。生效配置位于 `.codex/config.toml`、`.codex/agents/`、`.agents/skills/` 和 `AGENTS.md`。
 
 ## 怎么使用
 
@@ -83,7 +83,7 @@ Sol Ultra 和 Astra Ultra 保持用户选择及 Codex 原生委派行为，不�
 任务：ID、角色、目标与最终行为。
 源码：绝对 checkout、base、HEAD；有相关未提交修改时附任务 diff 或 working-tree hash（含相关 untracked 文件）。
 权限：允许读写、文件所有权、禁止动作；只读任务明确禁写，叶子 Agent 不再委派。
-输入：已知事实、必要约束和 required_reading（路径、章节或符号）。
+输入：已知事实、必要约束和 required_reading（路径、章节或符号；按任务附上适用的 `.agents/skills/` 入口，只给本次需要的那个）。
 验收：关键场景、验证方法；需要持久证据时给出路径。
 上报：何种新事实需暂停受影响部分；仍可安全继续的范围。
 返回：任务 ID、建议状态、已读资料、实际源码身份、改动/证据、验证及偏离与阻塞。
@@ -124,7 +124,7 @@ Sol Ultra 和 Astra Ultra 保持用户选择及 Codex 原生委派行为，不�
 
 ### 5.6 验证与完成
 
-Worker 完成局部自检；Tester 依现有角色指令在冻结源码上运行指定验证，保留首个失败和已有 runner retry 约定；Reviewer 只读检查实际 diff 和相关代码的正确性，不只核对是否照计划执行。角色按任务需要选择，不能替代仓库已有必需门禁。
+Worker 完成局部自检；Tester 依现有角色指令在冻结源码上运行指定验证，保留首个失败和已有 runner retry 约定；Reviewer 只读检查实际 diff 和相关代码的正确性，不只核对是否照计划执行。异步、Harness 与资源类测试另按 `tests/TEST_STRATEGY.md` 与 `.agents/skills/stemmio-test-reliability/SKILL.md` 执行，评审方法按 `.agents/skills/stemmio-code-review/SKILL.md` 执行；角色 skill 只提供方法，不增加权限。角色按任务需要选择，不能替代仓库已有必需门禁。
 
 主 Agent 按风险核对源码/base/相关 dirty 改动、权限与所有权、必读资料、实际 diff 和验收证据。源码、配置、环境与验证范围仍适用时复用证据；相关变化、失败、缺失覆盖或新疑点才重验受影响部分，不完整重复子 Agent 的阅读与测试。失效证据不签发完成，不隐去失败或靠重跑取绿。
 

@@ -772,10 +772,22 @@ test("documentation-only changes produce an explicit no-test plan", () => {
   const plan = selectGatePlan({
     map,
     lane: "task",
-    changedFiles: ["README.md", "tests/TEST_STRATEGY.md"],
+    changedFiles: ["README.md", "docs/MVP_PRD.md"],
   });
   assert.deepEqual(plan.suites, []);
   assert.deepEqual(plan.selectedNodeTests, []);
+});
+
+test("workflow entry documents select their reference contract", () => {
+  for (const file of ["tests/TEST_STRATEGY.md", ".github/PULL_REQUEST_TEMPLATE.md"]) {
+    const plan = selectGatePlan({ map, lane: "task", changedFiles: [file] });
+    assert.deepEqual(plan.selectedNodeTests, ["tests/workflow-doc-contract.test.mjs"], file);
+  }
+  const agents = selectGatePlan({ map, lane: "task", changedFiles: ["AGENTS.md"] });
+  assert.deepEqual(
+    [...agents.selectedNodeTests].sort(),
+    ["tests/task-workflow.test.mjs", "tests/workflow-doc-contract.test.mjs"],
+  );
 });
 
 test("every CI Health workflow input selects its ownership coverage", () => {
