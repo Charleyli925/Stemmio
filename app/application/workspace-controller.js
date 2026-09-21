@@ -675,6 +675,7 @@ export class WorkspaceController {
         copyHandoff: (input) => this.copyRunHandoff(input),
         startAgent: (input) => this.startRunAgent(input),
         cancel: (input) => this.cancelRun(input),
+        resolvePageRecovery: (input) => this.resolveRunPageRecovery(input),
         resolveConflict: (input) => this.resolveRunConflict(input),
         prepareReview: (input) => this.prepareReviewCandidate(input),
         activateReadyVersion: (input) => this.activateReadyVersion(input),
@@ -1905,6 +1906,10 @@ export class WorkspaceController {
 
   cancelRun(input) {
     return this.#requireRunWorkflow().cancel(input);
+  }
+
+  resolveRunPageRecovery(input) {
+    return this.#requireRunWorkflow().resolvePageRecovery(input);
   }
 
   resolveRunConflict(input) {

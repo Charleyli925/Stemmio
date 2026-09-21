@@ -465,6 +465,13 @@ export default function AiConversationSidebar({
     || agentPresentation?.displayName
     || agentPresentation?.agentName
     || resolvedAgentActionName;
+  const cancelAction = actionBar?.actions.find((action) => action.id === "cancel") || null;
+  const cancelButtonLabel = handoffStatus === "cancelling" && deliveryMode === "managed-agent"
+    ? cancelAction?.label || "正在停止"
+    : executionStatusActive
+      ? "停止"
+      : cancelAction?.label || "结束本轮";
+
   const selectedModel = models.find((model) => model.id === selectedModelId) || models[0] || null;
   const schemeName = (typeof agentDisplayName === "string" && agentDisplayName.trim())
     || resolvedAgentActionName;
@@ -1158,9 +1165,10 @@ export default function AiConversationSidebar({
             <AgentChoiceMark label={schemeName} logoSrc={agentPresentation?.logoSrc} />
             <span>{serviceTriggerLabel}</span>
           </span>
-          {actionBar?.actions.some((action) => action.id === "cancel") ? <button type="button" className={styles.send}
+          {cancelAction ? <button type="button" className={styles.send}
             data-testid="ai-conversation-stop" onClick={() => onAction?.("cancel")}
-            disabled={actionBar?.actions.find((action) => action.id === "cancel")?.disabled}>{executionStatusActive ? "停止" : "结束本轮"}</button> : null}
+            disabled={cancelAction.disabled}>{cancelButtonLabel}</button> : null}
+
           {(state === "preview-ready" || state === "no-change") ? (
           <div className={styles.deliveryActions}>
             {activeIntent === "modify" && onCopyTask ? (

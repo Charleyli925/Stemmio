@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { preserveCandidateSourceIdsForFixture } from "../../helpers/preserve-candidate-source-ids.mjs";
 import {
   ORIGINAL_TEXT,
   UPDATED_TEXT,
@@ -421,6 +422,64 @@ test("an unknown Request outcome stays fail-closed and reconciles automatically"
     }).getByRole("button", { name: "结束本轮并继续编辑" })).toBeEnabled();
     expect(requestDirectoryCount(launched.workspace)).toBe(1);
     expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("accepted source survives a display verification failure and repairs without adopting twice", {
+  tag: ["@smoke-review"],
+}, async ({}, testInfo) => {
+  const fixture = createSourceFixture("accepted-page-recovery.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const decisions = [];
+  try {
+    const request = await addCommentAndSubmit(launched.page, launched.electronApp, fixture.sourcePath);
+    writeAiOutput(request.requestRoot, (base) => preserveCandidateSourceIdsForFixture(base, base.replace(ORIGINAL_TEXT, UPDATED_TEXT)));
+    runOfficialFinalizer(request.requestRoot, request.changeRequest);
+    await launched.page.getByRole("button", { name: "查看修改", exact: true }).click();
+    await expect(launched.page.getByTestId("ai-review-workspace")).toBeVisible();
+    launched.page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/ready-version/activate") {
+        decisions.push(request.postDataJSON());
+      }
+    });
+    await launched.page.evaluate(() => {
+      const originalMark = performance.mark.bind(performance);
+      const fault = { enabled: true, committed: false, failures: 0 };
+      window.__acceptedPageVerificationFault = fault;
+      performance.mark = function(name, ...args) {
+        if (name === "stemmio:accept:commit-end") fault.committed = true;
+        if (name === "stemmio:canvas:verify-ack" && fault.enabled && fault.committed) {
+          fault.failures += 1;
+          throw new Error("Synthetic accepted-page verification failure");
+        }
+        return originalMark(name, ...args);
+      };
+    });
+    await launched.page.getByRole("button", { name: "采用修改", exact: true }).click();
+    await launched.page.getByRole("button", { name: "确认并采纳" }).click();
+    const sidebar = launched.page.getByTestId("ai-conversation-sidebar");
+    const actions = sidebar.getByTestId("ai-conversation-action-bar");
+    await expect(actions).toContainText("已采用，但页面需要恢复");
+    expect(decisions).toHaveLength(1);
+    expect(await launched.page.evaluate(() => window.__acceptedPageVerificationFault.failures)).toBeGreaterThan(0);
+    const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
+    const accepted = readFileSync(active.sourcePath, "utf8");
+    expect(accepted).toContain(UPDATED_TEXT);
+    expect(accepted).not.toContain(ORIGINAL_TEXT);
+    await expect(sidebar.getByRole("button", { name: "采用修改", exact: true })).toHaveCount(0);
+    await expect(actions.getByRole("button")).toHaveCount(1);
+    await launched.page.screenshot({ path: testInfo.outputPath("accepted-page-needs-recovery.png"), animations: "disabled" });
+    await launched.page.evaluate(() => { window.__acceptedPageVerificationFault.enabled = false; });
+    await actions.getByRole("button", { name: "重试恢复页面", exact: true }).click();
+    await expect(sidebar.getByRole("button", { name: "重试恢复页面", exact: true })).toHaveCount(0, { timeout: 45_000 });
+    await expect(launched.page.locator('aside[aria-label="本轮评论"]').getByRole("button", { name: "全局评论", exact: true })).toBeEnabled({ timeout: 45_000 });
+    expect(decisions).toHaveLength(1);
+    expect(readFileSync(active.sourcePath, "utf8")).toBe(accepted);
+    expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
+    await launched.page.screenshot({ path: testInfo.outputPath("accepted-page-recovered.png"), animations: "disabled" });
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);

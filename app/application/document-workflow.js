@@ -696,6 +696,24 @@ export class DocumentWorkflow {
     this.#persistRecovery(null, context);
   }
 
+  /**
+   * Record a projection failure after another workflow has already committed
+   * the source authority. The DocumentWorkflow remains the only owner allowed
+   * to move Canvas authority to `failed`; callers must use repairCurrentCanvas
+   * to restore the accepted bytes.
+   */
+  markCanvasRecoveryRequired({ context, error } = {}) {
+    const activeContext = copyContext(context) || this.#projectSession.context;
+    if (!activeContext || !this.#isCurrent(activeContext)) return false;
+    const reason = typeof error === "string" && error.trim()
+      ? error.trim()
+      : this.#codecs.errorMessage(
+        error,
+        "新版本已经采用，但当前页面尚未完成恢复。",
+      );
+    return this.#failCurrentCanvas(reason);
+  }
+
   async rebaseRecoveryJournal({ previousContext, context } = {}) {
     const previous = copyContext(previousContext);
     const next = copyContext(context);

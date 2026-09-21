@@ -3699,7 +3699,11 @@ export default function Workbench() {
     projectLoadError,
     workspaceController,
   ]);
-  const reloadFailedCanvas = useCallback(async (): Promise<boolean> => {
+  const reloadFailedCanvas = useCallback(async ({
+    expectedRun = null,
+  }: {
+    expectedRun?: ActiveRun | null;
+  } = {}): Promise<boolean> => {
     const context = captureProjectContext();
     const controller = workspaceControllerRef.current;
     if (!context || !controller || projectLoadError || persistState === "conflict") {
@@ -3721,15 +3725,36 @@ export default function Workbench() {
       // to prove that the requested, restored, and still-visible routes agree.
       && sameProjectRoute(context, restoredContext)
       && sameProjectRoute(currentContext, restoredContext);
-    if (restored) {
-      setFileStatusNotice("页面已重新加载，可以继续编辑");
+    if (!restored) return false;
+    const visibleRun = currentRunSessionSnapshot().activeRun;
+    const recoveryRun = expectedRun?.pageRecoveryRequired === true
+      ? expectedRun
+      : visibleRun?.pageRecoveryRequired === true
+        ? visibleRun
+        : null;
+    if (recoveryRun) {
+      const currentRun = currentRunSessionSnapshot().activeRun;
+      if (
+        !currentRun
+        || currentRun.pageRecoveryRequired !== true
+        || currentRun.projectId !== recoveryRun.projectId
+        || currentRun.documentId !== recoveryRun.documentId
+        || currentRun.requestId !== recoveryRun.requestId
+        || currentRun.attemptId !== recoveryRun.attemptId
+        || !sameLocalSourcePath(currentRun.sourcePath, recoveryRun.sourcePath)
+      ) return false;
+      const settled = runCapability?.commands.resolvePageRecovery({ run: recoveryRun });
+      if (settled?.status !== "succeeded") return false;
     }
-    return restored;
+    setFileStatusNotice("页面已重新加载，可以继续编辑");
+    return true;
   }, [
     captureProjectContext,
     currentDocumentSessionSnapshot,
+    currentRunSessionSnapshot,
     persistState,
     projectLoadError,
+    runCapability,
   ]);
   useEffect(() => {
     deferredEditorReplayRef.current.reloadCurrentSource = () => {
@@ -5587,6 +5612,29 @@ export default function Workbench() {
   // Same authority the process view used, reached from the conversation so the
   // decision no longer requires a panel over the page.
   const handleAiDecision = useCallback((actionId: string) => {
+    if (actionId === "repair-page") {
+      const recoveryRun = activeRun;
+      if (!recoveryRun) return;
+      void reloadFailedCanvas({ expectedRun: recoveryRun }).then((restored) => {
+        if (!restored) return;
+        const current = currentRunSessionSnapshot().activeRun;
+        if (
+          !current
+          || current.projectId !== recoveryRun.projectId
+          || current.documentId !== recoveryRun.documentId
+          || current.requestId !== recoveryRun.requestId
+          || current.attemptId !== recoveryRun.attemptId
+          || !sameLocalSourcePath(current.sourcePath, recoveryRun.sourcePath)
+        ) return;
+        if (readyReviewSession) {
+          reviewSessionsRef.current.delete(readyReviewSession.tabId);
+          setReadyReviewSession(null);
+          reviewAnalysisSession.clear();
+        }
+        setCanvasMode("edit");
+      });
+      return;
+    }
     if (actionId === "resend-agent" || actionId === "retry-later") {
       void workspaceControllerRef.current?.resendAfterAccessRepair();
       return;
@@ -5677,7 +5725,9 @@ export default function Workbench() {
     if (actionId === "cancel") requestActiveRunEnd();
   }, [
     activateReadyResult,
+    currentRunSessionSnapshot,
     readyReviewSession,
+    reloadFailedCanvas,
     reviewAnalysisSession,
     activeRun,
     cancelActiveRun,

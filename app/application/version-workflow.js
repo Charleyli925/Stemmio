@@ -8,6 +8,8 @@ import {
 } from "./project-surface-context.js";
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
+const VERSION_ACTIVATION_PAGE_RECOVERY_REQUIRED =
+  "VERSION_ACTIVATION_PAGE_RECOVERY_REQUIRED";
 
 // Non-blocking performance-timeline marks for the accept/open critical path.
 // Marks are inert outside profiling sessions and never affect control flow.
@@ -27,11 +29,12 @@ function blocked(code, reason) {
   });
 }
 
-function rejected(code, reason) {
+function rejected(code, reason, extras = {}) {
   return Object.freeze({
     status: "rejected",
     code: String(code),
     reason: String(reason),
+    ...extras,
   });
 }
 
@@ -582,6 +585,36 @@ export class VersionWorkflow {
               && this.#codecs.sameSourcePath(handoff.sourcePath, ready.sourcePath)) {
               this.#runSession.clearActiveHandoff();
             }
+          }
+        }
+        if (opened.code === VERSION_ACTIVATION_PAGE_RECOVERY_REQUIRED) {
+          this.#clearPendingActivation(operationKey);
+          if (this.#isCurrentReadyRun(ready)) {
+            const recovery = opened.recovery || {};
+            const completed = this.#settleActivatedRun(
+              ready,
+              {
+                committedSourcePath: String(
+                  recovery.committedSourcePath || ready.sourcePath,
+                ),
+                candidateLabel: String(
+                  recovery.candidateLabel || ready.candidateVersionLabel,
+                ),
+                protocolViolation: Boolean(recovery.protocolViolation),
+              },
+              {
+                pageRecoveryRequired: true,
+                pageRecoveryReason: opened.reason,
+              },
+            );
+            this.#emitEvent({
+              type: "version-activation-recovery-required",
+              run: completed,
+              context: recovery.context || this.#projectSession.context,
+              operationKey: this.#codecs.operationKey(ready),
+              candidateLabel: completed.candidateVersionLabel,
+              reason: opened.reason,
+            });
           }
         }
         return opened;
@@ -1611,7 +1644,41 @@ export class VersionWorkflow {
       lastModifiedAt,
     });
 
-    await this.#canvasPort.verifyRendered(content, versionSha256, context);
+    try {
+      await this.#canvasPort.verifyRendered(content, versionSha256, context);
+    } catch (cause) {
+      // Promotion has already published the durable source and Version
+      // identity. A disposable Canvas failure therefore enters the existing
+      // DocumentWorkflow recovery owner instead of reopening adoption or
+      // clearing the lock as if the promotion had not happened.
+      if (!this.#isNavigationCurrent(operation) || !this.#projectSession.matches(context)) {
+        return stale(context);
+      }
+      const reason = this.#codecs.errorMessage(
+        cause,
+        "新版本已经采用，但当前页面尚未完成恢复。",
+      );
+      this.#documentWorkflow.markCanvasRecoveryRequired?.({
+        context,
+        error: reason,
+      });
+      this.#emitEvent({
+        type: "version-activation-canvas-failed",
+        context,
+        operationKey: this.#codecs.operationKey(run),
+        reason,
+      });
+      return rejected(VERSION_ACTIVATION_PAGE_RECOVERY_REQUIRED, reason, {
+        recovery: Object.freeze({
+          context,
+          committedSourcePath: resolvedCommittedSourcePath,
+          candidateLabel: completion.candidateLabel,
+          protocolViolation: completion.protocolViolation,
+          aiCompletedAt: completion.aiCompletedAt,
+          versionId: completion.versionId,
+        }),
+      });
+    }
     perfMark("stemmio:accept:canvas-verified");
     if (!this.#isNavigationActive(operation) || !this.#projectSession.matches(context)) {
       return stale(context);
@@ -1850,7 +1917,11 @@ export class VersionWorkflow {
     }
   }
 
-  #settleActivatedRun(run, value) {
+  #settleActivatedRun(
+    run,
+    value,
+    { pageRecoveryRequired = false, pageRecoveryReason = "" } = {},
+  ) {
     const warning = value.protocolViolation
       ? "内部 AI 的临时输出在最终化后又被修改；已提交版本本身未受影响。"
       : "";
@@ -1861,6 +1932,14 @@ export class VersionWorkflow {
       status: value.protocolViolation ? "error" : "complete",
       completionObserved: true,
       ...(warning ? { error: warning } : {}),
+      ...(pageRecoveryRequired
+        ? {
+            pageRecoveryRequired: true,
+            pageRecoveryReason: String(
+              pageRecoveryReason || "新版本已经采用，但当前页面尚未完成恢复。",
+            ),
+          }
+        : {}),
     };
     this.#runSession.setActiveRun(completed);
     this.#runSession.removeRun(run, { clearActive: false });

@@ -273,6 +273,27 @@ test("run session owns submission preparation, freeze and unknown-outcome lockin
   assert.equal(session.activeLocked, false);
 });
 
+test("a committed run stays locked until its accepted page is repaired", () => {
+  const session = new RunSession({ sourcePath: "/tmp/page.html" });
+  const adopted = run({
+    status: "complete",
+    pageRecoveryRequired: true,
+    pageRecoveryReason: "页面没有确认采用后的 HTML。",
+  });
+  session.trackRun(adopted, { activate: "always" });
+
+  assert.equal(session.activeLocked, true);
+  assert.equal(session.resolvePageRecovery({ ...adopted, attemptId: "old" }), false);
+  assert.equal(session.activeLocked, true);
+  session.setActiveRun({ ...adopted, status: "processing", pageRecoveryRequired: undefined });
+  assert.equal(session.resolvePageRecovery(adopted), false);
+  assert.equal(session.activeLocked, true);
+  session.setActiveRun(adopted);
+  assert.equal(session.resolvePageRecovery(adopted), true);
+  assert.equal(session.activeRun?.pageRecoveryRequired, undefined);
+  assert.equal(session.activeLocked, false);
+});
+
 test("run session rebases run, handoff and result through a source rename", () => {
   const session = new RunSession({ sourcePath: "/tmp/page.html" });
   const current = run();

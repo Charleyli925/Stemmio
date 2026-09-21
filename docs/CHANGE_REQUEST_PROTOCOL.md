@@ -665,6 +665,8 @@ Workspace 启动、项目打开、Version 查询和 AI 采纳都会扫描当前�
 
 AI Candidate 采纳由 current-version transaction 绑定 Candidate、Request、Attempt 和当前源 Hash。提交前会再次核对 Candidate evidence、source identity 和 binding；任何冲突都保留当前 HTML 并返回可重试的当前错误。重启后 `#recoverProject` 只恢复 current-version、save、source-element-identity 和当前 Request freeze 记录。
 
+提交 marker 已写入并发布源权威后，Canvas 字节核验失败只进入页面恢复：Version、已采用事实和当前 Attempt 保留，编辑 Canvas 继续锁定，运行投影显示“已采用，但页面需要恢复”，行动区只提供恢复当前页面。恢复成功后才解锁；恢复不会再次 promotion，且迟到回调必须通过原 Project/Document/Request/Attempt 身份核对后才能结束本次恢复。
+
 ### 14.2 Commit marker
 
 权威 Schema：
@@ -784,7 +786,7 @@ Attempt 的 `outcome.json` 是工作台写入的严格诊断终态，不是完�
   外部 Qoder 仍可能运行；同 Request 不得再启动或改为复制，只能重新发送为新 Request。
 
 对受管 Agent，界面的“结束本轮”直接进入上述停止顺序，不弹出确认框；
-按钮在 Bridge 投影 `cancelling` 时显示“正在结束…”。
+按钮在 Bridge 投影 `cancelling` 时显示“正在停止”。
 
 - `submitting/processing/validating`：标记 Attempt 取消，恢复冻结评论，释放候选，回到 editing。
 - `awaiting-conflict-resolution`：放弃未提交候选，保留源外部内容，恢复评论。

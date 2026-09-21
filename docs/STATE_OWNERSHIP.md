@@ -827,6 +827,14 @@ Reconciliation backs off to 30 seconds, pauses publication away from the origina
 Run, and stops on disposal. Review cannot override this projection and RunWorkflow
 refuses an opposite cancellation while the decision remains unresolved. Restart
 reconstructs the outcome from the persisted current Version transaction, never a new AI run.
+When promotion has published the accepted source but Canvas verification fails,
+VersionWorkflow settles adoption once and records `pageRecoveryRequired` on the
+existing Run projection. DocumentWorkflow owns failed Canvas authority and repair;
+RunWorkflow releases the recovery lock only for the same current Request/Attempt
+and a verified Canvas matching the current SourceReceipt, context, generation and
+source hash. Both UI recovery entries use that one repair path. This transient
+presentation state adds no durable adoption transaction or Conversation schema.
+
 Before accepting a submission, Conversation Repository reserves 128 messages, two contexts, one turn and 2 MiB for the bounded execution history, public summary and adoption decision. Near message/context/turn/byte limits it rotates only a settled Conversation, preserving both links and all prior records; interrupted rotation repairs the current index from the archived link. Submission requirements are losslessly split into bounded messages; more than 1 MiB of JSON-encoded requirements is rejected before acceptance or provider contact. Progress is capped before projection, while Request/Promotion terminal facts remain authoritative and replayable.
 Every RunWorkflow submit exit before a known Request settles the original submission identity in finally, including stale navigation after receipt or ticket arrival. A dispatched unknown Request is excluded and stays with existing reconciliation. The in-memory pending run is removed only after this pre-Request settlement path; navigation never changes its target.
 

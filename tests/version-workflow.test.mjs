@@ -235,6 +235,7 @@ function createHarness({
     unlock: 0,
     freeze: 0,
     clearRecovery: 0,
+    pageRecovery: [],
     clearAudit: 0,
     resetComments: 0,
     queueDraft: 0,
@@ -408,6 +409,10 @@ function createHarness({
     clearRecovery() {
       calls.clearRecovery += 1;
       recoveryState.status = "cleared";
+    },
+    markCanvasRecoveryRequired(input) {
+      calls.pageRecovery.push(input);
+      return true;
     },
     clearAudit() {
       calls.clearAudit += 1;
@@ -876,14 +881,23 @@ test("activation keeps the Canvas locked when rendered-byte verification fails",
   assert.equal(harness.calls.commit.length, 1);
   assert.equal(harness.documentSession.html, CANDIDATE_HTML);
   assert.equal(harness.versionSession.snapshot.currentExactVersionId, "ver_0002");
-  assert.equal(harness.runSession.activeRun?.status, "ready-to-open");
+  assert.equal(harness.runSession.activeRun?.status, "complete");
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  assert.match(harness.runSession.activeRun?.pageRecoveryReason, /canvas did not acknowledge candidate/u);
   assert.equal(harness.runSession.activeLocked, true);
   assert.equal(harness.calls.unlock, 0);
+  assert.equal(harness.calls.pageRecovery.length, 1);
   assert.equal(harness.calls.clearAudit, 0);
   assert.equal(harness.calls.resetComments, 0);
   assert.equal(harness.calls.draftAuthorities.length, 1);
   assert.equal(harness.calls.queueDraft, 0);
   assert.equal(harness.calls.refresh.length, 0);
+
+  const repeat = await harness.workflow.activateReadyVersion({
+    run: harness.runSession.activeRun,
+  });
+  assert.equal(repeat.status, "blocked");
+  assert.equal(harness.calls.activate, 1);
 });
 
 test("activation rejects completion/version hash drift before publishing current source", async () => {

@@ -237,6 +237,9 @@ export class RunWorkflow {
     agentMayBeRunning?: boolean;
     reason?: string;
   }): Promise<RunWorkflowOutcome<{ run: ActiveRun; current: boolean }>>;
+  resolvePageRecovery(input?: {
+    run?: ActiveRun | null;
+  }): RunWorkflowOutcome<{ run: ActiveRun; current: boolean }>;
   resolveConflict(input: {
     run?: ActiveRun | null;
     action: "adopt-ai" | "keep-external";
