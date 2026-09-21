@@ -828,6 +828,8 @@ Run, and stops on disposal. Review cannot override this projection and RunWorkfl
 refuses an opposite cancellation while the decision remains unresolved. Restart
 reconstructs the outcome from the persisted current Version transaction, never a new AI run.
 When promotion has published the accepted source but Canvas verification fails,
+After publication, the verification failure fence uses the active navigation plus
+the newly published Project context, never the pre-adoption source context.
 VersionWorkflow settles adoption once and records `pageRecoveryRequired` on the
 existing Run projection. DocumentWorkflow owns failed Canvas authority and repair;
 RunWorkflow releases the recovery lock only for the same current Request/Attempt

@@ -1,5 +1,26 @@
 # Design QA
 
+## 2026-09-22 — 采用事实、停止与页面恢复
+
+- Truth: 采用发布和页面核验是两个事实。已采用后的 Canvas 失败沿用 DocumentWorkflow 恢复，
+  固定行动区只显示“已采用，但页面需要恢复”和恢复按钮；既有 Preview 布局保证标题、按钮完整在视口中。
+  停止回执未到时保持锁定；采用未知继续复用同一决定，旧 run / context 不可解锁或切回当前文档。
+- Evidence: 整合 Node 定向检查 234 项通过，新增采用后 source identity 推进的负向实验先得到
+  `stale`（预期 `rejected`），修复后 VersionWorkflow 76 项通过。最终形状类型检查通过。
+  `agent-recovery-seventh` Electron 2/2 通过：延迟取消回执时停止按钮禁用且编辑不可用；
+  采用后注入 Canvas 核验失败，磁盘已采用内容保留、恢复动作完整可见、恢复后可编辑，采用 POST 恰好一次。
+- Visual QA: 已检查本轮 stopping、accepted-page-needs-recovery 与 recovered 截图。
+  实测发现直接在 Edit 的共享长画布里显示侧栏会让恢复标题离屏，因此复用已有固定 Preview 布局，
+  不新增侧栏状态 owner 或滚动服务。
+- Real HTML: 本地指定 T1 用原文件副本完成三组检查：Preview 过程阅读、Review 过程阅读、
+  采用后失败与恢复。展开/收起/复制不写当前稿、不新建 Request，所检查的 iframe/document 身份保持；
+  恢复不重复采用且保留已采用字节，原始 T1 Hash/字节数不变。私有 manifest、结果和截图仅在忽略的 output 内。
+- First failures retained: 初次暴露恢复侧栏被 Edit 隐藏；随后身份推进场景暴露旧 context 围栏导致
+  同一采用决定再次核对，已通过失败回归修复。夹具另修正了隐藏评论栏断言与异步剪贴板读取；
+  临时变量声明顺序错误及各次失败仍保留，不作为通过证据。最终源码复核没有已证实 P0/P1。
+- Boundary: 不宣称 T2–T8、真实外部模型、打包/已安装应用或完整私有语料矩阵已执行。
+  最终任务门禁另有版本绑定报告；交付仍止于 Draft PR。
+
 ## 2026-09-22 — 安全公开活动与连续分组
 
 - Truth: 运行时只投影固定活动种类、顺序与分组边界；不传递工具参数、路径、HTML、命令或私有推理。

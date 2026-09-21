@@ -1217,7 +1217,7 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
       const stopping = launched.page.getByRole("button", { name: "正在停止", exact: true });
       await expect(stopping).toBeVisible();
       await expect(stopping).toBeDisabled();
-      await expect(launched.page.locator('aside[aria-label="本轮评论"]').getByRole("button", { name: "全局评论", exact: true })).toBeDisabled();
+      await expect(launched.page.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
       expect(readFileSync(workingCopyPath)).toEqual(workingBefore);
       await launched.page.screenshot({ path: testInfo.outputPath("managed-agent-stopping.png"), animations: "disabled" });
     } finally {

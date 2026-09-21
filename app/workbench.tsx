@@ -1753,6 +1753,21 @@ export default function Workbench() {
         });
         return;
       }
+      if (event.type === "version-activation-recovery-required") {
+        const recovery = event as Readonly<{ context?: ProjectContext | null; run?: ActiveRun }>;
+        const current = currentRunSessionSnapshot().activeRun;
+        if (
+          recovery.context
+          && workspaceController.matchesCurrentProjectContext(recovery.context)
+          && current?.pageRecoveryRequired === true
+          && recovery.run
+          && activeRunOperationKey(current) === activeRunOperationKey(recovery.run)
+        ) {
+          setCanvasMode("preview");
+          revealAiConversation();
+        }
+        return;
+      }
       if (event.type === "version-activation-published") {
         const publication = event as Readonly<{ context?: ProjectContext | null; operationKey?: string }>;
         if (
@@ -2100,6 +2115,7 @@ export default function Workbench() {
     };
   }, [
     commentCanvasPort,
+    currentRunSessionSnapshot,
     readyReviewSession,
     reviewAnalysisSession,
     revealAiConversation,

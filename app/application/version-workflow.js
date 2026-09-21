@@ -1651,7 +1651,9 @@ export class VersionWorkflow {
       // identity. A disposable Canvas failure therefore enters the existing
       // DocumentWorkflow recovery owner instead of reopening adoption or
       // clearing the lock as if the promotion had not happened.
-      if (!this.#isNavigationCurrent(operation) || !this.#projectSession.matches(context)) {
+      // Publication advances the source context. Fence the still-active
+      // navigation and its newly published context, not the pre-adoption one.
+      if (!this.#isNavigationActive(operation) || !this.#projectSession.matches(context)) {
         return stale(context);
       }
       const reason = this.#codecs.errorMessage(

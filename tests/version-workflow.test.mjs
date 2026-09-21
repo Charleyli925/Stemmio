@@ -184,6 +184,7 @@ function createHarness({
   observeExternalSourceChange = async () => ({ status: "succeeded" }),
   onCatalogAfterSettlement = null,
   prepareTransition = null,
+  advanceSourceIdentity = false,
   currentDraft = false,
   createCurrent = null,
   queryCurrent = null,
@@ -342,7 +343,7 @@ function createHarness({
     commitManagedSourceTransition({ prepared, html, sourceSha256, publishVersion, publishSessions }) {
       calls.commit.push({ prepared, html, sourceSha256 });
       let nextContext = projectSession.context;
-      if (!sameSourcePath(projectSession.sourcePath, prepared.nextSourcePath)) {
+      if (advanceSourceIdentity || !sameSourcePath(projectSession.sourcePath, prepared.nextSourcePath)) {
         nextContext = projectSession.transitionSource({
           previousSourcePath: prepared.previousSourcePath,
           sourcePath: prepared.nextSourcePath,
@@ -865,8 +866,9 @@ test("activation publishes committed display identity before Canvas verification
   assert.equal(harness.runSession.activeRun?.status, "complete");
 });
 
-test("activation keeps the Canvas locked when rendered-byte verification fails", async () => {
+for (const advanceSourceIdentity of [false, true]) test(`activation keeps the Canvas locked when rendered-byte verification fails (new source identity: ${advanceSourceIdentity})`, async () => {
   const harness = createHarness({
+    advanceSourceIdentity,
     verifyRendered: async (html) => {
       if (html === CANDIDATE_HTML) throw new Error("canvas did not acknowledge candidate");
     },

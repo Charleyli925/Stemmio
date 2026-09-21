@@ -445,6 +445,12 @@ test("accepted source survives a display verification failure and repairs withou
         decisions.push(request.postDataJSON());
       }
     });
+    const adoptionResponses = [];
+    launched.page.on("response", async (response) => {
+      if (new URL(response.url()).pathname !== "/ready-version/activate") return;
+      const body = await response.json().catch(() => ({}));
+      adoptionResponses.push({ status: response.status(), error: body.error?.code || body.code || null });
+    });
     await launched.page.evaluate(() => {
       const originalMark = performance.mark.bind(performance);
       const fault = { enabled: true, committed: false, failures: 0 };
@@ -463,7 +469,9 @@ test("accepted source survives a display verification failure and repairs withou
     const sidebar = launched.page.getByTestId("ai-conversation-sidebar");
     const actions = sidebar.getByTestId("ai-conversation-action-bar");
     await expect(actions).toContainText("已采用，但页面需要恢复");
-    expect(decisions).toHaveLength(1);
+    await expect(actions).toBeInViewport({ ratio: 1 });
+    await expect(actions.getByRole("button", { name: "重试恢复页面", exact: true })).toBeInViewport({ ratio: 1 });
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
     expect(await launched.page.evaluate(() => window.__acceptedPageVerificationFault.failures)).toBeGreaterThan(0);
     const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
     const accepted = readFileSync(active.sourcePath, "utf8");
@@ -475,8 +483,8 @@ test("accepted source survives a display verification failure and repairs withou
     await launched.page.evaluate(() => { window.__acceptedPageVerificationFault.enabled = false; });
     await actions.getByRole("button", { name: "重试恢复页面", exact: true }).click();
     await expect(sidebar.getByRole("button", { name: "重试恢复页面", exact: true })).toHaveCount(0, { timeout: 45_000 });
-    await expect(launched.page.locator('aside[aria-label="本轮评论"]').getByRole("button", { name: "全局评论", exact: true })).toBeEnabled({ timeout: 45_000 });
-    expect(decisions).toHaveLength(1);
+    await expect(launched.page.getByRole("button", { name: "编辑", exact: true })).toBeEnabled({ timeout: 45_000 });
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
     expect(readFileSync(active.sourcePath, "utf8")).toBe(accepted);
     expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
     await launched.page.screenshot({ path: testInfo.outputPath("accepted-page-recovered.png"), animations: "disabled" });
