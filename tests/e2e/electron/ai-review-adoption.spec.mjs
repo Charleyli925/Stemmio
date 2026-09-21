@@ -1135,12 +1135,21 @@ ${REVIEW_MASK_UNION_BEFORE}
       try {
         const projection = await Promise.all([beforeReviewFrame, afterReviewFrame].map((frame) => (
           frame.locator("html").evaluate((root) => {
-            const attributes = (node) => Object.fromEntries([...node.attributes]
-              .filter((attribute) => attribute.name.startsWith("data-"))
-              .map((attribute) => [attribute.name, attribute.value]));
+            const attributes = (node) => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {
+                ...Object.fromEntries([...node.attributes]
+                  .filter((attribute) => attribute.name.startsWith("data-"))
+                  .map((attribute) => [attribute.name, attribute.value])),
+                bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                display: style.display, visibility: style.visibility, opacity: style.opacity,
+              };
+            };
             return {
               root: attributes(root),
               fonts: document.fonts.status,
+              viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },
               holes: [...document.querySelectorAll("[data-stemmio-review-mask-hole]")].map(attributes),
               bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map(attributes),
               markers: [...document.querySelectorAll("[data-review-readable-rewrite] [data-stemmio-review-text]")]
