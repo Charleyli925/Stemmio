@@ -25,22 +25,22 @@ import * as acp from "@agentclientprotocol/sdk";
 
 import {
   acpDriverProfile,
-  captureQoderAcpReviewBoundary,
-  createRestrictedQoderAcpHost,
-  loadQoderAcpTaskPolicy,
-  prepareVerifiedQoderJavaScriptExecution,
-  runAcpTask,
-  runQoderAcpTask,
-  runVerifiedQoderJavaScript,
-} from "../bridge/qoder-acp-client.mjs";
-import {
   DEFAULT_ACP_TURN_TIMEOUT_MS,
+  runAcpTask,
   runAcpTask as runGenericAcpTask,
 } from "../bridge/agent/runtimes/acp-protocol.mjs";
+import { createExecutionHost } from "../bridge/agent/hosts/execution-host.mjs";
+import { loadExecutionPolicy } from "../bridge/agent/policies/execution-policy.mjs";
+import { runAcpProcessTask } from "../bridge/agent/runtimes/acp-process.mjs";
+import {
+  prepareVerifiedJavaScriptExecution,
+  runVerifiedJavaScript,
+} from "../bridge/agent/runtimes/acp-verified-javascript.mjs";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { compileTaskSpec } from "../shared/task-spec.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { inspectSourceElementIdentity } from "../bridge/project-file-repository/working-copy.mjs";
+import { captureAcpReviewBoundary } from "../scripts/qoder-acp-spike-support.mjs";
 
 const IDENTITIES = Object.freeze({
   requestId: "req_aaaaaaaaaaaaaaaa",
@@ -50,14 +50,7 @@ const READ_FILE_COUNT = 6;
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-const acpSdkModuleUrl = pathToFileURL(path.join(
-  productRoot,
-  "node_modules",
-  "@agentclientprotocol",
-  "sdk",
-  "dist",
-  "acp.js",
-)).href;
+const acpSdkModuleUrl = pathToFileURL(require.resolve("@agentclientprotocol/sdk")).href;
 
 function createVirtualTimer() {
   let currentTime = 0;
@@ -158,7 +151,7 @@ async function createFixture(t, { rules = null } = {}) {
     outputPath,
     completionPath,
   };
-  const policy = await loadQoderAcpTaskPolicy(options);
+  const policy = await loadExecutionPolicy(options);
   return {
     root,
     repository,
@@ -189,8 +182,8 @@ test("Qoder ACP policy freezes identities, hashes, and real files", async (t) =>
 
   await writeFile(fixture.options.promptPath, "drifted\n", "utf8");
   await assert.rejects(
-    loadQoderAcpTaskPolicy(fixture.options),
-    (error) => error?.code === "ACP_FROZEN_INPUT_DRIFT",
+    loadExecutionPolicy(fixture.options),
+    (error) => error?.code === "AGENT_FROZEN_INPUT_DRIFT",
   );
 });
 
@@ -205,7 +198,7 @@ test("Qoder ACP policy canonicalizes macOS /var aliases without weakening path c
     return;
   }
   const alias = (value) => value.replace(/^\/private\/var\//u, "/var/");
-  const policy = await loadQoderAcpTaskPolicy({
+  const policy = await loadExecutionPolicy({
     requestPath: alias(fixture.options.requestPath),
     promptPath: alias(fixture.options.promptPath),
     outputPath: alias(fixture.options.outputPath),
@@ -225,8 +218,8 @@ test("Qoder ACP policy rejects symlinked frozen input", async (t) => {
   await symlink(targetPath, rulesPath);
 
   await assert.rejects(
-    loadQoderAcpTaskPolicy(fixture.options),
-    (error) => error?.code === "ACP_UNSAFE_FILE",
+    loadExecutionPolicy(fixture.options),
+    (error) => error?.code === "AGENT_UNSAFE_FILE",
   );
 });
 
@@ -238,22 +231,22 @@ test("Qoder ACP policy rejects a symlinked frozen-input ancestor", async (t) => 
   await symlink(movedRoot, annotationsRoot, "dir");
 
   await assert.rejects(
-    loadQoderAcpTaskPolicy(fixture.options),
-    (error) => error?.code === "ACP_UNSAFE_ANCESTOR",
+    loadExecutionPolicy(fixture.options),
+    (error) => error?.code === "AGENT_UNSAFE_ANCESTOR",
   );
 });
 
 test("Qoder ACP policy derives authority and rejects caller-injected policy fields", async (t) => {
   const fixture = await createFixture(t);
   await assert.rejects(
-    loadQoderAcpTaskPolicy({
+    loadExecutionPolicy({
       ...fixture.options,
       inputManifestSha256: "sha256:" + "0".repeat(64),
     }),
-    (error) => error?.code === "ACP_POLICY_OPTIONS_INVALID",
+    (error) => error?.code === "AGENT_POLICY_OPTIONS_INVALID",
   );
   await assert.rejects(
-    loadQoderAcpTaskPolicy({
+    loadExecutionPolicy({
       ...fixture.options,
       outputPath: path.join(
         fixture.requestPath,
@@ -263,14 +256,14 @@ test("Qoder ACP policy derives authority and rejects caller-injected policy fiel
         "other.html",
       ),
     }),
-    (error) => error?.code === "ACP_OUTPUT_ATTEMPT_MISMATCH",
+    (error) => error?.code === "AGENT_OUTPUT_ATTEMPT_MISMATCH",
   );
   await assert.rejects(
-    loadQoderAcpTaskPolicy({
+    loadExecutionPolicy({
       ...fixture.options,
       finalizer: fixture.finalizer,
     }),
-    (error) => error?.code === "ACP_POLICY_OPTIONS_INVALID",
+    (error) => error?.code === "AGENT_POLICY_OPTIONS_INVALID",
   );
 
   const runtimePath = path.join(
@@ -281,8 +274,8 @@ test("Qoder ACP policy derives authority and rejects caller-injected policy fiel
   runtime.activeRequest.inputManifestSha256 = "sha256:" + "0".repeat(64);
   await writeFile(runtimePath, `${JSON.stringify(runtime, null, 2)}\n`, "utf8");
   await assert.rejects(
-    loadQoderAcpTaskPolicy(fixture.options),
-    (error) => error?.code === "ACP_RUNTIME_AUTHORITY_MISMATCH",
+    loadExecutionPolicy(fixture.options),
+    (error) => error?.code === "AGENT_RUNTIME_AUTHORITY_MISMATCH",
   );
 
   const forgedRequestFixture = await createFixture(t);
@@ -291,23 +284,23 @@ test("Qoder ACP policy derives authority and rejects caller-injected policy fiel
   requestRecord.outputRelativePath = `requests/${IDENTITIES.requestId}/attempts/${IDENTITIES.attemptId}/output/other.html`;
   await writeFile(requestRecordPath, `${JSON.stringify(requestRecord, null, 2)}\n`, "utf8");
   await assert.rejects(
-    loadQoderAcpTaskPolicy(forgedRequestFixture.options),
-    (error) => error?.code === "ACP_REQUEST_AUTHORITY_MISMATCH",
+    loadExecutionPolicy(forgedRequestFixture.options),
+    (error) => error?.code === "AGENT_REQUEST_AUTHORITY_MISMATCH",
   );
 
   const manifestDriftFixture = await createFixture(t);
   const manifestText = await readFile(manifestDriftFixture.manifestPath, "utf8");
   await writeFile(manifestDriftFixture.manifestPath, `${manifestText}\n`, "utf8");
   await assert.rejects(
-    loadQoderAcpTaskPolicy(manifestDriftFixture.options),
-    (error) => error?.code === "ACP_INPUT_MANIFEST_HASH_MISMATCH",
+    loadExecutionPolicy(manifestDriftFixture.options),
+    (error) => error?.code === "AGENT_INPUT_MANIFEST_HASH_MISMATCH",
   );
 });
 
 test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and finalizer", async (t) => {
   const fixture = await createFixture(t);
   const events = [];
-  const host = createRestrictedQoderAcpHost(fixture.policy, {
+  const host = createExecutionHost(fixture.policy, {
     onEvent: (event) => events.push(event),
   });
   t.after(() => host.dispose());
@@ -327,22 +320,22 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
       path: fixture.options.promptPath,
       line: 0,
     }),
-    (error) => error?.code === "ACP_READ_RANGE_INVALID",
+    (error) => error?.code === "AGENT_READ_RANGE_INVALID",
   );
   await assert.rejects(
     host.readTextFile({ sessionId, path: path.join(fixture.requestPath, "secret.txt") }),
-    (error) => error?.code === "ACP_READ_NOT_AUTHORIZED",
+    (error) => error?.code === "AGENT_READ_NOT_AUTHORIZED",
   );
   await assert.rejects(
     host.readTextFile({ sessionId: "wrong", path: fixture.options.promptPath }),
-    (error) => error?.code === "ACP_SESSION_ID_MISMATCH",
+    (error) => error?.code === "AGENT_SESSION_ID_MISMATCH",
   );
 
   const candidate = identityPreservingCandidate(fixture, "ACP Candidate");
   await link(fixture.options.promptPath, fixture.outputPath);
   await assert.rejects(
     host.writeTextFile({ sessionId, path: fixture.outputPath, content: candidate }),
-    (error) => error?.code === "ACP_UNSAFE_OUTPUT_FILE",
+    (error) => error?.code === "AGENT_UNSAFE_OUTPUT_FILE",
   );
   assert.equal(await readFile(fixture.options.promptPath, "utf8"), fixture.promptText);
   await rm(fixture.outputPath);
@@ -358,11 +351,11 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
       path: path.join(fixture.requestPath, "current.html"),
       content: candidate,
     }),
-    (error) => error?.code === "ACP_WRITE_NOT_AUTHORIZED",
+    (error) => error?.code === "AGENT_WRITE_NOT_AUTHORIZED",
   );
   await assert.rejects(
     host.createTerminal({ sessionId, command: process.execPath, args: ["--version"] }),
-    (error) => error?.code === "ACP_TERMINAL_NOT_AUTHORIZED",
+    (error) => error?.code === "AGENT_TERMINAL_NOT_AUTHORIZED",
   );
   await assert.rejects(
     host.createTerminal({
@@ -370,7 +363,7 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
       command: fixture.finalizer.command,
       args: fixture.finalizer.args,
     }),
-    (error) => error?.code === "ACP_TERMINAL_NOT_AUTHORIZED",
+    (error) => error?.code === "AGENT_TERMINAL_NOT_AUTHORIZED",
   );
   await assert.rejects(
     host.createTerminal({
@@ -379,7 +372,7 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
       args: fixture.finalizer.args,
       cwd: fixture.finalizer.cwd,
     }),
-    (error) => error?.code === "ACP_TERMINAL_NOT_AUTHORIZED",
+    (error) => error?.code === "AGENT_TERMINAL_NOT_AUTHORIZED",
   );
 
   const permission = await host.requestPermission({
@@ -425,7 +418,7 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
   assert.equal(verifiedCompletion.outputSha256, completion.outputSha256);
   await assert.rejects(
     host.writeTextFile({ sessionId, path: fixture.outputPath, content: candidate }),
-    (error) => error?.code === "ACP_HOST_FINALIZED",
+    (error) => error?.code === "AGENT_HOST_FINALIZED",
   );
   assert.ok(events.some((event) => event.kind === "file-read"));
   assert.ok(events.some((event) => event.kind === "file-written"));
@@ -434,7 +427,7 @@ test("restricted Qoder ACP host exposes only frozen reads, Candidate write, and 
 
 test("finalizer spawn failure retains one diagnostic output and forbids replay", async (t) => {
   const fixture = await createFixture(t);
-  const host = createRestrictedQoderAcpHost(fixture.policy, {
+  const host = createExecutionHost(fixture.policy, {
     spawnProcess: () => {
       const error = new Error("synthetic finalizer spawn failure");
       error.code = "ENOENT";
@@ -465,13 +458,13 @@ test("finalizer spawn failure retains one diagnostic output and forbids replay",
   await assert.rejects(readFile(fixture.completionPath), (error) => error?.code === "ENOENT");
   await assert.rejects(
     host.createTerminal(terminalRequest),
-    (error) => error?.code === "ACP_FINALIZER_ALREADY_STARTED",
+    (error) => error?.code === "AGENT_FINALIZER_ALREADY_STARTED",
   );
 });
 
 test("restricted Qoder ACP host rejects cancelled and late mutating requests", async (t) => {
   const fixture = await createFixture(t);
-  const host = createRestrictedQoderAcpHost(fixture.policy);
+  const host = createExecutionHost(fixture.policy);
   t.after(() => host.dispose());
   const sessionId = "session_cancel_boundary";
   host.bindSessionId(sessionId);
@@ -486,7 +479,7 @@ test("restricted Qoder ACP host rejects cancelled and late mutating requests", a
   requestCancellation.abort();
   await assert.rejects(
     host.readTextFile({ sessionId, path: fixture.options.promptPath }, requestCancellation.signal),
-    (error) => error?.code === "ACP_REQUEST_CANCELLED",
+    (error) => error?.code === "AGENT_REQUEST_CANCELLED",
   );
 
   await host.cancel();
@@ -501,7 +494,7 @@ test("restricted Qoder ACP host rejects cancelled and late mutating requests", a
       path: fixture.outputPath,
       content: "<!doctype html><html><body><h1>Late write</h1></body></html>\n",
     }),
-    (error) => error?.code === "ACP_HOST_CANCELLING",
+    (error) => error?.code === "AGENT_HOST_CANCELLING",
   );
   await assert.rejects(
     host.createTerminal({
@@ -511,14 +504,14 @@ test("restricted Qoder ACP host rejects cancelled and late mutating requests", a
       cwd: fixture.finalizer.cwd,
       env: [],
     }),
-    (error) => error?.code === "ACP_HOST_CANCELLING",
+    (error) => error?.code === "AGENT_HOST_CANCELLING",
   );
   assert.equal(await readFile(fixture.outputPath, "utf8"), candidate);
 });
 
 test("restricted Qoder ACP host rechecks durable runtime authority before every mutation", async (t) => {
   const fixture = await createFixture(t);
-  const host = createRestrictedQoderAcpHost(fixture.policy);
+  const host = createExecutionHost(fixture.policy);
   host.bindSessionId("session_authority_drift");
   const runtimePath = path.join(
     fixture.target.projectRootPath,
@@ -536,7 +529,7 @@ test("restricted Qoder ACP host rechecks durable runtime authority before every 
       path: fixture.outputPath,
       content: "<!doctype html><html><body><h1>Late</h1></body></html>\n",
     }),
-    (error) => error?.code === "ACP_RUNTIME_AUTHORITY_DRIFT",
+    (error) => error?.code === "AGENT_RUNTIME_AUTHORITY_DRIFT",
   );
   await host.dispose();
 });
@@ -551,7 +544,7 @@ test("Qoder ACP mutation lock closes cancel and finalizer overlap races", async 
   const cancelledRenameRelease = new Promise((resolve) => {
     releaseCancelledRename = resolve;
   });
-  const cancelledHost = createRestrictedQoderAcpHost(cancelledFixture.policy, {
+  const cancelledHost = createExecutionHost(cancelledFixture.policy, {
     renameOutput: async (...args) => {
       announceCancelledRename();
       await cancelledRenameRelease;
@@ -573,7 +566,7 @@ test("Qoder ACP mutation lock closes cancel and finalizer overlap races", async 
   releaseCancelledRename();
   await assert.rejects(
     cancelledWrite,
-    (error) => error?.code === "ACP_HOST_CANCELLING",
+    (error) => error?.code === "AGENT_HOST_CANCELLING",
   );
   await cancellation;
   await assert.rejects(
@@ -592,7 +585,7 @@ test("Qoder ACP mutation lock closes cancel and finalizer overlap races", async 
     releaseSerializedRename = resolve;
   });
   const events = [];
-  const serializedHost = createRestrictedQoderAcpHost(serializedFixture.policy, {
+  const serializedHost = createExecutionHost(serializedFixture.policy, {
     renameOutput: async (...args) => {
       announceSerializedRename();
       await serializedRenameRelease;
@@ -801,7 +794,9 @@ const app = acp.agent({ name: "stemmio-stdio-agent" })
       sessionId,
       terminalId: terminal.terminalId,
     });
-    if (config.exitAfterStop) setTimeout(() => process.exit(0), 0);
+    if (config.exitAfterStop) {
+      setTimeout(() => process.stdout.end(() => process.exit(0)), 250);
+    }
     return { stopReason: "end_turn" };
   });
 
@@ -841,7 +836,7 @@ async function waitForProcessExit(pid, timeoutMs) {
 
 test("ACP ClientApp completes a synthetic Stemmio Candidate turn", async (t) => {
   const fixture = await createFixture(t);
-  const reviewBoundaryBefore = await captureQoderAcpReviewBoundary({
+  const reviewBoundaryBefore = await captureAcpReviewBoundary({
     repository: fixture.repository,
     target: fixture.target,
     projectRoot: fixture.target.projectRootPath,
@@ -879,7 +874,7 @@ test("ACP ClientApp completes a synthetic Stemmio Candidate turn", async (t) => 
     await readFile(fixture.target.exactSourcePath, "utf8"),
     fixture.managedSourceHtml,
   );
-  const reviewBoundaryAfter = await captureQoderAcpReviewBoundary({
+  const reviewBoundaryAfter = await captureAcpReviewBoundary({
     repository: fixture.repository,
     target: fixture.target,
     projectRoot: fixture.target.projectRootPath,
@@ -956,7 +951,7 @@ test("ACP stdio transport completes the same synthetic Candidate contract", asyn
   const fixture = await createFixture(t);
   const candidate = identityPreservingCandidate(fixture, "ACP stdio Candidate");
   const scriptPath = await createStdioAgentScript(fixture);
-  const result = await runQoderAcpTask({
+  const result = await runAcpProcessTask({
     command: process.execPath,
     args: [scriptPath, JSON.stringify({
       requestPath: fixture.requestPath,
@@ -985,7 +980,7 @@ test("ACP stdio transport completes the same synthetic Candidate contract", asyn
     fixture.managedSourceHtml,
   );
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: process.execPath,
       args: [scriptPath, "{}"],
       policy: fixture.policy,
@@ -1012,7 +1007,7 @@ test("ACP stdio transport runs a verified npm-style bundle with Finder's sparse 
       sha256: sha256(await readFile(scriptPath)),
     },
   };
-  const result = await runQoderAcpTask({
+  const result = await runAcpProcessTask({
     command: scriptPath,
     args: [JSON.stringify({
       requestPath: fixture.requestPath,
@@ -1042,7 +1037,7 @@ test("ACP stdio transport runs a verified npm-style bundle with Finder's sparse 
   assert.equal(status.status, "candidate-ready");
 
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: scriptPath,
       args: ["{}"],
       policy: fixture.policy,
@@ -1073,7 +1068,7 @@ process.stdout.write("verified-old-bytes\\n");
 `, { encoding: "utf8", mode: 0o755 });
   await chmod(executable, 0o755);
   const information = await stat(executable);
-  const prepared = await prepareVerifiedQoderJavaScriptExecution({
+  const prepared = await prepareVerifiedJavaScriptExecution({
     command: executable,
     expectedExecutable: {
       path: executable,
@@ -1144,7 +1139,7 @@ process.stdout.write("1.1.27\\n");
       sha256: sha256(await readFile(executable)),
     },
   };
-  const result = await runVerifiedQoderJavaScript({
+  const result = await runVerifiedJavaScript({
     command: executable,
     expectedExecutable,
     args: [pidPath],
@@ -1166,7 +1161,7 @@ process.stdout.write("1.1.27\\n");
   assert.equal(await waitForProcessExit(descendantPid, 3_000), true);
 
   await assert.rejects(
-    runVerifiedQoderJavaScript({
+    runVerifiedJavaScript({
       command: executable,
       expectedExecutable,
       args: [pidPath],
@@ -1200,15 +1195,17 @@ process.stdout.write(JSON.stringify({
   const clientModuleUrl = pathToFileURL(path.join(
     productRoot,
     "bridge",
-    "qoder-acp-client.mjs",
+    "agent",
+    "runtimes",
+    "acp-verified-javascript.mjs",
   )).href;
   await writeFile(runner, `import { readFile, realpath, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { runVerifiedQoderJavaScript } from ${JSON.stringify(clientModuleUrl)};
+import { runVerifiedJavaScript } from ${JSON.stringify(clientModuleUrl)};
 const command = await realpath(process.env.STEMMIO_TEST_QODER_COMMAND);
 const information = await stat(command);
 const bytes = await readFile(command);
-const result = await runVerifiedQoderJavaScript({
+const result = await runVerifiedJavaScript({
   command,
   expectedExecutable: {
     path: command,
@@ -1252,7 +1249,7 @@ test("ACP stdio transport accepts a valid completed turn before immediate Agent 
   const fixture = await createFixture(t);
   const candidate = identityPreservingCandidate(fixture, "Immediate exit Candidate");
   const scriptPath = await createStdioAgentScript(fixture);
-  const result = await runQoderAcpTask({
+  const result = await runAcpProcessTask({
     command: process.execPath,
     args: [scriptPath, JSON.stringify({
       requestPath: fixture.requestPath,
@@ -1280,7 +1277,7 @@ test("ACP stdio transport accepts a valid completed turn before immediate Agent 
 test("ACP stdio transport binds the preflight executable identity before spawn", async (t) => {
   const fixture = await createFixture(t);
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: process.execPath,
       args: ["--version"],
       policy: fixture.policy,
@@ -1307,7 +1304,7 @@ test("ACP stdio transport fails immediately on process errors and cleans orphane
   await writeFile(invalidExecutable, "#!/stemmio/definitely-missing-interpreter\n", "utf8");
   await chmod(invalidExecutable, 0o700);
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: invalidExecutable,
       args: [],
       policy: fixture.policy,
@@ -1317,6 +1314,22 @@ test("ACP stdio transport fails immediately on process errors and cleans orphane
     }),
     (error) => error?.code === "ACP_AGENT_PROCESS_ERROR",
   );
+
+  const cleanEarlyExitScript = path.join(fixture.root, "clean-early-exit-agent.mjs");
+  await writeFile(cleanEarlyExitScript, "process.exit(0);\n", "utf8");
+  const cleanExitStartedAt = Date.now();
+  await assert.rejects(
+    runAcpProcessTask({
+      command: process.execPath,
+      args: [cleanEarlyExitScript],
+      policy: fixture.policy,
+      prompt: "must fail on a clean early exit",
+      startupTimeoutMs: 10_000,
+      turnTimeoutMs: 10_000,
+    }),
+    (error) => error?.code === "ACP_AGENT_EXITED_EARLY",
+  );
+  assert.ok(Date.now() - cleanExitStartedAt < 5_000, "clean early exit waited for the ACP startup timeout");
 
   if (process.platform === "win32") return;
   const pidPath = path.join(fixture.root, "grandchild.pid");
@@ -1332,7 +1345,7 @@ process.exit(7);
 `, "utf8");
   const startedAt = Date.now();
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: process.execPath,
       args: [earlyExitScript, pidPath],
       policy: fixture.policy,
@@ -1362,7 +1375,7 @@ test("ACP stdio transport rejects invalid UTF-8 and oversized unterminated frame
     "process.stdout.write(Buffer.from([0xff, 0x0a]));",
   );
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: process.execPath,
       args: [invalidUtf8],
       policy: fixture.policy,
@@ -1379,7 +1392,7 @@ test("ACP stdio transport rejects invalid UTF-8 and oversized unterminated frame
     "process.stdout.write(Buffer.alloc(23 * 1024 * 1024, 0x61));",
   );
   await assert.rejects(
-    runQoderAcpTask({
+    runAcpProcessTask({
       command: process.execPath,
       args: [oversizedFrame],
       policy: fixture.policy,
@@ -1411,7 +1424,7 @@ test("ACP stop reason cannot replace Candidate finalization evidence", async (t)
       startupTimeoutMs: 1_000,
       turnTimeoutMs: 1_000,
     }),
-    (error) => error?.code === "ACP_FINALIZER_NOT_COMPLETED",
+    (error) => error?.code === "AGENT_FINALIZER_NOT_COMPLETED",
   );
 });
 
@@ -1596,7 +1609,7 @@ test("external cancellation closes the ACP mutation surface and terminates stdio
   const fixture = await createFixture(t);
   const scriptPath = await createStdioAgentScript(fixture);
   const controller = new AbortController();
-  const running = runQoderAcpTask({
+  const running = runAcpProcessTask({
     command: process.execPath,
     args: [scriptPath, JSON.stringify({
       requestPath: fixture.requestPath,

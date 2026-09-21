@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { TRUSTED_LOCAL_AGENT_POLICY_VERSION } from "../bridge/agent-bridge-service.mjs";
-import { loadQoderAcpTaskPolicy } from "../bridge/qoder-acp-client.mjs";
+import { loadExecutionPolicy } from "../bridge/agent/policies/execution-policy.mjs";
 import { createBridgeTestEnvironment } from "./helpers/bridge-test-environment.mjs";
 
 const fixtureAgent = fileURLToPath(new URL("./fixtures/qoder-acp-agent.mjs", import.meta.url));
@@ -200,7 +200,7 @@ async function createManagedRequest(t, { hang = false } = {}) {
     },
   });
   assert.equal(request.response.status, 201, JSON.stringify(request.body));
-  await loadQoderAcpTaskPolicy({
+  await loadExecutionPolicy({
     requestPath: request.body.activeRun.requestPath,
     promptPath: request.body.activeRun.promptPath,
     outputPath: request.body.activeRun.outputPath,

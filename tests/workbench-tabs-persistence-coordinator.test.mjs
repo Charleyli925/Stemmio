@@ -3,12 +3,13 @@ import test from "node:test";
 
 import { WorkbenchTabsPersistenceCoordinator } from "../app/application/workbench-tabs-persistence-coordinator.js";
 
-const A = Object.freeze({ version: 1, activeTabId: null, tabs: Object.freeze([]) });
+const A = Object.freeze({ version: 2, activeTabId: null, tabs: Object.freeze([]) });
 const B = Object.freeze({
-  version: 1,
+  version: 2,
   activeTabId: "document:project_b:doc_b",
   tabs: Object.freeze([Object.freeze({
     tabId: "document:project_b:doc_b",
+    kind: "document",
     projectId: "project_b",
     documentId: "doc_b",
   })]),
