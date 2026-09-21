@@ -288,6 +288,29 @@ const PUBLIC_RELEASES_REPOSITORY_URL =
   "https://github.com/Charleyli925/Stemmio-Releases";
 const LATEST_RELEASE_PAGE_URL =
   "https://github.com/Charleyli925/Stemmio-Releases/releases/latest";
+
+function sameProjectRoute(
+  left: ProjectContext | null,
+  right: ProjectContext | null,
+): boolean {
+  if (!left || !right) return false;
+  if (
+    left.epoch !== right.epoch
+    || left.projectId !== right.projectId
+    || left.documentId !== right.documentId
+    || !sameLocalSourcePath(left.sourcePath, right.sourcePath)
+  ) return false;
+  const leftManaged = typeof left.projectRootPath === "string";
+  const rightManaged = typeof right.projectRootPath === "string";
+  if (leftManaged !== rightManaged) return false;
+  if (!leftManaged || !rightManaged) return true;
+  return left.sessionEpoch === right.sessionEpoch
+    && sameLocalSourcePath(left.projectRootPath, right.projectRootPath)
+    && left.targetKind === right.targetKind
+    && left.workingCopyId === right.workingCopyId
+    && left.versionId === right.versionId
+    && sameLocalSourcePath(left.exactSourcePath, right.exactSourcePath);
+}
 class DeferredEditorCommandDiscardedError extends Error {
   readonly reason: NativeDeferredCommandDiscardReason;
 
@@ -3669,9 +3692,18 @@ export default function Workbench() {
       context,
       expectedSourceReceipt: currentDocumentSessionSnapshot().sourceReceipt,
     });
+    const restoredContext = outcome.status === "succeeded"
+      ? outcome.value.source.receipt?.context || null
+      : null;
+    const currentContext = captureProjectContext();
     const restored = outcome.status === "succeeded"
       && outcome.value.page.status === "restored"
-      && isCurrentProjectContext(context);
+      && restoredContext !== null
+      // A managed save may refresh only sourceSha256 while the repair is in
+      // flight. The operation receipt owns that new hash; Workbench only needs
+      // to prove that the requested, restored, and still-visible routes agree.
+      && sameProjectRoute(context, restoredContext)
+      && sameProjectRoute(currentContext, restoredContext);
     if (restored) {
       setFileStatusNotice("页面已重新加载，可以继续编辑");
     }
@@ -3679,7 +3711,6 @@ export default function Workbench() {
   }, [
     captureProjectContext,
     currentDocumentSessionSnapshot,
-    isCurrentProjectContext,
     persistState,
     projectLoadError,
   ]);
