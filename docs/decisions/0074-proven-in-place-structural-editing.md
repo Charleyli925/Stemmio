@@ -128,7 +128,7 @@ adjacent reorder, and the matching Undo/Redo. The `div` extension retains all
 identity, reference, resource, event-handler, ancestor and mixed-content guards;
 documents with authored scripts, event attributes or navigation URL attributes
 (`href`, `src`, `action`, `formaction`) whose WHATWG-parsed scheme is
-`javascript:` anywhere remain outside this direct category.
+`javascript:` or `vbscript:` anywhere remain outside this direct category.
 Arbitrary HTML insertion and cross-parent move are not direct product commands.
 Duplicate continues to reuse the shared `createInsertElementOperation` primitive;
 there is no second public copy protocol. The shared insert/move primitives remain

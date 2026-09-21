@@ -639,7 +639,7 @@ generation、提升身份、Runtime ready 和源码一致性后重新定位同�
 源码证据不符须失败并输出全部条件；没有适用拒绝样本必须保留具体不适用依据。
 `core-structure-leaf` 接收已核对的纯文字 `span`、`p`，以及无脚本静态文档中的
 纯文字 leaf `div` 结构样本，冻结父级、后续兄弟和源码插入字节位置；作者 Script、事件属性、
-按 WHATWG URL 解析为 `javascript:` 的导航 URL 属性（如 `href`、`src`、`action`、`formaction`）、身份/引用/资源属性和特殊祖先仍必须拒绝。
+按 WHATWG URL 解析为 `javascript:`/`vbscript:` 的导航 URL 属性（如 `href`、`src`、`action`、`formaction`）、身份/引用/资源属性和特殊祖先仍必须拒绝。
 独立 `core-structure-path-race` 在同一会话先复制混合内容子节点（Candidate），再复制普通叶节点（原地），
 结算后源码与画布都必须各有两份身份，且不得留下过期 Candidate 覆盖。复制顺序冻结为「后插入点先执行」，
 避免第一份复制移动第二份的 byte offset。
