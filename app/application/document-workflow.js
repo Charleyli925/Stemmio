@@ -1395,6 +1395,7 @@ export class DocumentWorkflow {
     ) {
       return succeeded({ deferred: true });
     }
+    const observedReceipt = this.#documentSession.sourceReceipt;
     try {
       let diskSha256 = "";
       let lastModifiedAt = "";
@@ -1432,8 +1433,11 @@ export class DocumentWorkflow {
       const current = copyContext(this.#projectSession.context);
       if (
         !current
-        || !this.#codecs.sameSourcePath(current.sourcePath, liveContext.sourcePath)
+        || !this.#isCurrent(liveContext)
+        || !sameSourceReceipt(observedReceipt, this.#documentSession.sourceReceipt)
       ) {
+        // A same-path adoption/save may publish a new authority while this disk
+        // read is pending. Its old observation cannot conflict that new source.
         return stale(liveContext);
       }
       if (diskSha256 === this.#documentSession.persistedSourceSha256) {
@@ -3443,6 +3447,20 @@ export class DocumentWorkflow {
     if (context && !this.#isCurrent(context)) return false;
     const confirmed = this.confirmCanvas(observation);
     if (confirmed) return true;
+    // The initial-render observer may have confirmed this exact receipt while
+    // verification was awaiting the frame. Reuse that authority without
+    // publishing it again; a different receipt or different bytes cannot settle
+    // this operation merely because some Canvas is already verified.
+    const current = this.#documentSession.snapshot;
+    if (
+      current.canvasAuthority.status === "verified"
+      && sameSourceReceipt(observation.receipt, current.sourceReceipt)
+      && observation.receipt.canvasGeneration === current.canvasGeneration
+      && current.canvasAuthority.generation === current.canvasGeneration
+      && observation.renderedSha256 === current.canvasAuthority.renderedSha256
+      && observation.renderedSha256 === current.workingHtmlSha256
+      && observation.renderedHtml === current.html
+    ) return true;
     this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
     return false;
   }
