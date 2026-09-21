@@ -126,8 +126,8 @@ script-free text-only leaf `div` elements, deletions with a provable source
 delete/undo boundary (with an optional selection landing), supported same-parent
 adjacent reorder, and the matching Undo/Redo. The `div` extension retains all
 identity, reference, resource, event-handler, ancestor and mixed-content guards;
-documents with authored scripts, event attributes or navigation URL attributes
-(`href`, `src`, `action`, `formaction`) whose WHATWG-parsed scheme is
+documents with authored scripts, event attributes or navigation/load URL attributes
+(`href`, `xlink:href`, `src`, `action`, `formaction`, `object[data]`) whose WHATWG-parsed scheme is
 `javascript:` or `vbscript:` anywhere remain outside this direct category.
 Arbitrary HTML insertion and cross-parent move are not direct product commands.
 Duplicate continues to reuse the shared `createInsertElementOperation` primitive;

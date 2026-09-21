@@ -206,10 +206,13 @@ const RESOURCE_ATTRIBUTE_NAMES = new Set([
 
 const AUTHOR_PROGRAM_URL_ATTRIBUTE_NAMES = new Set([
   "action",
+  "data",
   "formaction",
   "href",
   "src",
+  "xlink:href",
 ]);
+const AUTHOR_PROGRAM_DATA_TAGS = new Set(["object"]);
 const URL_PARSER_BASE = "https://stemmio.invalid/";
 
 const REASON_MESSAGES = Object.freeze({
@@ -368,7 +371,9 @@ function hasAuthorProgram(sourceIndex) {
     normalizedTag(element) === "script"
     || attributeEntries(element).some(({ name, value }) => (
       name.startsWith("on")
-      || (AUTHOR_PROGRAM_URL_ATTRIBUTE_NAMES.has(name) && isAuthorProgramUrl(value))
+      || (AUTHOR_PROGRAM_URL_ATTRIBUTE_NAMES.has(name)
+        && (name !== "data" || AUTHOR_PROGRAM_DATA_TAGS.has(normalizedTag(element)))
+        && isAuthorProgramUrl(value))
     ))
   ));
 }
