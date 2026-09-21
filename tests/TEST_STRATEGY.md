@@ -253,7 +253,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   Electron 通过暂停 B 的真实规则文件读取后点击 C/D，证明相邻待执行激活只执行 B/D、被替代的 C 及其余命令都到达终态；插入创建或关闭操作时必须仍执行 C。最终活动页、挂载文档和 Runtime owner 要与可见规则页一致，未保存和 IME 围栏沿用原导航场景。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
   20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
-  标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。Registry-before-hydrate 与
+  标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。缓存交接的受控暂停必须阻断新 Canvas 文档的可用性，
+  不得在真实连接完成后改写 `data-render-verified`；释放后必须由真实连接流程启动 Runtime 并退掉缓存。
+  保存的旧 ready 回调和 same-Hash 新交接仍须验证身份隔离。Registry-before-hydrate 与
   hydrate-before-Registry 都必须得到相同标题/缺失项结果。持久化测试拒绝 title/path/HTML/Hash
   和未知字段，验证 `activeTabId:null`、原子替换与无效文件 fail-closed；Electron 证明 Left/Right/
   Home/End 的 roving focus、键盘关闭后的活动标签焦点、Start 冷重启抑制 activePath、Start→Registry 原位打开、Registry 标题恢复及 unmounted outlet 安全关闭。

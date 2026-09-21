@@ -59,25 +59,27 @@ async function openedExternalUrls(electronApp) {
 
 async function holdCacheAndCanvasLoads(page) {
   await page.evaluate(() => {
-    // `verifyInitialRender` can acknowledge a frame through its post-load
-    // probe as well as the React load handler. Hold that diagnostic until the
-    // test deliberately releases the saved real handler, so a fast local
-    // iframe cannot collapse the handoff interval being asserted.
-    const originalSetAttribute = Element.prototype.setAttribute;
-    window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__ = originalSetAttribute;
-    Element.prototype.setAttribute = function stemmioTestSetAttribute(name, value) {
-      if (
-        window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__
-        && name === "data-render-verified"
-        && this instanceof HTMLElement
-        && this.matches('[data-testid="html-canvas-editor"]')
-        && value === "true"
-      ) {
-        window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__ = this;
-        return originalSetAttribute.call(this, name, "false");
-      }
-      return originalSetAttribute.call(this, name, value);
-    };
+    // Hold access to the next Canvas document, before either the load handler
+    // or parsed-frame probe can connect it. Rewriting data-render-verified
+    // after connection suppresses deferred Runtime replay without a real
+    // readiness transition when the saved handler is released.
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentDocument");
+    const existingDocuments = new WeakMap();
+    for (const frame of document.querySelectorAll('[data-testid="html-canvas-editor"] iframe')) {
+      existingDocuments.set(frame, descriptor.get.call(frame));
+    }
+    window.__STEMMIO_TEST_CANVAS_DOCUMENT_DESCRIPTOR__ = descriptor;
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentDocument", {
+      ...descriptor,
+      get() {
+        const documentNode = descriptor.get.call(this);
+        if (window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__
+          && this.closest('[data-testid="html-canvas-editor"]')
+          && this.getAttribute("data-runtime-slot-role") === "active"
+          && existingDocuments.get(this) !== documentNode) return null;
+        return documentNode;
+      },
+    });
     const reactLoadHandler = (frame) => {
       const propsKey = Object.keys(frame).find((key) => key.startsWith("__reactProps$"));
       return propsKey ? frame[propsKey]?.onLoad || null : null;
@@ -106,7 +108,6 @@ async function holdCacheAndCanvasLoads(page) {
     };
     window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = false;
     window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = true;
-    window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = true;
     window.__STEMMIO_TEST_HANDOFF_LOAD_CAPTURE__ = captureLoad;
     document.addEventListener("load", captureLoad, true);
   });
@@ -119,18 +120,9 @@ async function releaseCacheAndCanvasLoadHold(page) {
     delete window.__STEMMIO_TEST_HANDOFF_LOAD_CAPTURE__;
     delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
     delete window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__;
-    window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = false;
-    const originalSetAttribute = window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
-    if (typeof originalSetAttribute === "function") {
-      Element.prototype.setAttribute = originalSetAttribute;
-    }
-    const pendingCanvasVerification = window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
-    if (pendingCanvasVerification instanceof HTMLElement) {
-      originalSetAttribute?.call(pendingCanvasVerification, "data-render-verified", "true");
-    }
-    delete window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
-    delete window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__;
-    delete window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
+    const descriptor = window.__STEMMIO_TEST_CANVAS_DOCUMENT_DESCRIPTOR__;
+    if (descriptor) Object.defineProperty(HTMLIFrameElement.prototype, "contentDocument", descriptor);
+    delete window.__STEMMIO_TEST_CANVAS_DOCUMENT_DESCRIPTOR__;
     delete window.__STEMMIO_TEST_DELAYED_CACHE_FRAME__;
     delete window.__STEMMIO_TEST_DELAYED_CACHE_ON_LOAD__;
     delete window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
@@ -871,6 +863,9 @@ test("Electron retains an accepted B cache iframe while C waits, then ignores C'
       savedCanvasReady: true,
     });
 
+    await expect(launched.page.locator("[data-edit-runtime-phase]"))
+      .toHaveAttribute("data-edit-runtime-phase", "ready");
+
     // Complete C through the saved real Canvas handler while its prior static
     // load callback remains saved. Terminal Canvas authority must retire both
     // static frames before that stale callback can be invoked.
@@ -882,15 +877,6 @@ test("Electron retains an accepted B cache iframe while C waits, then ignores C'
       }
       window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
       onLoad({ currentTarget: frame });
-      window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = false;
-      const originalSetAttribute = window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
-      if (typeof originalSetAttribute === "function") {
-        Element.prototype.setAttribute = originalSetAttribute;
-      }
-      const pendingCanvasVerification = window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
-      if (pendingCanvasVerification instanceof HTMLElement) {
-        originalSetAttribute?.call(pendingCanvasVerification, "data-render-verified", "true");
-      }
     });
     await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
     await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
@@ -1002,6 +988,25 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
     const newHandoffId = String(await surfaceCache.getAttribute("data-candidate-handoff-id") || "");
     expect(newHandoffId).not.toBe("");
     expect(newHandoffId).not.toBe(oldHandoffId);
+    await expect(tabB).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => launched.page.evaluate(() => {
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      return typeof window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__ === "function"
+        && frame?.isConnected
+        && frame === document.querySelector(
+          '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
+        );
+    })).toBe(true);
+    await launched.page.evaluate(() => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
+      onLoad({ currentTarget: frame });
+    });
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await expect(tabB).toHaveAttribute("aria-selected", "true");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+
   } finally {
     await releaseCacheAndCanvasLoadHold(launched.page);
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
