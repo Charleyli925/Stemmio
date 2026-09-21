@@ -1312,6 +1312,22 @@ test("ACP stdio transport fails immediately on process errors and cleans orphane
     (error) => error?.code === "ACP_AGENT_PROCESS_ERROR",
   );
 
+  const cleanEarlyExitScript = path.join(fixture.root, "clean-early-exit-agent.mjs");
+  await writeFile(cleanEarlyExitScript, "process.exit(0);\n", "utf8");
+  const cleanExitStartedAt = Date.now();
+  await assert.rejects(
+    runAcpProcessTask({
+      command: process.execPath,
+      args: [cleanEarlyExitScript],
+      policy: fixture.policy,
+      prompt: "must fail on a clean early exit",
+      startupTimeoutMs: 10_000,
+      turnTimeoutMs: 10_000,
+    }),
+    (error) => error?.code === "ACP_AGENT_EXITED_EARLY",
+  );
+  assert.ok(Date.now() - cleanExitStartedAt < 5_000, "clean early exit waited for the ACP startup timeout");
+
   if (process.platform === "win32") return;
   const pidPath = path.join(fixture.root, "grandchild.pid");
   const earlyExitScript = path.join(fixture.root, "early-exit-agent.mjs");
