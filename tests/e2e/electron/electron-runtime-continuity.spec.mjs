@@ -33,6 +33,7 @@ import {
   tmpdir,
   writeFileSync,
   waitForRuntimeHandoffSettled,
+  waitForProjectReady,
 } from "./electron-native-harness.mjs";
 
 async function withRuntimeProject(prefix, files, run, launchOptions = {}) {
@@ -1500,5 +1501,96 @@ test("a completed Save does not reclaim an external comment textbox", {
       if (routeStarted) await routeDone;
       await page.unroute(routePattern, routeHandler);
     }
+  });
+});
+
+for (const input of ["wheel-up", "wheel-down", "keyboard-home", "scrollbar"]) {
+  test(`same-document reload remembers reading intent from ${input}`, async ({}, testInfo) => {
+    const html = process.env.STEMMIO_READING_HTML
+      ? readFileSync(process.env.STEMMIO_READING_HTML, "utf8")
+      : `<!doctype html><html><head><title>Reading position</title>
+      <style>p { height: 120px; margin: 0; }</style></head><body>
+      ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+      </body></html>`;
+    await withRuntimeProject("stemmio-reading-position-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      if (process.env.STEMMIO_READING_HTML) {
+        await waitForProjectReady(page);
+        await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+      } else {
+        await loadedDiskFrame(page, sourcePath, "reading-0");
+      }
+      const stage = page.locator(".review-scroll-stage");
+      await stage.evaluate((element) => { element.scrollTop = 1600; });
+      await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBe(1600);
+      // Observe the scroll event before issuing the next user input.
+      await stage.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(element.scrollTop)))));
+      const bounds = await stage.boundingBox();
+      await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
+      if (input === "wheel-up" || input === "wheel-down") {
+        await page.mouse.wheel(0, input === "wheel-up" ? -900 : 600);
+      } else if (input === "keyboard-home") {
+        await page.mouse.click(bounds.x + 8, bounds.y + bounds.height / 2);
+        await page.keyboard.press("Home");
+      } else {
+        const metrics = await stage.evaluate((element) => ({
+          height: element.clientHeight, scrollHeight: element.scrollHeight, top: element.scrollTop,
+        }));
+        const thumbHeight = metrics.height * metrics.height / metrics.scrollHeight;
+        const thumbTop = metrics.top * metrics.height / metrics.scrollHeight;
+        await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbTop + thumbHeight / 2);
+        await page.mouse.down();
+        await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbHeight / 2 + 30, { steps: 1 });
+        await page.mouse.up();
+      }
+      if (input === "keyboard-home") {
+        await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBe(0);
+      } else {
+        await expect.poll(() => stage.evaluate((element) => element.scrollTop)).not.toBe(1600);
+      }
+      const before = await stage.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(element.scrollTop)))));
+      await page.screenshot({ path: testInfo.outputPath("upward-before-reload.png") });
+      const token = await documentToken(page);
+      await page.getByRole("button", { name: "更多", exact: true }).click();
+      await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+      await expect.poll(() => documentToken(page)).not.toBe(token);
+      await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+      await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeCloseTo(before, 0);
+      await page.screenshot({ path: testInfo.outputPath("upward-after-reload.png") });
+    });
+  });
+}
+
+test("comment reveal and layout alignment preserve the latest reading intent", async ({}, testInfo) => {
+  const html = `<!doctype html><html><head><title>Reading comments</title>
+    <style>p { height: 120px; margin: 0; }</style></head><body>
+    ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+    </body></html>`;
+  await withRuntimeProject("stemmio-reading-comments-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+    const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
+    const stage = page.locator(".review-scroll-stage");
+    await stage.evaluate(element => { element.scrollTop = 1500; });
+    await frame.locator('[data-native-case="reading-14"]').click();
+    await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
+    await page.getByRole("textbox", { name: "评论内容" }).fill("Reading anchor comment");
+    await page.getByRole("button", { name: "评论", exact: true }).click();
+    await expect(page.locator(".comment-card").filter({ hasText: "Reading anchor comment" })).toBeVisible();
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
+    const bounds = await stage.boundingBox();
+    await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
+    await page.mouse.wheel(0, -900);
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
+    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const before = await stage.evaluate(element => element.scrollTop);
+    // Resizing the shell recomputes comment geometry; this is not a request to reveal a comment.
+    await page.setViewportSize({ width: 1100, height: 760 });
+    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+    const token = await documentToken(page);
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+    await expect.poll(() => documentToken(page)).not.toBe(token);
+    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+    await page.screenshot({ path: testInfo.outputPath("reading-after-comment-and-resize.png") });
   });
 });

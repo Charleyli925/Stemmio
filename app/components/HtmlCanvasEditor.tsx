@@ -769,18 +769,6 @@ function rememberVisibleCanvasViewport({
     selectedElement: null,
     selectedSourceSelection: null,
   });
-  const previous = destination.current;
-  // Comment-rail alignment can jump the shared stage back toward a marker
-  // near the top. Same-document HTML replacement should keep the last
-  // reading position instead of that snap.
-  if (
-    previous
-    && previous.outerScrollTop !== null
-    && next.outerScrollTop !== null
-    && previous.outerScrollTop - next.outerScrollTop > 400
-  ) {
-    return;
-  }
   destination.current = next;
 }
 
