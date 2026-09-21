@@ -139,6 +139,11 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await expect(process.locator("summary")).toHaveCount(1);
     await process.locator("summary").click();
     await expect(process).toContainText("Qoder");
+    const activities = narration.getByTestId("ai-conversation-public-activity");
+    await expect(activities).toContainText(["读取本轮资料", "写入修改结果"]);
+    await expect(activities.locator("a, button, svg")).toHaveCount(0);
+    await expect(narration).not.toContainText(/读取了.*文件|视觉验证通过|activity:/u);
+
     await expect(launched.page.getByTestId("ai-conversation-message").filter({ hasText: "正在读取冻结任务。正在写入 Candidate。正在等待校验。" })).toHaveCount(1);
     await expect(process.locator("li").first()).toBeVisible();
     const processTime = process.locator("time").first();
@@ -667,6 +672,7 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
     // fixture can finish between polls and remove the progress row entirely.
     beforeStreamComplete: () => streamObserved,
     rejectedApiKeys: ["sk-e2e-invalid-replacement"],
+    includePublicProgress: false,
     streamDelayMs: 150,
   });
   const launched = await launchStemmio({
@@ -735,6 +741,14 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
     await expect(streamingProgress).not.toContainText("完整结果校验后可查看");
     await expect(streamingProgress).not.toContainText("fixture-hidden");
     await expect(launched.page.getByTestId("ai-conversation-run-progress")).toHaveCount(0);
+    const quietProcess = sidebar.getByTestId("ai-conversation-narration-message");
+    await expect(quietProcess.getByTestId("ai-conversation-narration-toggle")).toHaveText("查看过程");
+    await quietProcess.getByTestId("ai-conversation-narration-toggle").click();
+    await expect(quietProcess.getByTestId("ai-conversation-public-activity")).toContainText(["收到服务响应", "生成修改"]);
+    await expect(quietProcess.locator("p")).toHaveCount(0);
+    await expect(quietProcess.getByRole("button", { name: "复制消息" })).toHaveCount(0);
+    await expect(quietProcess).not.toContainText(/fixture-hidden|<!DOCTYPE|读取本轮资料|写入修改结果/u);
+    await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "http-without-public-text.png"), animations: "disabled" });
     releaseStream();
     await expect(launched.page.locator(".toast.show")).toHaveCount(0);
     await expect(launched.page.getByTestId("ai-conversation-action-bar"))

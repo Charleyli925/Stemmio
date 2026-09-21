@@ -24,6 +24,7 @@ import {
   sidebarTurnPresentation,
   sidebarNarrationParagraphs,
   sidebarNarrationPreview,
+  sidebarActivityTimeline,
   sidebarProcessRows,
   sidebarModePresentation,
   sidebarResolvedIntent,
@@ -35,6 +36,7 @@ import {
   type SidebarCatalogStatus,
   type SidebarHistoryGroup,
 } from "./ai-conversation-model.js";
+import type { RunPublicActivity } from "../application/run-session.js";
 import type { AgentSelection } from "../domain/agent-provider-state.js";
 import { type BoundAgentSetupPanelProps } from "../components/AgentSetupPanel";
 import type { AgentProviderCardData } from "../components/agent-provider-card-types";
@@ -133,6 +135,8 @@ export type AiConversationSidebarProps = {
   agentUpdates?: readonly unknown[];
   /** True only when a bounded public-text projection omitted a suffix. */
   agentTextTruncated?: boolean;
+  agentActivities?: readonly RunPublicActivity[];
+  agentActivitiesTruncated?: boolean;
   /** A managed Agent is actively thinking or processing this round. */
   agentWorking?: boolean;
   agentStartedAt?: string | null;
@@ -343,6 +347,8 @@ export default function AiConversationSidebar({
   deliveryMode = "managed-agent",
   agentUpdates = [],
   agentTextTruncated = false,
+  agentActivities = [],
+  agentActivitiesTruncated = false,
   agentWorking = false,
   agentStartedAt = null,
   agentReceivedBytes = 0,
@@ -519,6 +525,7 @@ export default function AiConversationSidebar({
     runKey || "",
     state,
     loading ? "loading" : "ready",
+    agentActivities.map((activity) => activity.id).join(","),
     runProgress?.liveLabel || runProgress?.headline || "",
     runProgress?.narrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
     agentWorking ? "working" : "idle",
@@ -530,6 +537,7 @@ export default function AiConversationSidebar({
   ].join("|");
   const liveNarrationUpdates = runProgress?.narrationUpdates || null;
   const liveNarrationPreview = sidebarNarrationPreview(liveNarrationUpdates || []);
+  const publicTimeline = sidebarActivityTimeline(liveNarrationUpdates || [], agentActivities);
 
   const persistReadingState = useCallback(() => {
     if (!readingStateStore) return;
@@ -916,7 +924,7 @@ export default function AiConversationSidebar({
         {/* Public Agent narration and its compact execution metadata share one
             stable article. Later Stemmio verification facts can then follow it
             in chronological order. */}
-        {(liveNarrationUpdates || executionStatusActive) ? (
+        {(liveNarrationUpdates || agentActivities.length > 0 || executionStatusActive) ? (
           <article
             ref={bindLiveMessageRef}
             className={styles.message}
@@ -939,7 +947,7 @@ export default function AiConversationSidebar({
                 />
               ) : null}
             </span>
-            {liveNarrationUpdates && liveNarrationPreview ? (
+            {publicTimeline.length > 0 ? (
               <div
                 className={styles.processDisclosure}
                 data-testid="ai-conversation-narration"
@@ -956,16 +964,23 @@ export default function AiConversationSidebar({
                   <span className={styles.narrationDisclosureIcon} aria-hidden="true">
                     {processExpanded ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
                   </span>
-                  <span>{liveNarrationPreview}</span>
+                  <span>{liveNarrationPreview || "查看过程"}</span>
                 </button>
                 <div
                   id={narrationPanelId}
                   className={styles.narrationText}
                   hidden={!processExpanded}
                 >
-                  {liveNarrationUpdates.map((update) => (
-                    <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
+                  {publicTimeline.map((entry) => entry.kind === "activity" ? (
+                    <div key={entry.id} className={styles.publicActivity} data-testid="ai-conversation-public-activity">
+                      {entry.label}
+                    </div>
+                  ) : (
+                    <div key={entry.id}>{sidebarNarrationParagraphs(entry.text || "").map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
                   ))}
+                  {agentActivitiesTruncated ? (
+                    <small className={styles.truncated}>部分活动记录已省略</small>
+                  ) : null}
                   {runProgress?.narration ? (
                     <div className={styles.messageMeta}>
                       <button

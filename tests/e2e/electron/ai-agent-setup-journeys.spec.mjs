@@ -137,6 +137,13 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await draftCdp.detach();
     await expect(narration).not.toContainText("fixture-hidden");
     await expect(narration).not.toContainText("<!DOCTYPE");
+    const processToggle = narration.getByTestId("ai-conversation-narration-toggle");
+    if (await processToggle.getAttribute("aria-expanded") !== "true") await processToggle.click();
+    await expect(narration.getByTestId("ai-conversation-public-activity")).toContainText([
+      "收到服务响应", "生成修改",
+    ]);
+    await expect(narration).not.toContainText(/读取本轮资料|写入修改结果/u);
+
     const process = sidebar.getByTestId("ai-turn-process").first();
     await expect(process.locator("summary")).toHaveCount(1);
     await process.locator("summary").click();
@@ -167,6 +174,9 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await launched.page.screenshot({ path: path.join(screenshots, "narrow-sidebar-generating.png"), animations: "disabled" });
     finish();
     await expect(sidebar.getByTestId("ai-conversation-action-bar")).toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
+    await expect(narration.getByTestId("ai-conversation-public-activity")).toContainText([
+      "收到服务响应", "生成修改", "服务响应已结束", "已检查 HTML 完整性", "准备审阅",
+    ]);
     await expect(sidebar.getByTestId("ai-conversation-run-summary")).toHaveCount(0);
     const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
     const candidates = candidateHtmlFiles(launched.workspace, active.projectId);
