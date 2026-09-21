@@ -1690,15 +1690,15 @@ test("ACP execution reads frozen rules A while current project rules advance to 
   const currentPath = path.join(fixture.target.projectRootPath, "PROJECT.md");
   await fixture.repository.updateProjectNotes({ target: fixture.target, content: rulesB });
   // Reload policy exactly as a retry/recovery does, after the mutable file changed.
-  const policy = await loadQoderAcpTaskPolicy(fixture.options);
+  const policy = await loadExecutionPolicy(fixture.options);
   assert.ok(policy.readableFiles.some(entry => entry.path === frozenPath));
   assert.ok(policy.readableFiles.every(entry => entry.path !== currentPath));
-  const host = createRestrictedQoderAcpHost(policy);
+  const host = createExecutionHost(policy);
   t.after(() => host.dispose());
   host.bindSessionId("rules_session");
   assert.equal((await host.readTextFile({ sessionId: "rules_session", path: frozenPath })).content, rulesA);
   await assert.rejects(host.readTextFile({ sessionId: "rules_session", path: currentPath }),
-    error => error.code === "ACP_READ_NOT_AUTHORIZED");
+    error => error.code === "AGENT_READ_NOT_AUTHORIZED");
   assert.equal(await readFile(frozenPath, "utf8"), rulesA);
   assert.equal(await readFile(currentPath, "utf8"), rulesB);
 });
