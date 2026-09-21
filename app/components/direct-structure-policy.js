@@ -217,7 +217,7 @@ const REASON_MESSAGES = Object.freeze({
   "target-not-found": "The selected source element is no longer available.",
   "target-identity-invalid": "The selected source element has invalid identity evidence.",
   "target-kind-unsupported": "The selected source node is not an HTML source element.",
-  "copy-root-tag-unsupported": "Only paragraphs, headings, list items and blockquotes can be copied directly.",
+  "copy-root-tag-unsupported": "Only safe text blocks can be copied directly.",
   "copy-customized-built-in": "Customized built-in elements cannot be copied directly.",
   "copy-custom-element": "Custom elements cannot be copied directly.",
   "copy-namespace-unsupported": "Only ordinary HTML source elements can be copied directly.",
@@ -233,6 +233,7 @@ const REASON_MESSAGES = Object.freeze({
   "copy-author-identity": "Author id/name identity cannot be duplicated by a direct copy.",
   "copy-reference-rewrite": "Referenced ids would need rewriting before a direct copy.",
   "copy-event-handler": "Authored event handlers cannot be duplicated through the direct path.",
+  "copy-div-author-program": "Static text containers cannot be copied when the document contains authored program behavior.",
   "copy-resource-attribute": "Resource attributes cannot be duplicated through the direct path.",
   "copy-parent-mixed-content": "Text or comments make the copy insertion boundary ambiguous.",
   "copy-invalid-source": "The copied source subtree has invalid source evidence.",
@@ -539,7 +540,18 @@ function copySubtreeReason(sourceIndex, root) {
 
 function directCopyDecision(sourceIndex, target) {
   const rootTag = normalizedTag(target);
-  if (!COPY_ROOT_TAGS.has(rootTag)) return unsupported("copy-root-tag-unsupported");
+  if (rootTag === "div") {
+    const children = childNodes(sourceIndex, target);
+    if (!children || !children.length || children.some(child => child.type !== "text")
+      || !target.textContent.trim()) return unsupported("copy-root-tag-unsupported");
+    // This first container category is deliberately static and text-only.
+    // Do not infer author-program dependencies from the current Runtime DOM.
+    if (sourceIndex.elements.some(element => normalizedTag(element) === "script"
+      || attributeEntries(element).some(({ name, value }) => name.startsWith("on")
+        || ((name === "href" || name === "src") && /^\s*(?:java|vb)script\s*:/iu.test(value))))) {
+      return unsupported("copy-div-author-program");
+    }
+  } else if (!COPY_ROOT_TAGS.has(rootTag)) return unsupported("copy-root-tag-unsupported");
   const parentReason = unsupportedAncestorReason(sourceIndex, target, "copy");
   if (parentReason) return unsupported(parentReason);
   const parent = target.parentId ? sourceIndex.byNodeId.get(target.parentId) : null;

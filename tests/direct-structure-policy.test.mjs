@@ -76,9 +76,9 @@ test("copy admits simple list items and directly inline blockquotes", () => {
   }
 });
 
-test("copy rejects roots outside p/headings/li/blockquote and unsafe descendants", () => {
+test("copy rejects complex roots and unsafe descendants", () => {
   const cases = [
-    ["<div data-stemmio-id=\"sm1_00000000000040008000000000000010\">text</div>", "copy-root-tag-unsupported"],
+    ["<div data-stemmio-id=\"sm1_00000000000040008000000000000010\"><span>text</span></div>", "copy-root-tag-unsupported"],
     ["<blockquote data-stemmio-id=\"sm1_00000000000040008000000000000010\"><div>nested</div></blockquote>", "copy-nested-block"],
     ["<blockquote data-stemmio-id=\"sm1_00000000000040008000000000000010\"><ul><li>nested</li></ul></blockquote>", "copy-nested-list"],
     ["<p data-stemmio-id=\"sm1_00000000000040008000000000000010\"><button>run</button></p>", "copy-control"],
@@ -363,4 +363,46 @@ test("incomplete source identity fails closed before direct structure admission"
   });
   assert.equal(result.status, "unsupported");
   assert.equal(result.reason, "source-index-invalid");
+});
+
+test("copy admits only static text-only divs through the existing source policy", () => {
+  const cases = [
+    ['class="label"', "Text", "", "copy-supported"],
+    ['id="author"', "Text", "", "copy-author-identity"],
+    ['name="author"', "Text", "", "copy-author-identity"],
+    ['aria-labelledby="title"', "Text", "", "copy-reference-rewrite"],
+    ['onclick="run()"', "Text", "", "copy-div-author-program"],
+    ['', "Text", '<script>run()</script>', "copy-div-author-program"],
+    ['', "Text", '<p onmouseover="run()">Other</p>', "copy-div-author-program"],
+    ['', "Text", '<a href="javascript:run()">Other</a>', "copy-div-author-program"],
+    ['style="background:url(image.png)"', "Text", "", "copy-resource-attribute"],
+    ['', "<img src='image.png'>", "", "copy-root-tag-unsupported"],
+    ['', "<span>Text</span>", "", "copy-root-tag-unsupported"],
+    ['', "<!--marker-->Text", "", "copy-root-tag-unsupported"],
+    ['', " ", "", "copy-root-tag-unsupported"],
+  ];
+  for (const [attributes, content, extra, reason] of cases) {
+    const { sourceIndex } = fixture(`<div data-stemmio-id="${ids.first}" ${attributes}>${content}</div>${extra}`);
+    const result = evaluateDirectStructurePolicy({ action: "copy", sourceIndex, elementId: ids.first });
+    assert.equal(result.reason, reason);
+    assert.equal(result.status, reason === "copy-supported" ? "supported" : "unsupported");
+    assert.equal(directCopyPolicyForElement({ sourceIndex, elementId: ids.first }).reason, reason);
+  }
+});
+
+test("static text-only divs retain mixed-content and special-ancestor guards", () => {
+  const tableHtml = documentHtml(
+    `<table data-stemmio-id="${ids.section}"><tbody><tr><td><div data-stemmio-id="${ids.first}">Text</div></td></tr></tbody></table>`,
+  );
+  const tableIndex = buildSourceIndex(tableHtml);
+  assert.equal(
+    evaluateDirectStructurePolicy({ action: "copy", sourceIndex: tableIndex, elementId: ids.first }).reason,
+    "copy-parent-special-structure",
+  );
+
+  const mixed = fixture(`<section data-stemmio-id="${ids.section}">prefix <div data-stemmio-id="${ids.first}">Text</div></section>`);
+  assert.equal(
+    evaluateDirectStructurePolicy({ action: "copy", sourceIndex: mixed.sourceIndex, elementId: ids.first }).reason,
+    "copy-parent-mixed-content",
+  );
 });
