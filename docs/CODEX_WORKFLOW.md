@@ -16,6 +16,86 @@ Use the user's requested authorization level:
 
 An implementation PR is not a release. Merging to `main` updates the canonical source; only an immutable version tag may create an official installer.
 
+## Task lifecycle
+
+One lifecycle covers analysis, implementation and delivery, but every task uses
+only the stages that match its type and authorization. A planning request stops
+after a reviewable plan and acceptance method; a verification request runs only
+the authorized checks; a review request stays read-only; implementation uses the
+editing and delivery stages. Steps may be combined, reordered or omitted when
+they do not apply. Permission, required verification and the definition of
+complete do not become weaker as a result. Explain an omitted item only when it
+limits the credibility of the conclusion.
+
+| Stage | Judgement required | Record |
+| --- | --- | --- |
+| Intake | Does the user want analysis, planning, verification, implementation or later delivery, and how far may the task go? | outcome, allowed scope, behavior to preserve, completion standard, delivery authority |
+| Investigation | What does current source and the owning rule actually establish? | verified facts, reasoned inferences, open questions and relevant call paths |
+| Planning | What behavior must be proven through which real entry, and what would refute it? | key decisions, observable acceptance claims and verification method |
+| Implementation | Is the change in the owner and no larger than needed? | focused diff plus necessary tests and edit-time checks |
+| Verification | What actually ran, against which source, and what remains unproved? | version-bound result, first failure, result categories and coverage limits |
+| Review | Is the actual diff correct against current contracts? | evidenced defects, unverified suspicions, suggestions and verification gaps |
+| Delivery | What do the evidence and current authorization support? | actual deliverable, accessible evidence, remaining limits and delivery stage |
+| Retention | What must remain to prevent a repeat? | regression test, owner-rule update or durable ADR when warranted |
+
+Scale the record to the decision. A small task needs a few sentences, while an
+asynchronous, public-interface or authority-boundary change needs the facts that
+affect its behavior. Keep verified facts, inferences and open questions distinct;
+source describes current behavior and accepted product or security rules define
+required behavior. Check versioned third-party facts against official material.
+For a significant change, state an observable acceptance claim rather than "the
+tests pass", and surface a missing verification capability during planning.
+
+Within the agreed scope, the implementer owns routine choices, necessary fixes
+and proportionate retesting. When a new fact changes agreed behavior, authority,
+write scope or the validity of acceptance, pause that affected part and hand it
+to the task owner; unaffected work may continue. The task owner asks the user
+only when a material choice or new authorization is required. Related findings
+stay recorded outside scope unless the existing authorization already covers
+them.
+
+Verification and review use the rules in
+[Test strategy](../tests/TEST_STRATEGY.md#改动类型与证据质量) and the applicable
+review contract. Preserve the first failure and keep result categories distinct.
+An ordinary implementation reaches a tested Draft PR; an explicitly authorized
+later delivery continues under the existing Ready, merge, package or release
+rules. Keep a regression test, owner-rule update or ADR only when it has lasting
+value.
+
+## Evidence and reports
+
+Evidence lives in the existing carriers: the session and the Pull Request for a
+simple task, `output/` reports and test artifacts for a complex one. Do not
+transcribe machine-generated commands, counts and results into a second store.
+
+Local raw evidence and reviewer-accessible evidence are different. Keep full
+logs, sensitive details and large artifacts in the authorized local or CI
+carrier. The Pull Request includes enough desensitized facts to check each
+conclusion and links an existing CI artifact or other authorized shared carrier
+when needed. A local `output/` path documents reproducibility, but does not by
+itself make the material available to a GitHub reviewer and must not be the only
+support for a reviewable claim.
+
+A reader must be able to answer which source and baseline were verified, with
+which method, in which environment, with which result, and how far the
+conclusion reaches. When relevant uncommitted changes exist, bind the evidence
+to the content actually tested instead of only `HEAD`. If a hook or another step
+changes files after verification, re-check the diff and the affected evidence.
+
+Results keep their own vocabulary: planned, discovered, executed, passed,
+failed, skipped, not executed and missing are reported separately, and a missing
+count is unknown rather than zero. A provider test without credentials reports
+skipped, never passed.
+
+Evidence supports its own conclusion and nothing wider. A local test pass is not
+a complete CI pass, source verification is not a packaged-app verification, and
+a third-party tool's own summary is not a verified result. Test counts alone do
+not establish quality.
+
+Private material follows the existing privacy rules: never commit or publish
+real user HTML, attachments, project records, credentials, personal paths or raw
+sensitive logs, and include only the desensitized minimum a public report needs.
+
 ## Stemmio Agent runtime boundary
 
 Qoder and Codex both use the shared ACP runtime. Codex is discovered as an
@@ -200,7 +280,10 @@ for Ready, packaging, installation, merge, and publication.
 1. Use a short-lived branch with an approved prefix.
 2. Keep one coherent outcome per PR.
 3. Open every PR as Draft. Draft opens, pushes and reopens run impact-selected `pr-feedback` (`gate:draft`: Node plus the selected capability canary) inside `ci.yml`.
-4. The PR body must state outcome, boundary, verification, documentation impact and release impact.
+4. The PR body follows `.github/PULL_REQUEST_TEMPLATE.md`: goal and scope, key
+   decisions, verification evidence bound to the source, review and
+   documentation, remaining limits and delivery state. Reference reports instead
+   of pasting logs and matrices.
 5. Keep the PR Draft while implementation and focused feedback converge. Batch accepted P0/P1 product fixes before promotion. The review service status, absence and unverified comments are informational. Root-agent-verified P0/P1 defects still block delivery, even when the review job and `release-gate` are green. Apply the mandatory scope-stop rule above; P2/P3 and unclassified minor findings do not require a new SHA or another repair cycle unless the developer explicitly escalates them.
 6. When the head is ready, update it onto current `main` and mark the PR Ready once. That starts the complete source matrix. A PR opened already Ready also takes this path because `draft == false`. Codex review is requested automatically for that head, shown on the PR, and never included in `release-gate`.
 7. Wait for the required `release-gate` and review the final GitHub diff, not only the local working diff. Do not restart already-green source lanes merely because `github.run_attempt` changed. A failed product suite on the same SHA cannot be washed green by rerunning; classify a true `ci_environment` failure first.
@@ -271,6 +354,43 @@ tag 以来的提交和文件变化绑定，并从 GitHub 实时解析每个关�
 令以刷新可变的 PR 状态；无法取得实时 GitHub 元数据时，不得把安装包交付称
 为完成。
 
+## Documentation, decisions and retrospectives
+
+Normative documents describe current requirements and current behavior. Planned,
+accepted-but-unimplemented, implemented and retired material stay
+distinguishable, and a future plan must not sit in an owner document written in
+the present tense.
+
+Comments keep the non-obvious contract: behavior, failure, timing, ownership,
+exceptions and consequences. Delete a comment that restates the code, narrates
+the change or repeats the architecture rationale, and keep the limit a
+maintainer actually needs.
+
+Write an ADR only for a decision with long-term value: the problem, the choice,
+the alternatives that were really considered, the benefits, the costs and the
+condition that would reopen it. Small mechanical changes need none. When a
+related ADR already exists, do not create a duplicate: record the successor or
+the current status through the [ADR curation workflow](ADR_CURATION.md), which
+owns change notice, status marking, the index and archive moves and leaves an
+ADR's historical rationale intact. The task owner gives the notice required by
+that workflow before an ADR change and lists the actual ADR impact at delivery.
+[The ADR index](decisions/README.md) is the living index.
+
+A retrospective exists to prevent a repeat: an important escaped defect states
+why the existing evidence did not catch it and which regression, rule or process
+step will catch it next time. Not every small bug becomes an incident report.
+
+History is neither disguised as a current rule nor rewritten. Superseded
+material may be marked, archived or merged, but a trade-off with long-term value
+must not survive only in Git history.
+
+## Adding a workflow step
+
+Every new workflow step states which real problem it solves, who executes it,
+what useful evidence it produces and why the existing steps are not enough. If
+that cannot be stated, it is not added. This applies to this document, to
+`.agents/skills/`, to the templates and to automation.
+
 ## Documentation impact
 
 Behavior and its documentation form one change. Use this routing table:
@@ -286,11 +406,15 @@ Behavior and its documentation form one change. Use this routing table:
 | Architecture capability routing or user-visible guards | `docs/ARCHITECTURE_MAP.md`, `scripts/capability-context.json`, `docs/GUARD_LEDGER.md`, `docs/ENGINEERING_STANDARDS.md` |
 | Packaging, provenance, signing or publication | `docs/RELEASING.md`, `CHANGELOG.md` |
 | Dependency policy or advisory exception | `docs/DEPENDENCY_SECURITY.md` |
-| Public/private source boundary | `docs/OPEN_SOURCE_BOUNDARY.md`, notices, contribution or security policies as applicable |
+| Public/private source boundary | `docs/PRIVATE_SOURCE_BOUNDARY.md`, notices, contribution or security policies as applicable |
 
 If no document changes, the final report and PR must say why existing documentation remains accurate.
 
 ## Agent final report
+
+Report evidence under the rules in `## Evidence and reports`: bind it to the
+verified source, keep counts in their own categories, and do not widen the
+conclusion past what was proven.
 
 Match the report to the task:
 

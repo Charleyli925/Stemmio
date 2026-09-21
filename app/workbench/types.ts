@@ -4,6 +4,12 @@ import type {
 } from "../components/HtmlCanvasEditor";
 import type { DraftSnapshot } from "../application/draft-session.js";
 import type { BrowserOpenRequest } from "../application/browser-open-workflow.js";
+import type {
+  AgentCredentialClearRequest,
+  AgentCredentialOperationReceipt,
+  AgentCredentialPersistRequest,
+  AgentCredentialStatusRequest,
+} from "../application/agent-credential-operation-contract.js";
 import type { SourceHistoryDirection, SourceHistoryEntry } from "../domain/source-history.js";
 import type {
   CandidateAssessment,
@@ -30,6 +36,7 @@ export type HtmlProject = {
   projectId?: string;
   documentId?: string;
   openTarget?: Record<string, unknown>;
+  historyCreation?: Readonly<{ operationId: string; versionId: string }> | null;
   openKind?: "project";
 };
 
@@ -282,7 +289,7 @@ export type DocumentRecoveryJournalRebase = DocumentRecoveryJournalLocator & {
 };
 
 export type DocumentRecoveryJournalSummary = DocumentRecoveryJournalLocator & {
-  schemaVersion: "1.0.0" | "2.0.0";
+  schemaVersion: "2.0.0";
   sourcePath: string;
   workingCopyId: string;
   expectedSourceSha256: string | null;
@@ -295,12 +302,15 @@ export type DocumentRecoveryJournalSummary = DocumentRecoveryJournalLocator & {
 
 export type DesktopWorkbenchTabsApi = {
   get: () => Promise<{
-    version: 1;
+    version: 2;
     activeTabId: string | null;
     tabs: Array<{
       tabId: string;
+      kind: "document" | "project-rules" | "history";
       projectId: string;
       documentId: string;
+      versionId?: string;
+      versionOrdinal?: number;
     }>;
   } | null>;
   set: (state: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -349,22 +359,9 @@ export type DesktopIntegrationsApi = {
     providerId: string;
   }) => Promise<{ opened?: boolean }>;
   openVendorApiKeyPage?: (vendorId: string) => Promise<{ opened: boolean }>;
-  persistSessionCredential?: (payload: {
-    apiKey: string;
-    vendorId?: string;
-    baseUrl?: string;
-    modelId?: string;
-  }) => Promise<{ ok?: boolean; code?: string; remembered?: boolean }>;
-  clearSessionCredential?: () => Promise<{ ok?: boolean; remembered?: boolean }>;
-  sessionCredentialStatus?: () => Promise<{
-    available?: boolean;
-    remembered?: boolean;
-    vendorId?: string | null;
-    unreadable?: boolean;
-    reconnectRequired?: boolean;
-    reason?: string;
-    code?: string;
-  }>;
+  persistSessionCredential?: (payload: AgentCredentialPersistRequest) => Promise<AgentCredentialOperationReceipt>;
+  clearSessionCredential?: (payload: AgentCredentialClearRequest) => Promise<AgentCredentialOperationReceipt>;
+  sessionCredentialStatus?: (payload?: AgentCredentialStatusRequest) => Promise<AgentCredentialOperationReceipt>;
   restoreSessionCredential?: () => Promise<{
     ok?: boolean;
     restored?: boolean;
@@ -406,7 +403,7 @@ export type DesktopUpdatesApi = {
     reason: "not-ready" | "close-blocked" | null;
   }>;
   openLatestRelease: () => Promise<{ opened: boolean }>;
-  openRepository: () => Promise<{ opened: boolean }>;
+  openPublicReleases: () => Promise<{ opened: boolean }>;
 };
 
 declare global {

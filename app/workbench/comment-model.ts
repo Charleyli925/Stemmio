@@ -95,10 +95,12 @@ export function rebindTargetsPreservingGlobal(
   const localTargets = targets.filter((target) => (
     !isGlobalPageTarget(target) && canLocateTarget(target)
   ));
-  const reboundById = new Map(
-    rebindCanvasSelectionTargets(nextHtml, localTargets)
-      .map((target) => [target.id, target]),
-  );
+  const reboundById = new Map<string, HtmlCanvasSelection>();
+  if (localTargets.length > 0) {
+    for (const target of rebindCanvasSelectionTargets(nextHtml, localTargets)) {
+      reboundById.set(target.id, target);
+    }
+  }
   return targets.map((target) => (
     isGlobalPageTarget(target)
       ? exactGlobalPageTarget(target)

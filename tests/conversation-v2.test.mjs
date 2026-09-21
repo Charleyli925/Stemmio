@@ -85,19 +85,12 @@ function legacyConversation() {
   };
 }
 
-test("v1 conversation reads as a v3 projection without changing input bytes", () => {
+test("v1 conversation records are explicitly unsupported", () => {
   const legacy = legacyConversation();
-  const bytes = JSON.stringify(legacy);
-  const projected = normalizeConversation(legacy, { projectId, documentId });
-  assert.equal(JSON.stringify(legacy), bytes);
-  assert.equal(projected.schemaVersion, "3.0.0");
-  assert.equal(projected.messages[0].actor, "agent");
-  assert.equal(projected.messages[0].providerId, "qoder");
-  assert.equal(projected.turns[0].providerSelection.reasoning.resolution, "provider-default");
-  assert.deepEqual(projected.turns[0].providerBinding, { providerId: "qoder", runtimeId: "acp" });
-  assert.deepEqual(projected.futureRoot, { keep: true });
-  assert.equal(projected.turns[0].futureTurn, 7);
-  assert.equal(projected.messages[0].futureMessage, true);
+  assert.throws(
+    () => normalizeConversation(legacy, { projectId, documentId }),
+    (error) => error.code === "UNSUPPORTED_CONVERSATION_SCHEMA",
+  );
 });
 
 test("v3 writer stores generic Agent actor and provider-bound actual model", () => {
@@ -158,7 +151,7 @@ test("v2 conversation records are explicitly unsupported", () => {
   );
 });
 
-test("v1 draft reads as v2 without mutation and preserves unknown members", () => {
+test("v1 conversation drafts are explicitly unsupported", () => {
   const legacy = {
     schemaVersion: "1.0.0",
     conversationId: "conversation_draftv2test12",
@@ -171,13 +164,10 @@ test("v1 draft reads as v2 without mutation and preserves unknown members", () =
     deliveryMode: "qoder-acp",
     futureDraft: { keep: true },
   };
-  const bytes = JSON.stringify(legacy);
-  const projected = normalizeConversationDraft(legacy);
-  assert.equal(JSON.stringify(legacy), bytes);
-  assert.equal(projected.schemaVersion, "2.0.0");
-  assert.equal(projected.deliveryMode, "managed-agent");
-  assert.equal(projected.providerSelection.requestedModelId, "qoder:model-a");
-  assert.deepEqual(projected.futureDraft, { keep: true });
+  assert.throws(
+    () => normalizeConversationDraft(legacy),
+    (error) => error.code === "UNSUPPORTED_CONVERSATION_SCHEMA",
+  );
 
   const created = createEmptyConversationDraft({
     conversationId: "conversation_draftwriter2",

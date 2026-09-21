@@ -23,6 +23,7 @@ import { createRuntimeRegistry } from "../bridge/agent/runtimes/runtime-registry
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
 import { inspectSourceElementIdentity } from "../bridge/project-file-repository/working-copy.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import {
   OPENAI_COMPATIBLE_VENDORS,
   normalizeOpenAiCompatibleBaseUrl,
@@ -1150,6 +1151,13 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
     apiKey: "sk-synthetic", vendorId: "deepseek", selection: selection("deepseek-v4-flash", "low"),
   });
   const preflight = await coordinator.preflight({ selection: connected.selection, trustPolicyAccepted: TRUST });
+  const comments = [{
+    commentId: "comment_one",
+    text: "Change Before to After",
+    target: { targetId: "target_one" },
+    attachments: [],
+  }];
+  const targets = [{ targetId: "target_one" }];
   const request = await repository.prepareRequest({
     target: imported.target,
     requestId: "req_stemmio_http_candidate",
@@ -1158,9 +1166,10 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
     request: {
       freezeCutoffRevision: 0,
       summary: "Modify the page through source Agent",
-      comments: [{ commentId: "comment_one", text: "Change Before to After", target: { targetId: "target_one" }, attachments: [] }],
+      comments,
       changeEvents: [],
-      targets: [{ targetId: "target_one" }],
+      targets,
+      taskSpec: compileTaskSpec({ comments, targets }),
       agentDelivery: {
         mode: "managed-agent",
         selection: preflight.selection,

@@ -1,6 +1,6 @@
 # Workbench 应用编排收口执行计划
 
-- 状态：**PR-1 至 PR-7b 已合并至 `main`；PR-7 最终 Composition/hard-gate 实现已在独立分支完成并通过任务门禁，待 Draft PR 审阅。尚未 Ready、合并、打 tag 或发布。**
+- 状态：**历史基线（2026-08-11 至 2026-08-12），不是当前施工清单。PR-1 至 PR-7b 及 PR-7 最终 Composition/hard-gate 已合并；最终 hard-gate 提交 `e913d652`（PR #160）是 `main` 当前祖先链的一部分，2026-09-20 已核对。**
 - 规划基线：`main@37bba7779b27c0a42a52f98ec84a377b964bf4eb`
 - 基线 Tree：`0e074849493e5f9db9e89621e0a1c1a4910b8fa1`
 - 基线日期：2026-08-11
@@ -8,7 +8,9 @@
 - 目标边界：Renderer Workbench 与现有 Application Sessions 之间的应用编排
 - 明确不属于本计划：大文件 Patch transport、Bridge 路由或持久 Schema 重写、UI 改版、全仓 TypeScript 迁移、打包与发布
 
-> 本文是一份施工合同，不是生产实现授权。任何实施 PR、Ready、合并、版本或发布仍需独立授权。
+> 本文保留为历史施工合同与设计理由，不是生产实现授权或待办列表。日常定位应先读取
+> `docs/ARCHITECTURE_MAP.md`、`docs/STATE_OWNERSHIP.md`、`docs/ARCHITECTURE_CONTRACT.md`、
+> `docs/decisions/README.md` 与 `docs/CODEX_WORKFLOW.md`；只有需要了解当时约束或失败经验时才回看本文。
 >
 > 历史边界说明：本文中的 clipboard-only / 不控制 QoderWork 约束描述的是该次编排重构
 > 的范围，已由 ADR 0032 的 Bridge-owned Qoder ACP Agent Bridge 产品决策取代。剪贴板

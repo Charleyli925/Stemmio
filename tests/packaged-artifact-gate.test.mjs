@@ -99,6 +99,16 @@ async function verifySyntheticAppBundle(fixture, { allowUnsigned = true } = {}) 
   });
 }
 
+test("runtime source maps are intentionally absent from the packaged dependency closure", async (t) => {
+  const fixture = await createSyntheticAppBundle(t, { profile: "candidate" });
+  await writeFile(
+    path.join(fixture.productRoot, "node_modules", "acorn", "dist", "acorn.js.map"),
+    "{\"version\":3}\n",
+  );
+
+  await verifySyntheticAppBundle(fixture);
+});
+
 test("release commands use one automated artifact lane with full tests and packaged runtime verification", async () => {
   const [
     packageText,
@@ -121,7 +131,7 @@ test("release commands use one automated artifact lane with full tests and packa
   const impactMap = JSON.parse(impactMapText);
   assert.equal(
     packageJson.scripts.typecheck,
-    "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:document-source-operation && npm run typecheck:browser-open",
+    "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:workspace-preferences && npm run typecheck:document-source-operation && npm run typecheck:agent-credential-operation && npm run typecheck:browser-open",
   );
   assert.equal(packageJson.scripts.verify, "npm run gate:task");
   assert.equal(packageJson.scripts["release:mac"], "npm run gate:artifact:auto");
@@ -408,12 +418,12 @@ test("the app-bundle gate validates app.asar, Bridge scripts, schemas and plist 
   });
   const result = await verifySyntheticAppBundle(fixture);
   assert.equal(result.version, "0.7.0");
-  assert.equal(result.asarFileCount, 49);
+  assert.equal(result.asarFileCount, 50);
   assert.equal(result.schemaFileCount, 5);
   assert.equal(result.legalResourceCount, 5);
   assert.deepEqual(result.applicationUpdate, {
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     provider: "github",
     releaseType: "release",
     updaterCacheDirName: "stemmio-updater",
@@ -531,6 +541,30 @@ test("the app-bundle gate reports each mutated closure boundary", async (t) => {
         { recursive: true, force: true },
       ),
       expected: /dist-desktop/u,
+    },
+    {
+      name: "renderer source map",
+      profile: "candidate",
+      allowUnsigned: true,
+      mutate: ({ productRoot: fixtureProductRoot }) => writeFile(
+        path.join(
+          fixtureProductRoot,
+          "dist-desktop",
+          "proprietary-source-leak.js.map",
+        ),
+        "{}\n",
+      ),
+      expected: /renderer build output must not contain source map artifacts: proprietary-source-leak\.js\.map/u,
+    },
+    {
+      name: "packaged resource source map",
+      profile: "candidate",
+      allowUnsigned: true,
+      mutate: ({ resourcesPath }) => writeFile(
+        path.join(resourcesPath, "proprietary-source-leak.js.map"),
+        "{}\n",
+      ),
+      expected: /packaged Resources must not contain source map artifacts: proprietary-source-leak\.js\.map/u,
     },
     {
       name: "missing telemetry metadata",

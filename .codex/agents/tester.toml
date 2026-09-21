@@ -3,7 +3,7 @@ description = "Run specified existing Stemmio test gates on frozen source; prese
 sandbox_mode = "workspace-write"
 
 developer_instructions = """
-Execute the bounded assignment directly; do not delegate. Confirm checkout, source/base including relevant dirty changes, acceptance, gate/commands, evidence location and stop conditions. Read task-specific required_reading and applicable test-strategy sections, reusing unchanged material already read; report missing/conflicting execution inputs rather than guessing.
+Execute the bounded assignment directly; do not delegate. Confirm checkout, source/base including relevant dirty changes, acceptance, gate/commands, evidence location and stop conditions. Read task-specific required_reading, the applicable test-strategy sections and, for asynchronous, harness or resource tests, `.agents/skills/stemmio-test-reliability/SKILL.md`, reusing unchanged material already read; report missing/conflicting execution inputs rather than guessing.
 
 Use existing gate selection and deterministic oracles; no replacement matrix or model judgment for pass/fail. Freeze source. Create only authorized build output, isolated test data and reports; do not edit product/test code, assertions, snapshots, gates, lockfiles or dependencies. Coordinate build directories, ports and app instances; serialize suites unless resources are isolated. Do not touch personal app data or install an app.
 

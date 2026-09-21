@@ -25,6 +25,7 @@ import {
   driveAuthoredTabActivation,
   normalizeCapabilityProbeObservations,
   probeAuthoredCapability,
+  resetAuthoredProbeSelection,
   runtimeGeneratedDiagnosticsIssue,
 } from "../electron/real-html/capability-driver.mjs";
 
@@ -683,6 +684,54 @@ test("canonical source and alias normalization fail closed and keep one determin
   })]);
 });
 
+test("capability discovery excludes the authored canvas root with explicit product-contract proof", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent('<main data-runtime-root></main>');
+  await page.locator("body").evaluate((element, stableId) => {
+    element.setAttribute("data-stemmio-id", stableId);
+  }, CORRECT_ID);
+  const observation = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: {
+      stableId: CORRECT_ID,
+      tag: "body",
+      sourceOrder: 0,
+      sourceEditable: false,
+      visible: true,
+      isConnected: true,
+      inert: false,
+      runtimeGenerated: false,
+      tabId: null,
+      region: "top",
+      scrollContainer: "document",
+    },
+    mode: "discover",
+    sourceElements: [{
+      stemmioId: CORRECT_ID,
+      stemmioIdentityStatus: "valid",
+      tagName: "body",
+      parentId: null,
+      sourceOrder: 0,
+      sourceEditable: false,
+    }],
+  });
+  expect(observation).toMatchObject({
+    stableId: CORRECT_ID,
+    probeReason: "AUTHORED_CANVAS_ROOT_NO_CAPABILITY",
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    hitTest: { kind: "authored-canvas-root", tag: "body" },
+  });
+  expect(normalizeCapabilityProbeObservations([observation])).toMatchObject({
+    liveDom: [],
+    denominatorExclusions: [{
+      elementId: CORRECT_ID,
+      reason: "AUTHORED_CANVAS_ROOT_NO_CAPABILITY",
+    }],
+  });
+});
+
 test("capability probe accepts only the exact selected Stable ID", HARNESS_TEST_OPTIONS, async ({ page }) => {
   await capabilityFixture(page);
   const editor = page.locator("[data-runtime-root]");
@@ -739,6 +788,38 @@ test("capability probe closes A's toolbar before the next exact click on B", HAR
     },
   });
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(2);
+});
+
+test("capability reset uses a second Escape when the first only ends the active edit", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <p data-stemmio-id="${CORRECT_ID}" data-html-canvas-selected>editing</p>
+      <div role="toolbar" aria-label="编辑正文" style="position:fixed;width:120px;height:40px"></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    let escapeCount = 0;
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      escapeCount += 1;
+      if (escapeCount === 1) {
+        document.querySelector("[data-html-canvas-selected]")
+          ?.removeAttribute("data-html-canvas-selected");
+      } else {
+        document.querySelector('[role="toolbar"]')?.setAttribute("hidden", "");
+      }
+    });
+  });
+  await expect(resetAuthoredProbeSelection({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+  })).resolves.toMatchObject({
+    ok: true,
+    escapeAttemptCount: 2,
+    selectedMarkerCount: 0,
+    visibleToolbarCount: 0,
+  });
 });
 
 test("capability probe fails closed before clicking when the prior overlay cannot clear", HARNESS_TEST_OPTIONS, async ({ page }) => {
@@ -848,6 +929,393 @@ test("capability probe uses a bounded real mouse hit for a continuously moving t
   expect(Date.now() - startedAt).toBeLessThan(5_000);
 });
 
+test("capability probe finds a natural parent hit outside a rounded descendant", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root data-element-copy-availability="available" data-element-copy-reason="available">
+      <section id="rounded-parent" data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:100%;height:100%;border-radius:40px">rounded cover</span>
+      </section>
+      <div role="toolbar" aria-label="元素工具栏" hidden><button aria-label="编辑"></button></div>
+    </main>
+  `);
+  await page.locator("#rounded-parent").evaluate((element) => {
+    element.addEventListener("click", () => {
+      element.setAttribute("data-html-canvas-selected", "");
+      document.querySelector('[role="toolbar"]')?.removeAttribute("hidden");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      element.removeAttribute("data-html-canvas-selected");
+      document.querySelector('[role="toolbar"]')?.setAttribute("hidden", "");
+    });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    operationStableId: PARENT_ID,
+    probeReason: "CAPABILITY_OBSERVED",
+  });
+});
+
+test("capability probe excludes a source-proven wrapper covered by unique authored descendants without clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section id="wrapper" data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:100%;height:100%">covered</span>
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [CORRECT_ID],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableIds: [CORRECT_ID],
+    },
+  });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
+test("capability probe still validates selection when bounded geometry finds an exact sparse-wrapper point", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  const fractions = [0.08, 0.2, 0.5, 0.8, 0.92];
+  const descendantIds = fractions.flatMap((_, row) => fractions.map((__, column) => (
+    `sm1_${(row * fractions.length + column + 100).toString(16).padStart(32, "0")}`
+  )));
+  const dots = descendantIds.map((stableId, index) => {
+    const row = Math.floor(index / fractions.length);
+    const column = index % fractions.length;
+    return `<span data-stemmio-id="${stableId}" style="position:absolute;left:calc(${fractions[column] * 100}% - 3px);top:calc(${fractions[row] * 100}% - 3px);width:6px;height:6px"></span>`;
+  }).join("");
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${PARENT_ID}" style="position:relative;display:block;width:240px;height:100px">
+        ${dots}
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  await expect(probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      ...descendantIds.map((stableId, index) => ({
+        stemmioId: stableId,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: index + 1,
+        sourceEditable: false,
+      })),
+    ],
+  })).rejects.toMatchObject({ code: "CAPABILITY_PROBE_SELECTION_IDENTITY_MISMATCH" });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBeGreaterThan(0);
+});
+
+test("capability probe accepts exact rectangular union coverage from proven authored descendants", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  const leftId = "sm1_dddddddddddddddddddddddddddddddd";
+  const rightId = "sm1_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${PARENT_ID}" style="display:flex;width:240px;height:100px">
+        <span data-stemmio-id="${leftId}" style="display:block;width:50%;height:100%"></span>
+        <span data-stemmio-id="${rightId}" style="display:block;width:50%;height:100%"></span>
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      ...[leftId, rightId].map((stableId, index) => ({
+        stemmioId: stableId,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: index + 1,
+        sourceEditable: false,
+      })),
+    ],
+  });
+  expect(observed).toMatchObject({
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    hitTest: {
+      coverageVerified: true,
+      coverageKind: "union-untransformed-hit-boxes",
+      coverageStableIds: [leftId, rightId],
+    },
+  });
+});
+
+test("capability probe keeps an unproved dedicated-child wrapper explicit", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <div id="target" data-stemmio-id="${PARENT_ID}" style="width:204px">
+        <canvas data-stemmio-id="${CORRECT_ID}" style="display:block;width:200px;height:80px;margin:2px;pointer-events:none"></canvas>
+      </div>
+      <div role="toolbar" aria-label="元素工具栏" hidden></div>
+    </main>
+  `);
+  await page.evaluate((selectedId) => {
+    document.addEventListener("click", () => {
+      document.querySelector(`[data-stemmio-id="${selectedId}"]`)
+        ?.setAttribute("data-html-canvas-selected", "part");
+      document.querySelector('[role="toolbar"]')?.removeAttribute("hidden");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      document.querySelectorAll("[data-html-canvas-selected]")
+        .forEach((element) => element.removeAttribute("data-html-canvas-selected"));
+      document.querySelector('[role="toolbar"]')?.setAttribute("hidden", "");
+    });
+  }, CORRECT_ID);
+  const sourceElements = [
+    {
+      stemmioId: PARENT_ID,
+      stemmioIdentityStatus: "valid",
+      parentId: null,
+      tagName: "div",
+      sourceOrder: 0,
+      sourceEditable: false,
+    },
+    {
+      stemmioId: CORRECT_ID,
+      stemmioIdentityStatus: "valid",
+      parentId: PARENT_ID,
+      tagName: "canvas",
+      sourceOrder: 1,
+      sourceEditable: false,
+    },
+  ];
+
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: {
+      ...candidate(PARENT_ID),
+      tag: "div",
+      sourceEditable: false,
+      sourceOrder: 0,
+    },
+    mode: "discover",
+    sourceElements,
+  });
+
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    probeReason: "NO_EXACT_HIT_POINT",
+    visible: false,
+    hitTest: {
+      kind: "blocked",
+    },
+  });
+});
+
+test("capability probe finds the narrow parent border outside dedicated child tolerance", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root data-element-copy-availability="available" data-element-copy-reason="available">
+      <div id="target" data-stemmio-id="${PARENT_ID}" style="width:453px;height:260px">
+        <video data-stemmio-id="${CORRECT_ID}" style="display:block;width:453px;height:254px;margin:3px 0;pointer-events:none"></video>
+      </div>
+      <div role="toolbar" aria-label="元素工具栏" hidden>
+        <button aria-label="留评论"></button>
+      </div>
+    </main>
+  `);
+  await page.evaluate(({ parentId, childId }) => {
+    document.addEventListener("click", (event) => {
+      const child = document.querySelector(`[data-stemmio-id="${childId}"]`);
+      const rect = child.getBoundingClientRect();
+      const dedicatedHit = event.clientX >= rect.left - 2
+        && event.clientX <= rect.right + 2
+        && event.clientY >= rect.top - 2
+        && event.clientY <= rect.bottom + 2;
+      document.querySelector(`[data-stemmio-id="${dedicatedHit ? childId : parentId}"]`)
+        ?.setAttribute("data-html-canvas-selected", "part");
+      document.querySelector('[role="toolbar"]')?.removeAttribute("hidden");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      document.querySelectorAll("[data-html-canvas-selected]")
+        .forEach((element) => element.removeAttribute("data-html-canvas-selected"));
+      document.querySelector('[role="toolbar"]')?.setAttribute("hidden", "");
+    });
+  }, { parentId: PARENT_ID, childId: CORRECT_ID });
+  const sourceElements = [
+    {
+      stemmioId: PARENT_ID,
+      stemmioIdentityStatus: "valid",
+      parentId: null,
+      tagName: "div",
+      sourceOrder: 0,
+      sourceEditable: false,
+    },
+    {
+      stemmioId: CORRECT_ID,
+      stemmioIdentityStatus: "valid",
+      parentId: PARENT_ID,
+      tagName: "video",
+      sourceOrder: 1,
+      sourceEditable: false,
+    },
+  ];
+
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: {
+      ...candidate(PARENT_ID),
+      tag: "div",
+      sourceEditable: false,
+      sourceOrder: 0,
+    },
+    mode: "discover",
+    sourceElements,
+  });
+
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    selectedId: PARENT_ID,
+    probeReason: "CAPABILITY_OBSERVED",
+  });
+});
+
+test("capability probe blocks a descendant-covered wrapper when source ancestry is unproven", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:100%;height:100%">covered</span>
+      </section>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    probeReason: "NO_EXACT_HIT_POINT",
+    hitTest: { kind: "blocked", hitKind: "unproven-descendant" },
+  });
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
 test("capability probe rejects a foreign hit interceptor without force-clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
   await capabilityFixture(page);
   await page.locator("#target").evaluate((element) => {
@@ -873,9 +1341,72 @@ test("capability probe rejects a foreign hit interceptor without force-clicking"
   expect(observed).toMatchObject({
     capabilityFamilies: [],
     behaviorFamilies: [],
-    probeReason: "NO_EXACT_HIT_POINT",
+    probeReason: "AUTHORED_FOREIGN_SURFACE_OCCLUSION",
+    hitTest: {
+      kind: "valid-foreign-occlusion",
+      coverageVerified: true,
+    },
   });
   expect(Date.now() - startedAt).toBeLessThan(5_000);
+  expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
+});
+
+test("capability probe leaves mixed authored pointer occlusion explicitly unproven", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root style="position:relative;width:240px;height:80px">
+      <section data-stemmio-id="${PARENT_ID}" style="display:block;width:240px;height:80px">
+        <span data-stemmio-id="${CORRECT_ID}" style="display:block;width:120px;height:80px">left cover</span>
+      </section>
+      <div data-stemmio-id="${WRONG_ID}" style="position:absolute;z-index:2;left:120px;top:0;width:120px;height:80px">right cover</div>
+      <div role="toolbar" hidden></div>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.__capabilityProbeClickCount = 0;
+    document.addEventListener("click", () => { window.__capabilityProbeClickCount += 1; });
+  });
+  const observed = await probeAuthoredCapability({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    candidate: { ...candidate(PARENT_ID), tag: "section", sourceOrder: 0 },
+    mode: "discover",
+    sourceElements: [
+      {
+        stemmioId: PARENT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "section",
+        sourceOrder: 0,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: CORRECT_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: PARENT_ID,
+        tagName: "span",
+        sourceOrder: 1,
+        sourceEditable: false,
+      },
+      {
+        stemmioId: WRONG_ID,
+        stemmioIdentityStatus: "valid",
+        parentId: null,
+        tagName: "div",
+        sourceOrder: 2,
+        sourceEditable: false,
+      },
+    ],
+  });
+  expect(observed).toMatchObject({
+    stableId: PARENT_ID,
+    probeReason: "NO_EXACT_HIT_POINT",
+    hitTest: {
+      kind: "blocked",
+      hitKind: "stable-id-non-descendant",
+      foreignCoverageDiagnostic: { coverageVerified: false },
+    },
+  });
   expect(await page.evaluate(() => window.__capabilityProbeClickCount)).toBe(0);
 });
 
@@ -1175,6 +1706,140 @@ test("Runtime-generated discovery trusts controller diagnostics and freezes one 
     deniedCapabilityFamilies: ["text", "format", "copy", "move", "delete"],
   }]);
   expect(runtimeGeneratedDiagnosticsIssue([frozen.diagnostics])).toBeNull();
+});
+
+test("Runtime-generated discovery clicks an active-frame SVG through its descendant with a real mouse", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <style>iframe { width:320px; height:180px; border:0; }</style>
+    <main data-runtime-root><iframe data-runtime-slot-role="active" data-frame-generation="7"></iframe></main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  const iframeElement = await page.locator("iframe").elementHandle();
+  const child = await iframeElement.contentFrame();
+  await child.setContent(`
+    <section data-stemmio-id="${CORRECT_ID}">
+      <svg id="runtime-svg" width="240" height="100"><rect width="240" height="100"></rect></svg>
+    </section>
+  `);
+  await child.locator("#runtime-svg").evaluate((element, anchorId) => {
+    window.__runtimeProbeClickCount = 0;
+    element.addEventListener("click", () => {
+      window.__runtimeProbeClickCount += 1;
+      const root = window.parent.document.querySelector("[data-runtime-root]");
+      root.setAttribute("data-selection-runtime-generated", "true");
+      root.setAttribute("data-selection-runtime-generation", "7");
+      root.setAttribute("data-selection-runtime-source-anchor-id", anchorId);
+      root.setAttribute("data-selection-runtime-kind", "svg");
+      root.setAttribute("data-selection-runtime-path", "svg");
+    });
+  }, CORRECT_ID);
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: child,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.diagnostics).toMatchObject({
+    candidateCount: 1,
+    probedCount: 1,
+    runtimeGeneratedCount: 1,
+    frozenTargetCount: 1,
+    probeFailureCount: 0,
+    firstFailure: null,
+  });
+  expect(await child.evaluate(() => window.__runtimeProbeClickCount)).toBe(1);
+});
+
+test("Runtime-generated discovery uses a natural ancestor hit for a pointer-transparent SVG", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <main data-runtime-root>
+      <section data-stemmio-id="${CORRECT_ID}">
+        <svg id="transparent-svg" width="240" height="100" style="pointer-events:none"><rect width="240" height="100"></rect></svg>
+      </section>
+    </main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  await page.evaluate((anchorId) => {
+    window.__runtimeProbeClickCount = 0;
+    const section = document.querySelector("section");
+    section.addEventListener("click", () => {
+      window.__runtimeProbeClickCount += 1;
+      const root = document.querySelector("[data-runtime-root]");
+      root.setAttribute("data-selection-runtime-generated", "true");
+      root.setAttribute("data-selection-runtime-generation", "7");
+      root.setAttribute("data-selection-runtime-source-anchor-id", anchorId);
+      root.setAttribute("data-selection-runtime-kind", "svg");
+      root.setAttribute("data-selection-runtime-path", "svg");
+    });
+  }, CORRECT_ID);
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: page,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.targets).toHaveLength(1);
+  expect(frozen.targets[0]).toMatchObject({
+    sourceAnchorId: CORRECT_ID,
+    kind: "svg",
+    relativePath: "svg",
+  });
+  expect(frozen.diagnostics).toMatchObject({
+    candidateCount: 1,
+    probedCount: 1,
+    runtimeGeneratedCount: 1,
+    frozenTargetCount: 1,
+    probeFailureCount: 0,
+    firstFailure: null,
+  });
+  expect(await page.evaluate(() => window.__runtimeProbeClickCount)).toBe(1);
+});
+
+test("Runtime-generated discovery rejects an active-frame host overlay without clicking", HARNESS_TEST_OPTIONS, async ({ page }) => {
+  await page.setContent(`
+    <style>
+      iframe { width:320px; height:180px; border:0; }
+      #host-overlay { position:fixed; left:8px; top:8px; width:320px; height:180px; z-index:20; }
+    </style>
+    <main data-runtime-root>
+      <iframe data-runtime-slot-role="active" data-frame-generation="7"></iframe>
+      <div id="host-overlay" hidden></div>
+    </main>
+  `);
+  await installRuntimeDiagnosticReset(page);
+  const iframeElement = await page.locator("iframe").elementHandle();
+  const child = await iframeElement.contentFrame();
+  await child.setContent(`
+    <section data-stemmio-id="${CORRECT_ID}">
+      <svg id="runtime-svg" width="240" height="100"><rect width="240" height="100"></rect></svg>
+    </section>
+  `);
+  await child.locator("#runtime-svg").evaluate((element) => {
+    window.__runtimeProbeClickCount = 0;
+    element.addEventListener("click", () => { window.__runtimeProbeClickCount += 1; });
+  });
+  await page.locator("iframe").evaluate((iframe) => {
+    iframe.addEventListener("mouseenter", () => {
+      document.querySelector("#host-overlay")?.removeAttribute("hidden");
+    });
+  });
+  const frozen = await discoverRuntimeGeneratedTargets({
+    page,
+    frame: child,
+    editor: page.locator("[data-runtime-root]"),
+    tabId: null,
+  });
+  expect(frozen.targets).toEqual([]);
+  expect(frozen.diagnostics).toMatchObject({
+    probedCount: 0,
+    probeFailureCount: 1,
+    firstFailure: {
+      substage: "target-click",
+      code: "RUNTIME_PROBE_HOST_POINTER_INTERCEPTED",
+      hitKind: "div",
+    },
+  });
+  expect(await child.evaluate(() => window.__runtimeProbeClickCount)).toBe(0);
 });
 
 test("Runtime-generated discovery records an authored-only page without a probe failure", HARNESS_TEST_OPTIONS, async ({ page }) => {

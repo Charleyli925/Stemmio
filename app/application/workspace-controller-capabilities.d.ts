@@ -96,7 +96,7 @@ export type WorkspaceShellCommentSnapshot<TComment = unknown, TEvent = unknown, 
 }>;
 export type WorkspaceShellSnapshot = Readonly<Pick<WorkspaceControllerSnapshot,
   "projectSession" | "document" | "hasDocumentHistoryAction" | "run" | "versionSession" | "version" | "project" |
-  "editRuntime" | "workbenchTabs" | "documentSurfaceCache"
+  "editRuntime" | "workbenchTabs" | "documentSurfaceCache" | "workbenchNavigation"
 > & {
   commentSession: WorkspaceShellCommentSnapshot | null;
   comment: Readonly<{ attachmentUploadCount: number; draftError: string }> | null;
@@ -105,7 +105,7 @@ export type WorkspaceShellSnapshot = Readonly<Pick<WorkspaceControllerSnapshot,
     "activeRun" | "recentOutcome" | "activeLocked" | "activeSubmission" | "submissionPending" |
     "activeHandoffMayBeRunning" | "activeHandoffManaged"
   > & { activeHandoff: Omit<NonNullable<RunSessionSnapshot["activeHandoff"]>,
-    "visibleText" | "visibleTextUpdates" | "textTruncated" | "startedAt" | "lastActivityAt" | "receivedBytes" | "updatedAt"
+    "visibleTextUpdates" | "textTruncated" | "startedAt" | "lastActivityAt" | "receivedBytes" | "updatedAt"
   > | null }) | null;
 }>;
 export type WorkspaceShellCapability = Readonly<{
@@ -319,6 +319,7 @@ export interface NavigationControllerCommands {
     title: string;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
     force?: boolean;
+    intentKind?: string;
     committedVersionTransitionFailure?: { code?: string; reason?: string };
   }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
 }
@@ -341,8 +342,8 @@ export interface AgentSelectionControllerCapability {
   clearPendingDefaultAgent(expectedIntentId?: string): AgentSelection | null;
   commitPendingDefaultAgent(
     selection: AgentSelection | null | undefined,
-    options?: Readonly<{ saveDefault?(providerId: string): Promise<unknown> }>,
   ): Promise<RunWorkflowOutcome>;
+  selectDefaultAgent(selection: AgentSelection): Promise<RunWorkflowOutcome>;
   beginAccessRepair(run?: ActiveRun | null, field?: "apiKey" | "login" | "install" | "model" | "provider"): unknown;
   clearAccessRepair(expectedIntentId?: string): unknown;
   resendAfterAccessRepair(): Promise<RunWorkflowOutcome>;
@@ -351,17 +352,12 @@ export interface AgentSelectionControllerCapability {
   applyDisabledAgentProviders(ids?: readonly string[]): void;
   connectAgentApiKey(selection: AgentSelection, apiKey: string, extras?: Readonly<{ vendorId?: string; baseUrl?: string; modelId?: string; remember?: boolean }>): Promise<RunWorkflowOutcome>;
   disconnectAgentApiKey(selection: AgentSelection): Promise<RunWorkflowOutcome>;
+  retryAgentCredentialPersist(selection: AgentSelection): Promise<RunWorkflowOutcome>;
   stopRunsForProvider(providerId: string): Promise<readonly RunWorkflowOutcome[]>;
   manageAgentAccess(
     kind: "disconnect" | "remove-key" | "reconnect" | "logout",
     selection: AgentSelection,
-    options?: Readonly<{
-      stopRelatedRuns?: boolean;
-      credentials?: Readonly<{
-        clear?(): Promise<{ ok?: boolean }>;
-        restore?(): Promise<unknown>;
-      }>;
-    }>,
+    options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
   checkAgentUsability(selection?: AgentSelection): Promise<RunWorkflowOutcome>;
   cancelAgentInstall(selection?: AgentSelection | null): Promise<RunWorkflowOutcome>;

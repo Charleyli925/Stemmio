@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   ORIGINAL_LIST_TEXT,
+  ProjectFileRepository,
   activateNativeEdit,
   addCanvasComment,
   caseSelector,
@@ -26,8 +27,10 @@ import {
   removeValidatedTemporaryDirectory,
   sendToMainRenderer,
   setTextSelection,
+  sha256,
   stopStemmio,
   tmpdir,
+  waitForProjectReady,
   workspaceContainsDraftComment,
   writeFileSync,
 } from "./electron-native-harness.mjs";
@@ -150,6 +153,87 @@ test("长期规则入口打开唯一规则标签并保留 HTML 画布", async ()
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("跨项目规则读取失败保留原标签、内容和保存目标", async () => {
+  test.setTimeout(120_000);
+  const projectA = createSourceFixture("project-rules-rollback-a.html");
+  const projectB = createSourceFixture("project-rules-rollback-b.html");
+  const launched = await launchStemmio({ activeSourcePath: projectA.sourcePath });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await waitForProjectReady(launched.page);
+    const managedAPath = await managedWorkingCopyPath(launched.page, projectA.sourcePath);
+    const repository = new ProjectFileRepository({
+      projectsRoot: path.dirname(path.dirname(managedAPath)),
+    });
+    const importedB = await repository.importExternal({
+      sourcePath: projectB.sourcePath,
+      expectedSourceSha256: sha256(readFileSync(projectB.sourcePath)),
+    });
+
+    await launched.page.getByRole("button", { name: "展开左侧边栏" }).click();
+    const sidebar = launched.page.locator(".workbench-global-sidebar");
+    const rowA = sidebar.locator(".sidebar-project-item")
+      .filter({ hasText: "project-rules-rollback-a" }).first();
+    const rowB = sidebar.locator(".sidebar-project-item")
+      .filter({ hasText: "project-rules-rollback-b" }).first();
+    await rowA.locator(".sidebar-project-rules-row").click();
+    const editor = launched.page.getByRole("textbox", { name: "长期规则内容" });
+    await expect(editor).toBeVisible();
+    await editor.fill("A 项目规则");
+    await launched.page.keyboard.press("Meta+s");
+    const rulesAPath = path.join(path.dirname(managedAPath), "PROJECT.md");
+    await expect.poll(() => readFileSync(rulesAPath, "utf8")).toBe("A 项目规则");
+    const rulesATab = launched.page.getByRole("tab", {
+      name: "project-rules-rollback-a · 长期规则",
+      exact: true,
+    });
+    await expect(rulesATab).toHaveAttribute("aria-selected", "true");
+
+    const rejectBRules = async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("path") !== "PROJECT.md") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PROJECT_RULES_TEST_READ_FAILED",
+            message: "测试 B 项目规则读取失败",
+          },
+        }),
+      });
+    };
+    await launched.page.route("**/file?*", rejectBRules);
+    await rowB.locator(".sidebar-project-row").click();
+    await rowB.locator(".sidebar-project-rules-row").click();
+    await expect(launched.page.getByText("测试 B 项目规则读取失败", { exact: true }))
+      .toBeVisible();
+    await expect(rulesATab).toHaveAttribute("aria-selected", "true");
+    await expect(editor).toHaveValue("A 项目规则");
+    await expect(launched.page.getByRole("tab", {
+      name: "project-rules-rollback-b · 长期规则",
+      exact: true,
+    })).toHaveCount(0);
+
+    await editor.fill("A 项目规则（失败后继续编辑）");
+    await launched.page.keyboard.press("Meta+s");
+    await expect.poll(() => readFileSync(rulesAPath, "utf8"))
+      .toBe("A 项目规则（失败后继续编辑）");
+    expect(readFileSync(
+      path.join(path.dirname(importedB.target.exactSourcePath), "PROJECT.md"),
+      "utf8",
+    )).not.toContain("失败后继续编辑");
+    await launched.page.unroute("**/file?*", rejectBRules);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
   }
 });
 

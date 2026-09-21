@@ -86,7 +86,6 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
         ? currentHandoff.safeToRetry
         : currentHandoff?.retryable === true}
       failureRecoveryKind={currentHandoff?.recoveryKind || null}
-      agentText={currentHandoff?.visibleText || ""}
       agentUpdates={currentHandoff?.visibleTextUpdates || []}
       agentTextTruncated={currentHandoff?.textTruncated === true}
       agentWorking={currentHandoff?.mode === "managed-agent"

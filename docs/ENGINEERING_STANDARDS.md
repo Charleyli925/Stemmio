@@ -60,6 +60,21 @@ when tests and a recovery path exist. Record the decision in `GUARD_LEDGER.md`.
 Line-count ceilings in `scripts/architecture-budget.json` are observational.
 They are not an acceptance goal. Do not split a file only to lower `maxLines`.
 
+### Validation placement
+
+Place validation where the fact is owned and the limit can actually be enforced:
+
+- Same-process parameters that already satisfy the type and ownership contract
+  are not re-validated as hostile input.
+- Parsing, configuration, queues, model output, persistence, worker, subprocess
+  and network input need their own validation.
+- A type assertion is not validation.
+- A permission, identity or version precondition that can change across an
+  `await` cannot stay valid forever because it was checked earlier.
+
+Concentrating each check in its owner is not a licence to re-validate the same
+fact in every layer.
+
 ## Prefer invariants over patches
 
 Before adding a guard, retry, ref, effect or compatibility branch, write down:
@@ -121,6 +136,87 @@ identifier fields are empty strings. Model a locator and a registered context
 as different states. Any transition that creates or adopts project identity
 must initialize every dependent session from the same authoritative response;
 setting React identifiers without binding the Draft session is incomplete.
+
+## Asynchronous ownership and cleanup
+
+One asynchronous operation has one lifecycle owner. An extra cancel, ready,
+retain or ended state needs its own responsibility and end point; it must not
+restate a fact an existing state already owns. Keep the rollback, the
+first-terminal decision, callback-exception isolation and resource ownership the
+operation actually needs.
+
+“Stop requested” is not “stopped”. Cleanup stops new work, isolates late
+callbacks and waits until the processes, connections or tasks it owns have
+actually ended.
+
+## Ownership and commit points
+
+An important interface defines more than who owns the state: when new facts are
+accepted, when a notification may be published, and which facts already hold
+after a failure. Different outcomes stay independently expressed; one generic
+success flag does not hide partial completion, an unknown result or unfinished
+cleanup.
+
+Review one operation along its whole path — input, execute, commit, notify,
+clean up — and look for publication before commit, a late older operation
+overwriting a newer result, and several consumers each compensating for the same
+error instead of the producer fixing it.
+
+## Requirements before mechanism
+
+An abstraction, public method, state machine, configuration option, defensive
+copy or compatibility branch names its current consumer, its owning module and
+the responsibility it removes. “Might be needed later”, “more general” and
+“safer” are not requirements. A small call-site count is not by itself a removal
+argument either: an explicit external extension promise, a persisted format or a
+security requirement is also a real requirement.
+
+Judge a simplification by net maintenance cost across implementation, callers,
+tests, documentation and dependencies, not by the number of deleted lines.
+Scope, consumer proof and proposal format live in `docs/SIMPLIFICATION_AUDIT.md`.
+
+## Where a limit must be enforced
+
+A permission, refusal condition, write precondition or operation limit is
+verified at the entry that produces the effect. A prompt, a disabled button, a
+hidden schema field, a thin wrapper and the expected call order do not by
+themselves prove the limit cannot be bypassed; check the direct call and the
+other legitimate entries as well.
+
+Enforcing in the owner is not permission to repeat the same check in every
+layer; `### Validation placement` says which inputs need their own validation.
+
+## Interfaces, model input and user-facing copy
+
+When a public interface, prompt, tool schema, result or diagnostic changes,
+state separately what the program, the model and the user each need.
+
+- The program never parses state or identifiers out of user-facing copy.
+- A model interface carries no unrelated UI or implementation vocabulary.
+- User copy never describes an unconfirmed result as completed.
+
+A model-visible change is checked on the assembled input or output, not on one
+template. For behavior an external system cannot observe, state the evidence
+limit instead of claiming more.
+
+## Defaults, dependencies and compatibility
+
+A public default or configurable option carries a current requirement or a
+reliable source. Without one, prefer an explicit input or defer the decision
+instead of adding configuration that hides an unmade decision.
+
+Using a built-in capability or a mature dependency means checking the applicable
+version, its maintenance, size, transitive dependencies and security
+requirements. Do not trade own code for a larger hidden maintenance surface.
+
+Internal APIs, on-disk data and external protocols are decided separately: an
+unstable internal interface does not excuse dropping data support that was
+already promised, and a compatibility layer is not kept forever for unknown
+historical states.
+
+These are design and review requirements. They do not authorize a scan that
+rewrites the repository, and they do not change any current authorization,
+gate or release boundary.
 
 ## Tests
 

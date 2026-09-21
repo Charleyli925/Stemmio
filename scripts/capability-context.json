@@ -78,6 +78,7 @@
         "^app/application/document-session",
         "^app/application/source-receipt",
         "^scripts/verify-source-receipt-typecheck",
+        "^scripts/typecheck-mutation-verifier",
         "^tests/source-receipt-contract\\.typecheck",
         "^tests/source-receipt-typecheck-verifier",
         "^tsconfig\\.source-receipt",
@@ -85,6 +86,7 @@
       ],
       "entryInterfaces": [
         "app/application/document-workflow.d.ts",
+        "app/application/document-session-contract.d.ts",
         "app/application/document-session.d.ts",
         "app/application/source-receipt-contract.d.ts",
         "app/application/document/save-plan.d.ts",
@@ -124,6 +126,60 @@
           "path": "docs/INTERACTION_FLOW.md",
           "headings": [
             "## 5. \u76f4\u63a5\u7f16\u8f91\u4e0e\u81ea\u52a8\u5199\u56de"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agent-preferences",
+      "patterns": [
+        "^app/application/workspace-preferences-session",
+        "^app/application/workspace-preference-mutation-outcome",
+        "^app/application/(?:run-workflow|agent-provider-catalog)(?:\\.js|\\.d\\.ts)$",
+        "^app/application/workspace-controller\\.d\\.ts$",
+        "^app/workbench/use-workspace-preferences",
+        "^shared/agent-configuration-preferences",
+        "^scripts/verify-workspace-preferences-typecheck",
+        "^scripts/typecheck-mutation-verifier",
+        "^tests/(?:workspace-preferences|run-workflow|agent-provider-catalog)",
+        "^tsconfig\\.workspace-preferences"
+      ],
+      "entryInterfaces": [
+        "app/application/workspace-preferences-session.d.ts",
+        "app/application/workspace-preference-mutation-outcome.d.ts",
+        "app/application/run-workflow.d.ts",
+        "app/application/agent-provider-catalog.d.ts"
+      ],
+      "owners": [
+        "WorkspacePreferencesSession",
+        "RunWorkflow",
+        "AgentCatalogState"
+      ],
+      "implementationFiles": [
+        "app/application/workspace-preferences-session.js",
+        "app/application/workspace-preference-mutation-outcome.js",
+        "app/application/run-workflow.js",
+        "app/application/agent-provider-catalog.js",
+        "app/workbench/use-workspace-preferences.ts"
+      ],
+      "focusedTests": [
+        "tests/workspace-preferences-session.test.mjs",
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/workspace-preferences-contract.typecheck.ts",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
+      ],
+      "requiredDocs": [
+        "docs/ARCHITECTURE_MAP.md",
+        "docs/STATE_OWNERSHIP.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/INTERACTION_FLOW.md"
+      ],
+      "requiredDocSections": [
+        {
+          "path": "docs/INTERACTION_FLOW.md",
+          "headings": [
+            "### AI 服务设置与任务区（2026-09-09）"
           ]
         }
       ]
@@ -377,6 +433,7 @@
       "id": "run-and-review",
       "patterns": [
         "^app/application/run-workflow",
+        "^app/application/agent-credential-operation",
         "^app/application/run-session",
         "^app/application/version-workflow",
         "^app/application/version-session",
@@ -392,6 +449,7 @@
         "^bridge/project-file-(?:finalizer|repository)\\.mjs$"
       ],
       "entryInterfaces": [
+        "app/application/agent-credential-operation-contract.d.ts",
         "app/application/run-workflow.d.ts",
         "app/application/run-session.d.ts",
         "app/application/version-workflow.d.ts",
@@ -411,6 +469,7 @@
         "ProjectFileRepository"
       ],
       "implementationFiles": [
+        "app/application/agent-credential-operation.js",
         "app/application/run-workflow.js",
         "app/application/version-workflow.js",
         "app/application/run/submit-plan.js",
@@ -474,6 +533,8 @@
         "^app/application/workbench-navigation",
         "^app/application/workbench-tabs",
         "^app/application/browser-document",
+        "^app/workbench/(?:WorkbenchDocumentSurfaceCache|document-surface-presentation)",
+        "^app/components/HtmlDisplaySurface",
         "^app/workbench/workbench-navigation-container",
         "^tests/workbench-navigation",
         "^tests/workbench-tabs"
@@ -646,11 +707,17 @@
       "id": "architecture-policy",
       "patterns": [
         "^AGENTS\\.md$",
+        "^CONTRIBUTING\\.md$",
+        "^\\.agents/skills/",
         "^\\.qoder/skills/",
+        "^\\.codex/agents/",
+        "^\\.github/PULL_REQUEST_TEMPLATE\\.md$",
         "^docs/ARCHITECTURE",
         "^docs/GUARD_LEDGER",
         "^docs/ENGINEERING_STANDARDS",
         "^docs/CODEX_WORKFLOW",
+        "^docs/CODEX_SUBAGENT_ROUTING_WORKSHEET",
+        "^docs/(?:DEVELOPMENT|GIT_WORKFLOW)",
         "^docs/ADR_CURATION",
         "^docs/SIMPLIFICATION_AUDIT",
         "^scripts/check-architecture",
@@ -658,7 +725,9 @@
         "^scripts/capability-context",
         "^tests/architecture-boundaries",
         "^tests/test-gate-selection",
-        "^tests/capability-context-locate"
+        "^tests/capability-context-locate",
+        "^tests/TEST_STRATEGY\\.md$",
+        "^tests/workflow-doc-contract"
       ],
       "entryInterfaces": [
         "docs/ARCHITECTURE_MAP.md",
@@ -677,7 +746,8 @@
       "focusedTests": [
         "tests/architecture-boundaries.test.mjs",
         "tests/test-gate-selection.test.mjs",
-        "tests/capability-context-locate.test.mjs"
+        "tests/capability-context-locate.test.mjs",
+        "tests/workflow-doc-contract.test.mjs"
       ],
       "requiredDocs": [
         "docs/ARCHITECTURE_MAP.md",

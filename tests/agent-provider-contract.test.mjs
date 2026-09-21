@@ -14,12 +14,7 @@ import {
   normalizedQoderPreflightError,
 } from "../bridge/agent/providers/qoder-provider.mjs";
 import { createCodexAcpProvider } from "../bridge/agent/providers/codex-acp-provider.mjs";
-import {
-  acpDriverProfile,
-  createRestrictedQoderAcpHost,
-  loadQoderAcpTaskPolicy,
-} from "../bridge/qoder-acp-client.mjs";
-import { createExecutionHost } from "../bridge/agent/hosts/execution-host.mjs";
+import { acpDriverProfile } from "../bridge/agent/runtimes/acp-protocol.mjs";
 import {
   AGENT_POLICY_BRAND,
   loadExecutionPolicy,
@@ -59,9 +54,7 @@ function providerSelection() {
   });
 }
 
-test("shared policy brand stays neutral while the legacy facade preserves errors", async () => {
-  assert.notEqual(loadQoderAcpTaskPolicy, loadExecutionPolicy);
-  assert.notEqual(createRestrictedQoderAcpHost, createExecutionHost);
+test("shared policy and host expose one provider-neutral contract", async () => {
   assert.equal(typeof AGENT_POLICY_BRAND, "symbol");
 
   await assert.rejects(
@@ -70,13 +63,6 @@ test("shared policy brand stays neutral while the legacy facade preserves errors
       && error?.code === "AGENT_POLICY_OPTIONS_INVALID"
       && error?.message.includes("Agent execution policy options"),
   );
-  await assert.rejects(
-    loadQoderAcpTaskPolicy({ unsupported: true }),
-    (error) => error?.name === "QoderAcpPolicyError"
-      && error?.code === "ACP_POLICY_OPTIONS_INVALID"
-      && error?.message.includes("ACP task policy options"),
-  );
-
   assert.throws(() => acpDriverProfile(Object.freeze({
     [AGENT_POLICY_BRAND]: true,
     mode: "discussion",
@@ -329,7 +315,7 @@ test("Bridge keeps preflight internals private while public execution sessions i
   });
   t.after(() => service.dispose());
 
-  assert.deepEqual(await service.availability(), {
+  assert.deepEqual(await service.availability({ selection: providerSelection() }), {
     ok: true,
     status: "ready",
   });

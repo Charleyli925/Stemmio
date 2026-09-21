@@ -23,9 +23,6 @@ test("open procedure acquires one split workspace under the injected operation i
   };
   const result = await acquireProjectOpenWorkspace({
     bridgeClient: {
-      async workspace() {
-        throw new Error("flat workspace must not be used");
-      },
       async workspaceEnvelope(sourcePath, options) {
         calls.push({ sourcePath, options });
         return {
@@ -68,7 +65,7 @@ test("open procedure rejects supplemental bytes from another operation", () => {
 test("open procedure returns stale without exposing a completed Bridge result", async () => {
   const result = await acquireProjectOpenWorkspace({
     bridgeClient: {
-      async workspace() {
+      async workspaceEnvelope() {
         return { projectId: "project_old" };
       },
     },

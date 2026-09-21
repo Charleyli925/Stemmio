@@ -15,6 +15,12 @@ import {
 import { usePreviewResourceBase } from "./use-preview-resource-base";
 import styles from "./HtmlDisplaySurface.module.css";
 
+export type HtmlDisplaySurfaceReadyToken = Readonly<{
+  tabId: string;
+  sourceSha256: string;
+  handoffId: string;
+}>;
+
 type HtmlDisplaySurfaceProps = {
   html: string;
   sourcePath?: string;
@@ -23,6 +29,15 @@ type HtmlDisplaySurfaceProps = {
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
   onFirstScroll?: (scrollTop: number) => void;
+  /**
+   * The parent-owned handoff identity for this disposable iframe. It is not
+   * source authority; it only lets the parent accept or reject this frame's
+   * readiness without observing its diagnostic DOM attributes.
+   */
+  displayReadyToken?: HtmlDisplaySurfaceReadyToken | null;
+  onDisplayReady?: (token: HtmlDisplaySurfaceReadyToken) => void;
+  onScrollableReady?: (token: HtmlDisplaySurfaceReadyToken) => void;
+  presentationKey?: string;
 };
 
 /**
@@ -38,15 +53,22 @@ export default function HtmlDisplaySurface({
   initialScrollTop = 0,
   onScrollTopChange,
   onFirstScroll,
+  displayReadyToken = null,
+  onDisplayReady,
+  onScrollableReady,
+  presentationKey,
 }: HtmlDisplaySurfaceProps) {
   const fallbackBase = baseHrefFromSourcePath(sourcePath);
-  const { resourceBase } = usePreviewResourceBase(html, sourcePath, false);
+  const { resourceBase, ready } = usePreviewResourceBase(html, sourcePath, false);
   const frameHtml = useMemo(
-    () => sanitizeScrollableDisplayDocument(html, resourceBase || fallbackBase),
-    [fallbackBase, html, resourceBase],
+    () => ready
+      ? sanitizeScrollableDisplayDocument(html, resourceBase || fallbackBase)
+      : null,
+    [fallbackBase, html, ready, resourceBase],
   );
-  const [loadedFrameHtml, setLoadedFrameHtml] = useState<string | null>(null);
-  const [scrollableFrameHtml, setScrollableFrameHtml] = useState<string | null>(null);
+  const frameIdentity = frameHtml ? presentationKey || frameHtml : null;
+  const [loadedFrameIdentity, setLoadedFrameIdentity] = useState<string | null>(null);
+  const [scrollableFrameIdentity, setScrollableFrameIdentity] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const cleanupScrollRef = useRef<(() => void) | null>(null);
   const firstScrollReportedRef = useRef(false);
@@ -66,11 +88,14 @@ export default function HtmlDisplaySurface({
       className={styles.surface}
       style={{ "--html-display-height": height } as CSSProperties}
       data-testid="html-display-surface"
-      data-display-ready={loadedFrameHtml === frameHtml ? "true" : "false"}
-      data-scrollable-ready={scrollableFrameHtml === frameHtml ? "true" : "false"}
+      // These stay available to test and diagnostic tooling. Production
+      // handoff readiness is reported directly through the exact token.
+      data-display-ready={frameIdentity && loadedFrameIdentity === frameIdentity ? "true" : "false"}
+      data-scrollable-ready={frameIdentity && scrollableFrameIdentity === frameIdentity ? "true" : "false"}
     >
       {status ? <div className={styles.status} role="status">{status}</div> : null}
-      <iframe
+      {frameHtml ? <iframe
+        key={frameIdentity}
         ref={frameRef}
         className={styles.frame}
         title="HTML 页面（正在准备编辑）"
@@ -130,7 +155,8 @@ export default function HtmlDisplaySurface({
               frameWindow.removeEventListener("scroll", handleScroll);
             };
             performance.mark("stemmio:document:scrollable-ready");
-            setScrollableFrameHtml(frameHtml);
+            setScrollableFrameIdentity(frameIdentity);
+            if (displayReadyToken) onScrollableReady?.(displayReadyToken);
             if (restorationPending) frameWindow.requestAnimationFrame(() => {
               if (!restorationPending) return;
               acceptingUserScroll = false;
@@ -144,10 +170,11 @@ export default function HtmlDisplaySurface({
               acceptingUserScroll = true;
             });
           }
-          setLoadedFrameHtml(frameHtml);
+          setLoadedFrameIdentity(frameIdentity);
           performance.mark("stemmio:document:static-frame-loaded");
+          if (displayReadyToken) onDisplayReady?.(displayReadyToken);
         }}
-      />
+      /> : null}
     </div>
   );
 }

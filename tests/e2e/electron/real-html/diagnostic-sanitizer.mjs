@@ -1,7 +1,7 @@
 import { CAPABILITY_STABLE_ID_PATTERN } from "./capability-manifest.mjs";
 
 const PUBLIC_STRING_KEYS = new Set([
-  "code", "causeCode", "exactReason", "phase", "reasonCode", "expectedId",
+  "code", "causeCode", "exactReason", "phase", "substage", "reasonCode", "expectedId",
   "observedId", "observedTag", "observedParentId", "selectedTag", "hitKind",
   "activeGeneration",
   "hintTargetKey", "hintTargetDomGeneration", "hintCurrentDomGeneration",

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { TRUSTED_LOCAL_AGENT_POLICY_VERSION } from "../bridge/agent-bridge-service.mjs";
-import { loadQoderAcpTaskPolicy } from "../bridge/qoder-acp-client.mjs";
+import { loadExecutionPolicy } from "../bridge/agent/policies/execution-policy.mjs";
 import { createBridgeTestEnvironment } from "./helpers/bridge-test-environment.mjs";
 
 const fixtureAgent = fileURLToPath(new URL("./fixtures/qoder-acp-agent.mjs", import.meta.url));
@@ -103,11 +103,9 @@ async function createManagedRequest(t, { hang = false } = {}) {
     `/workspace?sourcePath=${encodeURIComponent(ensured.body.sourcePath)}`,
   );
   assert.equal(afterUnknown.body.activeRun, null);
-  const availability = await bridge.requestJson("/agent/availability");
-  assert.equal(availability.response.status, 200, JSON.stringify(availability.body));
-  assert.equal(availability.body.status, "ready");
-  assert.equal("command" in availability.body, false);
-  assert.equal("version" in availability.body, false);
+  const missingAvailability = await bridge.requestJson("/agent/availability");
+  assert.equal(missingAvailability.response.status, 400, JSON.stringify(missingAvailability.body));
+  assert.equal(missingAvailability.body.error.code, "AGENT_SELECTION_REQUIRED");
   const selectedAvailability = await bridge.requestJson(
     `/agent/availability?selection=${encodeURIComponent(JSON.stringify({
       providerId: "qoder",
@@ -167,6 +165,13 @@ async function createManagedRequest(t, { hang = false } = {}) {
   assert.equal(driverOnly.response.status, 400, JSON.stringify(driverOnly.body));
   assert.equal(driverOnly.body.error.code, "AGENT_SELECTION_UNSUPPORTED");
   const preflight = await bridge.postJson("/agent/preflight", {
+    selection: {
+      providerId: "qoder",
+      runtimeId: "acp",
+      requestedModelId: null,
+      resolvedModelId: null,
+      reasoning: { requested: null, applied: null, resolution: "provider-default" },
+    },
     trustPolicyAccepted: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
   });
   assert.equal(preflight.response.status, 200, JSON.stringify(preflight.body));
@@ -195,7 +200,7 @@ async function createManagedRequest(t, { hang = false } = {}) {
     },
   });
   assert.equal(request.response.status, 201, JSON.stringify(request.body));
-  await loadQoderAcpTaskPolicy({
+  await loadExecutionPolicy({
     requestPath: request.body.activeRun.requestPath,
     promptPath: request.body.activeRun.promptPath,
     outputPath: request.body.activeRun.outputPath,
@@ -206,8 +211,9 @@ async function createManagedRequest(t, { hang = false } = {}) {
     documentId: ensured.body.documentId,
     sourcePath: ensured.body.sourcePath,
     requestId: request.body.requestId,
-      attemptId: request.body.attemptId,
-      trustPolicyAccepted: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
+    attemptId: request.body.attemptId,
+    selection: preflight.body.selection,
+    trustPolicyAccepted: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
     preflightId: preflight.body.preflightId,
     configurationDigest: preflight.body.configuration.configurationDigest,
   });
@@ -361,6 +367,13 @@ test("Bridge crash fences an interrupted Qoder Request from restart and clipboar
   );
 
   const preflight = await restarted.postJson("/agent/preflight", {
+    selection: {
+      providerId: "qoder",
+      runtimeId: "acp",
+      requestedModelId: null,
+      resolvedModelId: null,
+      reasoning: { requested: null, applied: null, resolution: "provider-default" },
+    },
     trustPolicyAccepted: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
   });
   const retried = await restarted.postJson("/agent/start", {
@@ -369,6 +382,7 @@ test("Bridge crash fences an interrupted Qoder Request from restart and clipboar
     sourcePath: value.ensured.sourcePath,
     requestId: value.request.requestId,
     attemptId: value.request.attemptId,
+    selection: preflight.body.selection,
     trustPolicyAccepted: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
     preflightId: preflight.body.preflightId,
     configurationDigest: preflight.body.configuration.configurationDigest,

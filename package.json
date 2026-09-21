@@ -1,17 +1,17 @@
 {
   "name": "stemmio",
-  "version": "0.9.89",
+  "version": "0.9.90",
   "description": "源页（Stemmio）— Editable islands with byte-exact source outside every edited region.",
   "author": "源页",
-  "license": "Apache-2.0",
+  "license": "UNLICENSED",
   "private": true,
-  "homepage": "https://github.com/Charleyli925/Stemmio#readme",
+  "homepage": "https://github.com/Charleyli925/Stemmio-Releases#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Charleyli925/Stemmio.git"
   },
   "bugs": {
-    "url": "https://github.com/Charleyli925/Stemmio/issues"
+    "url": "https://github.com/Charleyli925/Stemmio-Releases/issues"
   },
   "main": "desktop/main.mjs",
   "engines": {
@@ -27,9 +27,11 @@
     "ci:source-build": "npm run typecheck && npm run lint && npm run build",
     "architecture:check": "node scripts/check-architecture.mjs",
     "adr:check": "node scripts/check-adrs.mjs",
-    "typecheck": "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:document-source-operation && npm run typecheck:browser-open",
+    "typecheck": "npm run architecture:check && tsc --noEmit && npm run typecheck:source-receipt && npm run typecheck:workspace-preferences && npm run typecheck:document-source-operation && npm run typecheck:agent-credential-operation && npm run typecheck:browser-open",
     "typecheck:source-receipt": "tsc --noEmit -p tsconfig.source-receipt.json && node scripts/verify-source-receipt-typecheck.mjs",
+    "typecheck:workspace-preferences": "tsc --noEmit -p tsconfig.workspace-preferences.json && node scripts/verify-workspace-preferences-typecheck.mjs",
     "typecheck:document-source-operation": "tsc --noEmit -p tsconfig.document-source-operation.json",
+    "typecheck:agent-credential-operation": "tsc --noEmit -p tsconfig.agent-credential-operation.json",
     "typecheck:browser-open": "tsc --noEmit -p tsconfig.browser-open-workflow.json",
     "test": "npm run test:node:full",
     "test:node:core": "node scripts/test-node-group.mjs core",
@@ -213,6 +215,7 @@
       "desktop/runtime-project-storage-contract.mjs",
       "shared/agent-vendor-key-url.mjs",
       "shared/agent-configuration-preferences.mjs",
+      "shared/workspace-preferences.mjs",
       "app/domain/edit-runtime-contract.js",
       "public/brand-logo.png",
       "dist-desktop/renderer/**/*",
@@ -364,10 +367,6 @@
       {
         "from": "bridge/agent/hosts/execution-host.mjs",
         "to": "bridge/agent/hosts/execution-host.mjs"
-      },
-      {
-        "from": "bridge/qoder-acp-client.mjs",
-        "to": "bridge/qoder-acp-client.mjs"
       },
       {
         "from": "bridge/finalize-attempt.mjs",
@@ -751,11 +750,8 @@
           "change-request.v3.schema.json",
           "committed-marker.v1.schema.json",
           "completion.v1.schema.json",
-          "conversation.v1.schema.json",
-          "conversation.v2.schema.json",
           "conversation.v3.schema.json",
           "conversation-index.v1.schema.json",
-          "conversation-draft.v1.schema.json",
           "conversation-draft.v2.schema.json",
           "current-version-transaction.v1.schema.json",
           "input-manifest.v1.schema.json",
@@ -766,7 +762,6 @@
           "project-registry.v4.schema.json",
           "project-manifest.v4.schema.json",
           "project-runtime-state.v4.schema.json",
-          "promotion-transaction.v4.schema.json",
           "runtime-state.v3.schema.json",
           "scope-report.v1.schema.json",
           "submission-receipt.v1.schema.json",
@@ -774,7 +769,6 @@
           "task-spec.v1.schema.json",
           "user-supplement.v1.schema.json",
           "version-manifest.v3.schema.json",
-          "version-transaction.v1.schema.json",
           "working-copy-state.v4.schema.json"
         ]
       },
@@ -833,7 +827,7 @@
       {
         "provider": "github",
         "owner": "Charleyli925",
-        "repo": "Stemmio",
+        "repo": "Stemmio-Releases",
         "releaseType": "release"
       }
     ],

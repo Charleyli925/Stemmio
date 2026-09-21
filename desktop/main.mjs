@@ -12,6 +12,8 @@ import {
 } from "electron";
 import electronUpdater from "electron-updater";
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   randomBytes,
   randomUUID,
@@ -113,7 +115,7 @@ import {
 } from "./project-path-policy.mjs";
 import {
   LATEST_RELEASE_PAGE_URL,
-  PROJECT_REPOSITORY_URL,
+  PUBLIC_RELEASES_REPOSITORY_URL,
 } from "./product-links.mjs";
 import { createApplicationUpdateController } from "./application-update.mjs";
 import {
@@ -341,7 +343,7 @@ const UPDATE_CHANNELS = Object.freeze({
   downloadAvailable: "html-updates:download-available",
   installDownloaded: "html-updates:install-downloaded",
   openLatestRelease: "html-updates:open-latest-release",
-  openRepository: "html-updates:open-repository",
+  openPublicReleases: "html-updates:open-public-releases",
 });
 const USAGE_CHANNELS = Object.freeze({
   capture: "html-usage:capture",
@@ -510,11 +512,39 @@ const preparedHtmlOpenStore = createPreparedHtmlOpenStore();
 const recoveryJournalStore = createRecoveryJournalStore({
   rootPath: runtimeEnvironment.recoveryJournalPath,
 });
+function e2eCredentialEncryption() {
+  if (app.isPackaged || process.env.STEMMIO_E2E !== "1") return null;
+  const encodedKey = String(process.env.STEMMIO_E2E_CREDENTIAL_ENCRYPTION_KEY || "").trim();
+  if (!/^[a-f0-9]{64}$/u.test(encodedKey)) return null;
+  const key = Buffer.from(encodedKey, "hex");
+  return Object.freeze({
+    encryptString: async (value) => {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", key, iv);
+      const ciphertext = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+      return Buffer.concat([Buffer.from("SE2", "ascii"), iv, cipher.getAuthTag(), ciphertext]);
+    },
+    decryptString: async (payload) => {
+      const buffer = Buffer.from(payload);
+      if (buffer.subarray(0, 3).toString("ascii") !== "SE2" || buffer.length < 31) {
+        throw new Error("Invalid E2E credential ciphertext.");
+      }
+      const decipher = createDecipheriv("aes-256-gcm", key, buffer.subarray(3, 15));
+      decipher.setAuthTag(buffer.subarray(15, 31));
+      return Buffer.concat([decipher.update(buffer.subarray(31)), decipher.final()]).toString("utf8");
+    },
+    isEncryptionAvailable: async () => true,
+  });
+}
+
+const credentialEncryption = e2eCredentialEncryption() || Object.freeze({
+  encryptString: (value) => safeStorage.encryptStringAsync(value),
+  decryptString: async (buffer) => (await safeStorage.decryptStringAsync(buffer)).result,
+  isEncryptionAvailable: () => safeStorage.isAsyncEncryptionAvailable(),
+});
 const agentSessionCredentialStore = createAgentSessionCredentialStore({
   userDataPath: runtimeEnvironment.userDataPath,
-  encryptString: (value) => safeStorage.encryptString(value),
-  decryptString: (buffer) => safeStorage.decryptString(buffer),
-  isEncryptionAvailable: () => safeStorage.isEncryptionAvailable() === true,
+  ...credentialEncryption,
 });
 let rememberedCredentialRestoreFailure = null;
 let rememberedCredentialRestorePromise = Promise.resolve();
@@ -3922,7 +3952,10 @@ async function fetchBridgeCommand(pathname, body) {
 }
 
 async function restoreRememberedAgentCredential() {
-  if (process.env.STEMMIO_E2E === "1") {
+  if (
+    process.env.STEMMIO_E2E === "1"
+    && process.env.STEMMIO_E2E_RESTORE_CREDENTIAL !== "1"
+  ) {
     return Object.freeze({ ok: true, restored: false });
   }
   try {
@@ -3983,12 +4016,12 @@ async function restoreRememberedAgentCredential() {
   }
 }
 
-async function sessionCredentialStatus() {
+async function sessionCredentialStatus({ operationId } = {}) {
   // Startup restore is deliberately best-effort, but wait for its one attempt
   // before reporting the remembered state so a keychain denial is visible to
   // the renderer instead of being mistaken for a healthy saved credential.
   await rememberedCredentialRestorePromise.catch(() => {});
-  const status = await agentSessionCredentialStore.publicStatus();
+  const status = await agentSessionCredentialStore.publicStatus({ operationId });
   return rememberedCredentialRestoreFailure
     ? Object.freeze({ ...status, ...rememberedCredentialRestoreFailure, unreadable: true })
     : status;
@@ -4062,6 +4095,7 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
     `/registered-project/open?projectId=${encodeURIComponent(projectId)}${expectedTarget ? `&workingCopyId=${encodeURIComponent(expectedTarget.workingCopyId)}` : ""}`,
   );
   const target = payload.openTarget;
+  const historyCreation = payload.historyCreation ?? null;
   if (
     !target
     || typeof target !== "object"
@@ -4081,6 +4115,13 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
     || typeof payload.content !== "string"
     || typeof payload.lastModifiedAt !== "string"
     || !payload.lastModifiedAt
+    || (historyCreation !== null && (
+      !historyCreation
+      || typeof historyCreation !== "object"
+      || Array.isArray(historyCreation)
+      || !/^[A-Za-z0-9_-]{8,160}$/u.test(String(historyCreation.operationId || ""))
+      || !/^ver_\d{4,}$/u.test(String(historyCreation.versionId || ""))
+    ))
   ) {
     throw new ProjectFileError(
       "REGISTERED_PROJECT_TARGET_INVALID",
@@ -4116,6 +4157,12 @@ async function readRegisteredProjectProjection(projectIdInput, expectedTarget = 
   return Object.freeze({
     ...projectWithIdentity(project, target),
     openTarget: Object.freeze({ ...target }),
+    historyCreation: historyCreation
+      ? Object.freeze({
+        operationId: String(historyCreation.operationId),
+        versionId: String(historyCreation.versionId),
+      })
+      : null,
   });
 }
 
@@ -4224,8 +4271,8 @@ async function openLatestRelease() {
   return { opened: true };
 }
 
-async function openProjectRepository() {
-  await shell.openExternal(PROJECT_REPOSITORY_URL);
+async function openPublicReleases() {
+  await shell.openExternal(PUBLIC_RELEASES_REPOSITORY_URL);
   return { opened: true };
 }
 
@@ -4348,9 +4395,11 @@ function registerProjectIpc() {
       if (result?.ok === true) rememberedCredentialRestoreFailure = null;
       return result;
     },
-    clearSessionCredential: async () => {
-      const result = await agentSessionCredentialStore.clear();
-      rememberedCredentialRestoreFailure = null;
+    clearSessionCredential: async (payload) => {
+      const result = await agentSessionCredentialStore.clear(payload);
+      if (result?.ok === true && result?.status === "missing") {
+        rememberedCredentialRestoreFailure = null;
+      }
       return result;
     },
     sessionCredentialStatus,
@@ -4366,7 +4415,7 @@ function registerProjectIpc() {
     ensureApplicationUpdateController,
     coordinateApplicationUpdateInstall,
     openLatestRelease,
-    openProjectRepository,
+    openPublicReleases,
   });
   registerWindowIpc({
     ipcMain,

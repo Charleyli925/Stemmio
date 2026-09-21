@@ -95,7 +95,11 @@ export type AgentProviderCardProps = {
   initialApiKeyOpen?: boolean;
   credentialPersist?: Readonly<{
     status?: string;
+    operationKind?: "startup" | "persist" | "clear" | null;
     reason?: string | null;
+    operationId?: string | null;
+    recordId?: string | null;
+    code?: string | null;
   }> | null;
 };
 
@@ -197,7 +201,13 @@ export default function AgentProviderCard({
       ? String(selectedModelId || models[0]?.id || "").replace(/^stemmio:/u, "")
       : "",
   );
-  const persistFailed = credentialPersist?.status === "failed";
+  const persistFailed = credentialPersist?.operationKind !== "clear" && [
+    "failed",
+    "unreadable",
+    "unavailable",
+    "rejected",
+    "unknown",
+  ].includes(String(credentialPersist?.status || ""));
   const persistReason = persistFailed
     ? (credentialPersist?.reason || "已连接，但新的 API Key 未保存。")
     : "";
@@ -656,7 +666,11 @@ export default function AgentProviderCard({
         <div className="qoder-card-credential-summary" data-testid="agent-credential-summary">
           <span>API Key</span>
           <span>{credentialPersist?.status === "saved" ? "已在此 Mac 保存"
-            : credentialPersist?.status === "failed" ? "保存失败，本次仍可使用"
+            : credentialPersist?.operationKind === "clear"
+              ? ["pending", "unknown", "unavailable", "unreadable"].includes(String(credentialPersist.status || ""))
+                ? "移除状态未确认"
+                : credentialPersist.status === "missing" ? "未保存" : "移除未完成"
+            : ["failed", "unreadable", "unavailable", "rejected"].includes(String(credentialPersist?.status || "")) ? "保存失败，本次仍可使用"
               : credentialPersist?.status === "pending" ? "正在保存…"
                 : credentialPersist?.status === "skipped" ? "仅本次使用" : "保存状态未确认"}</span>
           {provider.supportsApiKey && onConnectApiKey ? (

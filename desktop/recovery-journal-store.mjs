@@ -14,7 +14,6 @@ import { nonReplaceTemporaryName } from "./runtime-project-storage-contract.mjs"
 import { PRODUCT_MAX_HTML_BYTES } from "./product-contract.mjs";
 
 export const RECOVERY_JOURNAL_SCHEMA_VERSION = "2.0.0";
-const LEGACY_RECOVERY_JOURNAL_SCHEMA_VERSION = "1.0.0";
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ID_LENGTH = 160;
 const MAX_PATH_LENGTH = 4096;
@@ -161,10 +160,7 @@ export async function atomicWriteRecoveryJournalFile(filePath, content, {
 
 function normalizeEnvelope(value) {
   const raw = assertRecord(value, "恢复日志内容无效。");
-  if (
-    raw.schemaVersion !== RECOVERY_JOURNAL_SCHEMA_VERSION
-    && raw.schemaVersion !== LEGACY_RECOVERY_JOURNAL_SCHEMA_VERSION
-  ) {
+  if (raw.schemaVersion !== RECOVERY_JOURNAL_SCHEMA_VERSION) {
     throw recoveryError(
       "RECOVERY_JOURNAL_SCHEMA_UNSUPPORTED",
       "恢复日志版本不受支持。",

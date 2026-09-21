@@ -17,6 +17,7 @@ import {
   REQUIRED_APP_SOURCE_FILES,
   REQUIRED_SHARED_FILES,
 } from "../scripts/verify-packaged-artifact.mjs";
+import { removePackagedSourceMaps } from "../desktop/after-pack.mjs";
 import { evaluatePackagedSourceRuntimeClosure } from "../scripts/packaged-runtime-closure.mjs";
 import { APP_SOURCE_FILES } from "./helpers/release-evidence-fixtures.mjs";
 import { stagePackagedApplicationForLaunch } from "./e2e/electron/helpers/packaged-app-launch.mjs";
@@ -67,6 +68,7 @@ const APP_FILE_ALLOWLIST = [
   "desktop/runtime-project-storage-contract.mjs",
   "shared/agent-vendor-key-url.mjs",
   "shared/agent-configuration-preferences.mjs",
+  "shared/workspace-preferences.mjs",
   "app/domain/edit-runtime-contract.js",
   "public/brand-logo.png",
   "dist-desktop/renderer/**/*",
@@ -105,7 +107,6 @@ const BRIDGE_FILES = [
   "agent/runtimes/http-runtime.mjs",
   "agent/policies/execution-policy.mjs",
   "agent/hosts/execution-host.mjs",
-  "qoder-acp-client.mjs",
   "finalize-attempt.mjs",
   "lifecycle-core.mjs",
   "project-file-repository.mjs",
@@ -175,11 +176,8 @@ const SCHEMA_FILES = [
   "change-request.v3.schema.json",
   "committed-marker.v1.schema.json",
   "completion.v1.schema.json",
-  "conversation.v1.schema.json",
-  "conversation.v2.schema.json",
   "conversation.v3.schema.json",
   "conversation-index.v1.schema.json",
-  "conversation-draft.v1.schema.json",
   "conversation-draft.v2.schema.json",
   "current-version-transaction.v1.schema.json",
   "input-manifest.v1.schema.json",
@@ -190,7 +188,6 @@ const SCHEMA_FILES = [
   "project-registry.v4.schema.json",
   "project-manifest.v4.schema.json",
   "project-runtime-state.v4.schema.json",
-  "promotion-transaction.v4.schema.json",
   "runtime-state.v3.schema.json",
   "scope-report.v1.schema.json",
   "source-element-identity-migration.v1.schema.json",
@@ -198,7 +195,6 @@ const SCHEMA_FILES = [
   "task-spec.v1.schema.json",
   "user-supplement.v1.schema.json",
   "version-manifest.v3.schema.json",
-  "version-transaction.v1.schema.json",
   "working-copy-state.v4.schema.json",
 ];
 
@@ -404,7 +400,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
     {
       provider: "github",
       owner: "Charleyli925",
-      repo: "Stemmio",
+      repo: "Stemmio-Releases",
       releaseType: "release",
     },
   ]);
@@ -430,7 +426,7 @@ test("desktop package identity and artifact profile stay fixed", async () => {
   assert.deepEqual(packageJson.build.publish, [{
     provider: "github",
     owner: "Charleyli925",
-    repo: "Stemmio",
+    repo: "Stemmio-Releases",
     releaseType: "release",
   }]);
   assert.equal(packageJson.dependencies["@openai/codex"], undefined);
@@ -468,6 +464,28 @@ test("package security boundaries retain CSP, entitlements and final plist clean
   assert.match(afterPack, /Delete/u);
 });
 
+test("after-pack removes nested source maps from staged resources", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "stemmio-source-map-prune-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const nestedMap = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js.map");
+  const rootMap = path.join(temporaryRoot, "renderer.js.map");
+  const runtimeFile = path.join(temporaryRoot, "node_modules", "runtime", "bundle.js");
+  await Promise.all([
+    mkdir(path.dirname(nestedMap), { recursive: true }),
+    writeFile(rootMap, "source map\n", "utf8"),
+  ]);
+  await Promise.all([
+    writeFile(nestedMap, "source map\n", "utf8"),
+    writeFile(runtimeFile, "runtime bytes\n", "utf8"),
+  ]);
+
+  await removePackagedSourceMaps(temporaryRoot);
+
+  await assert.rejects(stat(rootMap), { code: "ENOENT" });
+  await assert.rejects(stat(nestedMap), { code: "ENOENT" });
+  assert.equal(await readFile(runtimeFile, "utf8"), "runtime bytes\n");
+});
+
 test("packaged legal notice and icon remain available as reviewed resources", async () => {
   const [notice, privacy, iconInfo] = await Promise.all([
     readFile(new URL("../源页 用户声明与免责声明.txt", import.meta.url), "utf8"),
@@ -481,7 +499,7 @@ test("packaged legal notice and icon remain available as reviewed resources", as
   assert.match(notice, /只有用户明确采纳后才成为正式版本/u);
   assert.match(privacy, /用户主动选择源页 Agent、Qoder CLI 或 Codex/u);
   assert.match(privacy, /将完成任务所需的内容发送至 Codex 服务/u);
-  assert.match(notice, /Apache License 2\.0/u);
+  assert.match(notice, /专有许可与担保/u);
   assert.ok(iconInfo.size > 100_000);
 });
 

@@ -35,9 +35,7 @@ export type RunHandoffState = {
   providerId?: string | null;
   runtimeId?: string | null;
   agentName?: string | null;
-  /** What the Agent said while working (ADR 0037); narration with no authority. */
-  visibleText?: string;
-  /** Stable public message rows. Hidden reasoning and tool events never enter this list. */
+  /** Canonical stable public message rows. Hidden reasoning and tool events never enter this list. */
   visibleTextUpdates?: readonly RunVisibleTextUpdate[];
   textTruncated?: boolean;
   agentVersion?: string | null;

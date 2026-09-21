@@ -26,14 +26,14 @@ export class WorkbenchTabsSession {
   restoreAuthority(authority: unknown): WorkbenchTabsSnapshot | null;
   subscribe(listener: (snapshot: WorkbenchTabsSnapshot) => void): () => void;
   hydrate(value: unknown): WorkbenchTabsSnapshot;
-  createStart(input?: { focus?: boolean }): WorkbenchTabsSnapshot | null;
-  createSettings(input?: { focus?: boolean }): WorkbenchTabsSnapshot | null;
+  createStart(input?: { focus?: boolean }): WorkbenchTab | null;
+  createSettings(input?: { focus?: boolean }): WorkbenchTab | null;
   createProjectRules(input: {
     projectId: string;
     documentId: string;
     title: string;
     focus?: boolean;
-  }): WorkbenchTabsSnapshot | null;
+  }): WorkbenchTab | null;
   createHistory(input: {
     projectId: string;
     documentId: string;
@@ -43,7 +43,7 @@ export class WorkbenchTabsSession {
     versionLabel?: string;
     displayFileName?: string;
     focus?: boolean;
-  }): WorkbenchTabsSnapshot | null;
+  }): WorkbenchTab | null;
   bindDocument(input: {
     projectId: string;
     documentId: string;

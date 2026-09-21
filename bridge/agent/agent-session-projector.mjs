@@ -162,7 +162,6 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
       }
       const visibleTextUpdates = Object.freeze(bounded.map(Object.freeze));
       cached = Object.freeze({
-        visibleText: visibleTextUpdates.map((update) => update.text).join("\n\n"),
         visibleTextUpdates,
         textTruncated: publicTruncated,
       });
@@ -176,9 +175,6 @@ export function publicExecutionSession(entry) {
   return Object.freeze({
     providerId: entry.providerId || null,
     runtimeId: entry.runtimeId || null,
-    // Retain this only for legacy in-memory sessions. Renderer identity is
-    // provider/runtime based and must not infer a provider from a transport alias.
-    ...(entry.driver ? { driver: entry.driver } : {}),
     state: entry.state,
     phase: entry.phase,
     startedAt: entry.startedAt,
@@ -190,7 +186,6 @@ export function publicExecutionSession(entry) {
     agentName: entry.agentName ? safePublicAgentText(entry.agentName).slice(0, 160) : null,
     agentVersion: entry.agentVersion ? safePublicAgentText(entry.agentVersion).slice(0, 80) : null,
     eventCount: entry.eventCount || 0,
-    visibleText: safePublicAgentText(entry.visibleText),
     visibleTextUpdates: Object.freeze((entry.visibleTextUpdates || []).map((update, index) => Object.freeze({
       id: cleanPublicId(update.id, `public-${index}`), sequence: update.sequence,
       text: safePublicAgentText(update.text),

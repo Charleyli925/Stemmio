@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": [
+    "app/application/workspace-preferences-session.js",
+    "app/application/workspace-preference-mutation-outcome.js",
+    "shared/agent-configuration-preferences.d.mts",
+    "tests/workspace-preferences-contract.typecheck.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

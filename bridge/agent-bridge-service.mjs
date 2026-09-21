@@ -3,19 +3,12 @@ import {
   TRUSTED_LOCAL_AGENT_POLICY_VERSION,
 } from "./agent/agent-runtime-coordinator.mjs";
 import { AgentProviderError as AgentBridgeError } from "./agent/providers/agent-provider-contract.mjs";
-import { defaultManagedAgentDelivery } from "../shared/agent-delivery.mjs";
 
 export { parsePublicModels, resolveQoderAcpCommand } from "./agent/providers/qoder-provider.mjs";
 export { AgentBridgeError, TRUSTED_LOCAL_AGENT_POLICY_VERSION };
 
-function defaultSelectionInput(input = {}) {
-  const { driver: _ignored, ...rest } = input;
-  return rest.selection
-    ? rest
-    : { selection: defaultManagedAgentDelivery().selection };
-}
-
-// Compatibility façade for existing routes. It owns no runtime facts.
+// Routing façade. It owns no runtime facts and requires callers to provide the
+// canonical selection explicitly for every Agent operation.
 export class AgentBridgeService {
   #coordinator;
 
@@ -136,11 +129,11 @@ export class AgentBridgeService {
   }
 
   availability(input = {}) {
-    return this.#coordinator.availability(defaultSelectionInput(input));
+    return this.#coordinator.availability(input);
   }
 
   diagnose(input = {}) {
-    return this.#coordinator.diagnose(defaultSelectionInput(input));
+    return this.#coordinator.diagnose(input);
   }
 
   preflight(input) { return this.#coordinator.preflight(input); }
@@ -170,7 +163,7 @@ export class AgentBridgeService {
   }
 
   interrupted(input, options = {}) {
-    return this.#coordinator.interrupted(input, defaultSelectionInput(options));
+    return this.#coordinator.interrupted(input, options);
   }
 
   cancel(input) { return this.#coordinator.cancelExecution(input); }

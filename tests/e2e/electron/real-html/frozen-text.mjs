@@ -283,6 +283,23 @@ export async function executeFrozenText({ frame, target, access, page, editor,
       await expect(locator).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u, { timeout: 2_000 });
       // Native caret positioning, not a synthetic selection assignment.
       await page.keyboard.press(keyShortcut("ArrowDown"));
+      // The native selection update can land after more than one renderer frame
+      // on a loaded hosted runner. Observe that single keypress settling; do not
+      // repeat the input or synthesize a selection to make the oracle pass.
+      try {
+        await expect.poll(async () => {
+          try {
+            await endFocus();
+            return true;
+          } catch (error) {
+            if (error?.code !== "FROZEN_TEXT_FOCUS_MISMATCH") throw error;
+            return false;
+          }
+        }, { timeout: 2_000 }).toBe(true);
+      } catch (error) {
+        if (error?.code) throw error;
+        return endFocus();
+      }
       return endFocus();
   };
   try {

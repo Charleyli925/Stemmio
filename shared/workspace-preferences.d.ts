@@ -1,0 +1,32 @@
+export const WORKSPACE_PREFERENCE_SCHEMA_VERSION: 2;
+export const WORKSPACE_PREFERENCE_DEFAULTS: Readonly<{
+  rememberPanelWidths: true;
+  sidebarWidth: 264;
+  inspectorWidth: 376;
+  motion: "system";
+  restoreTabsOnLaunch: true;
+  reviewChangeContextVisibility: 25;
+  reviewCommentContextVisibility: 15;
+  defaultAgentProviderId: "qoder";
+  agentConfigurations: Readonly<Record<string, never>>;
+  documentAgentSelections: Readonly<Record<string, never>>;
+  disabledAgentProviderIds: readonly [];
+}>;
+export const WORKSPACE_PREFERENCE_LIMITS: Readonly<Record<string, Readonly<{ min: number; max: number }>>>;
+export type WorkspacePreferenceMotion = "system" | "reduced";
+export type WorkspacePreferenceAgentId = "stemmio" | "qoder" | "codex";
+export type WorkspacePreferences = Readonly<{
+  rememberPanelWidths: boolean;
+  sidebarWidth: number;
+  inspectorWidth: number;
+  motion: WorkspacePreferenceMotion;
+  restoreTabsOnLaunch: boolean;
+  reviewChangeContextVisibility: number;
+  reviewCommentContextVisibility: number;
+  defaultAgentProviderId: WorkspacePreferenceAgentId;
+  agentConfigurations: Readonly<Record<string, Readonly<{ modelId: string | null; reasoning: string | null }>>>;
+  documentAgentSelections: Readonly<Record<string, WorkspacePreferenceAgentId>>;
+  disabledAgentProviderIds: readonly WorkspacePreferenceAgentId[];
+}>;
+export function normalizeWorkspacePreferences(value: unknown): WorkspacePreferences;
+export function normalizeWorkspacePatch(value: unknown): Readonly<Partial<WorkspacePreferences>>;

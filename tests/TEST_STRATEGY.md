@@ -88,11 +88,53 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
 未过期的 `stemmio-ci-triage` 记录。JSON reporter 仍写入
 `output/ci-evidence/`。完整 Playwright diagnostics 只在失败或取消时上传。
 
+## 改动类型与证据质量
+
+门禁选择仍由 `tests/test-impact-map.json` 决定。本节只规定「这类改动需要什么证据」，既不替换选择器，也不允许 Agent 临时拼出第二套门禁。
+
+| 改动类型 | 应优先提供的证据 |
+|---|---|
+| 局部算法或纯逻辑 | 负责模块的行为测试与有意义的边界情况 |
+| 异步、取消、生命周期 | 可控时序、迟到结果处理与资源清理证据 |
+| 权限、身份、不可逆操作 | 从实际执行入口分别验证允许与拒绝路径 |
+| 持久化或协议 | 真实编码／解码、重新读取、失败与支持范围证据 |
+| 模型或用户可见输出 | 实际组装后的内容、必要快照或真实交互证据 |
+| 启动、构建、打包入口 | 对应构建产物与真实运行方式的验证 |
+| 性能优化 | 同条件基线、目标路径与可重复测量 |
+| 纯文档与流程规则 | 规则一致性、引用有效性与必要的流程演练 |
+
+不机械要求所有改动跑齐所有层；也不能用一个低层测试替代它证明不了的高层行为。
+
+### 结果从外部核验
+
+测试检查文件、状态、事件、退出结果或其他可观察事实。「组件报告保存成功」「Agent 回复已完成」「某个 ready 标记为 true」都不能单独证明对应效果已经发生。测试预期不得由被测实现用同样的方法重新计算；快照刷新必须审查行为差异，不能自动接受当前输出作为正确答案。单元测试与覆盖率可能绕过真实的启动、加载和调用路径，因此重要结论需要经真实入口独立核验。
+
+### 反向证明
+
+新增安全检查、关键流程约束和重要竞态回归，需要证明它能够抓住目标错误：临时撤销相应保护、使用修复前版本，或构造明确非法的输入，经真实测试入口观察预期失败，然后恢复。普通改动不要求全量 mutation testing，但不能把「测试目前是绿的」当作「测试能发现目标回归」的充分证据。反向实验只在隔离环境或合成测试数据中进行，不污染正式分支和真实用户数据。
+
+### 测试可靠性
+
+- **时序可控**：用事件、握手、屏障或可观察条件等待，不用固定 sleep 冒充就绪；压力测试补充确定性回归，不替代它。
+- **资源隔离**：端口、目录、数据库命名空间、构建输出和子进程有明确所有者；并行问题优先解决隔离，不靠全仓串行化掩盖。
+- **全局状态恢复**：环境变量、时钟、工作目录、mock 与全局拦截必须恢复原状态，并覆盖失败时的清理。
+- **清理到实际停止**：不能只调用 `abort`、`close` 或 `kill` 就结束测试。
+- **超时有依据**：说明等待什么状态、使用什么时间预算；不通过无解释的重试、加时、吞错或弱化断言洗绿。
+
+### 失败分类与复测
+
+失败后先保留首个失败，包括源码身份、命令、预期与实际、日志和当时的运行条件。随后区分产品问题、测试问题、环境问题与尚未归因；「本机重跑通过」不能直接解释为环境问题。修复后只重跑失效的证据和必要关联检查，仍然有效的通过结果可以复用；源码、基线、配置、依赖、环境、命令或运行产物发生相关变化时，按既有规则重新判断有效性。报告必须区分通过、失败、跳过、未执行、取消与阻塞，未知数量不是零；没有凭证的真实 Provider 测试只能记为跳过。
+
+### 性能与真实外部服务
+
+性能修改要求同条件基线和可重复测量，不凭感觉宣布更快；普通 PR 不强制新增 benchmark。真实外部服务测试放在它真正能证明的边界上，避免让常规门禁依赖昂贵或不确定的网络调用。删除测试需要说明：被保护的行为已经正式取消，还是被覆盖相同风险的更强证据替代，不能只因为测试慢或难修就删除。
+
 ## 测试类型与去重
 
 - 核心 Node：算法、状态机、序列化、事务、错误关闭和 forward/inverse 不变量。
 - Runtime Continuity Probe：`runtime-continuity-probe.js` 只在测试调用 enable 后记录 `frameCreated` / `candidateCreated`、canvas/评论栏宽度、scrollTop 和可见 Frame。生产路径默认静默。Electron `electron-runtime-continuity.spec.mjs` 用静态页、嵌套滚动页和 Script 图表页证明连续编辑不重建 Runtime、评论栏宽度不闪、以及重建后第 6 个空行的 Caret 落点。`electron-seeded-faults.spec.mjs` 在同一探针上注入 Active iframe 消失和编辑中 Candidate iframe，证明 canary 会失败并在恢复后收敛。
 - 编辑链路计算计数：`edit-pipeline-counters.js` 只在测试显式 enable 后累计整文 `buildSourceIndex`、完整 `applyPatchPlan` 和插入点全树扫描。默认关闭，事件不含 HTML。`tests/edit-pipeline-baseline.test.mjs` 冻结当前 kernel 与 Canvas 单路物化次数；后续删除重复工作时必须更新这些数字。kernel 在同一次 apply 内复用已构建索引后，不得把状态包装或身份计算的重复解析算回基线。插入点全树扫描只在源码 Hash 或 iframe document 身份变化时发生，overlay/滚动/选区更新不得另计一次。片段解析、浏览器 DOM 解析和独立持久化验证不计入同一组。
+  评论目标重绑还必须证明空目标和仅全局页面目标不会建立整文索引，非空本地目标仍恰好进入一次重绑索引；对应计数由 `tests/comment-workflow.test.mjs` 固定。
 - 已删除的 Canvas `useCallback` 源码切片断言由既有 Electron 行为测试接替，映射写在 `tests/html-canvas-runtime-startup.test.mjs`。保留的只是退役路径禁令（例如 `forceRuntimeHandoff`、`lastValidCommentLayoutRef`）和 queued-static oracle。
 - 测试 Inventory 与风险账本：`npm run test:inventory` 从实际 Playwright 配置的 `testMatch` 生成执行清单（含 Ready / Draft smoke / packaged / DOM 编辑兼容性扫描，以及明确标为 `on-demand` 的 review-annotation），并核对 `tests/test-risk-ledger.json` 的 `ready-full` 文件确实被某个 Ready 配置选中。源码正则只用于辅助提取标题与 Tag，不能单独证明用例会被执行。
 - `DocumentWorkflow`：fake Scheduler、Hash、RecoveryStore、Canvas Port 和 Bridge
@@ -113,10 +155,14 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `page: not-current` 结果由 `tests/run-workflow.test.mjs` 拥有。这些 Node 用例不声称 IME、Focus 或真实 iframe 连续性；继续复用
   `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
   `conflict-force-unlock.spec.mjs` 的真实接纳接线。
-- `SourceReceipt` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
-  `source-receipt.js` 与真实 `DocumentSession` 调用者合约，并从
+- `SourceReceipt` / `DocumentSession` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
+  `source-receipt.js`、真实 `document-session.js`、单一实例合同 `document-session-contract.d.ts`、
+  runtime façade `document-session.d.ts` 与调用者合约，并从
   `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
-  再以内存源码覆盖完成定向错误变异。证明必须在目标实现位置得到指定类型错误；若正式配置
+  再以内存源码覆盖完成定向错误变异。`DocumentSession` 变异分别把 verified Hash 置空、
+  generation 改成字符串、把 accepted edit 结果改成错误形状、删除实例方法，以及让
+  Canvas / flush getter 返回错误类型，都必须在指定生产位置只产生预期类型错误；
+  若正式配置
   关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
   也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。
 - `ProjectWorkflow`：fake Canvas/ProjectOpen Port、窄 `ViewStatePort`/`RecentRunsPort`
@@ -221,8 +267,8 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   的 accept/ack，不暴露路径权威。
 - Bridge 集成环境：每个真实 Bridge 测试各自创建临时 root、workspace、sources、端口、子进程与 stdout/stderr；同一测试可为重启恢复顺序启动新进程，但不同测试绝不共享 workspace 或长寿命 Bridge。环境默认携带配置的 Bridge auth token，测试缺失/错误 token 时必须显式关闭或覆盖它；HTTP/连接失败保留 response text 与 Bridge 日志，不重试 mutation。
 - Desktop 托管激活回执的 Electron 持久化用例必须覆盖干净重启后的 pending 同操作恢复，以及 pending A→B 后经另一组激活回到 A 的 ABA 拒绝；pending 回执必须同时核对前序 `activeEffect` 与单调 `activeEffectGeneration`，Recent/path membership 不能替代 operation-specific predecessor proof。拒绝路径必须保持旧 `activePath`、`activeEffect` 与回执不变，并在重启后得到相同结论。
-- Agent Host/Policy contract：公共 owner 位于 `bridge/agent/policies/` 与 `bridge/agent/hosts/`；`tests/agent-provider-contract.test.mjs` 证明公共层只产生通用 Agent error/brand，旧 façade 在边界映射回既有 provider/transport error name、code 与 copy，并以 source literal gate 阻止 provider/transport ownership 回流。Discussion capability 和非 execution ticket 必须 fail-closed。`tests/qoder-acp-spike-client.test.mjs` 属于 Node integration owner，只使用合成 HTML、隔离的真实 v4 `ProjectFileRepository`、进程内 fake ACP Agent 与官方 finalizer。oracle 必须独立证明外部封存的 manifest Hash、精确 readOrder/role/media type、单一 Candidate 写路径与原子 no-replace 发布、无 shell 的精确 finalizer、session/permission/terminal 绑定、completion/output Hash、runtime authority drift、macOS `/var` realpath alias、事件/prompt 边界、timeout cancel 后拒绝晚到写入/finalizer、Agent 早退出与孤儿进程组清理，以及 Candidate ready 后 Working Copy 全量状态、manifest 和 Version 快照均未变化。
-- Product Agent Bridge：`tests/agent-provider-contract.test.mjs` 使用无用户路径/秘密的合成 provider/runtime fixture，拥有 legacy `qoder-acp` → `qoder`/`acp` 唯一 registry 分派、内部 installation digest/capabilities ticket、未知 provider/runtime fail-closed，以及 availability/preflight/start 的旧公开投影。`tests/agent-bridge-service.test.mjs` 拥有只读本地检查不运行 Qoder、同进程安装后重读、npmrc/nvm/Volta/fnm/mise 发现、非法包不误报未安装、trusted-local consent、使用前检查、一次性 execution ticket、最终 spawn identity、不泄露 command/path、持久 crash lease、task-keyed 幂等、取消、restart-interrupted、retry output refusal 与公开错误脱敏。`tests/run-workflow.test.mjs` 证明只读检查零 Request/冻结/剪贴板、`agentDelivery: qoder-acp`、Execution 投影、安装与登录引导剪贴板隔离、Settings 检查不授权稍后发送、同一发送意图的 ticket 只供紧接着的 Agent 启动复用，以及预检失败不解锁一张从未锁定的 Canvas。`tests/agent-bridge-workspace.test.mjs` 必须启动真实 Bridge 与 fake ACP 子进程，证明自动完成只产生 pending-review Candidate、Working Copy/Version 不变，取消先终止 Qoder 再 durable cancel，以及 Bridge 强杀后同 Request 重启被 fence、旧 Request 取消后才能重新发送。`tests/desktop-preload-ipc.test.mjs` 证明 preload 不暴露 Agent executable/spawn/command/path capability。Electron AI closed-loop 必须额外证明自动模式不接触剪贴板、不自动 Adoption，并能进入真实 Review UI；未登录时 Settings 保持、复制任务始终可用、零 Request 且 About 保持产品信息。package owner必须递归拒绝 symlink/特殊文件，并用打包 Helper、打包 Bridge、fake ACP 与打包 finalizer 证明 pending-review 闭环及 SDK/Zod 精确运行时闭包。`npm run spike:qoder-acp` 的真实账号/网络探测仅是额外开发证据，失败或成功都不进入自动门禁；ACP allowlist 也不得被描述成 Qoder 本地进程的 OS 沙箱。
+- Agent Host/Policy contract：公共 owner 位于 `bridge/agent/policies/` 与 `bridge/agent/hosts/`；`tests/agent-provider-contract.test.mjs` 证明公共层只产生通用 Agent error/brand，服务边界保持既有 provider/transport error name、code 与 copy，并以 source literal gate 阻止 provider/transport ownership 回流。Discussion capability 和非 execution ticket 必须 fail-closed。`tests/qoder-acp-spike-client.test.mjs` 属于 Node integration owner，只使用合成 HTML、隔离的真实 v4 `ProjectFileRepository`、进程内 fake ACP Agent 与官方 finalizer。oracle 必须独立证明外部封存的 manifest Hash、精确 readOrder/role/media type、单一 Candidate 写路径与原子 no-replace 发布、无 shell 的精确 finalizer、session/permission/terminal 绑定、completion/output Hash、runtime authority drift、macOS `/var` realpath alias、事件/prompt 边界、timeout cancel 后拒绝晚到写入/finalizer、Agent 早退出与孤儿进程组清理，以及 Candidate ready 后 Working Copy 全量状态、manifest 和 Version 快照均未变化。
+- Product Agent Bridge：`tests/agent-provider-contract.test.mjs` 使用无用户路径/秘密的合成 provider/runtime fixture，拥有 canonical provider/runtime 分派、内部 installation digest/capabilities ticket、未知 provider/runtime fail-closed，以及 availability/preflight/start 的明确公开投影。`tests/agent-bridge-service.test.mjs` 拥有只读本地检查不运行 Qoder、同进程安装后重读、npmrc/nvm/Volta/fnm/mise 发现、非法包不误报未安装、trusted-local consent、使用前检查、一次性 execution ticket、最终 spawn identity、不泄露 command/path、持久 crash lease、task-keyed 幂等、取消、restart-interrupted、retry output refusal 与公开错误脱敏。`tests/run-workflow.test.mjs` 证明只读检查零 Request/冻结/剪贴板、canonical Agent delivery、Execution 投影、安装与登录引导剪贴板隔离、Settings 检查不授权稍后发送、同一发送意图的 ticket 只供紧接着的 Agent 启动复用，以及预检失败不解锁一张从未锁定的 Canvas。`tests/agent-bridge-workspace.test.mjs` 必须启动真实 Bridge 与 fake ACP 子进程，证明自动完成只产生 pending-review Candidate、Working Copy/Version 不变，取消先终止 Qoder 再 durable cancel，以及 Bridge 强杀后同 Request 重启被 fence、旧 Request 取消后才能重新发送。`tests/desktop-preload-ipc.test.mjs` 证明 preload 不暴露 Agent executable/spawn/command/path capability。Electron AI closed-loop 必须额外证明自动模式不接触剪贴板、不自动 Adoption，并能进入真实 Review UI；未登录时 Settings 保持、复制任务始终可用、零 Request 且 About 保持产品信息。package owner必须递归拒绝 symlink/特殊文件，并用打包 Helper、打包 Bridge、fake ACP 与打包 finalizer 证明 pending-review 闭环及 SDK/Zod 精确运行时闭包。`npm run spike:qoder-acp` 的真实账号/网络探测仅是额外开发证据，失败或成功都不进入自动门禁；ACP allowlist 也不得被描述成 Qoder 本地进程的 OS 沙箱。
 - Schema 与 scope 的纯函数矩阵继续独立拥有 strict union、identity/path/hash drift、TargetRef/topology 与 guidance 判定；真实 lifecycle 集成只证明产物 bundle、official finalizer、ready/attention 和 activation 的持久化边界。SourceTransaction failpoint 表逐 case 保留独立的 disk、runtime、history 与 audit exactly-once oracle，不以最终 200 取代 commit-point 断言。
 - Agent 诊断、流式和恢复：`tests/agent-provider-contract.test.mjs` 证明 diagnose 调用真实只读 provider probe，但不创建 preflight ticket/session 或改变 selection。`tests/openai-compatible-agent.test.mjs` 覆盖 `stream: true`、分段 UTF-8、跨 chunk/多行 SSE、`[DONE]`、断线半成品丢弃、结构化 provider error 和 content/reasoning/usage/heartbeat 滑动 activity。`tests/agent-protocol-acceptance.test.mjs` 证明产品可见的 DeepSeek 与 Qoder/Codex 在真实协议账本上仍为未验收，source-gate / Candidate 必须带上该账本，CI mock 不能把它写成 accepted。`tests/qoder-acp-spike-client.test.mjs` 覆盖 ACP 同一 inactivity 语义与 cancel fence；测试用短窗口或伪时钟证明总时长超过一个窗口仍可持续，不真实等待 45 分钟。Conversation/Run 测试必须证明同 request/attempt 失败优先、最多两个恢复操作、重试复用冻结选择、结束走 durable cancel，以及历史仅按日期/turn/request 派生分组。
 - 外部源绑定：Repository Node 测试按能力拆在 `tests/project-registry-and-open.test.mjs`、`tests/project-working-copy-save.test.mjs`、`tests/project-candidate-promotion.test.mjs`、`tests/project-request-authority.test.mjs`、`tests/project-ai-task-projection.test.mjs`、`tests/project-path-security-and-locks.test.mjs` 与少量跨模块 `tests/project-file-repository.integration.test.mjs`。它们共同拥有编辑/晋升/历史 Working Copy 后重开、Hash 变化仍保持 B、同内容另一路径仍为 C、跨实例同源唯一与异源不丢写、多 claim 失败关闭、损坏绑定不降级为 C，以及当前 Registry 写锁的活/死 owner。`tests/project-file-bridge.test.mjs` 拥有 `/project/open-classification` 的 A/B/C DTO、无副作用和禁止回传 source key/原稿绝对路径。分类测试必须独立计算期望 Hash，不能调用被测 source-key helper 当 oracle。
@@ -334,8 +380,8 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   review/accept、pre-load navigation、顺序 Version/relaunch、internal supplement、
   no-change、return、clipboard failure、A/B 隔离、double-click、cancel/restart、
   unknown reconcile、missing finalizer、malformed HTML、broad related、activation
-  failure；legacy global comment 的跨重启恢复仍处在兼容窗口，继续保留为独立
-  Electron 场景。Native Electron 拥有 rapid switch/close 的真实 DOM 与磁盘 oracle；
+  failure；当前 global comment 的跨重启恢复作为正常故障场景保留，不读取旧记录。
+  Native Electron 拥有 rapid switch/close 的真实 DOM 与磁盘 oracle；
   project rules/drain 与 update/Settings 均由其更窄的 Node/Preload/UI owner 覆盖。首个
   review/accept 场景的 geometry helper
   必须把每个表驱动 case 的 fixture、filter/page/context、change type、element/Range
@@ -368,7 +414,11 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   synthetic HTML 上串行运行。它必须同时保留 external-write conflict、
   restart recovery 与 exact-byte oracle；restart recovery 不仅验证磁盘
   字节，也必须重新打开已注册 workspace 并验证项目/文档身份、Hash 和
-  persisted revision；并报告样本数、p50/p95/max、
+  persisted revision；exact-byte oracle 以导入后完成 Stable-ID 物化的
+  Working Copy 为冻结基线，不把导入前外部原稿误当为可编辑源；
+  dirty close 的 elapsed 截止于原关闭事件，安全 oracle 在计时外使用同一
+  隔离 userData 重开并验证恢复后 Working Copy 的完整字节；
+  并报告样本数、p50/p95/max、
   request/response bytes、renderer/Bridge RSS、renderer rAF gap 和明确的
   `skip-12` 或 `authorize-12-pr1` 决策；不同 SHA、并行负载或旧诊断样本
   不得混合。
@@ -680,7 +730,7 @@ B 在预检时根据当前产品能力生成只读清单，对用户可触达、
 | 非法 SourceReceipt 不能被放行 | 固定的非法值、缺失字段、超界数字和 context 投影与生产守卫结果对比；不调用守卫自己生成期望 | `tests/document-session.test.mjs` 的 `source receipt guard ...` 正反例 | `node --test tests/document-session.test.mjs` |
 | 原子写入异常不掩盖真实结果 | 故障注入后独立读取目标字节、目录项和主错误，区分 replace 前后的 cleanup | `tests/lifecycle-core.test.mjs` 的 255-byte、directory-sync 和 cleanup failure 用例 | `node --test tests/lifecycle-core.test.mjs` |
 | 禁止的架构依赖必须失败 | 独立临时源码中的合法/非法 AST 固定样例，再执行完整生产图检查 | `tests/architecture-boundaries.test.mjs` 与 `scripts/check-architecture.mjs` | `npm run architecture:check && node --test tests/architecture-boundaries.test.mjs` |
-| SourceReceipt 核心实现真正受类型检查 | 编译输入列表核对加定向错误变异；变异未报错则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
+| SourceReceipt / DocumentSession 核心实现真正受类型检查 | contract / façade / 实现 root 核对加七个定向错误变异；任一变异未在指定生产位置报预期错误则本入口失败 | `tsconfig.source-receipt.json`、`tests/source-receipt-contract.typecheck.ts`、`scripts/verify-source-receipt-typecheck.mjs` | `npm run typecheck:source-receipt` |
 | 在默认浏览器中打开的是当前所见目标 | Workflow 使用事先冻结的 current/history 身份，Desktop 只接受已授权 HTML URL，Electron 拦截外部打开并核对精确 Version 路径及当前稿字节 | `tests/browser-open-workflow.test.mjs`、`tests/open-in-default-browser.test.mjs`、`tests/e2e/electron/electron-workbench-tabs.spec.mjs` | `node --test tests/browser-open-workflow.test.mjs tests/open-in-default-browser.test.mjs`; Electron 由 `npm run gate:task -- --base origin/main` 的 `electron-changed-specs` 执行 |
 | 旧保存回执不能清掉更新编辑 | 直接观察 durable revision、pending write、HTML/Hash 快照和新一轮 flush 归属，不只检查返回的 status | `tests/document-session.test.mjs` 的 old write/old flush/atomic publication 用例，以及 `tests/document-workflow.test.mjs` 的 older ACK 与 newer queued write 用例 | `node --test tests/document-session.test.mjs tests/document-workflow.test.mjs` |
 | 重构不破坏编辑体验 | 真实 Electron 窗口和磁盘字节同时证明连续输入、composition、保存中切换、Undo/Redo 后续写、历史操作和 Canvas 重建后续写 | `electron-runtime-continuity.spec.mjs` 的 continuous editing、published Undo 与 reload 用例；`electron-native-input.spec.mjs` 的 composition 与 Undo/Redo 用例；`electron-workbench-tabs.spec.mjs` 的 current/history 用例；`electron-source-recovery.spec.mjs` 的 autosave failure/recovery 用例 | `npm run gate:task -- --base origin/main` 按影响映射执行对应 Electron lanes；全量 Ready 由 `release-gate` 执行 |
@@ -713,11 +763,11 @@ fixture、DOM 编辑兼容性扫描或仓库 Electron 通过代替真实语料�
 ## Single current draft and immutable history
 
 The current-draft Repository owner covers explicit local snapshot/no-op,
-same-current adoption/history/recovery, actual active older-WC migration,
-preserved comments/attachments, restart fault stages and confirmed Finder
-absence/return/duplicate isolation. Snapshot bytes and current bytes are
-independent oracles. Old per-Version editable fixtures remain explicit migration
-inputs, never the expected result of a new import.
+same-current adoption/history/recovery, preserved comments/attachments, restart
+fault stages and confirmed Finder absence/return/duplicate isolation. Snapshot
+bytes and current bytes are independent oracles. Historical multi-Working-Copy
+fixtures are rejection inputs only; new imports and current failures use newly
+created current-format projects.
 
 VersionWorkflow and ProjectWorkflow tests cover frozen export bytes, no Version
 on plain/cancelled/failed export, partial export/version reconciliation, stale
@@ -727,3 +777,46 @@ V1/V2 viewing, current return, default export and optional V3 creation with no
 duplicate on unchanged content. Shared sidebar helpers select the current row
 or explicitly expand and select historical Vn; first-row selectors cannot stand
 in for current identity.
+
+### Agent credential and preference ordering
+
+`tests/agent-session-credential-store.test.mjs` owns Main acceptance order,
+random record IDs, operation receipts, strict CAS, unscoped clear semantics,
+tombstones and old-write replay refusal. `tests/run-workflow.test.mjs` owns the
+separate connection/persistence/default results, lost-receipt status
+reconciliation without rewriting, same-operation clear reconciliation, startup
+success/failure fences, deferred configuration-save/remove ordering, held-secret
+reference retirement, replacement-save/old-clear ordering, Settings clear-action
+gating, provider-disabled preference rollback, retry without reconnect/default
+commit, receipt precedence, and slow-A/fast-B projection fencing. The checked production interpreter and
+the test stubs share the union in `agent-credential-operation-contract.d.ts`.
+`tests/workspace-preferences-session.test.mjs` separately owns the single
+renderer durable-write turn, lost-response reconciliation, field-generation
+owned rollback, disposal fencing, strict complete persistence receipts and a
+Main-backed reopen oracle. The actual production Session, precise mutation
+receipt and RunWorkflow/Catalog receipt interpreter are checked by
+`typecheck:workspace-preferences`; the verifier rejects directed producer and
+consumer mutations and fails if either JavaScript implementation leaves the
+official compiler inputs.
+
+| Preference ordering proof | Deterministic test evidence |
+| --- | --- |
+| P01 hydration versus first update | `the first preference change waits for hydration without losing the optimistic patch` |
+| P02 A waits while B is accepted | `a newer ordinary write is never overwritten by an older Agent rollback`; `a later ordinary update supersedes an Agent intent during its baseline read`; `a same-field update accepted after rollback record invocation writes last`; `an update queued from the closing pump publication gets a fresh durable turn` |
+| P03 stale durable A owns only its field | `a same-field update accepted during rollback authority read fences the restore` |
+| P04 unrelated field during rollback | `an unrelated update during rollback authority read does not block the narrow restore` |
+| P05 failed patch followed by newer value | `a newer ordinary preference beats the failed patch retained for one retry` |
+| P06 queued operation disposed before write | `dispose prevents a queued Agent mutation from starting a write`; `a same-field intent that replaces an Agent patch before record leaves it not-started` |
+| P07 dispose after durable write starts | `dispose reconciles a durable Agent write whose response was lost`; `dispose lets started Agent mutations finish only their predetermined rollback` |
+| P08 rollback failure or lost response | `Agent mutations require a strict durable rollback baseline before writing`; `terminal supersession retires only its failed pending Agent patch`; `a lost rollback response is confirmed only when authority shows the restore`; `an unconfirmed rollback remains unknown and does not claim restoration` |
+| P09 Agent preference operations stay distinct | `a credential intent reaches the single preferences session and restores superseded configuration`; `concurrent provider access changes preserve both disabled providers`; `a later unrelated terminal failure cannot downgrade confirmed Agent persistence` |
+| P10 reopen matches the promise | `a confirmed Agent preference survives a real Main persistence reopen` |
+
+`tests/desktop-preload-ipc.test.mjs` proves
+missing capabilities fail explicitly and forwards operation/model identity.
+Electron may restore a synthetic Key only for an isolated profile with explicit
+`STEMMIO_E2E_RESTORE_CREDENTIAL=1` and an ephemeral
+`STEMMIO_E2E_CREDENTIAL_ENCRYPTION_KEY`; the unpackaged test process uses that
+key only for isolated AES-GCM ciphertext and must prove restart restoration and
+no plaintext on disk or in logs. Packaged builds always use Electron
+`safeStorage`. Default E2E launches still suppress restoration.

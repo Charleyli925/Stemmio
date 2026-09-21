@@ -46,8 +46,6 @@ import {
   closeWorkspaceBridgeAfterAgentCleanup,
 } from "./workspace-bridge-shutdown.mjs";
 import {
-  defaultManagedAgentDelivery,
-  legacyDriverForAgentDelivery,
   normalizeAgentDelivery,
 } from "../shared/agent-delivery.mjs";
 import {
@@ -114,7 +112,7 @@ const agentBridgeService = new AgentBridgeService({
     : {}),
 });
 function normalizeDispatchableAgentDelivery(value) {
-  const delivery = normalizeAgentDelivery(value, { allowLegacy: false });
+  const delivery = normalizeAgentDelivery(value);
   if (delivery.mode === "managed-agent") {
     agentBridgeService.assertSelection(delivery.selection, "execution");
   }
@@ -389,13 +387,7 @@ function projectFileHttpError(cause) {
       "FROZEN_INPUT_HASH_MISMATCH",
       "REQUEST_COLLISION",
       "FILE_COLLISION",
-      "PROMOTION_PATH_REPLACED",
-      "PROMOTION_PREPARED_PATH_CONFLICT",
-      "PROMOTION_PREPARED_FILE_CHANGED",
-      "PROMOTION_TRANSACTION_MISMATCH",
-      "PROMOTION_TRANSACTION_INVALID",
-      "PROMOTION_WORKING_COPY_MISSING",
-      "PROMOTION_VERSION_MISSING",
+      "CURRENT_VERSION_TRANSACTION_MISMATCH",
       "IMPORT_REGISTRY_CONFLICT",
       "IMPORT_IDENTITY_MISMATCH",
       "IMPORT_RECOVERY_INVALID",
@@ -498,6 +490,7 @@ async function registeredProjectOpen(projectId, workingCopyId = null) {
       content: resolved.html,
       lastModifiedAt: resolved.lastModifiedAt,
       openTarget: resolved.target,
+      historyCreation: resolved.historyCreation,
     };
   } catch (cause) {
     throw projectFileHttpError(cause);
@@ -602,7 +595,7 @@ function projectFileVersionRows(workspace, requirements = new Map()) {
       requirement: requirements.get(version.versionId) || null,
       workingCopyId: workingCopy?.workingCopyId || null,
       displayFileName: projectVersionDisplayFileName({
-        manifest: workspace.manifest, version,
+        version,
         currentSourcePath: workspace.target.exactSourcePath,
         versionSourcePath: workingCopy?.sourceRelativePath,
       }),
@@ -654,13 +647,11 @@ async function versionRequirement(cacheScope, projectRootPath, requestId) {
       "utf8",
     );
     const record = JSON.parse(raw);
-    // v4 Task Specs keep the user-authored objective under
-    // `requirements.objective`; v3 and older records used summary fields.
+    // Current Request records expose the compiled Task Spec in both the
+    // frozen request and its change-request projection.
     requirement = condenseVersionRequirement(
       record?.requirements?.objective
-        ?? record?.requirements?.summary
-        ?? record?.request?.taskSpec?.objective
-        ?? record?.request?.summary,
+        ?? record?.request?.taskSpec?.objective,
     );
   } catch {
     // A retired or unreadable round simply has no requirement to show. The
@@ -1527,14 +1518,6 @@ async function resolveAgentBridgeTask(identity) {
   return { target, request: status.request || null, run };
 }
 
-function compatibilityDriverForAgentDelivery(delivery) {
-  try {
-    return legacyDriverForAgentDelivery(delivery);
-  } catch {
-    return null;
-  }
-}
-
 function agentSessionForStatus({ request, run, lifecycleStatus }) {
   const delivery = request?.request?.agentDelivery;
   if (!run || delivery?.mode === "clipboard") return null;
@@ -1544,8 +1527,6 @@ function agentSessionForStatus({ request, run, lifecycleStatus }) {
   } catch {
     return null;
   }
-  const compatibilityDriver = compatibilityDriverForAgentDelivery(normalizedDelivery);
-  const publicDriver = compatibilityDriver || normalizedDelivery.selection.providerId;
   const identity = {
     projectId: run.projectId,
     documentId: run.documentId,
@@ -1559,7 +1540,7 @@ function agentSessionForStatus({ request, run, lifecycleStatus }) {
     return {
       providerId: normalizedDelivery.selection.providerId,
       runtimeId: normalizedDelivery.selection.runtimeId,
-      driver: publicDriver,
+      driver: normalizedDelivery.selection.providerId,
       state: "completed",
       phase: "awaiting-validation",
       startedAt: null,
@@ -1569,7 +1550,6 @@ function agentSessionForStatus({ request, run, lifecycleStatus }) {
       agentVersion: null,
       eventCount: 0,
       receivedBytes: 0,
-      visibleText: "",
       visibleTextUpdates: [],
       textTruncated: false,
       retryable: false,
@@ -1684,7 +1664,11 @@ function canonicalDeliveryFromAgentBody(body) {
   if (body?.agentDelivery) {
     return normalizeAgentDelivery(body.agentDelivery);
   }
-  return defaultManagedAgentDelivery();
+  throw new HttpError(
+    400,
+    "AGENT_SELECTION_REQUIRED",
+    "Current Agent execution requires a canonical selection.",
+  );
 }
 
 async function preflightAgent(body) {
@@ -1703,8 +1687,8 @@ function availabilitySelection(value) {
     return normalizeAgentDelivery({
       mode: "managed-agent",
       selection: JSON.parse(value),
-      trustPolicyVersion: defaultManagedAgentDelivery().trustPolicyVersion,
-    }, { allowLegacy: false }).selection;
+      trustPolicyVersion: "trusted-local-agent-v1",
+    }).selection;
   } catch {
     throw new HttpError(
       400,
@@ -1716,12 +1700,18 @@ function availabilitySelection(value) {
 
 async function agentAvailability(selectionInput = null) {
   const selection = availabilitySelection(selectionInput);
-  return agentBridgeService.availability(selection ? { selection } : {});
+  if (!selection) {
+    throw new HttpError(400, "AGENT_SELECTION_REQUIRED", "Agent availability requires an explicit selection.");
+  }
+  return agentBridgeService.availability({ selection });
 }
 
 async function agentDiagnose(selectionInput = null) {
   const selection = availabilitySelection(selectionInput);
-  return agentBridgeService.diagnose(selection ? { selection } : {});
+  if (!selection) {
+    throw new HttpError(400, "AGENT_SELECTION_REQUIRED", "Agent diagnosis requires an explicit selection.");
+  }
+  return agentBridgeService.diagnose({ selection });
 }
 
 async function agentProviders() {
@@ -1951,104 +1941,6 @@ async function projectFileCurrentVersion(body, action) {
           : await projectFileRepository.queryCurrentVersionCreation(input);
     return { ok: true, ...result };
   } catch (cause) { throw projectFileHttpError(cause); }
-}
-
-async function continueProjectFileHistoryVersion(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new HttpError(400, "INVALID_HISTORY_CONTINUE", "The history continuation payload is invalid.");
-  }
-  const allowedKeys = new Set([
-    "sourcePath",
-    "projectId",
-    "documentId",
-    "versionId",
-    "operationId",
-  ]);
-  if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
-    throw new HttpError(400, "INVALID_HISTORY_CONTINUE", "The history continuation payload has unsupported fields.");
-  }
-  if (!/^ver_\d{4,}$/.test(String(body.versionId || ""))) {
-    throw new HttpError(400, "INVALID_VERSION_ID", "versionId is invalid.");
-  }
-  if (!/^[A-Za-z0-9_-]{8,160}$/.test(String(body.operationId || ""))) {
-    throw new HttpError(400, "INVALID_OPERATION_ID", "operationId is invalid.");
-  }
-  try {
-    const activated = await projectFileRepository.replayHistoryVersionActivation({
-      target: {
-        projectId: body.projectId,
-        documentId: body.documentId,
-        exactSourcePath: body.sourcePath,
-      },
-      versionId: String(body.versionId),
-      operationId: String(body.operationId),
-    });
-    const next = await projectFileWorkspaceForSource(activated.target.exactSourcePath);
-    return {
-      ...(await projectFileBaseWorkspaceState(next)),
-      status: "history-working-copy-activated",
-      historyActivation: activated.historyActivation,
-      operationId: activated.historyActivation.operationId,
-      replayed: activated.replayed === true,
-    };
-  } catch (cause) {
-    throw projectFileHttpError(cause);
-  }
-}
-
-async function confirmProjectFileHistoryVersion(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new HttpError(400, "INVALID_HISTORY_CONFIRM", "The history activation confirmation payload is invalid.");
-  }
-  const allowedKeys = new Set([
-    "sourcePath",
-    "projectId",
-    "documentId",
-    "previousWorkingCopyId",
-    "activatedWorkingCopyId",
-    "versionId",
-    "operationId",
-  ]);
-  if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
-    throw new HttpError(400, "INVALID_HISTORY_CONFIRM", "The history activation confirmation payload has unsupported fields.");
-  }
-  if (
-    body.previousWorkingCopyId !== null
-    && !/^work_ver_\d{4,}$/.test(String(body.previousWorkingCopyId || ""))
-  ) {
-    throw new HttpError(400, "INVALID_WORKING_COPY_ID", "previousWorkingCopyId is invalid.");
-  }
-  if (
-    !/^[A-Za-z0-9_-]{8,160}$/.test(String(body.operationId || ""))
-    || !/^work_ver_\d{4,}$/.test(String(body.activatedWorkingCopyId || ""))
-    || !/^ver_\d{4,}$/.test(String(body.versionId || ""))
-  ) {
-    throw new HttpError(400, "INVALID_HISTORY_CONFIRM", "The history activation confirmation is invalid.");
-  }
-  try {
-    const confirmed = await projectFileRepository.confirmVersionWorkingCopyActivation({
-      target: {
-        projectId: body.projectId,
-        documentId: body.documentId,
-        exactSourcePath: body.sourcePath,
-      },
-      operationId: String(body.operationId),
-      previousWorkingCopyId: body.previousWorkingCopyId,
-      activatedWorkingCopyId: String(body.activatedWorkingCopyId),
-      versionId: String(body.versionId),
-    });
-    return {
-      ok: true,
-      projectId: confirmed.historyActivation.projectId,
-      documentId: confirmed.historyActivation.documentId,
-      status: "history-working-copy-desktop-confirmed",
-      historyActivation: confirmed.historyActivation,
-      confirmed: confirmed.confirmed,
-      operationId: confirmed.historyActivation.operationId,
-    };
-  } catch (cause) {
-    throw projectFileHttpError(cause);
-  }
 }
 
 function shellQuoted(value) {
@@ -3005,30 +2897,6 @@ async function route(request, response) {
     const body = await readBody(request);
     sendJson(response, 200, await projectFileHistoryCreation(body,
       url.pathname === "/history-version/create" ? "create" : url.pathname === "/history-version/opened" ? "opened" : "result"));
-    return;
-  }
-  if (
-    request.method === "POST"
-    && url.pathname === "/history-version/continue"
-  ) {
-    const body = await readBody(request);
-    sendJson(
-      response,
-      200,
-      requireFound(await continueProjectFileHistoryVersion(body)),
-    );
-    return;
-  }
-  if (
-    request.method === "POST"
-    && url.pathname === "/history-version/desktop-confirmed"
-  ) {
-    const body = await readBody(request);
-    sendJson(
-      response,
-      200,
-      requireFound(await confirmProjectFileHistoryVersion(body)),
-    );
     return;
   }
   if (

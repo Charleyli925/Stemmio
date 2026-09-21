@@ -268,7 +268,6 @@ export class AgentRuntimeCoordinator {
 
   #selectionForInput({ selection, trustPolicyAccepted } = {}) {
     // Current execution binds only by canonical selection. Historical
-    // `mode: "qoder-acp"` records are converted at the delivery codec, not here.
     if (!selection) {
       failAgentRuntime(
         "AGENT_SELECTION_UNSUPPORTED",
@@ -690,7 +689,7 @@ export class AgentRuntimeCoordinator {
     return verified;
   }
 
-  #observe(entry, rawEvent, phaseForEvent, textField) {
+  #observe(entry, rawEvent, phaseForEvent) {
     if (
       rawEvent?.turnId
       && String(rawEvent.turnId) !== entry.turnId
@@ -730,14 +729,8 @@ export class AgentRuntimeCoordinator {
         void this.#queueExecutionFact(entry, entry.phase);
       }
     }
-    if (textField) {
-      entry[textField] = reduced.projection.visibleText;
-      if (textField === "replyText") entry.replyTruncated = reduced.projection.textTruncated;
-      if (textField === "visibleText") {
-        entry.visibleTextUpdates = reduced.projection.visibleTextUpdates;
-        entry.textTruncated = reduced.projection.textTruncated;
-      }
-    }
+    entry.visibleTextUpdates = reduced.projection.visibleTextUpdates;
+    entry.textTruncated = reduced.projection.textTruncated;
     if (reduced.event.kind === "initialized") {
       if (["starting", "running"].includes(entry.state)) entry.state = "running";
       entry.agentName = cleanAgentText(reduced.event.agentName) || "Local Agent";
@@ -972,7 +965,6 @@ export class AgentRuntimeCoordinator {
       cancelState: null,
       controller,
       promise: null,
-      visibleText: "",
       visibleTextUpdates: [],
       textTruncated: false,
       completionVerified: false,
@@ -1003,7 +995,7 @@ export class AgentRuntimeCoordinator {
     let projectionActive = false;
     const publishEvent = (event) => {
       if (this.#executionSessions.get(key) === entry) {
-        this.#observe(entry, event, executionPhaseForEvent, "visibleText");
+        this.#observe(entry, event, executionPhaseForEvent);
       }
     };
     const observe = (event) => {
@@ -1090,7 +1082,11 @@ export class AgentRuntimeCoordinator {
       if (entry.cancelState === "requested") entry.cancelState = "provider-acknowledged";
       this.#touch(entry);
     }).finally(async () => {
-      const summary = safePublicAgentSummary(entry.visibleText);
+      // Stored summaries deliberately derive from the already-redacted public
+      // blocks. The canonical runtime projection remains the ordered block list.
+      const summary = safePublicAgentSummary(
+        entry.visibleTextUpdates.map((update) => update.text).join("\n\n"),
+      );
       if (summary) await this.#queueExecutionFact(entry, "public-summary", summary);
       await this.#queueExecutionFact(entry, entry.state === "failed" ? "failed" : "execution-ended");
       if (entry.historyFailure) {
@@ -1142,7 +1138,6 @@ export class AgentRuntimeCoordinator {
       agentVersion: null,
       eventCount: 0,
       receivedBytes: 0,
-      visibleText: "",
       visibleTextUpdates: [],
       textTruncated: false,
       retryable: false,

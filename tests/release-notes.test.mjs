@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   RELEASE_NOTES_RELATIVE_PATH,
-  changelogPermalink,
   composeReleaseNotes,
   extractChangelogNotes,
   writeReleaseNotes,
@@ -39,20 +38,6 @@ const CHANGELOG = [
   "",
   "- 更早的一条改动。",
 ].join("\n");
-
-const packageJson = {
-  version: "1.2.3",
-  build: {
-    publish: [
-      {
-        provider: "github",
-        owner: "Charleyli925",
-        repo: "Stemmio",
-        releaseType: "release",
-      },
-    ],
-  },
-};
 
 test("release notes are the exact CHANGELOG section for that version", () => {
   assert.equal(
@@ -129,34 +114,9 @@ test("a neighbouring longer version never leaks into the notes", () => {
   assert.equal(extractChangelogNotes(changelog, "1.2.3"), "- 属于 1.2.3 的改动。");
 });
 
-test("published notes carry the full changelog permalink for skipped versions", () => {
+test("published notes contain only the reviewed changelog section", () => {
   assert.equal(
-    changelogPermalink({ packageJson, version: "1.2.3" }),
-    "https://github.com/Charleyli925/Stemmio/blob/v1.2.3/CHANGELOG.md",
-  );
-  assert.equal(
-    composeReleaseNotes({ changelog: CHANGELOG, packageJson, version: "1.2.2" }),
-    [
-      "- 更早的一条改动。",
-      "",
-      "---",
-      "",
-      "完整更新记录 / Full changelog:"
-      + " https://github.com/Charleyli925/Stemmio/blob/v1.2.2/CHANGELOG.md",
-      "",
-    ].join("\n"),
-  );
-});
-
-test("an unrecognized publish target still publishes the readable section", () => {
-  const withoutProvider = { version: "1.2.2", build: { publish: [] } };
-  assert.equal(changelogPermalink({ packageJson: withoutProvider, version: "1.2.2" }), null);
-  assert.equal(
-    composeReleaseNotes({
-      changelog: CHANGELOG,
-      packageJson: withoutProvider,
-      version: "1.2.2",
-    }),
+    composeReleaseNotes({ changelog: CHANGELOG, version: "1.2.2" }),
     "- 更早的一条改动。\n",
   );
 });
@@ -170,7 +130,10 @@ test("the CLI writes notes for the current package version by default", async (t
     await readFile(path.join(productRoot, "package.json"), "utf8"),
   );
   assert.match(written, /^- /mu);
-  assert.match(written, new RegExp(`/blob/v${version.replace(/\./gu, "\\.")}/CHANGELOG\\.md`, "u"));
+  assert.doesNotMatch(
+    written,
+    /https:\/\/github\.com\/Charleyli925\/Stemmio(?:-Releases)?\/blob/u,
+  );
   assert.equal(written.endsWith("\n"), true);
   assert.equal(RELEASE_NOTES_RELATIVE_PATH, "output/release-metadata/release-notes.md");
 });

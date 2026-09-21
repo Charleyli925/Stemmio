@@ -253,7 +253,6 @@ function visibleTextChunk(update) {
 }
 
 function visibleTextBuffer(byteLimit) {
-  let text = "";
   let bytes = 0;
   let truncated = false;
   return {
@@ -266,18 +265,13 @@ function visibleTextBuffer(byteLimit) {
       }
       const size = Buffer.byteLength(chunk, "utf8");
       if (size <= remaining) {
-        text += chunk;
         bytes += size;
         return chunk;
       }
       const kept = truncateUtf8Tail(chunk, remaining);
-      text += kept.value;
       bytes += Buffer.byteLength(kept.value, "utf8");
       truncated = true;
       return kept.value;
-    },
-    get value() {
-      return text;
     },
     get truncated() {
       return truncated;
@@ -649,7 +643,6 @@ export async function runAcpTask({
               completion,
               updates,
               droppedUpdateCount,
-              visibleText: visibleText.value,
               visibleTextTruncated: visibleText.truncated,
             };
           }

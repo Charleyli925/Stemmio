@@ -11,7 +11,6 @@ const runtimeSource = fileURLToPath(new URL("../bridge/agent/runtimes/acp-runtim
 test("ACP runtime defaults to the shared process supervisor instead of Qoder symbols", async () => {
   const source = await readFile(runtimeSource, "utf8");
   assert.match(source, /runTask = runAcpProcessTask/u);
-  assert.equal(source.includes("runQoderAcpTask"), false);
   assert.equal(source.includes("Qoder"), false);
 });
 
@@ -21,7 +20,7 @@ test("ACP runtime can run a protocol task through an injected fake process", asy
     runTask: async (launch) => {
       launches.push(launch);
       launch.onEvent({ kind: "visible-text", text: "ready" });
-      return Object.freeze({ visibleText: "ready" });
+      return Object.freeze({});
     },
   });
   assert.equal(runtime.runtimeId, "acp");
@@ -31,7 +30,7 @@ test("ACP runtime can run a protocol task through an injected fake process", asy
     command: "/tmp/synthetic-agent",
     onEvent: (event) => events.push(event),
   });
-  assert.equal(result.visibleText, "ready");
+  assert.equal(Object.hasOwn(result, "visibleText"), false);
   assert.equal(launches.length, 1);
   assert.equal(launches[0].command, "/tmp/synthetic-agent");
   assert.deepEqual(events, [{ kind: "visible-text", text: "ready" }]);

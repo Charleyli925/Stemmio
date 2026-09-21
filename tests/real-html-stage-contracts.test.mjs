@@ -41,7 +41,10 @@ import {
   STALE_CANDIDATE_REASONS,
 } from "./e2e/electron/real-html/continuity-chain.mjs";
 import { summarizeRuntimeObserverRecords } from "./e2e/electron/real-html/runtime-observer.mjs";
-import { normalizeCapabilityProbeObservations } from "./e2e/electron/real-html/capability-driver.mjs";
+import {
+  classifyCapabilityProbeFailure,
+  normalizeCapabilityProbeObservations,
+} from "./e2e/electron/real-html/capability-driver.mjs";
 import {
   REAL_HTML_DISCOVERY_STAGES,
   createDiscoveryTrace,
@@ -296,6 +299,222 @@ test("a stopped capability probe keeps the full static denominator as partial di
     assert.equal(draft.coveragePlan.unexaminedCandidateCount, denominator.length - stopAt - 1);
     assert.ok(draft.issues.includes("DISCOVERY_INCOMPLETE"));
   }
+});
+
+test("capability normalization admits only complete proven authored denominator exclusions", () => {
+  const wrapperId = "sm1_10000000000000000000000000000000";
+  const descendantId = "sm1_20000000000000000000000000000000";
+  const observation = {
+    stableId: wrapperId,
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [descendantId],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableIds: [descendantId],
+    },
+  };
+  const normalized = normalizeCapabilityProbeObservations([observation]);
+  assert.deepEqual(normalized.liveDom, []);
+  assert.deepEqual(normalized.denominatorExclusions, [{
+    elementId: wrapperId,
+    reason: CAPABILITY_MANIFEST_REASONS.AUTHORED_DESCENDANT_OCCLUSION,
+    descendantStableIds: [descendantId],
+    hitTest: {
+      sampleCount: 25,
+      validSampleCount: 25,
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableIds: [descendantId],
+    },
+  }]);
+  for (const hitTest of [
+    { ...observation.hitTest, validSampleCount: 24 },
+    { ...observation.hitTest, sourceAncestorVerified: false },
+    { ...observation.hitTest, liveUniqueVerified: false },
+    { ...observation.hitTest, coverageVerified: false },
+    { ...observation.hitTest, coverageKind: "sampled-grid" },
+    { ...observation.hitTest, coverageStableIds: [wrapperId] },
+    { ...observation.hitTest, descendantStableIds: [] },
+    { ...observation.hitTest, descendantStableIds: ["private-dom-id"] },
+  ]) {
+    assert.throws(
+      () => normalizeCapabilityProbeObservations([{ ...observation, hitTest }]),
+      { code: "CAPABILITY_PROBE_DENOMINATOR_EXCLUSION_INVALID" },
+    );
+  }
+});
+
+test("capability normalization requires complete proof for every reviewed reachability exclusion", () => {
+  const ids = Array.from({ length: 6 }, (_, index) => (
+    `sm1_${String(index + 5).padStart(32, "0")}`
+  ));
+  const observations = [
+    {
+      stableId: ids[0],
+      tag: "body",
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_CANVAS_ROOT_NO_CAPABILITY",
+      hitTest: { kind: "authored-canvas-root", tag: "body" },
+    },
+    {
+      stableId: ids[1],
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_RUNTIME_DESCENDANT_OCCLUSION",
+      hitTest: {
+        kind: "valid-runtime-descendant-occlusion",
+        runtimeSelectionCount: 2,
+        coverageRectangleCount: 2,
+        coverageVerified: true,
+        coverageModel: "product-runtime-bounding-box",
+      },
+    },
+    {
+      stableId: ids[2],
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_DEDICATED_SURFACE_OCCLUSION",
+      hitTest: {
+        kind: "valid-authored-dedicated-surface-occlusion",
+        selectedSurfaceCount: 1,
+        selectionCount: 2,
+        coverageRectangleCount: 1,
+        coverageVerified: true,
+        coverageModel: "product-dedicated-surface-bounding-box-with-hit-tolerance",
+      },
+    },
+    {
+      stableId: ids[3],
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_MIXED_DESCENDANT_OCCLUSION",
+      hitTest: {
+        kind: "valid-mixed-descendant-occlusion",
+        runtimeSelectionCount: 2,
+        runtimeRectangleCount: 2,
+        authoredStableIdCount: 1,
+        authoredRectangleCount: 1,
+        runtimeDomElementCount: 0,
+        runtimeDomRectangleCount: 0,
+        coverageVerified: true,
+        coverageModel: "product-runtime-and-proven-authored-box-union",
+      },
+    },
+    {
+      stableId: ids[4],
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_FOREIGN_SURFACE_OCCLUSION",
+      hitTest: {
+        kind: "valid-foreign-occlusion",
+        sampleCount: 25,
+        foreignStableIdCount: 1,
+        coverageRectangleCount: 1,
+        coverageVerified: true,
+        coverageModel: "visible-viewport-proven-foreign-box-union",
+      },
+    },
+    {
+      stableId: ids[5],
+      capabilityFamilies: [],
+      behaviorFamilies: [],
+      probeReason: "AUTHORED_VIEWPORT_UNREACHABLE",
+      hitTest: {
+        kind: "valid-viewport-unreachable",
+        scrollAttemptCount: 3,
+        connected: true,
+        cssVisible: true,
+        rectWidth: 40,
+        rectHeight: 40,
+        viewportIntersectionPointCount: 0,
+      },
+    },
+  ];
+  const normalized = normalizeCapabilityProbeObservations(observations);
+  assert.deepEqual(
+    normalized.denominatorExclusions.map((entry) => entry.reason),
+    observations.map((entry) => entry.probeReason),
+  );
+  for (const observation of observations.slice(1, 5)) {
+    assert.throws(
+      () => normalizeCapabilityProbeObservations([{
+        ...observation,
+        hitTest: { ...observation.hitTest, coverageVerified: false },
+      }]),
+    );
+  }
+  assert.throws(() => normalizeCapabilityProbeObservations([{
+    ...observations[0],
+    hitTest: { ...observations[0].hitTest, tag: "div" },
+  }]));
+  assert.throws(() => normalizeCapabilityProbeObservations([{
+    ...observations[5],
+    hitTest: { ...observations[5].hitTest, scrollAttemptCount: 2 },
+  }]));
+});
+
+test("capability probe failures without explicit codes retain an actionable safe class", () => {
+  assert.deepEqual(classifyCapabilityProbeFailure(Object.assign(new Error("wait timed out"), {
+    name: "TimeoutError",
+  })), {
+    code: "CAPABILITY_PROBE_TIMEOUT",
+    reasonClass: "TIMEOUT",
+    errorName: "TimeoutError",
+  });
+  assert.deepEqual(classifyCapabilityProbeFailure(new Error("locator resolved to 2 elements")), {
+    code: "CAPABILITY_PROBE_LOCATOR_AMBIGUOUS",
+    reasonClass: "LOCATOR_AMBIGUOUS",
+    errorName: "Error",
+  });
+  assert.equal(
+    classifyCapabilityProbeFailure(new Error("opaque third-party failure")).code,
+    "CAPABILITY_PROBE_UNCLASSIFIED_ERROR",
+  );
+});
+
+test("a reviewed descendant-occlusion exclusion removes only its exact authored denominator row", () => {
+  const wrapperId = "sm1_30000000000000000000000000000000";
+  const siblingId = "sm1_40000000000000000000000000000000";
+  const denominator = [
+    { probeStableId: wrapperId, operationStableId: wrapperId, expectations: [] },
+    { probeStableId: siblingId, operationStableId: siblingId, expectations: [] },
+  ];
+  const normalized = normalizeCapabilityProbeObservations([{
+    stableId: wrapperId,
+    capabilityFamilies: [],
+    behaviorFamilies: [],
+    probeReason: "AUTHORED_DESCENDANT_OCCLUSION",
+    hitTest: {
+      kind: "valid-descendant-occlusion",
+      sampleCount: 25,
+      validSampleCount: 25,
+      descendantStableIds: [siblingId],
+      sourceAncestorVerified: true,
+      liveUniqueVerified: true,
+      coverageVerified: true,
+      coverageKind: "single-untransformed-hit-box",
+      coverageStableIds: [siblingId],
+    },
+  }]);
+  const excludedIds = new Set(normalized.denominatorExclusions.map((entry) => entry.elementId));
+  const reviewed = denominator.filter((entry) => !excludedIds.has(entry.probeStableId));
+  const draft = createCapabilityManifestDraft({ authoredDenominator: reviewed });
+  assert.deepEqual(reviewed.map((entry) => entry.probeStableId), [siblingId]);
+  assert.equal(draft.coveragePlan.denominator, 1);
+  assert.equal(draft.coveragePlan.required, 1);
+  assert.equal(createCapabilityManifestDraft({ authoredDenominator: [] }).issues
+    .includes("AUTHORED_DENOMINATOR_EMPTY"), true);
 });
 
 test("real HTML discovery observations do not turn a successful preflight into a failure", () => {
@@ -897,6 +1116,7 @@ test("canonical diagnostics retain only valid planned and observed Stable IDs", 
     stableId: probeStableId,
     expectedStableId: operationStableId,
     hintTargetId: "private-file-name.html",
+    substage: "complete-pointer-map",
     path: "/private/local/path",
   }), {
     probeStableId,
@@ -905,6 +1125,7 @@ test("canonical diagnostics retain only valid planned and observed Stable IDs", 
     probeStableIds: [probeStableId, operationStableId],
     stableId: probeStableId,
     expectedStableId: operationStableId,
+    substage: "complete-pointer-map",
   });
 });
 

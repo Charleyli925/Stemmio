@@ -12,6 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
 import { normalizeAgentDelivery } from "../shared/agent-delivery.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 import {
   ProjectFileRepository,
   ProjectFileRepositoryError,
@@ -32,28 +33,31 @@ import {
 
 function requestFor(summary, overrides = {}) {
   const target = { targetId: "target_test" };
+  const comments = [{
+    commentId: "comment_test",
+    text: summary,
+    target,
+    attachments: [],
+  }];
+  const targets = [target];
   return {
     freezeCutoffRevision: 0,
     summary,
-    comments: [{
-      commentId: "comment_test",
-      text: summary,
-      target,
-      attachments: [],
-    }],
+    comments,
     changeEvents: [],
-    targets: [target],
+    targets,
+    taskSpec: compileTaskSpec({ comments, targets }),
     ...overrides,
   };
 }
 
-test("frozen policy v2 owns stable HTML editing rules and keeps v1 readable", () => {
+test("frozen policy v2 is the only supported Request format", () => {
   assert.equal(FROZEN_REQUEST_POLICY_VERSION, "2.0.0");
   assert.equal(FROZEN_REQUEST_PROMPT_TEMPLATE_VERSION, "2.0.0");
-  assert.deepEqual([...SUPPORTED_FROZEN_REQUEST_POLICY_VERSIONS], ["1.0.0", "2.0.0"]);
+  assert.deepEqual([...SUPPORTED_FROZEN_REQUEST_POLICY_VERSIONS], ["2.0.0"]);
   assert.deepEqual(
     [...SUPPORTED_FROZEN_REQUEST_PROMPT_TEMPLATE_VERSIONS],
-    ["1.0.0", "2.0.0"],
+    ["2.0.0"],
   );
   assert.match(FROZEN_REQUEST_RULES, /AI_RULES\.md, explicit requirements in change-request\.json, PROJECT\.md/iu);
   assert.match(FROZEN_REQUEST_RULES, /changeEvents are audit context, not actions to replay, undo or apply again/iu);
@@ -64,6 +68,37 @@ test("frozen policy v2 owns stable HTML editing rules and keeps v1 readable", ()
   assert.match(FROZEN_REQUEST_RULES, /change its authored host, configuration or script/iu);
   assert.match(FROZEN_REQUEST_RULES, /targets-plus-required-dependencies allows only their minimal direct dependencies/iu);
   assert.match(FROZEN_REQUEST_RULES, /Do not add external dependencies, tracking, network calls/iu);
+});
+
+test("retired frozen Request versions are rejected without conversion", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "request-retired-version.html");
+  const requestId = "req_retired_template_version";
+  const prepared = await value.repository.prepareRequest({
+    target: imported.target,
+    requestId,
+    attemptId: "attempt_retired_template_0001",
+    expectedSourceSha256: imported.target.sourceSha256,
+    request: requestFor("Retired template version."),
+    prompt: "# Request\n",
+  });
+  const requestPath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "requests",
+    prepared.requestId,
+    "request.json",
+  );
+  const record = await json(requestPath);
+  record.policyVersion = "1.0.0";
+  await writeFile(requestPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    value.repository.workspace({ sourcePath: imported.target.exactSourcePath }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "REQUEST_TEMPLATE_VERSION_INVALID",
+  );
+  assert.equal((await json(requestPath)).policyVersion, "1.0.0");
 });
 
 test("Request publication rechecks source bytes after freezing its input bundle", async (t) => {
@@ -154,13 +189,12 @@ test("request preparation fault injection restores one immutable active Request"
         }],
       }],
       targets: [{ targetId: "target_fault" }],
-      instructions: [{
-        instructionId: "instruction_fault",
-        text: "读取附件",
-        targetRefs: ["target_fault"],
-        attachmentRefs: ["attachment_fault"],
-      }],
     };
+    request.taskSpec = compileTaskSpec({
+      comments: request.comments,
+      targets: request.targets,
+      attachments: request.comments.flatMap((comment) => comment.attachments),
+    });
     const prompt = `# ${failpoint}\n`;
     const failing = new ProjectFileRepository({
       projectsRoot: value.projects,
@@ -284,13 +318,12 @@ test("project recovery publishes a verified staged Request after a process-like 
       }],
     }],
     targets: [{ targetId: "target_recovery" }],
-    instructions: [{
-      instructionId: "instruction_recovery",
-      text: "读取附件",
-      targetRefs: ["target_recovery"],
-      attachmentRefs: ["attachment_recovery"],
-    }],
   };
+  request.taskSpec = compileTaskSpec({
+    comments: request.comments,
+    targets: request.targets,
+    attachments: request.comments.flatMap((comment) => comment.attachments),
+  });
   const interrupted = new ProjectFileRepository({
     projectsRoot: value.projects,
     failpoint: async (name) => name === "request-published",
@@ -506,9 +539,12 @@ test("a Request freezes comments, targets and project rules alongside its exact 
     summary: "按评论更新标题",
     comments,
     changeEvents: [{ eventId: "edit_001", kind: "text", target: { targetId: "target_title" } }],
-    instructions: [{ instructionId: "instruction_001", text: "保留其他内容" }],
     targets: [{ targetId: "target_title", selector: "h1" }],
-    preserveOutsideTargets: false,
+    taskSpec: compileTaskSpec({
+      comments,
+      targets: [{ targetId: "target_title", selector: "h1" }],
+      attachments: comments.flatMap((comment) => comment.attachments),
+    }),
   };
   await assert.rejects(
     value.repository.prepareRequest({
@@ -698,12 +734,11 @@ test("attachments-only comments freeze every byte before Request authority is pu
       summary: "只根据附件完成修改",
       comments,
       targets: comments.map((comment) => comment.target),
-      instructions: comments.map((comment) => ({
-        instructionId: comment.commentId.replace("comment_", "instruction_"),
-        text: "",
-        targetRefs: [comment.target.targetId],
-        attachmentRefs: comment.attachments.map((attachment) => attachment.attachmentId),
-      })),
+      taskSpec: compileTaskSpec({
+        comments,
+        targets: comments.map((comment) => comment.target),
+        attachments: comments.flatMap((comment) => comment.attachments),
+      }),
     },
     prompt: "# 附件任务\n",
   });
@@ -835,12 +870,16 @@ test("invalid comment attachments stop before request.json and Runtime authority
             attachments: [attachment],
           }],
           targets: [{ targetId: "target_invalid" }],
-          instructions: [{
-            instructionId: "instruction_invalid",
-            text: "",
-            targetRefs: ["target_invalid"],
-            attachmentRefs: [attachmentId],
-          }],
+          taskSpec: compileTaskSpec({
+            comments: [{
+              commentId,
+              text: "",
+              target: { targetId: "target_invalid" },
+              attachments: [attachment],
+            }],
+            targets: [{ targetId: "target_invalid" }],
+            attachments: [attachment],
+          }),
         },
         prompt: "# invalid attachment\n",
       }),
@@ -920,7 +959,7 @@ test("injected provider authority can normalize a new selection without a legacy
   const repository = new ProjectFileRepository({
     projectsRoot: value.projects,
     agentDeliveryNormalizer: (input) => {
-      const delivery = normalizeAgentDelivery(input, { allowLegacy: false });
+      const delivery = normalizeAgentDelivery(input);
       if (delivery.mode === "managed-agent"
         && (delivery.selection.providerId !== "synthetic-provider"
           || delivery.selection.runtimeId !== "synthetic-runtime")) {

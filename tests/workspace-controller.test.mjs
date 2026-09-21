@@ -20,26 +20,26 @@ import {
 const SOURCE_PATH = "/tmp/workspace-controller.html";
 const NEXT_SOURCE_PATH = "/tmp/workspace-controller-next.html";
 
-test("Qoder compatibility actions stay pinned to the Qoder workflow", () => {
+test("Agent access actions stay on the generic workflow", () => {
   const source = readFileSync(
     new URL("../app/application/workspace-controller.js", import.meta.url),
     "utf8",
   );
   assert.match(
     source,
-    /refreshQoderAvailability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.refreshQoderAvailability\(\);\s+\}/u,
+    /refreshAgentAvailability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.refreshAgentAvailability\(\);\s+\}/u,
   );
   assert.match(
     source,
-    /checkQoderUsability\(\) \{\s+return this\.#requireRunWorkflow\(\)\.checkQoderUsability\(\);\s+\}/u,
+    /checkAgentUsability\(selection\) \{\s+return this\.#requireRunWorkflow\(\)\.checkAgentUsability\(selection\);\s+\}/u,
   );
   assert.match(
     source,
-    /copyQoderGuidance\(input\) \{\s+return this\.#requireRunWorkflow\(\)\.copyQoderGuidance\(input\);\s+\}/u,
+    /copyAgentGuidance\(input\) \{\s+return this\.#requireRunWorkflow\(\)\.copyAgentGuidance\(input\);\s+\}/u,
   );
   assert.match(
     source,
-    /installQoder\(\) \{\s+return this\.#requireRunWorkflow\(\)\.installQoder\(\);\s+\}/u,
+    /installAgent\(selection\) \{\s+return this\.#requireRunWorkflow\(\)\.installAgent\(selection\);\s+\}/u,
   );
   assert.match(
     source,
@@ -2233,13 +2233,13 @@ test("runs and navigation are stable capability facets over Controller authority
     requestId: activeRun.requestId,
     attemptId: activeRun.attemptId,
     status: "running",
-    visibleText: "Agent is working",
+    visibleTextUpdates: [{ id: "agent-working", sequence: 1, text: "Agent is working" }],
   });
 
   assert.equal(runs.getSnapshot().session?.activeRun, activeRun);
-  assert.equal(
-    runs.getSnapshot().session?.activeHandoff?.visibleText,
-    "Agent is working",
+  assert.deepEqual(
+    runs.getSnapshot().session?.activeHandoff?.visibleTextUpdates,
+    [{ id: "agent-working", sequence: 1, text: "Agent is working" }],
   );
   assert.equal(publications.length >= 2, true);
   assert.equal(harness.controller.runs, runs);
@@ -2460,7 +2460,23 @@ test("workspace controller aggregates and dispatches the typed PROJECT.md workfl
     harness.controller.updateProjectRules({ content: "# Updated rules" }).status,
     "succeeded",
   );
-  assert.equal((await harness.controller.saveProjectRules()).status, "succeeded");
+  const visibleScope = {
+    projectId: harness.context.projectId,
+    documentId: harness.context.documentId,
+  };
+  const wrongScope = { ...visibleScope, projectId: "project_rules_other" };
+  assert.equal(
+    harness.controller.restoreProjectRules({ scope: wrongScope }).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.controller.saveProjectRules({ scope: wrongScope })).code,
+    "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+  );
+  assert.equal(
+    (await harness.controller.saveProjectRules({ scope: visibleScope })).status,
+    "succeeded",
+  );
   assert.equal(harness.persisted, "# Updated rules");
   assert.equal(
     snapshots.at(-1)?.projectRules?.savedContent,
@@ -2877,12 +2893,12 @@ test("shell omits comment drafts while saved content and composer structure rema
   assert.equal(afterDispose, 0);
 });
 
-test("Agent text, clock and bytes notify only the run facet; phase, error and lifecycle notify shell", (t) => {
+test("Agent narration blocks, clock and bytes notify only the run facet; phase, error and lifecycle notify shell", (t) => {
   const h = createProjectRulesHarness();
   t.after(() => h.controller.dispose());
   const run = { sourcePath: SOURCE_PATH, requestId: "request_shell", attemptId: "attempt_shell", status: "processing" };
   h.runSession.setActiveRun(run);
-  const handoff = { ...run, mode: "managed-agent", status: "running", phase: "agent-message", visibleText: "first" };
+  const handoff = { ...run, mode: "managed-agent", status: "running", phase: "agent-message", visibleTextUpdates: [{ id: "message", sequence: 0, text: "first" }] };
   h.runSession.publishHandoff(handoff);
   const initial = h.controller.shell.getSnapshot();
   let shellUpdates = 0;
@@ -2890,14 +2906,18 @@ test("Agent text, clock and bytes notify only the run facet; phase, error and li
   h.controller.shell.subscribe(() => { shellUpdates += 1; });
   h.controller.runs.subscribe(() => { runUpdates += 1; });
   for (let index = 1; index <= 40; index += 1) {
-    h.runSession.publishHandoff({ ...handoff, visibleText: `message ${index}`, visibleTextUpdates: [{ id: "message", text: `message ${index}` }], receivedBytes: index, lastActivityAt: String(index), updatedAt: String(index) });
+    h.runSession.publishHandoff({ ...handoff, visibleTextUpdates: [{ id: "message", sequence: index, text: `message ${index}` }], receivedBytes: index, lastActivityAt: String(index), updatedAt: String(index) });
   }
   assert.equal(runUpdates, 40);
   assert.equal(shellUpdates, 0);
   assert.equal(h.controller.shell.getSnapshot(), initial);
-  assert.equal("visibleText" in initial.runSession.activeHandoff, false);
+  assert.equal("visibleTextUpdates" in initial.runSession.activeHandoff, false);
   assert.equal("receivedBytes" in initial.runSession.activeHandoff, false);
-  assert.equal(h.controller.runs.getSnapshot().session.activeHandoff.visibleText, "message 40");
+  assert.deepEqual(h.controller.runs.getSnapshot().session.activeHandoff.visibleTextUpdates, [{
+    id: "message",
+    sequence: 40,
+    text: "message 40",
+  }]);
   h.runSession.publishHandoff({ ...handoff, phase: "validating" });
   assert.equal(shellUpdates, 1);
   h.runSession.publishHandoff({ ...handoff, status: "failed", errorCode: "AGENT_FAILED", errorMessage: "failed" });

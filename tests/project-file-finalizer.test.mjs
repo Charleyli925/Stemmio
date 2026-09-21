@@ -16,6 +16,7 @@ import {
   finalizeProjectFileAttempt,
 } from "../bridge/project-file-finalizer.mjs";
 import { ProjectFileRepository } from "../bridge/project-file-repository.mjs";
+import { compileTaskSpec } from "../shared/task-spec.mjs";
 
 function html(label) {
   return `<!doctype html><html data-stemmio-id="sm1_11111111111141118111111111111111"><head data-stemmio-id="sm1_22222222222242229222222222222222"><title data-stemmio-id="sm1_3333333333334333a333333333333333">${label}</title></head><body data-stemmio-id="sm1_4444444444444444b444444444444444"><h1 data-stemmio-id="sm1_55555555555545558555555555555555">${label}</h1></body></html>`;
@@ -23,17 +24,20 @@ function html(label) {
 
 function requestFor(summary) {
   const target = { targetId: "target_test" };
+  const comments = [{
+    commentId: "comment_test",
+    text: summary,
+    target,
+    attachments: [],
+  }];
+  const targets = [target];
   return {
     freezeCutoffRevision: 0,
     summary,
-    comments: [{
-      commentId: "comment_test",
-      text: summary,
-      target,
-      attachments: [],
-    }],
+    comments,
     changeEvents: [],
-    targets: [target],
+    targets,
+    taskSpec: compileTaskSpec({ comments, targets }),
   };
 }
 

@@ -53,6 +53,29 @@ test("real HTML observer changes select the paired Browser trust probe", () => {
   assert.ok(plan.selectedNodeTests.includes("tests/real-html-stage-contracts.test.mjs"));
 });
 
+test("the shared semantic structure planner routes directly to source and Repository proofs", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["shared/semantic-structure-plan.mjs"],
+  });
+  for (const nodeTest of [
+    "tests/source-patch-engine.test.mjs",
+    "tests/source-structure-edit.test.mjs",
+    "tests/semantic-operation-kernel.test.mjs",
+    "tests/project-semantic-identity-save.test.mjs",
+  ]) assert.ok(plan.selectedNodeTests.includes(nodeTest), nodeTest);
+  assert.deepEqual(suiteIds(plan), [
+    "typecheck",
+    "lint",
+    "node-targeted",
+    "build-web",
+    "browser-editing-smoke",
+    "build-desktop",
+    "electron-editing-smoke",
+  ]);
+});
+
 test("browser-open workflow changes select its application, Desktop and presentation proofs", () => {
   const plan = selectGatePlan({
     map,
@@ -248,7 +271,6 @@ const TASK_OWNER_CASES = [
     nodeTests: [
       "tests/durable-working-copy-binding.test.mjs",
       "tests/history-creation.test.mjs",
-      "tests/legacy-history-activation.test.mjs",
       "tests/project-ai-task-projection.test.mjs",
       "tests/project-candidate-promotion.test.mjs",
       "tests/project-catalog-readonly.test.mjs",
@@ -370,6 +392,33 @@ test("SourceReceipt implementation type checks keep their runtime owner coverage
     assert.ok(suiteIds(plan).includes("typecheck"), file);
     assert.ok(plan.selectedNodeTests.includes("tests/document-session.test.mjs"), file);
   }
+});
+
+test("the checked preference interpreter selects its producer and direct consumers", () => {
+  for (const file of [
+    "app/application/workspace-preference-mutation-outcome.js",
+    "app/application/workspace-preference-mutation-outcome.d.ts",
+    "scripts/verify-workspace-preferences-typecheck.mjs",
+    "tsconfig.workspace-preferences.json",
+  ]) {
+    const plan = selectGatePlan({ map, lane: "task", changedFiles: [file] });
+    assert.ok(suiteIds(plan).includes("typecheck"), file);
+    for (const owner of [
+      "tests/workspace-preferences-typecheck-verifier.test.mjs",
+      "tests/run-workflow.test.mjs",
+      "tests/agent-provider-catalog.test.mjs",
+    ]) assert.ok(plan.selectedNodeTests.includes(owner), `${file}: ${owner}`);
+  }
+});
+
+test("comment model changes select the direct target-rebind counter oracle", () => {
+  const plan = selectGatePlan({
+    map,
+    lane: "task",
+    changedFiles: ["app/workbench/comment-model.ts"],
+  });
+  assert.ok(plan.matchedOwners.includes("comment-model"));
+  assert.ok(plan.selectedNodeTests.includes("tests/comment-workflow.test.mjs"));
 });
 
 test("owner rules select only the direct regression coverage for representative files", () => {
@@ -723,10 +772,22 @@ test("documentation-only changes produce an explicit no-test plan", () => {
   const plan = selectGatePlan({
     map,
     lane: "task",
-    changedFiles: ["README.md", "tests/TEST_STRATEGY.md"],
+    changedFiles: ["README.md", "docs/MVP_PRD.md"],
   });
   assert.deepEqual(plan.suites, []);
   assert.deepEqual(plan.selectedNodeTests, []);
+});
+
+test("workflow entry documents select their reference contract", () => {
+  for (const file of ["tests/TEST_STRATEGY.md", ".github/PULL_REQUEST_TEMPLATE.md"]) {
+    const plan = selectGatePlan({ map, lane: "task", changedFiles: [file] });
+    assert.deepEqual(plan.selectedNodeTests, ["tests/workflow-doc-contract.test.mjs"], file);
+  }
+  const agents = selectGatePlan({ map, lane: "task", changedFiles: ["AGENTS.md"] });
+  assert.deepEqual(
+    [...agents.selectedNodeTests].sort(),
+    ["tests/task-workflow.test.mjs", "tests/workflow-doc-contract.test.mjs"],
+  );
 });
 
 test("every CI Health workflow input selects its ownership coverage", () => {
@@ -891,7 +952,7 @@ test("Qoder ACP transport changes select Qoder and ACP owners without the packag
   const plan = selectGatePlan({
     map,
     lane: "task",
-    changedFiles: ["bridge/qoder-acp-client.mjs"],
+    changedFiles: ["bridge/agent/runtimes/acp-process.mjs"],
   });
   assert.deepEqual(suiteIds(plan), [
     "typecheck",
@@ -901,7 +962,7 @@ test("Qoder ACP transport changes select Qoder and ACP owners without the packag
     "ai-provider-smoke",
   ]);
   assert.deepEqual(plan.selectedNodeTests, [
-    "tests/agent-provider-contract.test.mjs",
+    "tests/acp-runtime.test.mjs",
     "tests/qoder-acp-spike-client.test.mjs",
   ]);
   assert.equal(plan.selectedNodeTests.includes("tests/desktop-package.test.mjs"), false);

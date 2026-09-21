@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { CommentSession } from "../app/application/comment-session.js";
-import { DocumentSession } from "../app/application/document-session.js";
+import { DocumentSession, sameSourceReceipt } from "../app/application/document-session.js";
 import { DocumentWorkflow } from "../app/application/document-workflow.js";
 import { DrainCoordinator } from "../app/application/drain-coordinator.js";
 import { ExternalFileOpenSession } from "../app/application/external-file-open-session.js";
@@ -57,6 +57,9 @@ function workspacePayload(sourcePath, html) {
     documentId: `document_${id}`,
     sourcePath,
     currentHtmlSha256: sha256(html),
+    sourceSha256: sha256(html),
+    content: html,
+    lastModifiedAt: "2026-08-11T00:00:00.000Z",
     project: { displayName: id },
     paths: { projectRecords: `/tmp/Stemmio/${id}` },
     versions: [{ id: `version_${id}` }],
@@ -217,6 +220,33 @@ function createHarness({
         : sourcePath === B_PATH ? B_HTML
           : OLD_HTML;
       return workspacePayload(sourcePath, html);
+    },
+    async workspaceEnvelope(sourcePath, options = {}) {
+      const state = await this.workspace(sourcePath, options);
+      const operationId = String(options.operationId || "");
+      const snapshotRevision = `${operationId}:${state.projectId}:${state.documentId}:${state.sourceSha256}`;
+      const {
+        paths = null,
+        project = null,
+        versions = [],
+        performanceTiming = null,
+        ...core
+      } = state;
+      return {
+        ok: true,
+        workspaceEnvelopeVersion: 1,
+        operationId,
+        snapshotRevision,
+        core,
+        supplemental: {
+          operationId,
+          snapshotRevision,
+          paths,
+          project,
+          versions,
+        },
+        performanceTiming,
+      };
     },
     async source(sourcePath) {
       calls.push(["source", sourcePath]);
@@ -616,6 +646,107 @@ test("startup publishes the initial active project without fencing a nonexistent
   assert.equal(harness.projectSession.context.projectId, `project_${slug(A_PATH)}`);
 });
 
+test("registered surface resolution is read-only and returns an exact detached context", async (t) => {
+  let reads = 0;
+  const aliasedSourcePath = `/private${A_PATH}`;
+  const target = {
+    projectId: "project_surface",
+    documentId: "doc_surface",
+    projectRootPath: "/tmp/project-surface",
+    targetKind: "working-copy",
+    workingCopyId: "work_surface",
+    versionId: "ver_0001",
+    exactSourcePath: A_PATH,
+    sourceSha256: sha256(A_HTML),
+  };
+  const harness = createHarness({
+    projectOpen: {
+      async readRegisteredProjection(projectId) {
+        reads += 1;
+        return {
+          name: "Surface",
+          html: A_HTML,
+          projectId,
+          documentId: target.documentId,
+          sourcePath: aliasedSourcePath,
+          sha256: sha256(A_HTML),
+          openTarget: target,
+          historyCreation: {
+            operationId: "history_surface_0001",
+            versionId: "ver_0002",
+          },
+        };
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+  const before = harness.projectSession.snapshot;
+
+  const outcome = await harness.workflow.resolveRegisteredSurfaceTarget({
+    projectId: target.projectId,
+    documentId: target.documentId,
+    transactionId: "navigation-surface",
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.context.surfaceContextId.includes("navigation-surface"), true);
+  assert.equal(outcome.value.context.sourceSha256, sha256(A_HTML));
+  assert.equal(outcome.value.context.sourcePath, aliasedSourcePath);
+  assert.equal(outcome.value.context.epoch, 0);
+  assert.equal(outcome.value.context.sessionEpoch, 0);
+  assert.deepEqual(outcome.value.historyCreation, {
+    operationId: "history_surface_0001",
+    versionId: "ver_0002",
+  });
+  assert.deepEqual(harness.projectSession.snapshot, before);
+  assert.equal(reads, 1);
+});
+
+test("accepted project hydration reuses its first authority receipt", async (t) => {
+  const pendingWorkspace = deferred();
+  const openTarget = {
+    projectId: "project_a",
+    documentId: "doc_a",
+    projectRootPath: "/tmp/project-a",
+    targetKind: "working-copy",
+    workingCopyId: "work_project_a",
+    versionId: "ver_0001",
+    exactSourcePath: A_PATH,
+    sourceSha256: sha256(A_HTML),
+  };
+  const harness = createHarness({
+    bridge: { workspace: () => pendingWorkspace.promise },
+  });
+  t.after(() => harness.workflow.dispose());
+  const accepted = harness.workflow.acceptProject({
+    name: "A",
+    projectId: "project_a",
+    documentId: "doc_a",
+    sourcePath: A_PATH,
+    html: A_HTML,
+    sha256: sha256(A_HTML),
+    openTarget,
+  }, { kind: "registered" });
+  assert.equal(accepted.status, "succeeded");
+  await waitFor(() => harness.documentSession.html === A_HTML);
+  const firstReceipt = harness.documentSession.sourceReceipt;
+  const firstGeneration = harness.documentSession.canvasGeneration;
+  pendingWorkspace.resolve({
+    ...workspacePayload(A_PATH, A_HTML),
+    projectId: "project_a",
+    documentId: "doc_a",
+    openTarget,
+  });
+  await waitFor(() => harness.workflow.getSnapshot().hydration.phase === "idle");
+
+  assert.equal(
+    sameSourceReceipt(harness.documentSession.sourceReceipt, firstReceipt),
+    true,
+    JSON.stringify({ firstReceipt, finalReceipt: harness.documentSession.sourceReceipt }),
+  );
+  assert.equal(harness.documentSession.canvasGeneration, firstGeneration);
+});
+
 test("a clean exact Canvas validation lease skips the leave-side drain", async (t) => {
   const harness = createHarness();
   t.after(() => harness.workflow.dispose());
@@ -868,6 +999,11 @@ test("a failed source write can close after recovery evidence without claiming s
       canProtectForDetach() { return true; },
       hasVerifiedProtectionEvidence({ revision } = {}) {
         return checkpointVerified && revision === 1;
+      },
+      verifiedProtectionEvidence({ revision } = {}) {
+        return checkpointVerified && revision === 1
+          ? { kind: "recoveryVerified", revision, htmlSha256: sha256(OLD_HTML) }
+          : null;
       },
       async protectForDetach() {
         checkpointVerified = true;

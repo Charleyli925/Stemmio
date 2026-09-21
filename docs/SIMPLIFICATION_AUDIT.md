@@ -18,7 +18,7 @@ Ask the requester, or default to a full pass over these hot spots (ordered by ex
 
 | Area | What to look for |
 | --- | --- |
-| `app/workbench.tsx` and `app/workbench/` | God-file growth, effects/state that belong in `app/application/` per `docs/STATE_OWNERSHIP.md`; cross-check against `docs/WORKBENCH_ORCHESTRATION_REFACTOR_PLAN.md` before proposing anything already planned |
+| `app/workbench.tsx` and `app/workbench/` | God-file growth, effects/state that belong in `app/application/` per `docs/STATE_OWNERSHIP.md`; cross-check the current architecture map, ownership, contract and living ADR index before proposing work. `docs/WORKBENCH_ORCHESTRATION_REFACTOR_PLAN.md` is historical rationale and known-risk context, not a pending-plan source |
 | `scripts/` | Scripts not referenced by any `package.json` script, CI workflow, or other script; single-use scripts whose purpose has expired |
 | `scripts/check-architecture.mjs` | String/substring assertions validating runtime coordination (`docs/ARCHITECTURE_CONTRACT.md` reserves source-string tests for packaging/dependency/security only) |
 | `shared/` vs `scripts/` vs `desktop/` | Same-named or near-duplicate modules — verify re-export vs true duplicate before flagging |
@@ -40,18 +40,23 @@ rg -o '`[a-zA-Z0-9_./-]+\.(mjs|tsx?|json)`' docs/ -N | sort -u   # then spot-che
 # chain-of-thought leakage / change-narrative in docs (see categories below)
 rg -n -i "we (tried|initially|then decided)|previously" docs/
 
-# dead exports (optional, one-off)
-npx --yes knip 2>/dev/null || echo "knip unavailable; fall back to rg per-export"
+# dead exports (optional, one-off): only with a tool the repository already
+# provides through a pinned dependency, never a temporary download
+npx --no-install knip 2>/dev/null || echo "knip unavailable; fall back to rg per-export"
 ```
+
+A static scan is a lead, not a verdict: "no reference found" never becomes
+"safe to delete" on its own. Confirm the consumer question below before a
+finding enters the proposal.
 
 ### Step 3: Verify
 
 Every finding must survive verification before entering the proposal — no speculative entries:
 
-- **Dead code**: confirm zero references including dynamic ones (`rg` for the bare name, not just import statements; check CI workflows in `.github/workflows/`).
+- **Dead code**: confirm zero references including dynamic ones (`rg` for the bare name, not just import statements; check CI workflows in `.github/workflows/`). Continue past static search into dynamic entries, configuration, persisted data formats, schema members and explicit external promises; only a real consumer removes an item from the zero-reference result.
 - **Duplication**: diff the two implementations; if they diverge, the finding is "divergent duplicate" (higher risk, higher value).
 - **Doc drift**: quote the documentation sentence and the contradicting code, both with file paths.
-- **Over-design**: identify the concrete cost (lines maintained, gate friction, cognitive load), not aesthetic preference.
+- **Over-design**: identify the concrete cost (lines maintained, callers, tests, documentation, dependencies, gate friction, cognitive load), not aesthetic preference. Net maintenance cost decides, not the number of deleted lines.
 
 ### Step 4: Write proposal
 

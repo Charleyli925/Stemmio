@@ -4,6 +4,7 @@ import type {
   AgentSelection,
 } from "../domain/agent-provider-state.js";
 import type { BridgeClient } from "./bridge-client.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 
 export type AgentProviderPresentation = Readonly<{
   displayName: string;
@@ -62,8 +63,12 @@ export type AgentProviderEntry = AgentProviderDescriptor & Readonly<{
   }> | null;
   lastOperation?: AgentProviderEntry["activeOperation"];
   credentialPersist?: Readonly<{
-    status: "pending" | "saved" | "failed" | "skipped";
+    status: "pending" | "saved" | "failed" | "unreadable" | "unavailable" | "rejected" | "unknown" | "skipped" | "missing" | "superseded";
+    operationKind: "startup" | "persist" | "clear" | null;
     reason: string | null;
+    operationId: string | null;
+    recordId: string | null;
+    code: string | null;
   }> | null;
   connection?: Readonly<{
     vendorId?: string;
@@ -132,6 +137,7 @@ export function agentProviderCardsFromCatalog(snapshot: AgentCatalogSnapshot | n
   }>[];
   credentialConfigured: boolean;
   connection: AgentProviderEntry["connection"];
+  credentialPersist: AgentProviderEntry["credentialPersist"];
   loginUrlPresent?: boolean;
   loginOpenError?: string | null;
   activeOperation?: AgentProviderEntry["activeOperation"];
@@ -147,20 +153,21 @@ export class AgentCatalogState {
     clock?: { now(): number };
     providers?: readonly AgentProviderDescriptor[];
     selected?: AgentSelection | null;
-    preferencesPort?: import("./workspace-preferences-session.js").WorkspacePreferencesPort | null;
-    credentialStatusPort?: (() => Promise<{
-      remembered?: boolean;
-      unreadable?: boolean;
-      reconnectRequired?: boolean;
-      reason?: string;
-    }>) | null;
+    configurationPreferencesPort?: Readonly<{
+      getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
+      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      commitAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent: Readonly<{ intentId: string; isCurrent(): boolean }>,
+      ): Promise<WorkspacePreferenceMutationResult>;
+    }> | null;
   });
   getSnapshot(): AgentCatalogSnapshot;
   subscribe(listener: (snapshot: AgentCatalogSnapshot) => void): () => void;
   dispose(): void;
   select(selection: AgentSelection): AgentSelection;
   configureProvider(selection: AgentSelection): AgentSelection;
-  saveConfiguration(): Promise<void>;
+  saveConfiguration(intent?: Readonly<{ intentId: string; isCurrent(): boolean }> | null): Promise<void>;
   queuePendingDefault(selection: AgentSelection): AgentSelection;
   pendingDefault(): AgentSelection | null;
   peekPendingDefaultIntent(): Readonly<{
@@ -172,29 +179,25 @@ export class AgentCatalogState {
   readyPendingDefault(): AgentSelection | null;
   clearPendingDefault(expectedIntentId?: string): AgentSelection | null;
   commitPendingDefault(expectedIntentId: string): AgentSelection | null;
-  holdRememberedCredential(providerId: string, payload: Readonly<{
-    apiKey: string;
-    vendorId?: string | null;
-    baseUrl?: string | null;
-    modelId?: string | null;
-  }>): Readonly<{ status: string; reason: string | null }> | null;
-  noteCredentialPersist(providerId: string, result: Readonly<{
+  publishCredentialPersist(providerId: string, result: Readonly<{
     status: string;
+    operationKind?: "startup" | "persist" | "clear" | null;
     reason?: string | null;
+    operationId?: string | null;
+    recordId?: string | null;
+    code?: string | null;
   }>): Readonly<{ status: string; reason: string | null }> | null;
   credentialPersist(providerId: string): Readonly<{
     status: string;
+    operationKind: "startup" | "persist" | "clear" | null;
     reason: string | null;
+    operationId: string | null;
+    recordId: string | null;
+    code: string | null;
   }> | null;
-  retryRememberedCredential(
-    providerId: string,
-    persist: (held: Readonly<{
-      apiKey: string;
-      vendorId: string | null;
-      baseUrl: string | null;
-      modelId: string | null;
-    }>) => Promise<{ ok?: boolean; code?: string }>,
-  ): Promise<Readonly<{ status: string; reason: string | null }> | null>;
+  publishRestoredCredentialConnection(providerId: string, status?: Readonly<{
+    vendorId?: string | null;
+  }>): AgentProviderEntry["connection"];
   applyDisabledProviderIds(ids?: readonly string[]): void;
   selectModel(modelId: string | null, expectedSelection?: AgentSelection | null): AgentSelection | null;
   selectReasoning(reasoning: string | null, expectedSelection?: AgentSelection | null): AgentSelection | null;
@@ -202,9 +205,19 @@ export class AgentCatalogState {
   connectWithApiKey(
     selection: AgentSelection,
     apiKey: string,
-    extras?: Readonly<{ vendorId?: string; baseUrl?: string; modelId?: string; remember?: boolean }>,
+    extras?: Readonly<{
+      vendorId?: string;
+      baseUrl?: string;
+      modelId?: string;
+      remember?: boolean;
+      intentId?: string;
+      isCurrent?(): boolean;
+    }>,
   ): Promise<unknown>;
-  disconnectApiKey(selection?: AgentSelection | null): Promise<unknown>;
+  disconnectApiKey(
+    selection?: AgentSelection | null,
+    options?: Readonly<{ isCurrent?(): boolean }>,
+  ): Promise<unknown>;
   freezeSelected(): AgentSelection | null;
   displaySelection(): AgentSelection | null;
   freezeProviderSelection(providerId: string): AgentSelection | null;

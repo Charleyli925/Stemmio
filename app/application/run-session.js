@@ -173,7 +173,6 @@ function recoveredAgentHandoff(run) {
     runtimeId: delivery.selection.runtimeId,
     agentName: null,
     agentVersion: null,
-    visibleText: "",
     visibleTextUpdates: [],
     textTruncated: false,
     startedAt: null,

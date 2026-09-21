@@ -3667,3 +3667,50 @@ private-corpus coverage remains outside this package.
 - 可见结果：应用命令分开报告授权、源码接纳与页面恢复。源码已接纳但 Canvas 恢复失败时，仍使用既有恢复入口，不回滚字节、不再次读盘或要求用户重新授权。
 - 安全边界：外部预览接受绑定预览身份与 Hash；磁盘变化后拒绝原回执。迟到的旧操作 completion/finally 不会改动或解锁新页。
 - Evidence boundary: 本项只新增纯 Node 操作序列与 Repository CAS 证据，并复用已有 Electron 重载、IME、显式退出和冲突采用规格；不把 Node 结果写成真实 Electron、私有 HTML 语料、打包应用或已安装应用验收。
+
+## 2026-09-18 — Agent 凭据单一操作意图与结果解释
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. 没有新增控件、弹窗、布局、颜色或动效；继续复用设置页既有连接、保存失败、状态未确认与重试入口。
+- 可见结果：`remembered` 不再覆盖 unreadable、unavailable、rejected 或 unknown；只有明确 saved、相同 operation ID 与合法 record ID 才显示已保存。启动查询、连接、更换、断开和移除由 provider 级代次围栏，迟到结果不会把已经移除的 Key 或旧默认服务重新显示为成功。
+- 恢复边界：clear 回执丢失后保留原 operation ID，设置页继续显示“确认移除结果”；再次移除先查询并收敛同一操作。如果期间已保存新 Key，只有旧操作终态后，该次明确移除才会为新 record 创建 clear；unknown/unreadable/unavailable 不会发出新变更。
+- 偏好边界：断开/重连的 disabled 偏好与同一 provider 凭据 intent 共用围栏；迟到写入在新连接或销毁后恢复原值，销毁后只允许已启动操作完成预定 rollback，不再发布 UI 或覆盖新 Catalog 归属。
+- 安全边界：实现只及时释放已经不再需要的 JS 引用，不宣称可以擦除 JavaScript 内存。Main 的 v2 receipt、recordId、CAS clear、tombstone、serialization 与 v1 读取兼容未改变。
+- Evidence boundary: 当前证据是纯解释器类型检查、合成 Node 顺序测试与 Settings 生产 action gate 可执行测试；没有改视觉样式，因此不需要截图。真实 provider、打包应用、已安装应用与私有语料验收均未执行。
+
+## 2026-09-19 — 独立规则与历史页面 P1 交接修复
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、颜色、间距或动效；保留现有规则编辑器与历史预览，只修正 P1 级页面/会话交接。
+- 规则失败边界：跨项目规则读取先形成一次性准备结果，目标标签提交后才发布同一项目的编辑会话。读取或标签提交失败时继续显示原标签、原内容和原保存目标；编辑、还原、保存与重试还会核对可见规则标签身份。
+- 历史独立性：历史预览由当前可见历史标签与自身快照挂载，不要求当前稿 Runtime；仅有历史标签的会话可重启恢复。
+- 范围停止：跨项目历史评论仍可能从当前 Runtime 的 Version 列表反查；按用户要求登记为 P2 后续项，本次不修改其数据源、标签投影或评论布局。
+- 实际证据：类型与架构检查通过；定向 Node 测试 127/127、编辑门禁 885/885 通过。完成门禁 `2026-09-19T16-01-17-781Z-task` 通过 Node 1525/1525、合同 27/27、Browser 70/70、Electron 102/102 与 AI canary 19/19，全部执行且零失败、零跳过。Electron 包含 A 规则到 B 规则读取失败后继续保存 A，以及关闭全部当前稿后打开历史并重启恢复。
+- Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是 Developer Preview、已安装应用或用户私有 HTML 语料验收；没有视觉样式变化，因此不制造截图差异结论。
+
+final result: passed for the scoped P1 page/session identity contract.
+
+## 2026-09-20 — 交接、标签创建与 Agent 旁白合同收敛
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. 没有新增控件、文案、颜色、间距、布局或动效；继续复用现有缓存页、Canvas、标签与 Agent 旁白表面。
+- 可见连续性：静态缓存 iframe 在自身 `onLoad` 直接报告包含 tab、源码 Hash 与本次导航 handoff 身份的 ready 事件。交接所有者只接受当前精确候选，旧 iframe 即使 HTML Hash 相同也不能在新导航轮次完成交接；诊断 `data-*` 仍保留，但不再驱动生产控制链。
+- 旁白表示：侧栏以稳定 ID、有序公开旁白块为唯一输入；复制或展示全文时才以明确的双换行规则派生字符串。原始碎片仍先按消息组装、再脱敏，恢复、实时旁白和持久会话记录仍各自保持生命周期边界。
+- 实际 Electron 证据：在重建源码的合成页面上，快速 A→B→C（含同 Hash 重返的不同 handoff 身份）、Canvas 先于被延迟缓存 iframe 到达、缓存逐出后滚动位置与 Preview 恢复、以及多 Registry 标签冷启动恢复共 4 个定向场景均通过。该行为改变未引入视觉样式，静态截图不会增加对交接时序的有效证据。
+- 确定性合同证据：标签创建命令直接返回创建或复用目标；SourceReceipt 与 Preferences 的实现级类型变异检查继续分别覆盖原有负例，并共享执行基础设施而未降低断言。
+- Evidence boundary: 此处 Electron 用例是隔离工作树中的合成 HTML 行为证据，不是用户私有 HTML 语料、Developer Preview、已打包或已安装应用验收；也不宣称已量化减少闪烁或耗时。
+
+final result: scoped continuity and narration-contract evidence recorded; final task gate result is tracked separately by the delivery workflow.
+
+## 2026-09-20 — 缓存交接物理实例连续性修复
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、颜色、间距、布局或动效；修复的是缓存面与 Canvas 接管之间已有的可见性和可操作性连续性。
+- 可见结果：已接受的 B 静态 iframe 在 C 候选尚未 ready 时继续显示，Canvas 同时保持 `inert`；C 的 iframe 保持隐藏。B 从候选变为保留展示面时不重挂载；同一 tab、同一 Hash 的下一轮导航创建独立的隐藏 iframe，不继承旧 iframe 的 ready 状态。
+- 迟到边界：C 的 Canvas 完成并释放缓存面后，再实际调用保存的 C 静态 `onLoad` 回调，不会重新显示遮罩或重新使 Canvas `inert`。Canvas 成功或失败必须属于当前 generation；导航提供精确 SourceReceipt 时还必须匹配该回执。没有 SourceReceipt 的已打开标签路径仍依赖 `DocumentSession` 已回执围栏的当前 Canvas authority，不能由旧画面的相同 Hash 提前收口。
+- 实际 Electron 证据：重建源码的两条合成 Electron 过程用例合并通过（2/2）：B → C 的旧展示 iframe 身份保持、C 候选隐藏、Canvas 接管后迟到 ready 被拒绝；以及经 A 返回 B 的同 Hash 重访中，旧 B 与新 B 同时挂载为两个不同物理 iframe、只有旧 B 可见。测试只在测试页面暂缓 Canvas 确认，以观察真实中间交接状态；未改生产控制链。
+- Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是用户私有 HTML 语料、Developer Preview、已打包或已安装应用验收；不据此量化闪烁、耗时或内存改善。
+
+final result: passed for the scoped physical-handoff continuity contract; final task-gate evidence is tracked separately by the delivery workflow.
+
+## 2026-09-20 — Private-source distribution entry points
+
+- Mode: DESIGN CHANGE. About no longer presents the private source repository as a public destination. Its existing GitHub entry now opens the public Stemmio Releases channel and describes the available user outcomes: downloads, release notes and product support. Settings remains the sole surface for update controls.
+- Interaction evidence: rebuilt-source Electron execution passed 1/1 for `automatic update actions keep the sidebar product geometry and split About from Settings`. It opens the About path from the normal workbench, verifies the public-distribution link and that Agent/update controls are absent there, then verifies that update controls remain in Settings without changing sidebar geometry.
+- Evidence boundary: this validates the migrated in-app path and copy in an isolated Electron run. It does not claim that a source-repository visibility switch, a signed transition release, anonymous distribution access, or an installed-app update has completed.

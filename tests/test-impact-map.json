@@ -597,6 +597,24 @@
       ]
     },
     {
+      "id": "workflow-entry-contract",
+      "patterns": [
+        "^\\.agents/skills/",
+        "^\\.qoder/skills/",
+        "^\\.codex/agents/",
+        "^\\.github/PULL_REQUEST_TEMPLATE\\.md$",
+        "^AGENTS\\.md$",
+        "^CONTRIBUTING\\.md$",
+        "^docs/(?:CODEX_WORKFLOW|CODEX_SUBAGENT_ROUTING_WORKSHEET|DEVELOPMENT|ENGINEERING_STANDARDS|GIT_WORKFLOW|SIMPLIFICATION_AUDIT|ADR_CURATION)\\.md$",
+        "^tests/TEST_STRATEGY\\.md$",
+        "^tests/workflow-doc-contract\\.test\\.mjs$"
+      ],
+      "suites": [],
+      "nodeTests": [
+        "tests/workflow-doc-contract.test.mjs"
+      ]
+    },
+    {
       "id": "bridge-client",
       "patterns": [
         "^app/application/bridge-client\\.(?:js|d\\.ts)$"
@@ -618,6 +636,18 @@
       ],
       "nodeTests": [
         "tests/comment-session.test.mjs"
+      ]
+    },
+    {
+      "id": "comment-model",
+      "patterns": [
+        "^app/workbench/comment-model\\.ts$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/comment-workflow.test.mjs"
       ]
     },
     {
@@ -665,7 +695,7 @@
     {
       "id": "document-session",
       "patterns": [
-        "^app/application/(?:document-session|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
+        "^app/application/(?:document-session(?:-contract)?|source-receipt(?:-contract)?)\\.(?:js|d\\.ts)$",
         "^scripts/verify-source-receipt-typecheck\\.mjs$",
         "^tests/source-receipt-contract\\.typecheck\\.ts$",
         "^tests/source-receipt-typecheck-verifier\\.test\\.mjs$",
@@ -686,6 +716,19 @@
         "tests/run-workflow.test.mjs",
         "tests/workspace-controller.test.mjs",
         "tests/source-receipt-typecheck-verifier.test.mjs"
+      ]
+    },
+    {
+      "id": "typecheck-mutation-verifier",
+      "patterns": [
+        "^scripts/typecheck-mutation-verifier\\.mjs$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/source-receipt-typecheck-verifier.test.mjs",
+        "tests/workspace-preferences-typecheck-verifier.test.mjs"
       ]
     },
     {
@@ -772,6 +815,7 @@
     {
       "id": "project-surface-boundary",
       "patterns": [
+        "^app/application/project-surface-context\\.(?:js|d\\.ts)$",
         "^app/workbench/(?:workbench-sidebar-container|project-version-tree|project-sidebar-state)\\.(?:d\\.ts|js|tsx|ts)$"
       ],
       "suites": [
@@ -781,6 +825,9 @@
       "nodeTests": [
         "tests/project-rules-session.test.mjs",
         "tests/project-rules-workflow.test.mjs",
+        "tests/project-workflow.test.mjs",
+        "tests/version-workflow.test.mjs",
+        "tests/workbench-navigation-workflow.test.mjs",
         "tests/workspace-controller.test.mjs",
         "tests/project-sidebar-state.test.mjs"
       ]
@@ -792,6 +839,7 @@
         "^app/application/document-surface-cache-session\\.(?:js|d\\.ts)$",
         "^app/application/browser-document-session\\.(?:js|d\\.ts)$",
         "^app/workbench/(?:WorkbenchChrome|WorkbenchDocumentSurfaceCache|WorkbenchActiveDocumentCanvas|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
+        "^app/components/HtmlDisplaySurface\\.tsx$",
         "^app/workbench/workbench-document-surface-cache\\.module\\.css$",
         "^desktop/workbench-tabs-state\\.mjs$",
         "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$",
@@ -899,7 +947,10 @@
       "id": "run-workflow",
       "patterns": [
         "^app/application/run-workflow(?:-codecs)?\\.(?:js|d\\.ts)$",
+        "^app/application/agent-credential-operation(?:-contract)?\\.(?:js|d\\.ts)$",
         "^app/application/run/(?:submit-plan|text-locator-validation)\\.(?:js|d\\.ts)$",
+        "^tests/agent-credential-operation-contract\\.typecheck\\.ts$",
+        "^tsconfig\\.agent-credential-operation\\.json$",
         "^tests/(?:run-workflow|text-locator-validation)\\.test\\.mjs$",
         "^tests/run-submit-plan\\.test\\.mjs$"
       ],
@@ -1011,7 +1062,9 @@
         "^bridge/conversation-repository\\.mjs$",
         "^bridge/project-file-repository/submission\\.mjs$",
         "^tests/submission-noop-write\\.test\\.mjs$",
-        "^schemas/conversation(?:-index|-draft)?\\.v[1-3]\\.schema\\.json$"
+        "^schemas/conversation\\.v3\\.schema\\.json$",
+        "^schemas/conversation-index\\.v1\\.schema\\.json$",
+        "^schemas/conversation-draft\\.v2\\.schema\\.json$"
       ],
       "suites": [],
       "nodeTests": [
@@ -1145,6 +1198,7 @@
         "^app/components/html-canvas-source-commands\\.(?:js|d\\.ts)$",
         "^shared/stemmio-element-identity\\.mjs$",
         "^shared/semantic-identity-delta\\.mjs$",
+        "^shared/semantic-structure-plan\\.mjs$",
         "^schemas/(?:stemmio-element-identity|semantic-operation)\\.v1\\.schema\\.json$",
         "^scripts/(?:source-index|target-resolver)\\.mjs$"
       ],
@@ -1686,6 +1740,24 @@
       ]
     },
     {
+      "id": "workspace-preferences-contract",
+      "patterns": [
+        "^app/application/workspace-preference-mutation-outcome\\.(?:js|d\\.ts)$",
+        "^shared/agent-configuration-preferences\\.d\\.mts$",
+        "^scripts/verify-workspace-preferences-typecheck\\.mjs$",
+        "^tests/workspace-preferences-(?:contract\\.typecheck|typecheck-verifier\\.test)\\.(?:mjs|ts)$",
+        "^tsconfig\\.workspace-preferences\\.json$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/workspace-preferences-typecheck-verifier.test.mjs",
+        "tests/run-workflow.test.mjs",
+        "tests/agent-provider-catalog.test.mjs"
+      ]
+    },
+    {
       "id": "desktop-update",
       "patterns": [
         "^desktop/application-update\\.mjs$",
@@ -1973,10 +2045,8 @@
       "id": "agent-provider-qoder",
       "patterns": [
         "^bridge/agent/providers/qoder-provider\\.mjs$",
-        "^bridge/qoder-acp-client\\.mjs$",
-        "^scripts/qoder-acp-spike(?:-client)?\\.mjs$",
-        "^app/components/QoderAvailabilityCard\\.tsx$",
-        "^app/domain/qoder-availability\\.(?:js|d\\.ts)$"
+        "^scripts/qoder-acp-spike(?:-client|-support)?\\.mjs$",
+        "^app/domain/agent-provider-state\\.(?:js|d\\.ts)$"
       ],
       "suites": [
         "typecheck",
@@ -2188,7 +2258,7 @@
         "^tests/project-file-(?:finalizer|bridge|schema)\\.test\\.mjs$",
         "^tests/project-file-repository(?:-harness|\\.integration\\.test)\\.mjs$",
         "^tests/project-(?:registry-and-open|working-copy-save|candidate-promotion|request-authority|ai-task-projection|path-security-and-locks)\\.test\\.mjs$",
-        "^tests/(?:history-creation|legacy-history-activation|workspace-performance-timing|durable-working-copy-binding|save-retirement)\\.test\\.mjs$"
+        "^tests/(?:history-creation|workspace-performance-timing|durable-working-copy-binding|save-retirement)\\.test\\.mjs$"
       ],
       "suites": [
         "ai-review-smoke"
@@ -2209,8 +2279,7 @@
         "tests/durable-working-copy-binding.test.mjs",
         "tests/project-catalog-readonly.test.mjs",
         "tests/save-retirement.test.mjs",
-        "tests/history-creation.test.mjs",
-        "tests/legacy-history-activation.test.mjs"
+        "tests/history-creation.test.mjs"
       ]
     },
     {

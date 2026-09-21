@@ -70,7 +70,7 @@ const updateChannels = Object.freeze({
   downloadAvailable: "html-updates:download-available",
   installDownloaded: "html-updates:install-downloaded",
   openLatestRelease: "html-updates:open-latest-release",
-  openRepository: "html-updates:open-repository",
+  openPublicReleases: "html-updates:open-public-releases",
 });
 const usageChannels = Object.freeze({
   capture: "html-usage:capture",
@@ -365,13 +365,28 @@ const integrationsApi = Object.freeze({
   persistSessionCredential: (payload) => invokeProject(
     integrationChannels.persistSessionCredential,
     {
+      operationId: String(payload?.operationId || "").trim(),
       vendorId: String(payload?.vendorId || "").trim(),
       baseUrl: String(payload?.baseUrl || "").trim(),
+      modelId: String(payload?.modelId || "").trim(),
       apiKey: String(payload?.apiKey || ""),
     },
   ),
-  clearSessionCredential: () => invokeProject(integrationChannels.clearSessionCredential),
-  sessionCredentialStatus: () => invokeProject(integrationChannels.sessionCredentialStatus),
+  clearSessionCredential: (payload) => invokeProject(
+    integrationChannels.clearSessionCredential,
+    {
+      operationId: String(payload?.operationId || "").trim(),
+      expectedRecordId: payload?.expectedRecordId === null || payload?.expectedRecordId === undefined
+        ? null
+        : String(payload.expectedRecordId).trim(),
+    },
+  ),
+  sessionCredentialStatus: (payload) => invokeProject(
+    integrationChannels.sessionCredentialStatus,
+    payload?.operationId
+      ? { operationId: String(payload.operationId).trim() }
+      : {},
+  ),
   restoreSessionCredential: () => invokeProject(integrationChannels.restoreSessionCredential),
 });
 const updateStatusListeners = new Map();
@@ -399,7 +414,7 @@ const updatesApi = Object.freeze({
   },
   installDownloaded: () => invokeProject(updateChannels.installDownloaded),
   openLatestRelease: () => invokeProject(updateChannels.openLatestRelease),
-  openRepository: () => invokeProject(updateChannels.openRepository),
+  openPublicReleases: () => invokeProject(updateChannels.openPublicReleases),
 });
 
 const query = new URLSearchParams(globalThis.location.search);

@@ -24,9 +24,8 @@ The product Agent Bridge is Bridge-owned and never owns Request, Candidate,
 Version or Working Copy state. A user may explicitly choose 源页 Agent (user
 Token, OpenAI-compatible HTTPS), a managed Qoder or Codex ACP session, or the
 existing clipboard fallback. Internally, current execution binds by canonical
-provider/runtime selection. Historical `mode: "qoder-acp"` Request records are
-projected to the `qoder` provider and shared `acp` runtime at the delivery
-codec; Codex uses the same runtime with `providerId: "codex"`; 源页 Agent uses `stemmio` /
+provider/runtime selection. Removed delivery aliases, including `mode: "qoder-acp"`,
+are rejected; Codex uses the same runtime with `providerId: "codex"`; 源页 Agent uses `stemmio` /
 `http`, with model and thinking-depth choice on the conversation sidebar.
 Unknown providers and runtimes fail closed. The packaged application
 contains no private Codex runtime or native Codex package; Codex is resolved
@@ -153,9 +152,7 @@ the historical synthetic-spike decision.
 - Formal AI review owns one disposable reducer with independent page, change
   filter, context visibility, navigation, active focus-group, canonical presentation path, scroll
   and zoom fields. Warning-only impact counts come from the bounded Candidate
-  assessment; historical Version full-array impact is projected at
-  `candidateAssessmentFromRecord` and is not reinterpreted in the Review
-  display. A cancellable, byte-bounded `ReviewAnalysisSession` yields
+  assessment. A cancellable, byte-bounded `ReviewAnalysisSession` yields
   between parse/control/pair/annotation/serialization phases and after bounded
   semantic row/list-item batches, then caches source-diff facts for the exact
   before/after HTML, source path and bootstrap mode. Comment text, comment
@@ -305,13 +302,13 @@ services.
 | Renderer draft revision, pending operations and reconciliation | `app/application/draft-session.js` |
 | Renderer comment working copy, composer and saved-comment edit projection | `app/application/comment-session.js` |
 | Active/background runs, Agent delivery projection, background outcomes, submission lifecycle locks and operation locks | `app/application/run-session.js` |
-| Renderer Agent catalog, provider-keyed diagnostic projection, selected provider/runtime/model/reasoning, bounded public model catalog, selection-keyed use-time preflight and submission sequencing | `app/application/agent-provider-catalog.js`, `app/domain/agent-provider-state.js` and `app/application/run-workflow.js`; `qoder-availability.js` and `QoderAvailabilityCard.tsx` are compatibility wrappers only. Settings consumes `AgentDiagnosticSnapshot` and never creates an execution ticket. Neither card receives command, version, path, npm prefix or Token bytes |
+| Renderer Agent catalog, provider-keyed diagnostic projection, selected provider/runtime/model/reasoning, bounded public model catalog, selection-keyed use-time preflight and submission sequencing | `app/application/agent-provider-catalog.js`, `app/domain/agent-provider-state.js` and `app/application/run-workflow.js`. Settings consumes `AgentDiagnosticSnapshot` and never creates an execution ticket. Provider cards receive only public presentation facts, never command, version, path, npm prefix or Token bytes |
 | Product ACP allowlist, managed-install inventory, in-flight install/login jobs and install/login drain | `bridge/agent/catalog/agent-catalog.mjs`, `agent-installer.mjs` and `agent-access-auth.mjs`; Coordinator does not own install or login. Login operations keep a Bridge-minted `operationId` through succeeded/cancelled/failed; diagnosis cannot finish or clear them. Qoder and Codex ACP are the installable shipped ACP entries. 源页 Agent is not installable |
-| Provider-neutral dispatch, provider/runtime/security-profile/execution-purpose tickets, process/session lifetime, canonical events, cancellation-before-durable-Request and shutdown drain | `bridge/agent/agent-runtime-coordinator.mjs` plus provider/runtime registries; current execution binds by canonical selection only; historical `mode: "qoder-acp"` conversion stays in the delivery codec; legacy Services are stateless façades and durable Request/Candidate authority remains in `ProjectFileRepository` |
-| Trusted-local Qoder installation discovery, read-only diagnosis, package/version/login/model preflight, error classification and ACP launch descriptor | `bridge/agent/providers/qoder-provider.mjs`; diagnosis uses only version/model-list commands and does not open ACP. Candidates are collected before selecting a valid user CLI, then a Stemmio-managed installation. A broken lower-priority candidate is diagnostic only when a valid higher-priority candidate exists. Historical `mode: "qoder-acp"` remains readable at the delivery codec and status projection; current execution does not map a leftover driver alias |
+| Provider-neutral dispatch, provider/runtime/security-profile/execution-purpose tickets, process/session lifetime, canonical events, cancellation-before-durable-Request and shutdown drain | `bridge/agent/agent-runtime-coordinator.mjs` plus provider/runtime registries; current execution binds by canonical selection only; removed delivery aliases are rejected; the service remains a stateless route adapter and durable Request/Candidate authority remains in `ProjectFileRepository` |
+| Trusted-local Qoder installation discovery, read-only diagnosis, package/version/login/model preflight, error classification and ACP launch descriptor | `bridge/agent/providers/qoder-provider.mjs`; diagnosis uses only version/model-list commands and does not open ACP. Candidates are collected before selecting a valid user CLI, then a Stemmio-managed installation. A broken lower-priority candidate is diagnostic only when a valid higher-priority candidate exists. Current execution exposes only the canonical provider selection; removed delivery aliases fail closed |
 | Codex ACP installation discovery, pinned adapter+native closure, read-only login diagnosis, ACP initialize/session preflight and client-mediated launch | `bridge/agent/providers/codex-acp-provider.mjs`; candidates are collected before selecting explicit test configuration, Stemmio-managed installation, then user-global installation. A broken lower-priority candidate is diagnostic only when a valid higher-priority candidate exists. Start-time verification rechecks both the adapter and native executable identities against the ticket |
 | Stemmio native OpenAI-compatible HTTP Agent, bounded diagnosis, vendor Token preflight and model catalog | `bridge/agent/providers/openai-compatible-provider.mjs` plus `shared/openai-compatible-vendors.mjs`; built-in vendors may diagnose through `/models`, while Custom validates saved configuration without assuming that route. Session Token stays in Coordinator memory; an explicit remember writes only Main `safeStorage` ciphertext. Anthropic is not registered |
-| Provider-neutral ACP protocol, process supervisor and immutable standard event envelope | `bridge/agent/runtimes/acp-runtime.mjs`, `acp-protocol.mjs`, `acp-process.mjs` and `acp-verified-javascript.mjs`; `bridge/qoder-acp-client.mjs` is a compatibility façade |
+| Provider-neutral ACP protocol, process supervisor and immutable standard event envelope | `bridge/agent/runtimes/acp-runtime.mjs`, `acp-protocol.mjs`, `acp-process.mjs` and `acp-verified-javascript.mjs`; Qoder uses these shared runtime modules directly |
 | Stemmio native HTTP runtime: streaming `/chat/completions`, unique output write and official finalizer | `bridge/agent/runtimes/http-runtime.mjs`; SSE content is accumulated only inside Bridge, while reasoning/usage/heartbeat update activity without entering narration. HTTP and ACP turns use a 45-minute sliding inactivity watchdog rather than a total-duration deadline. A disconnect, cancellation or timeout before protocol completion writes no Candidate; Candidate authority remains the official finalizer |
 | Public Agent failure recovery | `agent-runtime-coordinator.mjs` computes `safeToRetry` independently from `recoveryKind`; `agent-session-projector.mjs` exposes only that structured pair plus a bounded error. Renderer actions never infer recovery from provider text and remain capped at two |
 | Frozen execution policy and single-output client-mediated Host Port | `bridge/agent/policies/` and `bridge/agent/hosts/`; these constrain only requests made through the ACP Client Host, never native filesystem/command actions inside an Agent process |
@@ -381,9 +378,9 @@ the parser to rewrite HTML. The persistent element identity is only
 `data-stemmio-id`. Parser-local handles (`nodeId` / `parseKey`) stay inside
 `SourceIndex` / `SourcePatchEngine` for one parse of one revision: they never
 enter Runtime DOM, TargetRef, Selection, comments, Review or history.
-ADR 0060 gives `ProjectFileRepository` the separate one-time migration
+ADR 0060 gives `ProjectFileRepository` the separate identity-materialization
 authority: new imports create an identified managed Working Copy while
-preserving the external file and immutable V1 bytes; legacy managed Working
+preserving the external file and immutable V1 bytes; current managed Working
 Copies materialize missing IDs only through a Hash-checked recoverable
 transaction on editable workspace entry. Incomplete or invalid identities fail
 closed and do not enable direct edit. ADR 0061 makes that index the exclusive
@@ -399,7 +396,7 @@ element; whole-page comments persist the body's `elementId`. Semantic saving rem
 outside this foundation.
 
 A Project has one editable current Working Copy. New imports use a stable
-unnumbered HTML filename; migrated projects retain the actual active filename.
+unnumbered HTML filename; the current project retains its exact managed filename.
 The external original and hidden V1 preserve first-import bytes; Stable ID
 materialization changes only the current Working Copy. AI adoption, explicit
 local save, history creation and preserved-draft recovery create immutable
@@ -443,9 +440,9 @@ separately from a new semantic `fullPatchApply`.
 ## Persistence
 
 Desktop tab restoration uses a separate validated `workbench-tabs.json`. Its
-strict version-1 schema contains only tab IDs and durable `projectId +
-documentId` pairs; titles are refreshed from the Registry projection after
-open. It never persists source paths, HTML, Hashes or AI authority. Writes use
+strict version-2 schema contains explicit surface kinds, tab IDs and durable
+`projectId + documentId` pairs; titles are refreshed from the Registry
+projection after open. It never persists source paths, HTML, Hashes or AI authority. Writes use
 same-directory temporary creation plus atomic rename. `html-projects.json`
 continues to own `activePath` compatibility. Any valid tabs record suppresses
 that compatibility startup: `activeTabId: null` restores Start, while a stored
@@ -462,7 +459,7 @@ the pending identity through its owned workflow.
 Working Copy IDs plus the registered mapping and state Hash select a member;
 persisted stat fields are observations only. `source-binding.mjs` owns live
 hard-link locator operations under the same Repository serialization. Initialize
-recovers transactions before migrating each member; one project's failure never
+recovers transactions before identity materialization for each member; one project's failure never
 blocks another. Catalog rows retain project metadata and an independent source
 status; Version summaries do not require a usable HTML file. User-requested
 missing-file restoration crosses the existing ProjectWorkflow/ProjectOpenPort,
@@ -473,14 +470,14 @@ Direct edits form ordered revisions and are written through a single queue. Ever
 
 The same Repository serialization owns Working Copy source-element identity.
 `working-copy-state.v4` records the adopted identity schema and a canonical
-binding Hash over ID, tag, identified parent and source order. A legacy migration
+binding Hash over ID, tag, identified parent and source order. Identity materialization
 stages complete before/after HTML, publishes only through the existing
 same-directory CAS, then atomically updates Working Copy state and manifest
 file identity. Restart recovery follows only the registered transaction and
 accepts only its exact before or after Hash. Clean external text/style changes
 must preserve the binding Hash; structural identity drift is an explicit
-conflict and only force-unlock may adopt it before controlled migration.
-Immutable Versions, frozen Requests and Runtime DOM are never migration inputs
+conflict and only force-unlock may adopt it before controlled identity materialization.
+Immutable Versions, frozen Requests and Runtime DOM are never identity-materialization inputs
 or destinations.
 On the existing direct-edit path, `IslandEditingController` owns only the
 controlled DOM, Selection and IME checkpoint. Canvas submits logical `setText`
@@ -655,17 +652,13 @@ in `docs/decisions/0022-user-owned-project-root-identity.md`,
 `docs/decisions/0027-prepared-open-intent.md` and
 `docs/decisions/0028-unrecognized-registry-fails-closed.md`.
 
-Initial and accepted AI results are immutable versions. Routine local edits do not create versions. A validated AI result is not activated until the user explicitly chooses it. Promotion may stage a provisional output path, but its final visible path is frozen only after the no-replace publication succeeds; a pre-publication collision reallocates and retries without overwriting user bytes.
+Initial and accepted AI results are immutable versions. Routine local edits do not create versions. A validated AI result is not activated until the user explicitly chooses it. The current Version transaction may stage a provisional output path, but its final visible path is frozen only after the no-replace publication succeeds; a pre-publication collision reallocates and retries without overwriting user bytes.
 
 Candidate assessment is Attempt evidence, not current-source authority. The
-historical Version and archived terminal-outcome queries have one bounded
-adapter for the two `1.0.0` Developer Preview shapes: records may omit or carry
-the now-retired executable-surface fields. It verifies immutable base/candidate
-bytes and all four Hashes, re-runs the current document-health and continuity
-assessment, normalizes retired fields out in memory, and leaves the old file
-unchanged. Script conclusions from an old record never affect current status or
-review routing. Archived outcomes remain terminal and cannot become openable
-candidates through this adapter.
+current bounded assessment is required for every Candidate; retired executable-
+surface fields or unbounded impact arrays fail closed. It verifies immutable
+base/candidate bytes and all four Hashes before review routing. Archived outcomes
+remain terminal and cannot become openable candidates.
 
 `ProjectRulesWorkflow` owns `PROJECT.md`'s debounced autosave and is flushed before project switch or close; its Session retains only the working copy and composition fence. One recoverable unsaved comment composer is allowed at a time. Attachment uploads, rule saves and ordinary source writes are finished or surfaced in their owning panel before navigation proceeds.
 
@@ -709,8 +702,9 @@ The main-process application-update controller is the sole owner of stable
 channel checks, the startup-plus-four-hour schedule, coalesced manual checks,
 download progress and downloaded-install readiness. It exposes only immutable
 status snapshots and narrow check/download/install intents through preload IPC. The
-renderer can also request the fixed project repository URL, but cannot supply
-an arbitrary external URL. The Settings surface may request the packaged user
+renderer can also request the fixed public distribution repository URL, but
+cannot supply an arbitrary external URL or reach the private source repository.
+The Settings surface may request the packaged user
 notice through one app-level IPC intent; the main process resolves the fixed
 resource name for development or the signed app bundle, and the renderer cannot
 supply a local path. A renderer download intent is accepted only while
@@ -751,11 +745,10 @@ iframe loads and same-document navigation are subordinate UI activity; treating
 them as a Workbench reload would bypass the final close drain and is forbidden.
 
 Provider Registry owns the public Agent catalog and dispatch. The shared Agent
-Delivery codec owns durable validation and legacy read projection; the runtime
-coordinator converts a still-supported incoming driver once, then freezes
-canonical selection and fingerprint in its one-use ticket. Unknown providers
-stay readable and cancellable, but they are not start authority and do not fall
-back to another shipped provider.
+Delivery codec owns durable validation of the current canonical shape; the runtime
+coordinator freezes canonical selection and fingerprint in its one-use ticket.
+Unknown providers stay readable and cancellable, but they are not start authority
+and do not fall back to another shipped provider.
 Workspace Bridge exposes provider, diagnose, preflight, start, status and
 cancel routes. Diagnose is read-only and ticketless; preflight is execution-only.
 Status publishes only the bounded `PublicExecutionSession` activity projection

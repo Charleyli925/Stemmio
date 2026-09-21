@@ -32,23 +32,15 @@ verified OpenTarget even when its path and Working Copy ID remain unchanged.
 VersionSession owns immutable history projection. Views render facts and
 dispatch intent; no parallel current-document store is introduced.
 
-## Migration and compatibility
+## Format boundary
 
-The v4 manifest marks currentDraftSchemaVersion: "1.0.0". Migration applies only
-to valid registered v4 projects and retains the actual active Working Copy,
-including an older active version, its ID and existing visible filename.
-It never infers current from the highest ordinal. Every other independent
-legacy draft is preserved with HTML, comments and attachment bytes before
-retiring its editable membership. An explicit recovery menu retrieves this
-content. An active legacy operation must settle before migration.
-
-Marked records require exactly one current member. Unknown schema markers,
-invalid membership, ambiguous identity and unrelated bytes fail closed.
-This is a forward migration; old clients that only implement independent
-per-Version Working Copies are not supported writers of migrated projects.
+The v4 manifest marks `currentDraftSchemaVersion: "1.0.0"` and contains
+exactly one editable Working Copy. The Repository validates that marker and
+membership on every load; missing or older markers, multiple members and
+retired Working Copy metadata fail closed without a rewrite. There is no
+forward migration or recovery menu for an old multi-working-copy project.
 Pre-v4 projects and unknown Registry shapes remain unsupported. ADR 0022's
-Registry/path authorization remains binding; its per-Version visible-file
-publication is superseded for migrated projects.
+Registry/path authorization remains binding.
 
 ## Export and Finder
 

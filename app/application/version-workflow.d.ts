@@ -9,6 +9,7 @@ import type { ProjectWorkflow } from "./project-workflow.js";
 import type { RunSession } from "./run-session.js";
 import type { VersionSession } from "./version-session.js";
 import type { CandidateAssessment } from "../domain/run-lifecycle.js";
+import type { ProjectSurfaceContext } from "./project-surface-context.js";
 
 export type VersionWorkflowOutcome<T = Record<string, unknown>> =
   | Readonly<{ status: "succeeded"; value: T }>
@@ -186,16 +187,17 @@ export class VersionWorkflow {
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
   viewHistory(input: {
     version?: Record<string, unknown> | null;
-    context?: ProjectContext | null;
+    context?: ProjectContext | ProjectSurfaceContext | null;
     deadlineAt?: number;
     fromDeferred?: boolean;
+    switchPrepared?: boolean;
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
   returnToCurrent(input?: {
     context?: ProjectContext | null;
     fromDeferred?: boolean;
     currentSurfaceCommitScope?: object | null;
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
-  createVersionFromHistory(input: { operationId: string; context?: ProjectContext | null }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
+  createVersionFromHistory(input: { operationId: string; context?: ProjectContext | ProjectSurfaceContext | null }): Promise<VersionWorkflowOutcome<HistoryCreationResult>>;
   restoreHistoryCreation(input: { operationId: string; context: ProjectContext }): Promise<void>;
   openCreatedHistoryVersion(input: {
     operationId: string;

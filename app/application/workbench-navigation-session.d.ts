@@ -1,3 +1,5 @@
+import type { DocumentSourceReceipt } from "./document-session.js";
+
 export type WorkbenchNavigationPhase =
   | "idle"
   | "admitted"
@@ -17,6 +19,7 @@ export type WorkbenchNavigationReceipt = Readonly<{
   epoch: number;
   tabId: string | null;
   kind: string;
+  sourceReceipt?: DocumentSourceReceipt | null;
 }>;
 export type WorkbenchNavigationSnapshot = Readonly<{
   revision: number;

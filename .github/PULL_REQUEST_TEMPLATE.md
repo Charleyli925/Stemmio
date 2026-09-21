@@ -1,20 +1,35 @@
-## Summary
+<!-- Keep this short. Reference reports and machine output instead of pasting
+     full logs or matrices; a local output/ path is not by itself accessible
+     evidence for a GitHub reviewer.
+     A Draft PR does not have to claim that everything is finished. -->
 
-Describe the user-visible outcome and why this change is needed.
+Evidence follows the [repository evidence rules](../docs/CODEX_WORKFLOW.md#evidence-and-reports).
 
-## Boundary
+## Goal and scope
 
-List the files or subsystems intentionally changed and anything explicitly left unchanged.
+What this change makes true, and what it explicitly leaves unchanged.
 
-## Verification
+## Key decisions
 
-- [ ] The PR opened as Draft and ordinary pushes used only PR Feedback
-- [ ] The final head is updated onto current `main` and is Ready exactly once for final review
-- [ ] P0/P1 user-impact findings and P0/P1 `CHANGES_REQUESTED` reviews are addressed; P2/P3/unclassified debt is linked or left for the weekly roll-up
-- [ ] Any later commit returns this PR to Draft before one new final promotion
-- [ ] PR scope/size is coherent; it is an advisory discussion, not a mechanical merge limit
-- [ ] `npm run gate:task`
-- [ ] Relevant manual observation is documented, if automation cannot cover it
-- [ ] No secrets, personal paths, user files, build output or release binaries are included
-- [ ] Tests and documentation were updated where behavior or contracts changed
-- [ ] `CHANGELOG.md` was updated when the change affects a release
+The trade-offs that matter for review, and their reason. Omit this section for a
+small mechanical change.
+
+## Verification evidence
+
+- Source verified (commit, tree, or working-tree hash when uncommitted changes were tested):
+- Acceptance claim → method or command → result → reviewer-accessible summary or artifact:
+- Local raw evidence or reproduction path, when applicable:
+- Skipped, not executed, failed or reused evidence, and why:
+- The change contains no secrets, personal paths, user files, build output or release binaries.
+
+## Review and documentation
+
+- Confirmed findings and how they were handled:
+- Normative documents updated in this PR, or why existing documentation stays accurate:
+- ADRs added, changed, renamed, reclassified or archived, and their impact; proposed-only ADR work is marked pending:
+
+## Remaining limits and delivery state
+
+What is still unverified, blocked or unknown, and the authorization stage this
+Pull Request has actually reached. Ready, merge, packaging and release each need
+their own authorization; ordinary delivery stops at a tested Draft PR.

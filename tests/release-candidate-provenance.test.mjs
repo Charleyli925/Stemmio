@@ -160,13 +160,6 @@ test("downloaded candidate verification rejects changed release bytes and malfor
     "latest-mac.yml": Buffer.from(
       `version: ${packageVersion}\nfiles:\n  - url: ${zipName}\n    sha512: synthetic\n`,
     ),
-    "update-manifest.json": Buffer.from(`${JSON.stringify({
-      schemaVersion: 1,
-      version: packageVersion,
-      minimumMacOS: "12.0",
-      architectures: ["arm64"],
-      publishedAt: builtAt,
-    }, null, 2)}\n`),
     "build-info.json": Buffer.from(
       JSON.stringify(fixtureBuildInfo({
         version: packageVersion,
@@ -345,6 +338,19 @@ test("release workflows build before tagging and publish the verified candidate 
   assert.match(release, /release-candidate-provenance\.mjs verify/u);
   assert.match(release, /git tag -a/u);
   assert.match(release, /gh release create/u);
+  assert.match(release, /STEMMIO_PUBLIC_RELEASES_TOKEN/u);
+  assert.match(release, /PUBLIC_RELEASES_REPOSITORY:\s*Charleyli925\/Stemmio-Releases/u);
+  assert.match(release, /LEGACY_UPDATE_BRIDGE_REPOSITORY:\s*Charleyli925\/PageRoot/u);
+  assert.match(release, /LEGACY_UPDATE_BRIDGE_VERSION:\s*0\.9\.90/u);
+  assert.match(release, /--jq '\.full_name'/u);
+  assert.match(release, /gh release create[\s\S]+--repo "\$repository"/u);
+  assert.match(release, /publish_release "\$PUBLIC_RELEASES_REPOSITORY" false/u);
+  assert.match(
+    release,
+    /if \[ "\$VERSION" = "\$LEGACY_UPDATE_BRIDGE_VERSION" \]; then[\s\S]+publish_release "\$LEGACY_UPDATE_BRIDGE_REPOSITORY" true/u,
+  );
+  assert.match(release, /verify_existing_legacy_bridge/u);
+  assert.doesNotMatch(release, /gh release create[\s\S]+--repo "\$GITHUB_REPOSITORY"/u);
   assert.match(release, /Stemmio-\$\{VERSION\}-arm64\.zip/u);
   assert.match(release, /Stemmio-\$\{VERSION\}-arm64\.zip\.blockmap/u);
   assert.match(release, /latest-mac\.yml/u);

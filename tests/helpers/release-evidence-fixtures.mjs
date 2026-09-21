@@ -70,6 +70,7 @@ export const APP_SOURCE_FILES = [
   "desktop/runtime-project-storage-contract.mjs",
   "shared/agent-vendor-key-url.mjs",
   "shared/agent-configuration-preferences.mjs",
+  "shared/workspace-preferences.mjs",
   "app/domain/edit-runtime-contract.js",
   "public/brand-logo.png",
   "dist-desktop/renderer/index.html",
@@ -106,7 +107,6 @@ const BRIDGE_FILES = [
   "agent/runtimes/http-runtime.mjs",
   "agent/policies/execution-policy.mjs",
   "agent/hosts/execution-host.mjs",
-  "qoder-acp-client.mjs",
   "finalize-attempt.mjs",
   "lifecycle-core.mjs",
   "project-file-repository.mjs",
@@ -291,7 +291,7 @@ export function fixturePackageJson(profile, overrides = {}) {
         {
           provider: "github",
           owner: "Charleyli925",
-          repo: "Stemmio",
+          repo: "Stemmio-Releases",
           releaseType: "release",
         },
       ],
@@ -532,6 +532,11 @@ export async function createSyntheticAppBundle(t, {
       productRoot,
       "shared/agent-configuration-preferences.mjs",
       "export const fixtureAgentConfigurationPreferences = true;\n",
+    ),
+    writeFixtureFile(
+      productRoot,
+      "shared/workspace-preferences.mjs",
+      "export const WORKSPACE_PREFERENCE_SCHEMA_VERSION = 2;\n",
     ),
     writeFixtureFile(
       productRoot,

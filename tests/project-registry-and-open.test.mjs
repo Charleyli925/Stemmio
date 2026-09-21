@@ -1,4 +1,3 @@
-import { seedLegacyHistoryActivation } from "./helpers/legacy-history-activation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -119,31 +118,28 @@ test("an older managed project receives the default PROJECT.md on first read", a
   assert.equal(await readFile(projectNotesPath, "utf8"), DEFAULT_PROJECT_RULES_TEMPLATE);
 });
 
-test("a legacy v4 Runtime without historyActivation opens as null and normalizes on write", async (t) => {
+test("a Runtime with a historical activation receipt is rejected without rewriting", async (t) => {
   const value = await fixture(t);
-  const imported = await importSource(value, "legacy-runtime.html");
+  const imported = await importSource(value, "unsupported-runtime.html");
   const runtimePath = path.join(
     imported.target.projectRootPath,
     ".stemmio",
     "runtime-state.json",
   );
-  const legacyRuntime = await json(runtimePath);
-  delete legacyRuntime.historyActivation;
-  await writeFile(runtimePath, JSON.stringify(legacyRuntime), "utf8");
+  const unsupportedRuntime = await json(runtimePath);
+  unsupportedRuntime.historyActivation = {
+    operationId: "history_activation_legacy",
+    state: "desktop-pending",
+  };
+  const bytes = Buffer.from(`${JSON.stringify(unsupportedRuntime)}\n`, "utf8");
+  await writeFile(runtimePath, bytes);
 
   const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
-  const workspace = await restarted.workspace({ sourcePath: imported.target.exactSourcePath });
-  assert.equal(workspace.runtime.historyActivation, null);
-  assert.equal("historyActivation" in await json(runtimePath), false);
-
-  const saved = await restarted.saveWorkingCopy({
-    target: workspace.target,
-    html: html("legacy runtime normalized"),
-    expectedSourceSha256: workspace.sourceSha256,
-    editRevision: 1,
-  });
-  assert.equal(saved.versionCreated, false);
-  assert.equal((await json(runtimePath)).historyActivation, null);
+  await assert.rejects(
+    restarted.workspace({ sourcePath: imported.target.exactSourcePath }),
+    { code: "UNSUPPORTED_RUNTIME_FORMAT" },
+  );
+  assert.deepEqual(await readFile(runtimePath), bytes);
 });
 
 test("workspace reports complete non-authoritative repository stage timing", async (t) => {
@@ -326,21 +322,6 @@ test("single-current history uses its document filename without changing immutab
       assert.equal(sha256(bytes), snapshot.version.contentSha256);
     }
   }
-});
-
-test("legacy history summaries keep each Version's visible Working Copy filename", async (t) => {
-  const value = await fixture(t);
-  const imported = await importSource(value, "legacy summary.html");
-  const manifestPath = path.join(imported.target.projectRootPath, ".stemmio", "manifest.json");
-  const manifest = await json(manifestPath);
-  delete manifest.currentDraftSchemaVersion;
-  await writeFile(manifestPath, JSON.stringify(manifest));
-  const target = await promoteNextVersion(value.repository, imported.target, "legacy_summary_second");
-  const summary = await value.repository.listRegisteredProjectVersionSummaries({ projectId: target.projectId });
-  assert.deepEqual(summary.versions.map((version) => version.displayFileName), [
-    path.basename(imported.target.exactSourcePath), path.basename(target.exactSourcePath),
-  ]);
-  assert.notEqual(summary.versions[0].displayFileName, summary.versions[1].displayFileName);
 });
 
 test("reading a current V4 Registry never rewrites its bytes", async (t) => {
@@ -796,52 +777,6 @@ test("promoting V2 still returns the current V2 working copy for the original pa
   assert.equal(Object.keys((await json(registryPath(value))).projects).length, 1);
 });
 
-test("a historical active Working Copy is returned instead of silently jumping to latest", async (t) => {
-  const value = await fixture(t);
-  const imported = await importSource(value, "历史工作稿.html");
-  const legacyManifestPath = path.join(imported.target.projectRootPath, ".stemmio/manifest.json");
-  const legacyManifest = await json(legacyManifestPath);
-  delete legacyManifest.currentDraftSchemaVersion;
-  await writeFile(legacyManifestPath, JSON.stringify(legacyManifest));
-  let active = imported.target;
-  for (const label of ["history_v2", "history_v3"]) {
-    active = await promoteNextVersion(value.repository, active, label);
-  }
-  assert.equal(active.workingCopyId, "work_ver_0003");
-  const activated = await value.repository.replayHistoryVersionActivation(await seedLegacyHistoryActivation({
-    target: active,
-    versionId: "ver_0002",
-    operationId: "history_continue_v2_reopen_0001",
-    expectedActiveWorkingCopyId: "work_ver_0003",
-  }));
-  assert.equal(activated.target.workingCopyId, "work_ver_0002");
-  const editedHistory = html("continue from V2");
-  const saved = await value.repository.saveWorkingCopy({
-    target: activated.target,
-    html: editedHistory,
-    expectedSourceSha256: activated.target.sourceSha256,
-    editRevision: 1,
-  });
-
-  const classified = await value.repository.classifyOpenPath({
-    sourcePath: imported.sourcePath,
-  });
-  assert.equal(classified.kind, "known-external");
-  assert.equal(classified.projectFacts.openTarget.workingCopyId, "work_ver_0002");
-  assert.equal(classified.projectFacts.currentBasedOnVersionId, "ver_0002");
-  assert.equal(classified.projectFacts.latestOfficialVersionId, "ver_0003");
-  assert.equal(classified.projectFacts.currentDiffersFromBase, true);
-
-  const retried = await value.repository.importExternal({
-    sourcePath: imported.sourcePath,
-    expectedSourceSha256: sha256(imported.buffer),
-  });
-  assert.equal(retried.imported, false);
-  assert.equal(retried.target.workingCopyId, "work_ver_0002");
-  assert.equal(retried.target.exactSourcePath, saved.target.exactSourcePath);
-  assert.notEqual(retried.target.workingCopyId, "work_ver_0003");
-});
-
 test("a later change to the external original stays bound and reports sourceRelation=changed", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "原稿已改.html");
@@ -1098,52 +1033,6 @@ test("reconcileWorkingCopyLocator refuses a version mismatch and does not guess 
   );
   assert.equal(recovered.openTarget.projectId, imported.target.projectId);
   assert.notEqual(recovered.openTarget.projectId, equalBytes.target.projectId);
-});
-
-test("unknown Runtime root and historyActivation members survive a confirmation", async (t) => {
-  const value = await fixture(t);
-  const imported = await importSource(value, "运行态未知成员.html");
-  const legacyManifestPath = path.join(imported.target.projectRootPath, ".stemmio/manifest.json");
-  const legacyManifest = await json(legacyManifestPath);
-  delete legacyManifest.currentDraftSchemaVersion;
-  await writeFile(legacyManifestPath, JSON.stringify(legacyManifest));
-  const active = await promoteNextVersion(
-    value.repository,
-    imported.target,
-    "runtime_unknown",
-  );
-  const runtimeFile = path.join(
-    imported.target.projectRootPath,
-    ".stemmio",
-    "runtime-state.json",
-  );
-
-  const activated = await value.repository.replayHistoryVersionActivation(await seedLegacyHistoryActivation({
-    target: active,
-    versionId: "ver_0001",
-    operationId: "runtime_unknown_activation_0001",
-    expectedActiveWorkingCopyId: "work_ver_0002",
-  }));
-  assert.equal(activated.historyActivation.state, "desktop-pending");
-
-  const runtime = await json(runtimeFile);
-  runtime.ownerAccountId = "account_future";
-  runtime.historyActivation.provenance = { seq: 1 };
-  await writeFile(runtimeFile, `${JSON.stringify(runtime, null, 2)}\n`, "utf8");
-
-  const confirmed = await value.repository.confirmVersionWorkingCopyActivation({
-    target: activated.target,
-    operationId: "runtime_unknown_activation_0001",
-    previousWorkingCopyId: "work_ver_0002",
-    activatedWorkingCopyId: "work_ver_0001",
-    versionId: "ver_0001",
-  });
-  assert.equal(confirmed.confirmed, true);
-
-  const rewritten = await json(runtimeFile);
-  assert.equal(rewritten.historyActivation.state, "desktop-confirmed");
-  assert.equal(rewritten.ownerAccountId, "account_future");
-  assert.deepEqual(rewritten.historyActivation.provenance, { seq: 1 });
 });
 
 // Provenance answers "who wrote this" and is authored by the repository, never

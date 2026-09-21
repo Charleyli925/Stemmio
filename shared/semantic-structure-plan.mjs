@@ -91,6 +91,27 @@ function canonicalPatches(patches) {
   ));
 }
 
+function identityNeutralElementSource(source, root, elements) {
+  let neutral = source.slice(root.startOffset, root.endOffset);
+  const descendants = elements.filter((element) => (
+    element.startOffset >= root.startOffset
+    && element.endOffset <= root.endOffset
+    && Number.isInteger(element.contentStartOffset)
+    && element.contentStartOffset >= element.startOffset
+    && element.contentStartOffset <= element.endOffset
+  )).sort((left, right) => right.startOffset - left.startOffset);
+  for (const element of descendants) {
+    const start = element.startOffset - root.startOffset;
+    const end = element.contentStartOffset - root.startOffset;
+    const startTag = neutral.slice(start, end).replace(
+      /\s+data-stemmio-id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/giu,
+      "",
+    );
+    neutral = `${neutral.slice(0, start)}${startTag}${neutral.slice(end)}`;
+  }
+  return neutral;
+}
+
 function insertionPoint(byId, operation) {
   const parentElementId = operationElementId(operation, "parent");
   const beforeElementId = operationElementId(operation, "before");
@@ -241,30 +262,7 @@ function siblingReorderPlan(source, elements, target, insertion) {
       { parentElementId: parent.elementId },
     );
   }
-  const boundaries = [];
-  for (let index = 0; index < siblings.length - 1; index += 1) {
-    boundaries.push(gapBoundary(source, siblings[index], siblings[index + 1]));
-  }
-  const trailingBoundary = trailingCommentBoundary(
-    source,
-    parent,
-    siblings.at(-1),
-  );
-  const units = siblings.map((element, position) => {
-    const startOffset = position === 0
-      ? parent.contentStartOffset
-      : boundaries[position - 1];
-    const endOffset = position === siblings.length - 1
-      ? trailingBoundary
-      : boundaries[position];
-    return {
-      elementId: element.elementId,
-      startOffset,
-      endOffset,
-      raw: source.slice(startOffset, endOffset),
-    };
-  });
-  const oldOrder = units.map((unit) => unit.elementId);
+  const oldOrder = siblings.map((element) => element.elementId);
   const movingIndex = oldOrder.indexOf(target.elementId);
   const remaining = oldOrder.filter((elementId) => elementId !== target.elementId);
   const insertionIndex = insertion.before
@@ -288,20 +286,107 @@ function siblingReorderPlan(source, elements, target, insertion) {
   if (firstChanged < 0) {
     return { patches: [], beforeOrder: oldOrder, nextOrder };
   }
-  const byElementId = new Map(units.map((unit) => [unit.elementId, unit]));
-  const startOffset = units[firstChanged].startOffset;
-  const endOffset = units[lastChanged].endOffset;
+  if (gaps.some((gap) => gap.includes("<!--"))) {
+    const boundaries = [];
+    for (let index = 0; index < siblings.length - 1; index += 1) {
+      boundaries.push(gapBoundary(source, siblings[index], siblings[index + 1]));
+    }
+    const trailingBoundary = trailingCommentBoundary(source, parent, siblings.at(-1));
+    const units = siblings.map((element, position) => {
+      const startOffset = position === 0
+        ? parent.contentStartOffset
+        : boundaries[position - 1];
+      const endOffset = position === siblings.length - 1
+        ? trailingBoundary
+        : boundaries[position];
+      return {
+        elementId: element.elementId,
+        startOffset,
+        endOffset,
+        raw: source.slice(startOffset, endOffset),
+      };
+    });
+    const byElementId = new Map(units.map((unit) => [unit.elementId, unit]));
+    const movingUnit = byElementId.get(target.elementId);
+    const ownedPrefix = source.slice(movingUnit.startOffset, target.startOffset);
+    const ownedSuffix = source.slice(target.endOffset, movingUnit.endOffset);
+    const targetSourceShape = identityNeutralElementSource(source, target, elements);
+    const hasSourceEquivalentSibling = siblings.some((sibling) => (
+      sibling.elementId !== target.elementId
+      && identityNeutralElementSource(source, sibling, elements) === targetSourceShape
+    ));
+    if (
+      hasSourceEquivalentSibling
+      && !ownedPrefix.includes("<!--")
+      && !ownedSuffix.includes("<!--")
+    ) {
+      const raw = source.slice(target.startOffset, target.endOffset);
+      const insertionOffset = insertion.before
+        ? byElementId.get(insertion.before.elementId).startOffset
+        : insertion.offset;
+      return {
+        // A comment owned by another sibling stays at its exact source gap.
+        // Move only the target bytes, but insert before the destination's
+        // owned prefix so duplicate -> move -> delete remains byte-exact.
+        patches: canonicalPatches([
+          sourcePatch(
+            target.startOffset,
+            target.endOffset,
+            source,
+            "",
+            "sibling-reorder",
+          ),
+          sourcePatch(
+            insertionOffset,
+            insertionOffset,
+            source,
+            raw,
+            "sibling-reorder",
+          ),
+        ]),
+        beforeOrder: oldOrder,
+        nextOrder,
+      };
+    }
+    const startOffset = units[firstChanged].startOffset;
+    const endOffset = units[lastChanged].endOffset;
+    return {
+      patches: [sourcePatch(
+        startOffset,
+        endOffset,
+        source,
+        nextOrder
+          .slice(firstChanged, lastChanged + 1)
+          .map((elementId) => byElementId.get(elementId).raw)
+          .join(""),
+        "sibling-reorder",
+      )],
+      beforeOrder: oldOrder,
+      nextOrder,
+    };
+  }
+  const raw = source.slice(target.startOffset, target.endOffset);
   return {
-    patches: [sourcePatch(
-      startOffset,
-      endOffset,
-      source,
-      nextOrder
-        .slice(firstChanged, lastChanged + 1)
-        .map((elementId) => byElementId.get(elementId).raw)
-        .join(""),
-      "sibling-reorder",
-    )],
+    // With no authored comment owning a sibling gap, whitespace remains at its
+    // existing source position instead of becoming part of the moved element.
+    // Exact remove/insert patches let a later delete restore the pre-insert
+    // source byte-for-byte.
+    patches: canonicalPatches([
+      sourcePatch(
+        target.startOffset,
+        target.endOffset,
+        source,
+        "",
+        "sibling-reorder",
+      ),
+      sourcePatch(
+        insertion.offset,
+        insertion.offset,
+        source,
+        raw,
+        "sibling-reorder",
+      ),
+    ]),
     beforeOrder: oldOrder,
     nextOrder,
   };
@@ -385,12 +470,7 @@ export function planSemanticStructurePatches({
     );
   }
   if (target.parentElementId === insertion.parent.elementId) {
-    return siblingReorderPlan(
-      source,
-      elements,
-      target,
-      insertion,
-    );
+    return siblingReorderPlan(source, elements, target, insertion);
   }
   const raw = source.slice(target.startOffset, target.endOffset);
   return {

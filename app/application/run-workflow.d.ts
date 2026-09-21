@@ -1,4 +1,5 @@
 import type { BridgeClient } from "./bridge-client.js";
+import type { AgentCredentialOperationPort } from "./agent-credential-operation-contract.js";
 import type { CommentSession } from "./comment-session.js";
 import type { DocumentSession } from "./document-session.js";
 import type {
@@ -21,6 +22,7 @@ import type {
   AgentProviderPresentation,
 } from "./agent-provider-catalog.js";
 import type { RunSubmitPlan } from "./run/submit-plan.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 
 export type RunWorkflowOutcome<T = unknown> =
   | Readonly<{ status: "succeeded"; value: T }>
@@ -49,7 +51,7 @@ export type RunWorkflowCodecs = Readonly<{
 export type RunWorkflowSnapshot = Readonly<{
   polling: boolean;
   pendingReconciliations: ReadonlyArray<string>;
-  qoderAvailability: AgentProviderAvailabilitySnapshot;
+  agentAvailability: AgentProviderAvailabilitySnapshot;
   agentCatalog: AgentCatalogSnapshot;
   agentPresentation: AgentProviderPresentation;
   accessRepair: Readonly<{
@@ -89,7 +91,7 @@ export type RunWorkflowConstruction = Readonly<{
     | "createRequest"
     | "workspace"
     | "status"
-    | "qoderAvailability"
+    | "agentAvailability"
     | "preflightAgent"
     | "startAgent"
     | "cancelActiveRun"
@@ -121,8 +123,28 @@ export type RunWorkflowConstruction = Readonly<{
   }>>;
   codecs: RunWorkflowCodecs;
   ports: Readonly<{
-    uiPreferences?: import("./workspace-preferences-session.js").WorkspacePreferencesPort | null;
-    agentCredentialStatus?: (() => Promise<{ remembered?: boolean }>) | null;
+    agentPreferences?: Readonly<{
+      getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
+      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      commitAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent: Readonly<{ intentId: string; isCurrent(): boolean }>,
+      ): Promise<WorkspacePreferenceMutationResult>;
+      commitDefaultAgent(input: {
+        intentId: string;
+        providerId: string;
+        isCurrent(): boolean;
+      }): Promise<WorkspacePreferenceMutationResult>;
+      setProviderDisabled(input: {
+        intentId: string;
+        providerId: string;
+        disabled: boolean;
+        isCurrent(): boolean;
+      }): Promise<WorkspacePreferenceMutationResult>;
+    }> | null;
+    agentCredential?: AgentCredentialOperationPort & Readonly<{
+      restore(): Promise<Record<string, unknown>>;
+    }> | null;
     canvas: Readonly<{
       checkpointNativeTextIntent(input: Record<string, unknown>): {
         ok: boolean;
@@ -178,15 +200,6 @@ export class RunWorkflow {
     kind: AgentProviderGuidanceKind;
     selection?: AgentSelection | null;
   }): Promise<RunWorkflowOutcome<{ kind: AgentProviderGuidanceKind; copied: true }>>;
-  refreshQoderAvailability(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
-  checkQoderUsability(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
-  copyQoderGuidance(input: {
-    kind: AgentProviderGuidanceKind;
-  }): Promise<RunWorkflowOutcome<{ kind: AgentProviderGuidanceKind; copied: true }>>;
   startAgentLogin(selection?: AgentSelection | null): Promise<RunWorkflowOutcome<{
     availability: AgentProviderAvailabilitySnapshot;
     cancelled?: boolean;
@@ -201,9 +214,6 @@ export class RunWorkflow {
     availability: AgentProviderAvailabilitySnapshot;
   }>>;
   cancelAgentInstall(selection?: AgentSelection | null): Promise<RunWorkflowOutcome>;
-  installQoder(): Promise<RunWorkflowOutcome<{
-    availability: AgentProviderAvailabilitySnapshot;
-  }>>;
   planSubmission(): RunSubmitPlan;
   submit(input?: {
     projectName?: string;
@@ -248,8 +258,8 @@ export class RunWorkflow {
   clearPendingDefaultAgent(expectedIntentId?: string): AgentSelection | null;
   commitPendingDefaultAgent(
     selection: AgentSelection | null | undefined,
-    options?: Readonly<{ saveDefault?(providerId: string): Promise<unknown> }>,
   ): Promise<RunWorkflowOutcome>;
+  selectDefaultAgent(selection: AgentSelection): Promise<RunWorkflowOutcome>;
   beginAccessRepair(
     run?: ActiveRun | null,
     field?: "apiKey" | "login" | "install" | "model" | "provider",
@@ -265,16 +275,11 @@ export class RunWorkflow {
     extras?: Readonly<{ vendorId?: string; baseUrl?: string; modelId?: string; remember?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
   disconnectAgentApiKey(selection: AgentSelection): Promise<RunWorkflowOutcome>;
+  retryAgentCredentialPersist(selection: AgentSelection): Promise<RunWorkflowOutcome>;
   stopRunsForProvider(providerId: string): Promise<readonly RunWorkflowOutcome[]>;
   manageAgentAccess(
     kind: "disconnect" | "remove-key" | "reconnect" | "logout",
     selection: AgentSelection,
-    options?: Readonly<{
-      stopRelatedRuns?: boolean;
-      credentials?: Readonly<{
-        clear?(): Promise<{ ok?: boolean }>;
-        restore?(): Promise<unknown>;
-      }>;
-    }>,
+    options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
 }

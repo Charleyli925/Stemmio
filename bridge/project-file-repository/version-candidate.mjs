@@ -134,11 +134,6 @@ export function assertCandidateAssessment(assessment) {
       "Candidate validation evidence is invalid.",
     );
   }
-  const legacyImpactFields = [
-    "changedStableElementIds",
-    "requestedTargetElementIds",
-    "outsideRequestedTargetElementIds",
-  ];
   const boundedImpactFields = [
     "changedElementCount",
     "requestedTargetCount",
@@ -147,36 +142,16 @@ export function assertCandidateAssessment(assessment) {
     "outsideTargetElementIdSample",
     "truncated",
   ];
-  const hasLegacyImpact = legacyImpactFields.some((field) => Object.hasOwn(assessment, field));
   const hasBoundedImpact = boundedImpactFields.some((field) => Object.hasOwn(assessment, field));
-  if (hasLegacyImpact && hasBoundedImpact) {
+  if ([
+    "changedStableElementIds",
+    "requestedTargetElementIds",
+    "outsideRequestedTargetElementIds",
+  ].some((field) => Object.hasOwn(assessment, field))) {
     throw new ProjectFileRepositoryError(
       "CANDIDATE_VALIDATION_INVALID",
-      "Candidate impact evidence mixes legacy and bounded forms.",
+      "Legacy Candidate impact evidence is unsupported.",
     );
-  }
-  if (hasLegacyImpact) {
-    const validIdList = (value) => (
-      Array.isArray(value)
-      && value.every((id) => isValidStemmioElementId(id))
-      && new Set(value).size === value.length
-    );
-    if (
-      !legacyImpactFields.every((field) => Object.hasOwn(assessment, field))
-      || !validIdList(assessment.changedStableElementIds)
-      || !validIdList(assessment.requestedTargetElementIds)
-      || !validIdList(assessment.outsideRequestedTargetElementIds)
-      || !Number.isSafeInteger(assessment.requestedTargetCount)
-      || assessment.requestedTargetCount < 0
-      || assessment.outsideRequestedTargetElementIds.some(
-        (id) => !assessment.changedStableElementIds.includes(id),
-      )
-    ) {
-      throw new ProjectFileRepositoryError(
-        "CANDIDATE_VALIDATION_INVALID",
-        "Candidate impact evidence is invalid.",
-      );
-    }
   }
   if (hasBoundedImpact) {
     const validSample = (value) => (

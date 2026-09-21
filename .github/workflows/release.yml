@@ -112,16 +112,37 @@ jobs:
             output/package-delivery
           if-no-files-found: warn
           retention-days: 30
+      - name: Validate public distribution destinations before tagging
+        env:
+          PUBLIC_RELEASES_TOKEN: ${{ secrets.STEMMIO_PUBLIC_RELEASES_TOKEN }}
+          PUBLIC_RELEASES_REPOSITORY: Charleyli925/Stemmio-Releases
+          LEGACY_UPDATE_BRIDGE_REPOSITORY: Charleyli925/PageRoot
+          LEGACY_UPDATE_BRIDGE_VERSION: 0.9.90
+          VERSION: ${{ inputs.version }}
+        run: |
+          test -n "$PUBLIC_RELEASES_TOKEN" || {
+            echo "STEMMIO_PUBLIC_RELEASES_TOKEN is required to publish the public distribution release." >&2
+            exit 1
+          }
+          repositories=("$PUBLIC_RELEASES_REPOSITORY")
+          if [ "$VERSION" = "$LEGACY_UPDATE_BRIDGE_VERSION" ]; then
+            repositories+=("$LEGACY_UPDATE_BRIDGE_REPOSITORY")
+          fi
+          for repository in "${repositories[@]}"; do
+            test "$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh api "repos/$repository" --jq '.full_name')" = "$repository" || {
+              echo "The configured public distribution repository must resolve to its exact repository name: $repository" >&2
+              exit 1
+            }
+            test "$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh api "repos/$repository" --jq '.private')" = "false" || {
+              echo "The configured public distribution repository must be public: $repository" >&2
+              exit 1
+            }
+          done
       - name: Create or safely resume the immutable annotated tag
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           TAG="v${VERSION}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to replace immutable assets."
-            exit 1
-          fi
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
             test "$(git cat-file -t "refs/tags/$TAG")" = "tag"
@@ -133,22 +154,104 @@ jobs:
             git tag -a "$TAG" "$GITHUB_SHA" -m "Stemmio ${VERSION}"
             git push origin "refs/tags/$TAG"
           fi
-      - name: Publish immutable GitHub Release
+      - name: Publish immutable public GitHub Releases
         env:
-          GH_TOKEN: ${{ github.token }}
+          PUBLIC_RELEASES_TOKEN: ${{ secrets.STEMMIO_PUBLIC_RELEASES_TOKEN }}
+          PUBLIC_RELEASES_REPOSITORY: Charleyli925/Stemmio-Releases
+          LEGACY_UPDATE_BRIDGE_REPOSITORY: Charleyli925/PageRoot
+          LEGACY_UPDATE_BRIDGE_VERSION: 0.9.90
           VERSION: ${{ inputs.version }}
         run: |
           CANDIDATE_DIRECTORY="output/downloaded-release-candidate"
-          gh release create "v${VERSION}" \
-            "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.dmg" \
-            "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.zip" \
-            "$CANDIDATE_DIRECTORY/Stemmio-${VERSION}-arm64.zip.blockmap" \
-            "$CANDIDATE_DIRECTORY/latest-mac.yml" \
-            "$CANDIDATE_DIRECTORY/SHA256SUMS.txt" \
-            "$CANDIDATE_DIRECTORY/update-manifest.json" \
-            "$CANDIDATE_DIRECTORY/build-info.json" \
-            "$CANDIDATE_DIRECTORY/release-candidate.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --notes-file output/release-metadata/release-notes.md \
-            --title "Stemmio ${VERSION}"
+          TAG="v${VERSION}"
+          test -n "$PUBLIC_RELEASES_TOKEN" || {
+            echo "STEMMIO_PUBLIC_RELEASES_TOKEN is required to publish the public distribution release." >&2
+            exit 1
+          }
+          assets=(
+            "Stemmio-${VERSION}-arm64.dmg"
+            "Stemmio-${VERSION}-arm64.zip"
+            "Stemmio-${VERSION}-arm64.zip.blockmap"
+            "latest-mac.yml"
+            "SHA256SUMS.txt"
+            "build-info.json"
+            "release-candidate.json"
+          )
+
+          verify_existing_legacy_bridge() {
+            local repository="$1"
+            local downloaded="output/downloaded-legacy-update-bridge"
+            local expected_assets
+            local actual_assets
+            test "$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" --repo "$repository" --json isDraft,isPrerelease --jq '.isDraft or .isPrerelease')" = "false" || {
+              echo "Legacy updater bridge release must be a published stable release." >&2
+              exit 1
+            }
+            expected_assets="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
+            actual_assets="$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" --repo "$repository" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+            test "$actual_assets" = "$expected_assets" || {
+              echo "Legacy updater bridge asset set differs from the frozen candidate." >&2
+              exit 1
+            }
+            rm -rf "$downloaded"
+            mkdir -p "$downloaded"
+            GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release download "$TAG" \
+              --repo "$repository" \
+              --dir "$downloaded"
+            cmp -s output/release-metadata/release-notes.md <(
+              GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" \
+                --repo "$repository" \
+                --json body \
+                --jq .body
+            ) || {
+              echo "Legacy updater bridge notes differ from the reviewed release notes." >&2
+              exit 1
+            }
+            test "$(GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" --repo "$repository" --json name --jq .name)" = "Stemmio ${VERSION}" || {
+              echo "Legacy updater bridge title differs from the reviewed release title." >&2
+              exit 1
+            }
+            for asset in "${assets[@]}"; do
+              test -f "$downloaded/$asset" || {
+                echo "Legacy updater bridge is missing $asset." >&2
+                exit 1
+              }
+              cmp -s "$CANDIDATE_DIRECTORY/$asset" "$downloaded/$asset" || {
+                echo "Legacy updater bridge asset differs from the frozen candidate: $asset" >&2
+                exit 1
+              }
+            done
+          }
+
+          publish_release() {
+            local repository="$1"
+            local allow_resume="$2"
+            if GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release view "$TAG" --repo "$repository" >/dev/null 2>&1; then
+              if [ "$allow_resume" != "true" ]; then
+                echo "Public Release $TAG already exists; refusing to replace immutable assets." >&2
+                exit 1
+              fi
+              verify_existing_legacy_bridge "$repository"
+              echo "Existing exact legacy updater bridge release $TAG is retained."
+              return
+            fi
+            if GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh api "repos/$repository/git/ref/tags/$TAG" >/dev/null 2>&1; then
+              echo "Public release tag $TAG already exists without a releasable immutable bridge." >&2
+              exit 1
+            fi
+            local release_assets=()
+            for asset in "${assets[@]}"; do
+              release_assets+=("$CANDIDATE_DIRECTORY/$asset")
+            done
+            GH_TOKEN="$PUBLIC_RELEASES_TOKEN" gh release create "$TAG" \
+              "${release_assets[@]}" \
+              --repo "$repository" \
+              --target main \
+              --notes-file output/release-metadata/release-notes.md \
+              --title "Stemmio ${VERSION}"
+          }
+
+          if [ "$VERSION" = "$LEGACY_UPDATE_BRIDGE_VERSION" ]; then
+            publish_release "$LEGACY_UPDATE_BRIDGE_REPOSITORY" true
+          fi
+          publish_release "$PUBLIC_RELEASES_REPOSITORY" false

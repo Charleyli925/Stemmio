@@ -12,6 +12,7 @@ import type { DesktopUiPreferencesApi } from "../components/desktop-ui-preferenc
 import {
   WorkspacePreferencesSession,
   type WorkspacePreferenceAgentId,
+  type WorkspacePreferenceMutationResult,
   type WorkspacePreferences,
   type WorkspacePreferencesSnapshot,
 } from "../application/workspace-preferences-session.js";
@@ -46,6 +47,27 @@ export function useWorkspacePreferences(
 ): Readonly<{
   snapshot: WorkspacePreferencesSnapshot;
   panelWidths: Readonly<{ sidebarWidth: number; inspectorWidth: number }>;
+  sessionPort: Readonly<{
+    load(): Promise<WorkspacePreferencesSnapshot>;
+    update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
+    commitDefaultAgent(input: Readonly<{
+      intentId: string;
+      providerId: WorkspacePreferenceAgentId;
+      isCurrent(): boolean;
+    }>): Promise<WorkspacePreferenceMutationResult>;
+    commitAgentConfigurations(input: Readonly<{
+      intentId: string;
+      agentConfigurations: WorkspacePreferences["agentConfigurations"];
+      isCurrent(): boolean;
+    }>): Promise<WorkspacePreferenceMutationResult>;
+    setProviderDisabled(input: Readonly<{
+      intentId: string;
+      providerId: WorkspacePreferenceAgentId;
+      disabled: boolean;
+      isCurrent(): boolean;
+    }>): Promise<WorkspacePreferenceMutationResult>;
+    snapshot(): WorkspacePreferencesSnapshot;
+  }>;
   update(patch: Partial<WorkspacePreferences>): Promise<boolean>;
   commitPanelWidth(kind: "sidebar" | "inspector", width: number): void;
   retry(): boolean;
@@ -62,6 +84,27 @@ export function useWorkspacePreferences(
     }),
     [api],
   );
+  const sessionPort = useMemo(() => Object.freeze({
+    load: () => session.load(),
+    update: (patch: Partial<WorkspacePreferences>) => session.update(patch),
+    commitDefaultAgent: (input: Readonly<{
+      intentId: string;
+      providerId: WorkspacePreferenceAgentId;
+      isCurrent(): boolean;
+    }>) => session.commitDefaultAgent(input),
+    commitAgentConfigurations: (input: Readonly<{
+      intentId: string;
+      agentConfigurations: WorkspacePreferences["agentConfigurations"];
+      isCurrent(): boolean;
+    }>) => session.commitAgentConfigurations(input),
+    setProviderDisabled: (input: Readonly<{
+      intentId: string;
+      providerId: WorkspacePreferenceAgentId;
+      disabled: boolean;
+      isCurrent(): boolean;
+    }>) => session.setProviderDisabled(input),
+    snapshot: () => session.snapshot,
+  }), [session]);
   const [snapshot, setSnapshot] = useState<WorkspacePreferencesSnapshot>(session.snapshot);
   const [panelWidths, setPanelWidths] = useState({
     sidebarWidth: session.snapshot.workspace.sidebarWidth,
@@ -155,5 +198,5 @@ export function useWorkspacePreferences(
     (deadlineAt: number) => session.flush({ deadlineAt }),
     [session],
   );
-  return { snapshot, panelWidths, update, commitPanelWidth, retry, flush };
+  return { snapshot, panelWidths, sessionPort, update, commitPanelWidth, retry, flush };
 }

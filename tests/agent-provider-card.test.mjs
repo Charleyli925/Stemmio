@@ -2,27 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { settingsCredentialRemoveAction } from "../app/components/settings-agent-action-gate.js";
+
 async function source(relativePath) {
   return readFile(new URL(relativePath, import.meta.url), "utf8");
 }
 
-test("the legacy Qoder card is a presentation-only wrapper over the neutral card", async () => {
-  const [wrapper, card] = await Promise.all([
-    source("../app/components/QoderAvailabilityCard.tsx"),
-    source("../app/components/AgentProviderCard.tsx"),
-  ]);
-  assert.match(wrapper, /import AgentProviderCard from "\.\/AgentProviderCard"/u);
-  assert.match(wrapper, /<AgentProviderCard \{\.\.\.props\} presentation=\{QODER_CARD_PRESENTATION\}/u);
-  assert.doesNotMatch(wrapper, /useState|useEffect|useRef/u);
-  for (const literal of [
-    'displayName: "Qoder CLI"',
-    'logoSrc: "./qoder-logo.png"',
-    'cardClassName: "qoder-availability-card"',
-    'primaryActionDataAttribute: "data-qoder-primary"',
-    '安装 Qoder CLI',
-    '登录 Qoder',
-  ]) assert.match(wrapper, new RegExp(literal, "u"));
-
+test("the generic Agent card owns provider presentation", async () => {
+  const card = await source("../app/components/AgentProviderCard.tsx");
   for (const contract of [
     "data-status={availability.status}",
     "data-surface={surface}",
@@ -52,6 +39,8 @@ test("the legacy Qoder card is a presentation-only wrapper over the neutral card
   assert.match(card, /验证成功后才会替换当前连接/u);
   assert.match(card, /persistFailed \|\| outcome\?\.reason/u);
   assert.match(card, /已连接，但新的 API Key 未保存/u);
+  assert.match(card, /credentialPersist\?\.operationKind !== "clear"/u);
+  assert.match(card, /移除状态未确认/u);
   assert.match(card, /重试保存/u);
   assert.match(card, /kind: "api-key", label: "连接"/u);
   assert.doesNotMatch(card, /kind: "api-key", label: "登录"/u);
@@ -70,12 +59,13 @@ test("the legacy Qoder card is a presentation-only wrapper over the neutral card
 });
 
 test("About is product information while Settings owns Agent checks and update controls", async () => {
-  const [about, settings] = await Promise.all([
+  const [about, settings, actionGate] = await Promise.all([
     source("../app/components/AboutStemmioDialog.tsx"),
     source("../app/components/SettingsPage.tsx"),
+    source("../app/components/settings-agent-action-gate.js"),
   ]);
   assert.match(about, /源码级本地 HTML 编辑器/u);
-  assert.doesNotMatch(about, /about-agent-section|Agent|更新|检查更新|Qoder/u);
+  assert.doesNotMatch(about, /about-agent-section|Agent|检查更新|Qoder/u);
   assert.match(settings, /AI 服务/u);
   assert.match(settings, /settings-agent-row-/u);
   assert.match(settings, /AgentSetupPanel/u);
@@ -89,8 +79,10 @@ test("About is product information while Settings owns Agent checks and update c
   assert.match(settings, /onRequestRestart/u);
   assert.match(settings, /if \(!force && \(/u);
   assert.match(settings, /checkInFlightRef\.current/u);
-  assert.match(settings, /rememberedKey;/u);
   assert.doesNotMatch(settings, /rememberedKey \|\| Boolean\(card\.connection\)/u);
+  assert.match(settings, /settingsCredentialRemoveAction/u);
+  assert.match(actionGate, /确认移除结果/u);
+  assert.match(actionGate, /继续确认上次移除操作/u);
   assert.match(settings, /setConfirmPending\(true\)/u);
   assert.match(settings, /正在处理…/u);
   assert.doesNotMatch(settings, /expandedId \|\| selectedChoiceId/u);
@@ -99,9 +91,32 @@ test("About is product information while Settings owns Agent checks and update c
   assert.match(settings, /停止并退出/u);
   assert.match(settings, /providerAccessImpact/u);
   assert.match(settings, /credentialRestoreFailed/u);
+  assert.match(settings, /settings-preference-error/u);
+  assert.match(settings, /设置暂未保存/u);
+  assert.match(settings, /onRetryWorkspacePreferences/u);
   assert.match(settings, /initialApiKeyOpen=\{selectedCard\.credentialPersist\?\.status === "failed"/u);
   assert.match(settings, /无法读取已保存的连接凭证/u);
   assert.doesNotMatch(settings, /setConfirmAction\(null\);\s+if \(action\.kind === "remove-key"\)/u);
+});
+
+test("Settings unknown clear action executes the remove reconciliation for its provider", async () => {
+  const selection = Object.freeze({ providerId: "stemmio", runtimeId: "native-http" });
+  const calls = [];
+  const action = settingsCredentialRemoveAction({
+    card: Object.freeze({
+      selection,
+      credentialPersist: Object.freeze({ operationKind: "clear", status: "unknown" }),
+    }),
+    rememberedKey: false,
+    async onRemoveRememberedKey(actualSelection) {
+      calls.push(actualSelection);
+      return { status: "succeeded" };
+    },
+  });
+  assert.equal(action?.label, "确认移除结果");
+  assert.equal(action?.description, "继续确认上次移除操作");
+  assert.deepEqual(await action?.trigger(), { status: "succeeded" });
+  assert.deepEqual(calls, [selection]);
 });
 
 test("Settings reuses AgentSetupPanel and lists every service row", async () => {

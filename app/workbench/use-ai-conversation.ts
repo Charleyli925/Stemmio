@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AiConversationControllerCapability } from "../application/workspace-controller-capabilities.js";
-import type { QoderAvailabilitySnapshot } from "../domain/qoder-availability.js";
+import type { AgentProviderAvailabilitySnapshot } from "../domain/agent-provider-state.js";
 import type { SidebarCatalogStatus } from "./ai-conversation-model.js";
 
 // Owns the sidebar visibility and document lifecycle. Its outlet subscribes local facts.
@@ -18,7 +18,7 @@ import type { SidebarCatalogStatus } from "./ai-conversation-model.js";
 
 export type UseAiConversationOptions = {
   controllerRef: { current: AiConversationControllerCapability | null };
-  qoderAvailability: QoderAvailabilitySnapshot | null;
+  agentAvailability: AgentProviderAvailabilitySnapshot | null;
   agentDisplayName?: string | null;
   executionDisplayName?: string | null;
   agentActionName?: string | null;
@@ -69,7 +69,7 @@ export type UseAiConversationOptions = {
 
 export function useAiConversation({
   controllerRef,
-  qoderAvailability,
+  agentAvailability,
   agentDisplayName = null,
   executionDisplayName = null,
   agentActionName = "Agent",
@@ -167,8 +167,8 @@ export function useAiConversation({
     onDraftTextChange,
     // The selected Agent's availability is the model catalog's readiness: one owner supplies
     // both, so the Composer can never claim ready while the Agent is not.
-    catalogStatus: (qoderAvailability?.status ?? "unavailable") as SidebarCatalogStatus,
-    catalogReason: qoderAvailability?.reason ?? null,
+    catalogStatus: (agentAvailability?.status ?? "unavailable") as SidebarCatalogStatus,
+    catalogReason: agentAvailability?.reason ?? null,
     agentDisplayName,
     executionDisplayName,
     agentActionName,
@@ -188,7 +188,7 @@ export function useAiConversation({
     onClose: hide,
     onOpenAgentSettings,
   }), [
-    qoderAvailability,
+    agentAvailability,
     agentDisplayName,
     executionDisplayName,
     agentActionName,

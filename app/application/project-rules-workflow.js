@@ -1,4 +1,5 @@
 import { isBridgeRequestError } from "./bridge-client.js";
+import { isProjectSurfaceContext } from "./project-surface-context.js";
 
 const AUTOSAVE_DELAY_MS = 700;
 
@@ -95,6 +96,10 @@ export class ProjectRulesWorkflow {
 
   #saveSequence = 0;
 
+  #openSequence = 0;
+
+  #preparedOpen = null;
+
   #disposed = false;
 
   constructor({
@@ -177,6 +182,8 @@ export class ProjectRulesWorkflow {
 
   dispose() {
     this.#disposed = true;
+    this.#openSequence += 1;
+    this.#preparedOpen = null;
     this.#clearAutosaveTimer();
     this.#sessionUnsubscribe?.();
     this.#sessionUnsubscribe = null;
@@ -186,78 +193,158 @@ export class ProjectRulesWorkflow {
   }
 
   async open({ context } = {}) {
+    const prepared = await this.prepareOpen({ context });
+    if (prepared.status !== "succeeded") return prepared;
+    return this.commitPreparedOpen({
+      preparationId: prepared.value.preparationId,
+    });
+  }
+
+  async prepareOpen({ context } = {}) {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (!context || !this.#projectSession.matches(context)) return stale(context);
+    if (!this.#acceptsContext(context)) return stale(context);
+    const generation = ++this.#openSequence;
+    this.#preparedOpen = null;
     if (
       this.#snapshot.open
+      && !this.#snapshot.loading
       && !this.#snapshot.error
       && this.#projectRulesSession.matchesContext(context)
     ) {
-      return succeeded({ opened: true, reused: true });
+      const preparationId = this.#nextPreparationId(generation);
+      this.#preparedOpen = Object.freeze({
+        preparationId,
+        generation,
+        context: Object.freeze({ ...context }),
+        payload: null,
+        reused: true,
+      });
+      return succeeded({ prepared: true, preparationId, reused: true });
+    }
+    if (this.#snapshot.open && !this.#projectRulesSession.matchesContext(context)) {
+      const drained = await this.drain();
+      if (!this.#isPreparedReadCurrent(generation, context)) return stale(context);
+      if (!drained) {
+        return blocked(
+          "PROJECT_RULES_SWITCH_BLOCKED",
+          "当前长期规则尚未完成安全保存。",
+        );
+      }
     }
     this.#clearAutosaveTimer();
-    const token = this.#projectRulesSession.beginOpen(context);
-    if (!token) {
-      return blocked("PROJECT_RULES_CONTEXT_REQUIRED", "当前项目身份尚未完成初始化。");
-    }
+    const preparedContext = Object.freeze({ ...context });
     try {
       const payload = await this.#bridgeClient.projectFile(
-        token.context.sourcePath,
+        preparedContext.sourcePath,
         "PROJECT.md",
       );
-      if (!this.#isCurrent(token)) return stale(token.context);
-      if (!this.#projectRulesSession.completeOpen(token, payload)) {
-        return stale(token.context);
+      if (!this.#isPreparedReadCurrent(generation, preparedContext)) {
+        return stale(preparedContext);
       }
-      return succeeded({ opened: true, reused: false });
+      const preparationId = this.#nextPreparationId(generation);
+      this.#preparedOpen = Object.freeze({
+        preparationId,
+        generation,
+        context: preparedContext,
+        payload: Object.freeze({ content: String(payload?.content || "") }),
+        reused: false,
+      });
+      return succeeded({ prepared: true, preparationId, reused: false });
     } catch (cause) {
-      if (!this.#isCurrent(token)) return stale(token.context);
+      if (!this.#isPreparedReadCurrent(generation, preparedContext)) {
+        return stale(preparedContext);
+      }
       const reason = this.#errorMessage(
         cause,
         "长期规则暂时无法读取；未显示任何可编辑的替代内容。",
       );
-      this.#projectRulesSession.failOpen(token, reason);
       return rejected(bridgeErrorCode(cause, "PROJECT_RULES_READ_FAILED"), reason);
     }
   }
 
-  updateContent({ content } = {}) {
+  commitPreparedOpen({ preparationId } = {}) {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (this.#runSession.activeLocked) {
+    const prepared = this.#preparedOpen;
+    if (
+      !prepared
+      || prepared.preparationId !== String(preparationId || "")
+      || prepared.generation !== this.#openSequence
+      || !this.#acceptsContext(prepared.context)
+    ) {
+      return blocked(
+        "PROJECT_RULES_PREPARATION_STALE",
+        "长期规则读取结果已经过期，没有切换编辑会话。",
+      );
+    }
+    this.#preparedOpen = null;
+    if (prepared.reused) {
+      return this.#projectRulesSession.matchesContext(prepared.context)
+        ? succeeded({ opened: true, reused: true })
+        : blocked(
+          "PROJECT_RULES_PREPARATION_STALE",
+          "长期规则编辑会话已经变化，没有提交旧读取结果。",
+        );
+    }
+    if (!this.#projectRulesSession.commitOpen(prepared.context, prepared.payload)) {
+      return blocked(
+        "PROJECT_RULES_CONTEXT_REQUIRED",
+        "当前项目身份尚未完成初始化。",
+      );
+    }
+    return succeeded({ opened: true, reused: false });
+  }
+
+  discardPreparedOpen({ preparationId } = {}) {
+    if (this.#preparedOpen?.preparationId !== String(preparationId || "")) return false;
+    this.#preparedOpen = null;
+    return true;
+  }
+
+  updateContent({ content, scope } = {}) {
+    if (this.#disposed) {
+      return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
+    }
+    if (this.#runLockedForContext()) {
       return blocked("PROJECT_RULES_RUN_LOCKED", "AI 处理期间不能修改项目规则。");
     }
+    if (!this.#matchesVisibleScope(scope)) return this.#visibleContextMismatch();
     if (!this.#projectRulesSession.updateContent(String(content ?? ""))) {
       return blocked("PROJECT_RULES_EDIT_UNAVAILABLE", "项目规则尚未完成读取，暂时不能编辑。");
     }
     return succeeded({ updated: true });
   }
 
-  beginComposition({ target, baselineValue } = {}) {
-    if (this.#disposed || this.#runSession.activeLocked) return null;
+  beginComposition({ target, baselineValue, scope } = {}) {
+    if (
+      this.#disposed
+      || this.#runLockedForContext()
+      || !this.#matchesVisibleScope(scope)
+    ) return null;
     return this.#projectRulesSession.beginComposition(target, String(baselineValue ?? ""));
   }
 
-  finishComposition({ target } = {}) {
-    if (this.#disposed) return false;
+  finishComposition({ target, scope } = {}) {
+    if (this.#disposed || !this.#matchesVisibleScope(scope)) return false;
     return this.#projectRulesSession.finishComposition(target);
   }
 
-  leaveEditor() {
-    if (this.#disposed) return false;
+  leaveEditor({ scope } = {}) {
+    if (this.#disposed || !this.#matchesVisibleScope(scope)) return false;
     return this.#projectRulesSession.leaveEditor();
   }
 
-  restore() {
+  restore({ scope } = {}) {
     if (this.#disposed) {
       return blocked("PROJECT_RULES_WORKFLOW_DISPOSED", "项目规则工作流已经停止。");
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext()) {
       return blocked("PROJECT_RULES_RUN_LOCKED", "AI 处理期间不能还原项目规则。");
     }
+    if (!this.#matchesVisibleScope(scope)) return this.#visibleContextMismatch();
     const restore = this.#projectRulesSession.restore();
     if (!restore) {
       return blocked("PROJECT_RULES_RESTORE_UNAVAILABLE", "项目规则尚未完成读取，暂时不能还原。");
@@ -274,7 +361,7 @@ export class ProjectRulesWorkflow {
     return succeeded({ restored: true, editorGeneration: restore.editorGeneration });
   }
 
-  save() {
+  save({ scope } = {}) {
     if (this.#disposed) {
       return Promise.resolve(blocked(
         "PROJECT_RULES_WORKFLOW_DISPOSED",
@@ -283,8 +370,12 @@ export class ProjectRulesWorkflow {
     }
     if (this.#savePromise) return this.#savePromise;
     if (!this.#snapshot.open) return Promise.resolve(succeeded({ saved: false }));
-    if (!this.#projectRulesSession.matchesContext(this.#projectSession.context)) {
-      return Promise.resolve(stale(this.#projectSession.context));
+    if (!this.#matchesVisibleScope(scope)) {
+      return Promise.resolve(this.#visibleContextMismatch());
+    }
+    const context = this.#projectRulesSession.context;
+    if (!context || !this.#acceptsContext(context)) {
+      return Promise.resolve(stale(context));
     }
     if (this.#snapshot.loading || this.#snapshot.error) {
       return Promise.resolve(blocked(
@@ -292,7 +383,7 @@ export class ProjectRulesWorkflow {
         this.#snapshot.error || "项目规则尚未完成读取，暂时不能保存。",
       ));
     }
-    if (this.#runSession.activeLocked) {
+    if (this.#runLockedForContext()) {
       return Promise.resolve(blocked(
         "PROJECT_RULES_RUN_LOCKED",
         "AI 处理期间不能保存项目规则。",
@@ -347,6 +438,8 @@ export class ProjectRulesWorkflow {
 
   resetForProjectTransition() {
     if (this.#disposed) return;
+    this.#openSequence += 1;
+    this.#preparedOpen = null;
     this.#clearAutosaveTimer();
     // A source transition fences the Session generation. Do not make the next
     // project wait for an old, already-stale write promise before it can save.
@@ -356,7 +449,7 @@ export class ProjectRulesWorkflow {
 
   inspect() {
     return this.#projectRulesSession.inspect({
-      locked: this.#runSession.activeLocked,
+      locked: this.#runLockedForContext(),
     });
   }
 
@@ -429,8 +522,64 @@ export class ProjectRulesWorkflow {
     return Boolean(
       !this.#disposed
       && this.#projectRulesSession.isCurrent(token)
-      && this.#projectSession.matches(token.context),
+      && this.#acceptsContext(token.context),
     );
+  }
+
+  retry({ scope } = {}) {
+    if (!this.#matchesVisibleScope(scope)) {
+      return Promise.resolve(this.#visibleContextMismatch());
+    }
+    const context = this.#projectRulesSession.context;
+    return context
+      ? this.open({ context })
+      : Promise.resolve(blocked(
+        "PROJECT_RULES_CONTEXT_REQUIRED",
+        "当前长期规则没有可重试的项目身份。",
+      ));
+  }
+
+  #acceptsContext(context) {
+    return Boolean(
+      context
+      && (isProjectSurfaceContext(context) || this.#projectSession.matches(context)),
+    );
+  }
+
+  #isPreparedReadCurrent(generation, context) {
+    return Boolean(
+      !this.#disposed
+      && generation === this.#openSequence
+      && this.#acceptsContext(context),
+    );
+  }
+
+  #matchesVisibleScope(scope) {
+    if (scope === undefined) return true;
+    const context = this.#projectRulesSession.context;
+    return Boolean(
+      scope
+      && context
+      && String(scope.projectId || "") === context.projectId
+      && String(scope.documentId || "") === context.documentId,
+    );
+  }
+
+  #visibleContextMismatch() {
+    return blocked(
+      "PROJECT_RULES_VISIBLE_CONTEXT_MISMATCH",
+      "当前标签与长期规则编辑会话不一致，已拒绝这次操作。",
+    );
+  }
+
+  #runLockedForContext(context = this.#projectRulesSession.context) {
+    if (!this.#runSession.activeLocked) return false;
+    const activeRun = this.#runSession.activeRun;
+    if (!context || !activeRun) return true;
+    return activeRun.projectId && activeRun.documentId
+      ? activeRun.projectId === context.projectId
+        && activeRun.documentId === context.documentId
+      : activeRun.sourcePath === context.sourcePath;
   }
 
   #nextOperationId() {
@@ -439,6 +588,14 @@ export class ProjectRulesWorkflow {
       "project-rules-save",
       Math.max(0, Number(this.#clock.now()) || 0).toString(36),
       this.#saveSequence.toString(36),
+    ].join("_");
+  }
+
+  #nextPreparationId(generation) {
+    return [
+      "project-rules-open",
+      Math.max(0, Number(this.#clock.now()) || 0).toString(36),
+      Number(generation).toString(36),
     ].join("_");
   }
 
@@ -470,7 +627,7 @@ export class ProjectRulesWorkflow {
       && !snapshot.error
       && !snapshot.saving
       && !snapshot.compositionActive
-      && !this.#runSession.activeLocked
+      && !this.#runLockedForContext()
       && snapshot.content !== snapshot.savedContent,
     );
     if (!eligible) {

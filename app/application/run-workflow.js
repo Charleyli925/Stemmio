@@ -5,6 +5,11 @@ import { revalidateCommentTextLocators } from "./run/text-locator-validation.js"
 import { createRunWorkflowCodecs } from "./run-workflow-codecs.js";
 import { verifyOpenTarget, verifyProjectContext } from "./verified-project-context.js";
 import { AgentCatalogState } from "./agent-provider-catalog.js";
+import { interpretWorkspacePreferenceMutation } from "./workspace-preference-mutation-outcome.js";
+import {
+  interpretAgentCredentialOperation,
+  isAgentCredentialRecordId,
+} from "./agent-credential-operation.js";
 import { credentialErrorField } from "../../shared/agent-access-operation.mjs";
 import {
   decodeHttpAgentText,
@@ -14,7 +19,6 @@ import {
   agentRecoveryKindForError,
   CLIPBOARD_DELIVERY_MODE,
   MANAGED_AGENT_MODE,
-  TRUSTED_LOCAL_AGENT_POLICY_VERSION,
   normalizeAgentDelivery,
 } from "../../shared/agent-delivery.mjs";
 
@@ -306,7 +310,6 @@ function agentHandoffState(run, session) {
     agentVersion: session.agentVersion ? String(session.agentVersion) : null,
     // ADR 0037: narration only. It reaches the view so the user can see what the
     // Agent is doing, and it carries no authority over the Candidate.
-    visibleText: typeof session.visibleText === "string" ? session.visibleText : "",
     visibleTextUpdates: Object.freeze(visibleTextUpdates),
     textTruncated: session.textTruncated === true,
     startedAt: typeof session.startedAt === "string" ? session.startedAt : null,
@@ -323,6 +326,16 @@ function agentHandoffState(run, session) {
       safeToRetry,
     }),
   };
+}
+
+function sameVisibleTextUpdates(left, right) {
+  const leftUpdates = Array.isArray(left) ? left : [];
+  const rightUpdates = Array.isArray(right) ? right : [];
+  return leftUpdates.length === rightUpdates.length && leftUpdates.every((update, index) => (
+    update.id === rightUpdates[index]?.id
+    && update.sequence === rightUpdates[index]?.sequence
+    && update.text === rightUpdates[index]?.text
+  ));
 }
 
 function agentRecoveryRequired(run, handoff) {
@@ -352,24 +365,14 @@ function frozenDeliveryForMode(deliveryMode, selection, provider) {
       trustPolicyVersion: provider.trustPolicyVersion,
     });
   }
-  return normalizeAgentDelivery({
-    mode: deliveryMode,
-    trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-  });
+  throw responseError("RUN_DELIVERY_MODE_INVALID", "选择的 Agent 交接方式无效。");
 }
 
 function deliveryForRun(run) {
   try {
     return normalizeAgentDelivery(run?.agentDelivery);
   } catch {
-    try {
-      return normalizeAgentDelivery({
-        ...run?.agentDelivery,
-        trustPolicyVersion: TRUSTED_LOCAL_AGENT_POLICY_VERSION,
-      });
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -412,6 +415,14 @@ export class RunWorkflow {
   #accessRepair = null;
   #repairIntentSeq = 0;
   #defaultCommitSeq = 0;
+  #agentCredentialPort = null;
+  #agentPreferencesPort = null;
+  #heldAgentCredentials = new Map();
+  #latestCredentialOperationByProvider = new Map();
+  #pendingCredentialClearByProvider = new Map();
+  #credentialIntentGenerationByProvider = new Map();
+  #credentialIntentSeq = 0;
+  #credentialOperationSeq = 0;
   #disposed = false;
 
   constructor({
@@ -436,10 +447,7 @@ export class RunWorkflow {
       || typeof bridgeClient.createRequest !== "function"
       || typeof bridgeClient.workspace !== "function"
       || typeof bridgeClient.status !== "function"
-      || (
-        typeof bridgeClient.agentAvailability !== "function"
-        && typeof bridgeClient.qoderAvailability !== "function"
-      )
+      || typeof bridgeClient.agentAvailability !== "function"
       || typeof bridgeClient.preflightAgent !== "function"
       || typeof bridgeClient.startAgent !== "function"
       || typeof bridgeClient.cancelActiveRun !== "function"
@@ -529,6 +537,8 @@ export class RunWorkflow {
     this.#hashPort = ports.hash;
     this.#scheduler = scheduler;
     this.#clock = clock;
+    this.#agentCredentialPort = ports.agentCredential || null;
+    this.#agentPreferencesPort = ports.agentPreferences || null;
     this.#visibility = visibility;
     if (typeof visibility?.addEventListener === "function") {
       this.#visibilityListener = () => this.#rescheduleForVisibility();
@@ -537,14 +547,56 @@ export class RunWorkflow {
     this.#agentCatalog = agentCatalog || new AgentCatalogState({
       bridgeClient,
       handoffPort: this.#handoffPort,
-      preferencesPort: ports.uiPreferences || null,
-      credentialStatusPort: ports.agentCredentialStatus || null,
+      configurationPreferencesPort: this.#agentPreferencesPort,
       clock,
     });
     this.#ownsAgentCatalog = !agentCatalog;
     this.#unsubscribeAgentCatalog = this.#agentCatalog.subscribe(() => {
       this.#publishSnapshot();
     });
+    if (this.#agentCredentialPort?.status) {
+      const startupIntent = this.#credentialIntent("stemmio", "startup");
+      void this.#agentCredentialPort.status({}).then(async (status) => {
+        if (!this.#credentialIntentCurrent(startupIntent) || !status) return;
+        const interpreted = interpretAgentCredentialOperation(status, { kind: "startup" });
+        const projectionStatus = interpreted.status === "saved"
+          ? "saved"
+          : interpreted.status === "missing"
+            ? "missing"
+            : interpreted.status === "unknown"
+              ? "unknown"
+              : "failed";
+        this.#agentCatalog.publishCredentialPersist("stemmio", {
+          status: projectionStatus,
+          operationKind: "startup",
+          reason: projectionStatus === "failed"
+            ? status.reason || "无法读取已保存的连接凭证。你仍可编辑项目。"
+            : projectionStatus === "unknown"
+              ? status.reason || "已保存的 API Key 状态尚未确认。"
+              : null,
+          operationId: interpreted.operationId,
+          recordId: interpreted.recordId,
+          code: interpreted.code,
+        });
+        if (projectionStatus === "saved") {
+          this.#agentCatalog.publishRestoredCredentialConnection("stemmio", {
+            vendorId: status.vendorId,
+          });
+          const selection = this.#agentCatalog.freezeProviderSelection("stemmio");
+          if (selection && this.#credentialIntentCurrent(startupIntent)) {
+            await this.#agentCatalog.diagnose(selection).catch(() => null);
+          }
+        }
+      }).catch((cause) => {
+        if (!this.#credentialIntentCurrent(startupIntent)) return;
+        this.#agentCatalog.publishCredentialPersist("stemmio", {
+          status: "failed",
+          operationKind: "startup",
+          reason: "无法确认已保存的 API Key。你仍可编辑项目。",
+          code: errorCode(cause, "AGENT_CREDENTIAL_STATUS_UNAVAILABLE"),
+        });
+      });
+    }
   }
 
   getSnapshot() {
@@ -553,7 +605,7 @@ export class RunWorkflow {
       pendingReconciliations: frozenArray(this.#uncertainSubmissions.keys()),
       agentCatalog: this.#agentCatalog.getSnapshot(),
       agentPresentation: this.#agentCatalog.presentation(),
-      qoderAvailability: this.#agentCatalog.displayAvailability(),
+      agentAvailability: this.#agentCatalog.displayAvailability(),
       accessRepair: this.#accessRepair,
       providerAccessImpact: this.#providerAccessImpact(),
     });
@@ -586,6 +638,10 @@ export class RunWorkflow {
     this.#visibility = null;
     this.#uncertainSubmissions.clear();
     this.#agentStartsPending.clear();
+    this.#heldAgentCredentials.clear();
+    this.#latestCredentialOperationByProvider.clear();
+    this.#pendingCredentialClearByProvider.clear();
+    this.#credentialIntentGenerationByProvider.clear();
     this.#unsubscribeAgentCatalog?.();
     this.#unsubscribeAgentCatalog = null;
     if (this.#ownsAgentCatalog) this.#agentCatalog.dispose();
@@ -714,54 +770,6 @@ export class RunWorkflow {
     }
   }
 
-  #qoderSelection() {
-    return this.#agentCatalog.freezeProviderSelection("qoder");
-  }
-
-  refreshQoderAvailability() {
-    const selection = this.#qoderSelection();
-    if (!selection) {
-      return Promise.resolve(rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。"));
-    }
-    if (this.#disposed) {
-      return Promise.resolve(blocked("RUN_WORKFLOW_DISPOSED", "Qoder CLI 状态检查已经停止。"));
-    }
-    return this.#agentCatalog.refreshAvailability(selection)
-      .then((refreshed) => {
-        if (this.#disposed) return stale({ kind: "agent-availability" });
-        if (String(refreshed?.result?.status || "") === "ready") {
-          return succeeded({ availability: this.#agentCatalog.availability(selection) });
-        }
-        return succeeded({ availability: this.#agentCatalog.availability(selection) });
-      })
-      .catch((cause) => rejected(
-        errorCode(cause, "AGENT_AVAILABILITY_FAILED"),
-        this.#codecs.errorMessage(cause, "暂时无法检查 Qoder CLI。"),
-      ));
-  }
-
-  async checkQoderUsability() {
-    const selection = this.#qoderSelection();
-    return this.checkAgentUsability(selection);
-  }
-
-  async copyQoderGuidance({ kind } = {}) {
-    if (kind !== "install" && kind !== "login") {
-      return rejected("AGENT_GUIDANCE_INVALID", "选择的 Qoder 引导无效。");
-    }
-    const selection = this.#qoderSelection();
-    if (!selection) return rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。");
-    try {
-      const result = await this.#agentCatalog.copyGuidance(kind, selection);
-      return succeeded(result);
-    } catch (cause) {
-      return rejected(
-        errorCode(cause, "AGENT_GUIDANCE_COPY_FAILED"),
-        this.#codecs.errorMessage(cause, "Qoder 引导指令暂时无法复制，请重试。"),
-      );
-    }
-  }
-
   async startAgentLogin(selection = this.#agentCatalog.freezeSelected()) {
     const frozen = selection || this.#agentCatalog.freezeSelected();
     const displayName = this.#agentCatalog.presentation(frozen).displayName || "Agent";
@@ -772,7 +780,16 @@ export class RunWorkflow {
     try {
       await this.#agentCatalog.startLogin(frozen);
       if (this.#disposed) return stale({ kind: "agent-login" });
-      return succeeded({ availability: this.#agentCatalog.availability(frozen) });
+      const defaultCommit = await this.commitPendingDefaultAgent(frozen);
+      return Object.freeze({ ...succeeded({
+        availability: this.#agentCatalog.availability(frozen),
+        defaultCommit: defaultCommit.status === "succeeded"
+          ? defaultCommit.value || null
+          : { status: defaultCommit.status, code: defaultCommit.code || null },
+      }), ...(defaultCommit.status === "rejected" ? {
+        preferenceFailed: true,
+        reason: defaultCommit.reason || "已登录，但默认 Agent 没有保存。",
+      } : {}) });
     } catch (cause) {
       const cancelled = cause?.code === "AGENT_LOGIN_CANCELLED";
       if (cancelled) {
@@ -843,24 +860,6 @@ export class RunWorkflow {
       return rejected(
         errorCode(cause, "AGENT_INSTALL_FAILED"),
         this.#codecs.errorMessage(cause, `暂时无法安装 ${displayName}。`),
-      );
-    }
-  }
-
-  async installQoder() {
-    const selection = this.#qoderSelection();
-    if (!selection) return rejected("AGENT_PROVIDER_UNSUPPORTED", "Qoder CLI 不可用。");
-    if (this.#disposed) {
-      return blocked("RUN_WORKFLOW_DISPOSED", "Qoder CLI 安装已经停止。");
-    }
-    try {
-      await this.#agentCatalog.install(selection);
-      if (this.#disposed) return stale({ kind: "agent-install" });
-      return succeeded({ availability: this.#agentCatalog.availability(selection) });
-    } catch (cause) {
-      return rejected(
-        errorCode(cause, "AGENT_INSTALL_FAILED"),
-        this.#codecs.errorMessage(cause, "暂时无法安装 Qoder CLI。"),
       );
     }
   }
@@ -1602,7 +1601,6 @@ export class RunWorkflow {
         runtimeId: delivery.selection.runtimeId,
         agentName: presentation.agentName || presentation.displayName || "Agent",
         agentVersion: null,
-        visibleText: "",
         visibleTextUpdates: [],
         textTruncated: false,
         startedAt: null,
@@ -2122,8 +2120,11 @@ export class RunWorkflow {
         updatedAt: agentState.updatedAt || previousHandoff?.updatedAt || null,
       };
       if (
-        agentState.visibleText
-        && agentState.visibleText !== previousHandoff?.visibleText
+        agentState.visibleTextUpdates.length > 0
+        && !sameVisibleTextUpdates(
+          agentState.visibleTextUpdates,
+          previousHandoff?.visibleTextUpdates,
+        )
       ) {
         this.#lastNarrationAt = this.#clock.now();
       }
@@ -2494,7 +2495,7 @@ export class RunWorkflow {
     return this.#agentCatalog.clearPendingDefault(expectedIntentId);
   }
 
-  async commitPendingDefaultAgent(selection, { saveDefault } = {}) {
+  async commitPendingDefaultAgent(selection, { isCurrent: isOperationCurrent = () => true } = {}) {
     const pending = this.#agentCatalog.peekPendingDefaultIntent();
     if (!pending) return succeeded({ committed: false });
     const queued = pending.validatedSelection || pending.queuedSelection;
@@ -2505,19 +2506,22 @@ export class RunWorkflow {
     if (!ready) return succeeded({ committed: false });
     const intentId = pending.intentId;
     const generation = this.#defaultCommitSeq;
-    if (typeof saveDefault === "function") {
-      await saveDefault(ready.providerId);
+    if (!this.#agentPreferencesPort?.commitDefaultAgent) {
+      return rejected("AGENT_PREFERENCES_UNAVAILABLE", "默认 Agent 暂时无法保存。");
     }
-    if (generation !== this.#defaultCommitSeq
-      || this.#agentCatalog.peekPendingDefaultIntent()?.intentId !== intentId) {
-      const current = this.#agentCatalog.freezeSelected();
-      if (
-        current
-        && current.providerId !== ready.providerId
-        && typeof saveDefault === "function"
-      ) {
-        await saveDefault(current.providerId);
-      }
+    const isCurrent = () => isOperationCurrent()
+      && generation === this.#defaultCommitSeq
+      && this.#agentCatalog.peekPendingDefaultIntent()?.intentId === intentId;
+    const saved = await this.#agentPreferencesPort.commitDefaultAgent({
+      intentId,
+      providerId: ready.providerId,
+      isCurrent,
+    });
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    if (saveOutcome.errorCode) {
+      return rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。");
+    }
+    if (saveOutcome.kind === "superseded" || !isCurrent()) {
       return succeeded({ committed: false, superseded: true });
     }
     const committed = this.#agentCatalog.commitPendingDefault(intentId);
@@ -2525,6 +2529,33 @@ export class RunWorkflow {
       committed: Boolean(committed),
       selection: committed,
     });
+  }
+
+  async selectDefaultAgent(selection) {
+    const selected = this.selectAgent(selection);
+    this.clearPendingDefaultAgent();
+    if (!this.#agentPreferencesPort?.commitDefaultAgent) {
+      return rejected("AGENT_PREFERENCES_UNAVAILABLE", "默认 Agent 暂时无法保存。");
+    }
+    this.#defaultCommitSeq += 1;
+    const intentId = `direct-default-${this.#defaultCommitSeq}`;
+    const generation = this.#defaultCommitSeq;
+    const isCurrent = () => generation === this.#defaultCommitSeq
+      && this.#agentCatalog.getSnapshot().selected?.providerId === selected.providerId;
+    const saved = await this.#agentPreferencesPort.commitDefaultAgent({
+      intentId,
+      providerId: selected.providerId,
+      isCurrent,
+    });
+    const saveOutcome = interpretWorkspacePreferenceMutation(saved);
+    return saveOutcome.errorCode
+      ? rejected(saveOutcome.errorCode, "默认 Agent 暂时无法保存。")
+      : succeeded({
+        committed: saveOutcome.kind === "committed",
+        superseded: saveOutcome.kind === "superseded",
+        selection: selected,
+        intentId,
+      });
   }
 
   beginAccessRepair(run, field = "apiKey") {
@@ -2662,61 +2693,314 @@ export class RunWorkflow {
     this.#agentCatalog.applyDisabledProviderIds(ids);
   }
 
-  connectAgentApiKey(selection, apiKey, extras) {
-    return this.#agentCatalog.connectWithApiKey(selection, apiKey, extras)
-      .then((connection) => succeeded({
+  #credentialIntent(providerId, kind) {
+    const id = String(providerId || "");
+    return Object.freeze({
+      providerId: id,
+      kind: String(kind || "credential"),
+      generation: this.#credentialIntentGenerationByProvider.get(id) || 0,
+      intentId: `credential-intent-${id || "agent"}-${String(kind || "credential")}-${this.#credentialIntentSeq}`,
+    });
+  }
+
+  #beginCredentialIntent(providerId, kind, { preserveOperationId = null } = {}) {
+    const id = String(providerId || "");
+    const generation = (this.#credentialIntentGenerationByProvider.get(id) || 0) + 1;
+    this.#credentialIntentGenerationByProvider.set(id, generation);
+    this.#credentialIntentSeq += 1;
+    this.#defaultCommitSeq += 1;
+    for (const [operationId, held] of this.#heldAgentCredentials) {
+      if (held.providerId === id && operationId !== preserveOperationId) {
+        this.#heldAgentCredentials.delete(operationId);
+      }
+    }
+    return Object.freeze({
+      providerId: id,
+      kind: String(kind || "credential"),
+      generation,
+      intentId: `credential-intent-${id || "agent"}-${String(kind || "credential")}-${this.#credentialIntentSeq}`,
+    });
+  }
+
+  #credentialIntentCurrent(intent) {
+    return !this.#disposed
+      && (this.#credentialIntentGenerationByProvider.get(intent.providerId) || 0) === intent.generation;
+  }
+
+  #retireHeldCredential(operationId) {
+    if (operationId) this.#heldAgentCredentials.delete(operationId);
+  }
+
+  #nextCredentialOperationId(providerId, kind) {
+    this.#credentialOperationSeq += 1;
+    return `credential-${String(providerId || "agent")}-${kind}-${Math.max(0, Number(this.#clock.now()) || 0)}-${this.#credentialOperationSeq}`;
+  }
+
+  #publishCredentialProjection(providerId, projection) {
+    const operationId = projection?.operationId || null;
+    if (operationId && this.#latestCredentialOperationByProvider.get(providerId) !== operationId) {
+      return this.#agentCatalog.credentialPersist(providerId);
+    }
+    return this.#agentCatalog.publishCredentialPersist(providerId, projection);
+  }
+
+  async #persistHeldCredential(providerId, held, intent) {
+    if (!this.#credentialIntentCurrent(intent)) {
+      return Object.freeze({ status: "superseded", operationId: held.operationId });
+    }
+    if (!this.#agentCredentialPort?.persist) {
+      const projection = {
+        status: "unavailable",
+        operationKind: "persist",
+        operationId: held.operationId,
+        reason: "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。",
+        code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE",
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      return projection;
+    }
+    this.#publishCredentialProjection(providerId, {
+      status: "pending",
+      operationKind: "persist",
+      operationId: held.operationId,
+      recordId: held.recordId,
+      reason: null,
+    });
+    try {
+      const result = await this.#agentCredentialPort.persist({
+        operationId: held.operationId,
+        apiKey: held.apiKey,
+        vendorId: held.vendorId,
+        baseUrl: held.baseUrl,
+        modelId: held.modelId,
+      });
+      if (!this.#credentialIntentCurrent(intent)) {
+        return Object.freeze({ status: "superseded", operationId: held.operationId });
+      }
+      const interpreted = interpretAgentCredentialOperation(result, {
+        kind: "persist",
+        expectedOperationId: held.operationId,
+      });
+      const status = interpreted.status;
+      const projection = {
+        status,
+        operationKind: "persist",
+        operationId: held.operationId,
+        recordId: interpreted.recordId,
+        code: interpreted.code,
+        reason: status === "saved" || status === "superseded"
+          ? null
+          : interpreted.reason || "已连接，但新的 API Key 未保存。",
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      if (interpreted.terminal) this.#retireHeldCredential(held.operationId);
+      return projection;
+    } catch (cause) {
+      if (!this.#credentialIntentCurrent(intent)) {
+        return Object.freeze({ status: "superseded", operationId: held.operationId });
+      }
+      const code = errorCode(cause, "AGENT_CREDENTIAL_PERSIST_UNKNOWN");
+      const deterministic = code === "AGENT_CREDENTIAL_STORE_UNAVAILABLE"
+        || code === "AGENT_CREDENTIAL_PAYLOAD_INVALID";
+      const projection = {
+        status: deterministic ? "unavailable" : "unknown",
+        operationKind: "persist",
+        operationId: held.operationId,
+        recordId: held.recordId,
+        code,
+        reason: deterministic
+          ? "已连接，但无法安全保存 API Key。本次仍可使用，可稍后重试记住。"
+          : "已连接，但 API Key 的保存结果尚未确认。",
+      };
+      this.#publishCredentialProjection(providerId, projection);
+      return projection;
+    }
+  }
+
+  async connectAgentApiKey(selection, apiKey, extras = {}) {
+    const intent = this.#beginCredentialIntent(selection.providerId, "connect");
+    let connection;
+    try {
+      connection = await this.#agentCatalog.connectWithApiKey(selection, apiKey, {
+        ...extras,
+        intentId: intent.intentId,
+        isCurrent: () => this.#credentialIntentCurrent(intent),
+      });
+    } catch (cause) {
+      if (!this.#credentialIntentCurrent(intent)
+        || errorCode(cause, "") === "AGENT_PREFERENCES_SAVE_SUPERSEDED") {
+        return stale({ providerId: selection.providerId, credentialIntentId: intent.intentId });
+      }
+      const code = errorCode(cause, "AGENT_SESSION_CREDENTIAL_INVALID");
+      return rejected(
+        code,
+        this.#codecs.errorMessage(cause, "API Key 无效或已失效。"),
+        { field: credentialErrorField(code) || "form" },
+      );
+    }
+    if (!this.#credentialIntentCurrent(intent)) {
+      return stale({ providerId: selection.providerId, credentialIntentId: intent.intentId });
+    }
+    let credentialPersist;
+    if (extras.remember === true && apiKey) {
+      const operationId = this.#nextCredentialOperationId(selection.providerId, "save");
+      const held = Object.freeze({
+        operationId,
+        apiKey: String(apiKey),
+        vendorId: extras.vendorId || null,
+        baseUrl: extras.baseUrl || null,
+        modelId: extras.modelId || null,
+        recordId: null,
+        providerId: selection.providerId,
+      });
+      this.#latestCredentialOperationByProvider.set(selection.providerId, operationId);
+      this.#heldAgentCredentials.set(operationId, held);
+      credentialPersist = await this.#persistHeldCredential(selection.providerId, held, intent);
+    } else if (apiKey) {
+      const previousOperationId = this.#latestCredentialOperationByProvider.get(selection.providerId);
+      if (previousOperationId) this.#heldAgentCredentials.delete(previousOperationId);
+      this.#latestCredentialOperationByProvider.delete(selection.providerId);
+      credentialPersist = this.#agentCatalog.publishCredentialPersist(selection.providerId, {
+        status: "skipped",
+        operationKind: "persist",
+        reason: null,
+      });
+    } else {
+      // Model/reasoning updates reuse the Bridge-owned live credential. They
+      // must not rewrite or downgrade the independent remembered-Key result.
+      credentialPersist = this.#agentCatalog.credentialPersist(selection.providerId);
+    }
+    if (!this.#credentialIntentCurrent(intent)) {
+      return stale({ providerId: selection.providerId, credentialIntentId: intent.intentId });
+    }
+    const defaultCommit = await this.commitPendingDefaultAgent(
+      connection?.selection || selection,
+      { isCurrent: () => this.#credentialIntentCurrent(intent) },
+    );
+    const persistFailed = [
+      "failed",
+      "unknown",
+      "unavailable",
+      "unreadable",
+      "rejected",
+      "missing",
+    ].includes(credentialPersist?.status);
+    const configurationFailed = connection?.configurationPersist?.status === "failed";
+    const preferenceFailed = configurationFailed || defaultCommit.status === "rejected";
+    return Object.freeze({
+      ...succeeded({
         availability: this.#agentCatalog.availability(selection),
         models: this.#agentCatalog.provider(selection)?.models || [],
         connection: this.#agentCatalog.provider(selection)?.connection || null,
         selection: connection?.selection || null,
-        credentialPersist: this.#agentCatalog.credentialPersist(selection.providerId),
-      }))
-      .catch((cause) => {
-        const code = errorCode(cause, "AGENT_SESSION_CREDENTIAL_INVALID");
-        return rejected(
-          code,
-          this.#codecs.errorMessage(cause, "API Key 无效或已失效。"),
-          { field: credentialErrorField(code) || "form" },
-        );
-      });
+        configurationPersist: connection?.configurationPersist || null,
+        credentialPersist,
+        defaultCommit: defaultCommit.status === "succeeded"
+          ? defaultCommit.value || null
+          : { status: defaultCommit.status, code: defaultCommit.code || null },
+      }),
+      ...(preferenceFailed ? { preferenceFailed: true } : {}),
+      ...(persistFailed ? {
+        persistFailed: true,
+        reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
+      } : preferenceFailed ? {
+        reason: configurationFailed
+          ? "已连接，但模型与思考深度没有保存。"
+          : defaultCommit.reason || "已连接，但默认 Agent 没有保存。",
+      } : {}),
+    });
   }
 
-  disconnectAgentApiKey(selection) {
-    return this.#agentCatalog.disconnectApiKey(selection)
+  #disconnectAgentApiKeyForIntent(selection, intent) {
+    return this.#agentCatalog.disconnectApiKey(selection, {
+      isCurrent: () => this.#credentialIntentCurrent(intent),
+    })
       .then(() => succeeded({
         availability: this.#agentCatalog.availability(selection),
         models: [],
       }))
-      .catch((cause) => rejected(
-        errorCode(cause, "AGENT_SESSION_CREDENTIAL_CLEAR_FAILED"),
-        this.#codecs.errorMessage(cause, "断开连接没有完成。"),
+      .catch((cause) => (
+        errorCode(cause, "") === "AGENT_SESSION_CREDENTIAL_STALE"
+          ? stale({ providerId: selection.providerId, credentialIntentId: intent.intentId })
+          : rejected(
+            errorCode(cause, "AGENT_SESSION_CREDENTIAL_CLEAR_FAILED"),
+            this.#codecs.errorMessage(cause, "断开连接没有完成。"),
+          )
       ));
   }
 
-  holdAgentCredential(selection, payload) {
-    return this.#agentCatalog.holdRememberedCredential(selection?.providerId, payload);
+  disconnectAgentApiKey(selection) {
+    const intent = this.#beginCredentialIntent(selection.providerId, "disconnect");
+    return this.#disconnectAgentApiKeyForIntent(selection, intent);
   }
 
-  noteAgentCredentialPersist(selection, result) {
-    return this.#agentCatalog.noteCredentialPersist(selection?.providerId, result);
-  }
-
-  retryAgentCredentialPersist(selection, persist) {
-    return this.#agentCatalog.retryRememberedCredential(selection?.providerId, persist)
-      .then((credentialPersist) => (
-        credentialPersist?.status === "failed"
-          ? Object.freeze({
-            status: "succeeded",
-            persistFailed: true,
-            reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
-            value: { credentialPersist },
-          })
-          : succeeded({ credentialPersist })
-      ))
-      .catch((cause) => rejected(
-        errorCode(cause, "AGENT_CREDENTIAL_RETRY_UNAVAILABLE"),
-        this.#codecs.errorMessage(cause, "没有可重试保存的 API Key。"),
-      ));
+  async retryAgentCredentialPersist(selection) {
+    const providerId = selection?.providerId;
+    const current = this.#agentCatalog.credentialPersist(providerId);
+    const currentOperationId = current?.operationId;
+    const intent = this.#beginCredentialIntent(providerId, "retry-persist", {
+      preserveOperationId: currentOperationId,
+    });
+    let held = currentOperationId ? this.#heldAgentCredentials.get(currentOperationId) : null;
+    if (current?.status === "unknown" && currentOperationId && this.#agentCredentialPort?.status) {
+      try {
+        const reconciled = await this.#agentCredentialPort.status({ operationId: currentOperationId });
+        if (!this.#credentialIntentCurrent(intent)) {
+          return stale({ providerId, credentialIntentId: intent.intentId });
+        }
+        const interpreted = interpretAgentCredentialOperation(reconciled, {
+          kind: "persist",
+          expectedOperationId: currentOperationId,
+        });
+        if (interpreted.status === "saved") {
+          this.#retireHeldCredential(currentOperationId);
+          const credentialPersist = this.#publishCredentialProjection(providerId, {
+            status: "saved",
+            operationKind: "persist",
+            operationId: currentOperationId,
+            recordId: interpreted.recordId,
+          });
+          return succeeded({ credentialPersist, reconciled: true });
+        }
+        if (interpreted.terminal) {
+          this.#retireHeldCredential(currentOperationId);
+          const credentialPersist = this.#publishCredentialProjection(providerId, {
+            status: interpreted.status,
+            operationKind: "persist",
+            operationId: currentOperationId,
+            recordId: null,
+            code: interpreted.code,
+            reason: interpreted.reason || "API Key 保存操作没有生效。",
+          });
+          return rejected(
+            interpreted.code || "AGENT_CREDENTIAL_PERSIST_REJECTED",
+            credentialPersist.reason || "API Key 保存操作没有生效。",
+            { credentialPersist },
+          );
+        }
+      } catch {
+        return succeeded({ credentialPersist: current, persistFailed: true, reconciled: false });
+      }
+    }
+    if (!held) {
+      return rejected("AGENT_CREDENTIAL_RETRY_UNAVAILABLE", "没有可重试保存的 API Key。");
+    }
+    if (current?.status !== "unknown") {
+      const operationId = this.#nextCredentialOperationId(providerId, "retry");
+      held = Object.freeze({ ...held, operationId });
+      this.#heldAgentCredentials.delete(currentOperationId);
+      this.#heldAgentCredentials.set(operationId, held);
+      this.#latestCredentialOperationByProvider.set(providerId, operationId);
+    }
+    const credentialPersist = await this.#persistHeldCredential(providerId, held, intent);
+    return credentialPersist.status === "saved"
+      ? succeeded({ credentialPersist })
+      : Object.freeze({
+        status: "succeeded",
+        persistFailed: true,
+        reason: credentialPersist.reason || "已连接，但新的 API Key 未保存。",
+        value: { credentialPersist },
+      });
   }
 
   async stopRunsForProvider(providerId) {
@@ -2734,13 +3018,154 @@ export class RunWorkflow {
     return Object.freeze(outcomes);
   }
 
-  async manageAgentAccess(kind, selection, {
-    credentials = null,
-    stopRelatedRuns = true,
-  } = {}) {
+  async #clearRememberedCredential(providerId, intent) {
+    if (!this.#agentCredentialPort?.clear || !this.#agentCredentialPort?.status) {
+      return rejected(
+        "AGENT_CREDENTIAL_CLEAR_FAILED",
+        "当前连接已处理，但未能移除已记住的 API Key。",
+        { stage: "clear-credential" },
+      );
+    }
+    const current = this.#agentCatalog.credentialPersist(providerId);
+    let pending = this.#pendingCredentialClearByProvider.get(providerId);
+    let reconcile = Boolean(pending);
+    if (!pending) {
+      const operationId = this.#nextCredentialOperationId(providerId, "clear");
+      pending = Object.freeze({
+        operationId,
+        expectedRecordId: isAgentCredentialRecordId(current?.recordId)
+          ? current.recordId
+          : null,
+      });
+      this.#pendingCredentialClearByProvider.set(providerId, pending);
+      this.#latestCredentialOperationByProvider.set(providerId, operationId);
+    }
+    while (pending) {
+      this.#publishCredentialProjection(providerId, {
+        status: "pending",
+        operationKind: "clear",
+        operationId: pending.operationId,
+        recordId: null,
+        reason: reconcile ? "正在确认上次移除 API Key 的结果。" : null,
+      });
+      let raw;
+      try {
+        raw = reconcile
+          ? await this.#agentCredentialPort.status({ operationId: pending.operationId })
+          : await this.#agentCredentialPort.clear({
+            operationId: pending.operationId,
+            expectedRecordId: pending.expectedRecordId,
+          });
+      } catch (cause) {
+        if (!this.#credentialIntentCurrent(intent)) {
+          return stale({ providerId, credentialIntentId: intent.intentId });
+        }
+        this.#publishCredentialProjection(providerId, {
+          status: "unknown",
+          operationKind: "clear",
+          operationId: pending.operationId,
+          recordId: null,
+          code: errorCode(cause, "AGENT_CREDENTIAL_CLEAR_UNKNOWN"),
+          reason: "API Key 的移除结果尚未确认。",
+        });
+        return unknown(pending.operationId, "API Key 的移除结果尚未确认，请重试以继续对账。");
+      }
+      if (!this.#credentialIntentCurrent(intent)) {
+        return stale({ providerId, credentialIntentId: intent.intentId });
+      }
+      const interpreted = interpretAgentCredentialOperation(raw, {
+        kind: "clear",
+        expectedOperationId: pending.operationId,
+      });
+      const projected = this.#agentCatalog.credentialPersist(providerId);
+      const newerSavedRecord = projected?.status === "saved"
+        && projected.operationId !== pending.operationId
+        && isAgentCredentialRecordId(projected.recordId)
+        ? projected
+        : null;
+      if (reconcile
+        && ["missing", "superseded"].includes(interpreted.status)
+        && newerSavedRecord) {
+        this.#pendingCredentialClearByProvider.delete(providerId);
+        const operationId = this.#nextCredentialOperationId(providerId, "clear");
+        pending = Object.freeze({
+          operationId,
+          expectedRecordId: newerSavedRecord.recordId,
+        });
+        this.#pendingCredentialClearByProvider.set(providerId, pending);
+        this.#latestCredentialOperationByProvider.set(providerId, operationId);
+        reconcile = false;
+        continue;
+      }
+      if (interpreted.status === "missing") {
+        this.#pendingCredentialClearByProvider.delete(providerId);
+        this.#publishCredentialProjection(providerId, {
+          status: "missing",
+          operationKind: "clear",
+          operationId: pending.operationId,
+          recordId: null,
+          reason: null,
+        });
+        return succeeded({
+          credentialPersist: this.#agentCatalog.credentialPersist(providerId),
+          reconciled: reconcile,
+        });
+      }
+      if (["rejected", "superseded"].includes(interpreted.status)) {
+        this.#pendingCredentialClearByProvider.delete(providerId);
+        this.#publishCredentialProjection(providerId, {
+          status: interpreted.status,
+          operationKind: "clear",
+          operationId: pending.operationId,
+          recordId: null,
+          code: interpreted.code,
+          reason: interpreted.reason || "API Key 移除操作没有生效。",
+        });
+        return rejected(
+          interpreted.code || "AGENT_CREDENTIAL_CLEAR_FAILED",
+          interpreted.reason || "API Key 移除操作没有生效。",
+          { stage: "clear-credential" },
+        );
+      }
+      this.#publishCredentialProjection(providerId, {
+        status: interpreted.status,
+        operationKind: "clear",
+        operationId: pending.operationId,
+        recordId: null,
+        code: interpreted.code,
+        reason: interpreted.reason || "API Key 的移除结果尚未确认。",
+      });
+      return unknown(pending.operationId, "API Key 的移除结果尚未确认，请重试以继续对账。");
+    }
+    return rejected("AGENT_CREDENTIAL_CLEAR_FAILED", "当前连接已处理，但未能移除已记住的 API Key。");
+  }
+
+  async manageAgentAccess(kind, selection, { stopRelatedRuns = true } = {}) {
     const frozen = selection;
+    const intent = this.#beginCredentialIntent(frozen.providerId, kind);
+    const setProviderDisabled = async (disabled) => {
+      if (!this.#agentPreferencesPort?.setProviderDisabled) return "committed";
+      try {
+        const receipt = await this.#agentPreferencesPort.setProviderDisabled({
+          intentId: intent.intentId,
+          providerId: frozen.providerId,
+          disabled,
+          isCurrent: () => this.#credentialIntentCurrent(intent),
+        });
+        const outcome = interpretWorkspacePreferenceMutation(receipt);
+        if (!this.#credentialIntentCurrent(intent) || outcome.kind === "superseded") {
+          return "superseded";
+        }
+        return outcome.kind;
+      } catch {
+        return this.#credentialIntentCurrent(intent) ? "failed" : "superseded";
+      }
+    };
     if (kind !== "reconnect" && stopRelatedRuns) {
       const stopped = await this.stopRunsForProvider(frozen.providerId);
+      if (!this.#credentialIntentCurrent(intent)) {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
       const stopFailed = stopped.find((outcome) => (
         outcome?.status === "rejected" || outcome?.status === "blocked"
       ));
@@ -2753,42 +3178,99 @@ export class RunWorkflow {
       }
     }
     if (kind === "reconnect") {
-      if (typeof credentials?.restore === "function" && frozen.providerId === "stemmio") {
-        await credentials.restore().catch(() => null);
+      const enabled = await setProviderDisabled(false);
+      if (enabled === "superseded") {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
       }
-      return this.checkAgentUsability(frozen);
+      if (enabled === "unknown") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接状态没有保存，请重试。",
+          { stage: "enable-provider" },
+        );
+      }
+      if (enabled === "failed") {
+        return rejected(
+          "AGENT_PROVIDER_PREFERENCE_SAVE_FAILED",
+          "连接状态没有保存，请重试。",
+          { stage: "enable-provider" },
+        );
+      }
+      if (!this.#credentialIntentCurrent(intent)) {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (frozen.providerId === "stemmio") {
+        if (!this.#agentCredentialPort?.restore) {
+          return rejected("AGENT_CREDENTIAL_STORE_UNAVAILABLE", "已保存的 API Key 暂时无法恢复。");
+        }
+        try {
+          const restored = await this.#agentCredentialPort.restore();
+          if (!this.#credentialIntentCurrent(intent)) {
+            return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+          }
+          if (restored?.ok !== true || restored?.restored !== true || restored?.reconnectRequired === true) {
+            return rejected(restored?.code || "AGENT_CREDENTIAL_RESTORE_FAILED", restored?.reason || "已保存的 API Key 无法恢复。");
+          }
+        } catch (cause) {
+          return rejected(errorCode(cause, "AGENT_CREDENTIAL_RESTORE_FAILED"), "已保存的 API Key 无法恢复。");
+        }
+      }
+      const checked = await this.checkAgentUsability(frozen);
+      if (!this.#credentialIntentCurrent(intent)) {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (checked.status === "succeeded") {
+        const defaultCommit = await this.commitPendingDefaultAgent(frozen, {
+          isCurrent: () => this.#credentialIntentCurrent(intent),
+        });
+        if (defaultCommit.status === "rejected") {
+          return Object.freeze({
+            ...checked,
+            preferenceFailed: true,
+            reason: defaultCommit.reason || "已重新连接，但默认 Agent 没有保存。",
+            value: Object.freeze({
+              ...(checked.value || {}),
+              defaultCommit: { status: defaultCommit.status, code: defaultCommit.code || null },
+            }),
+          });
+        }
+      }
+      return checked;
     }
     if (kind === "logout") {
       return this.startAgentLogout(frozen);
     }
     let disconnect = succeeded({ kind });
     if (frozen.providerId === "stemmio" && (kind === "disconnect" || kind === "remove-key")) {
-      disconnect = await this.disconnectAgentApiKey(frozen);
+      disconnect = await this.#disconnectAgentApiKeyForIntent(frozen, intent);
       if (!["succeeded", "stale"].includes(disconnect.status)) return disconnect;
+      if (!this.#credentialIntentCurrent(intent)) return disconnect;
     }
     if (kind === "remove-key") {
-      if (typeof credentials?.clear !== "function") {
+      const cleared = await this.#clearRememberedCredential(frozen.providerId, intent);
+      if (cleared.status !== "succeeded") return cleared;
+    }
+    if (kind === "disconnect") {
+      const disabled = await setProviderDisabled(true);
+      if (disabled === "superseded") {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
+      }
+      if (disabled === "unknown") {
         return rejected(
-          "AGENT_CREDENTIAL_CLEAR_FAILED",
-          "当前连接已处理，但未能移除已记住的 API Key。",
-          { stage: "clear-credential" },
+          "AGENT_PROVIDER_PREFERENCE_SAVE_UNKNOWN",
+          "连接已断开，但停用状态没有保存，请重试。",
+          { stage: "disable-provider" },
         );
       }
-      try {
-        const cleared = await credentials.clear();
-        if (cleared?.ok === false) {
-          return rejected(
-            "AGENT_CREDENTIAL_CLEAR_FAILED",
-            "当前连接已处理，但未能移除已记住的 API Key。",
-            { stage: "clear-credential" },
-          );
-        }
-      } catch {
+      if (disabled === "failed") {
         return rejected(
-          "AGENT_CREDENTIAL_CLEAR_FAILED",
-          "当前连接已处理，但未能移除已记住的 API Key。",
-          { stage: "clear-credential" },
+          "AGENT_PROVIDER_PREFERENCE_SAVE_FAILED",
+          "连接已断开，但停用状态没有保存，请重试。",
+          { stage: "disable-provider" },
         );
+      }
+      if (!this.#credentialIntentCurrent(intent)) {
+        return stale({ providerId: frozen.providerId, credentialIntentId: intent.intentId });
       }
     }
     return succeeded({ kind });

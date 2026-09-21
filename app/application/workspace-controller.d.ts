@@ -1,4 +1,6 @@
 import type { BridgeClient } from "./bridge-client.js";
+import type { AgentCredentialOperationPort } from "./agent-credential-operation-contract.js";
+import type { WorkspacePreferenceMutationResult } from "./workspace-preferences-session.js";
 import type {
   BrowserOpenRequest,
   BrowserOpenResult,
@@ -265,7 +267,28 @@ export type WorkspaceControllerConstruction = Readonly<{
     projectSource?: ProjectSourceActivationPort;
     editRuntime?: EditAuthorRuntimePort;
     uiPreferences?: WorkspacePreferencesPort;
-    agentCredentialStatus?: () => Promise<{ remembered?: boolean }>;
+    agentPreferences?: Readonly<{
+      getAgentConfigurations(): Promise<Record<string, { modelId?: string | null; reasoning?: string | null }>>;
+      saveAgentConfigurations(value: Record<string, { modelId: string | null; reasoning: string | null }>): Promise<boolean>;
+      commitAgentConfigurations(
+        value: Record<string, { modelId: string | null; reasoning: string | null }>,
+        intent: Readonly<{ intentId: string; isCurrent(): boolean }>,
+      ): Promise<WorkspacePreferenceMutationResult>;
+      commitDefaultAgent(input: {
+        intentId: string;
+        providerId: string;
+        isCurrent(): boolean;
+      }): Promise<WorkspacePreferenceMutationResult>;
+      setProviderDisabled(input: {
+        intentId: string;
+        providerId: string;
+        disabled: boolean;
+        isCurrent(): boolean;
+      }): Promise<WorkspacePreferenceMutationResult>;
+    }>;
+    agentCredential?: AgentCredentialOperationPort & Readonly<{
+      restore(): Promise<Record<string, unknown>>;
+    }>;
     workbenchTabs?: Readonly<{
       get(): Promise<unknown>;
       set(value: Readonly<Record<string, unknown>>): Promise<unknown>;
@@ -438,7 +461,7 @@ export class WorkspaceController {
   updateConversationDraftText(text: string): void;
   updateConversationDraftIntent(intent: string): void;
   flushConversationDraft(): Promise<boolean>;
-  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number }): Promise<WorkbenchNavigationOutcome>;
+  activateWorkbenchTab(tabId: string, input?: { deadlineMs?: number; intentKind?: string }): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchStartTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchSettingsTab(): Promise<WorkbenchNavigationOutcome>;
   createWorkbenchProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
@@ -452,6 +475,7 @@ export class WorkspaceController {
     documentId: string;
     title: string;
     status?: WorkbenchTabStatus;
+    intentKind?: string;
   }): Promise<WorkbenchNavigationOutcome>;
   updateWorkbenchTabStatus(
     projectId: string,
@@ -570,25 +594,58 @@ export class WorkspaceController {
   refreshRecentProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   refreshRegisteredProjects(): Promise<ProjectWorkflowOutcome<{ projects: unknown[] }>>;
   openProjectRules(input: {
-    context: ProjectContext;
+    context: import("./project-rules-session.js").ProjectRulesContext;
   }): Promise<ProjectRulesWorkflowOutcome<{
     opened: boolean;
     reused?: boolean;
   }>>;
-  updateProjectRules(input: { content: string }): ProjectRulesWorkflowOutcome<{
+  prepareProjectRules(input: {
+    context: import("./project-rules-session.js").ProjectRulesContext;
+  }): Promise<ProjectRulesWorkflowOutcome<{
+    prepared: boolean;
+    preparationId: string;
+    reused?: boolean;
+  }>>;
+  commitPreparedProjectRules(input: {
+    preparationId: string;
+  }): ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>;
+  discardPreparedProjectRules(input: { preparationId: string }): boolean;
+  retryProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): Promise<ProjectRulesWorkflowOutcome<{
+    opened: boolean;
+    reused?: boolean;
+  }>>;
+  updateProjectRules(input: {
+    content: string;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): ProjectRulesWorkflowOutcome<{
     updated: boolean;
   }>;
   beginProjectRulesComposition(input: {
     target: unknown;
     baselineValue: string;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
   }): number | null;
-  finishProjectRulesComposition(input: { target: unknown }): boolean;
-  leaveProjectRulesEditor(): boolean;
-  restoreProjectRules(): ProjectRulesWorkflowOutcome<{
+  finishProjectRulesComposition(input: {
+    target: unknown;
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): boolean;
+  leaveProjectRulesEditor(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): boolean;
+  restoreProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): ProjectRulesWorkflowOutcome<{
     restored: boolean;
     editorGeneration: number;
   }>;
-  saveProjectRules(): Promise<ProjectRulesWorkflowOutcome<{
+  saveProjectRules(input?: {
+    scope?: import("./project-rules-workflow.js").ProjectRulesVisibleScope;
+  }): Promise<ProjectRulesWorkflowOutcome<{
     saved: boolean;
     reconciled?: boolean;
   }>>;
@@ -628,8 +685,8 @@ export class WorkspaceController {
   clearPendingDefaultAgent(expectedIntentId?: string): import("../domain/agent-provider-state.js").AgentSelection | null;
   commitPendingDefaultAgent(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
-    options?: Readonly<{ saveDefault?(providerId: string): Promise<unknown> }>,
   ): Promise<RunWorkflowOutcome>;
+  selectDefaultAgent(selection: import("../domain/agent-provider-state.js").AgentSelection): Promise<RunWorkflowOutcome>;
   beginAccessRepair(
     run?: import("../domain/run-lifecycle.js").ActiveRun | null,
     field?: "apiKey" | "login" | "install" | "model" | "provider",
@@ -647,45 +704,15 @@ export class WorkspaceController {
   disconnectAgentApiKey(
     selection: import("../domain/agent-provider-state.js").AgentSelection,
   ): Promise<RunWorkflowOutcome>;
-  holdAgentCredential(
-    selection: import("../domain/agent-provider-state.js").AgentSelection,
-    payload: Readonly<{
-      apiKey: string;
-      vendorId?: string | null;
-      baseUrl?: string | null;
-      modelId?: string | null;
-    }>,
-  ): unknown;
-  noteAgentCredentialPersist(
-    selection: import("../domain/agent-provider-state.js").AgentSelection,
-    result: Readonly<{ status: string; reason?: string | null }>,
-  ): unknown;
   retryAgentCredentialPersist(
     selection: import("../domain/agent-provider-state.js").AgentSelection,
-    persist: (held: Readonly<{
-      apiKey: string;
-      vendorId: string | null;
-      baseUrl: string | null;
-      modelId: string | null;
-    }>) => Promise<{ ok?: boolean; code?: string }>,
   ): Promise<RunWorkflowOutcome>;
   stopRunsForProvider(providerId: string): Promise<readonly RunWorkflowOutcome[]>;
   manageAgentAccess(
     kind: "disconnect" | "remove-key" | "reconnect" | "logout",
     selection: import("../domain/agent-provider-state.js").AgentSelection,
-    options?: Readonly<{
-      stopRelatedRuns?: boolean;
-      credentials?: Readonly<{
-        clear?(): Promise<{ ok?: boolean }>;
-        restore?(): Promise<unknown>;
-      }>;
-    }>,
+    options?: Readonly<{ stopRelatedRuns?: boolean }>,
   ): Promise<RunWorkflowOutcome>;
-  refreshQoderAvailability(): Promise<RunWorkflowOutcome>;
-  checkQoderUsability(): Promise<RunWorkflowOutcome>;
-  copyQoderGuidance(input: {
-    kind: import("../domain/agent-provider-state.js").AgentProviderGuidanceKind;
-  }): Promise<RunWorkflowOutcome>;
   startAgentLogin(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
@@ -695,7 +722,6 @@ export class WorkspaceController {
   startAgentLogout(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;
-  installQoder(): Promise<RunWorkflowOutcome>;
   installAgent(
     selection?: import("../domain/agent-provider-state.js").AgentSelection | null,
   ): Promise<RunWorkflowOutcome>;

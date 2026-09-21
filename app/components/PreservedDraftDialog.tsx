@@ -59,7 +59,7 @@ export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad
       <ul className="preserved-draft-list">
         {entries.map((entry) => <li key={entry.recoveryId}>
           <span>
-            <strong>{entry.reason === "legacy-working-copy" ? "旧工作稿" : "此前的当前稿"}</strong>
+            <strong>此前的当前稿</strong>
             <small>{new Date(entry.createdAt).toLocaleString()} · 基于 V{Number(entry.basedOnVersionId.replace(/^ver_/, ""))}{entry.hasComments ? " · 含评论" : ""}</small>
           </span>
           <button type="button" className="cancel-ai-run-end" disabled={Boolean(restoring)} onClick={async () => {

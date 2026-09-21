@@ -377,7 +377,8 @@ export class WorkspaceController {
   #workbenchNavigationUnsubscribe = null;
   #workbenchNavigationSnapshot = null;
   #uiPreferencesPort = null;
-  #agentCredentialStatusPort = null;
+  #agentPreferencesPort = null;
+  #agentCredentialPort = null;
   #workbenchTabsUnsubscribe = null;
   #workbenchTabsSnapshot = null;
   #workbenchTabsReady = false;
@@ -451,6 +452,11 @@ export class WorkspaceController {
   #pendingRegistrationPublication = null;
   #registrationSequence = 0;
   #disposed = false;
+  // A history-creation recovery is bound to the exact tab and navigation
+  // admission that produced it.  It must never follow a later user tab choice
+  // while waiting for hydration or Canvas readiness.
+  #startupHistoryRecovery = null;
+  #startupHistoryRecoverySequence = 0;
 
   comments;
 
@@ -542,7 +548,8 @@ export class WorkspaceController {
     this.#workbenchTabsPersistenceSnapshot = workbenchTabsPersistenceCoordinator?.snapshot || null;
     this.#navigationHostPort = ports.navigation || null;
     this.#uiPreferencesPort = ports.uiPreferences || null;
-    this.#agentCredentialStatusPort = ports.agentCredentialStatus || null;
+    this.#agentPreferencesPort = ports.agentPreferences || null;
+    this.#agentCredentialPort = ports.agentCredential || null;
     this.#workbenchNavigationSession = workbenchNavigationSession;
     this.#workbenchNavigationSnapshot = workbenchNavigationSession?.snapshot || null;
     // The conversation projection is optional so an existing embedder that has
@@ -932,12 +939,14 @@ export class WorkspaceController {
         this.#workbenchNavigationUnsubscribe = this.#workbenchNavigationSession.subscribe(
           (snapshot) => {
             if (this.#disposed) return;
+            this.#cancelStartupHistoryRecoveryOnNavigation(snapshot);
             this.#workbenchNavigationSnapshot = snapshot;
             this.#publishAggregateSnapshot();
           },
         );
         this.#workbenchTabsUnsubscribe = this.#workbenchTabsSession.subscribe((snapshot) => {
           if (this.#disposed) return;
+          this.#cancelStartupHistoryRecoveryOnTabs(snapshot);
           this.#workbenchTabsSnapshot = snapshot;
           this.#documentSurfaceCacheSession?.reconcile(
             snapshot.tabs
@@ -998,8 +1007,8 @@ export class WorkspaceController {
         ports: {
           canvas: runWorkflow.canvas,
           handoff: runWorkflow.handoff,
-          uiPreferences: this.#uiPreferencesPort,
-          agentCredentialStatus: this.#agentCredentialStatusPort,
+          agentPreferences: this.#agentPreferencesPort,
+          agentCredential: this.#agentCredentialPort,
           hash: this.#hashPort,
         },
         scheduler: runWorkflow.scheduler,
@@ -1147,6 +1156,7 @@ export class WorkspaceController {
 
   dispose() {
     this.#disposed = true;
+    this.#cancelStartupHistoryRecovery();
     this.#pendingRegistrationPublication = null;
     this.#projectSession.setObserver(null);
     this.#documentSession.setObserver(null);
@@ -1287,36 +1297,43 @@ export class WorkspaceController {
   }
 
   activateWorkbenchTab(tabId, input) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation(input?.intentKind);
     return this.#workbenchNavigationWorkflow?.activateTab(tabId, input)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   createWorkbenchStartTab() {
+    this.#cancelStartupHistoryRecoveryForUserNavigation("create-start");
     return this.#workbenchNavigationWorkflow?.createStart()
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   createWorkbenchSettingsTab() {
+    this.#cancelStartupHistoryRecoveryForUserNavigation("create-settings");
     return this.#workbenchNavigationWorkflow?.createSettings()
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   createWorkbenchProjectRulesTab(project) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation("create-project-rules");
     return this.#workbenchNavigationWorkflow?.createProjectRules(project)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   createWorkbenchHistoryTab(project, version) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation("create-history");
     return this.#workbenchNavigationWorkflow?.createHistory(project, version)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   closeWorkbenchTab(tabId) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation("close-tab");
     return this.#workbenchNavigationWorkflow?.closeTab(tabId)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
 
   openRegisteredWorkbenchProject(input) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation(input?.intentKind || "registered-sidebar");
     return this.#workbenchNavigationWorkflow?.openRegisteredProject(input)
       || Promise.resolve(rejected("WORKBENCH_TABS_UNAVAILABLE", "标签页尚未完成初始化。"));
   }
@@ -1520,6 +1537,7 @@ export class WorkspaceController {
   }
 
   openProject(input) {
+    this.#cancelStartupHistoryRecoveryForUserNavigation(input?.kind || "open-project");
     return this.#requireWorkbenchNavigationWorkflow().openProject(input);
   }
 
@@ -1705,6 +1723,22 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().open(input);
   }
 
+  prepareProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().prepareOpen(input);
+  }
+
+  commitPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().commitPreparedOpen(input);
+  }
+
+  discardPreparedProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().discardPreparedOpen(input);
+  }
+
+  retryProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().retry(input);
+  }
+
   updateProjectRules(input) {
     return this.#requireProjectRulesWorkflow().updateContent(input);
   }
@@ -1717,16 +1751,16 @@ export class WorkspaceController {
     return this.#requireProjectRulesWorkflow().finishComposition(input);
   }
 
-  leaveProjectRulesEditor() {
-    return this.#requireProjectRulesWorkflow().leaveEditor();
+  leaveProjectRulesEditor(input) {
+    return this.#requireProjectRulesWorkflow().leaveEditor(input);
   }
 
-  restoreProjectRules() {
-    return this.#requireProjectRulesWorkflow().restore();
+  restoreProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().restore(input);
   }
 
-  saveProjectRules() {
-    return this.#requireProjectRulesWorkflow().save();
+  saveProjectRules(input) {
+    return this.#requireProjectRulesWorkflow().save(input);
   }
 
   closeProjectRules() {
@@ -1773,6 +1807,10 @@ export class WorkspaceController {
     return this.#requireRunWorkflow().commitPendingDefaultAgent(selection, options);
   }
 
+  selectDefaultAgent(selection) {
+    return this.#requireRunWorkflow().selectDefaultAgent(selection);
+  }
+
   beginAccessRepair(run, field) {
     return this.#requireRunWorkflow().beginAccessRepair(run, field);
   }
@@ -1805,16 +1843,8 @@ export class WorkspaceController {
     return this.#requireRunWorkflow().disconnectAgentApiKey(selection);
   }
 
-  holdAgentCredential(selection, payload) {
-    return this.#requireRunWorkflow().holdAgentCredential(selection, payload);
-  }
-
-  noteAgentCredentialPersist(selection, result) {
-    return this.#requireRunWorkflow().noteAgentCredentialPersist(selection, result);
-  }
-
-  retryAgentCredentialPersist(selection, persist) {
-    return this.#requireRunWorkflow().retryAgentCredentialPersist(selection, persist);
+  retryAgentCredentialPersist(selection) {
+    return this.#requireRunWorkflow().retryAgentCredentialPersist(selection);
   }
 
   stopRunsForProvider(providerId) {
@@ -1823,18 +1853,6 @@ export class WorkspaceController {
 
   manageAgentAccess(kind, selection, options) {
     return this.#requireRunWorkflow().manageAgentAccess(kind, selection, options);
-  }
-
-  refreshQoderAvailability() {
-    return this.#requireRunWorkflow().refreshQoderAvailability();
-  }
-
-  checkQoderUsability() {
-    return this.#requireRunWorkflow().checkQoderUsability();
-  }
-
-  copyQoderGuidance(input) {
-    return this.#requireRunWorkflow().copyQoderGuidance(input);
   }
 
   startAgentLogin(selection) {
@@ -1847,10 +1865,6 @@ export class WorkspaceController {
 
   startAgentLogout(selection) {
     return this.#requireRunWorkflow().startAgentLogout(selection);
-  }
-
-  installQoder() {
-    return this.#requireRunWorkflow().installQoder();
   }
 
   installAgent(selection) {
@@ -2726,28 +2740,186 @@ export class WorkspaceController {
     }
   }
 
+  #cancelStartupHistoryRecovery() {
+    this.#startupHistoryRecovery = null;
+    this.#startupHistoryRecoverySequence += 1;
+  }
+
+  #cancelStartupHistoryRecoveryForUserNavigation(intentKind) {
+    if (["startup-restore", "startup-history-recovery"].includes(String(intentKind || ""))) return;
+    this.#cancelStartupHistoryRecovery();
+  }
+
+  #cancelStartupHistoryRecoveryOnNavigation(snapshot) {
+    const recovery = this.#startupHistoryRecovery;
+    if (!recovery) return;
+    if (Number(snapshot?.admissionOrdinal || 0) > recovery.allowedAdmissionOrdinal) {
+      this.#cancelStartupHistoryRecovery();
+    }
+  }
+
+  #cancelStartupHistoryRecoveryOnTabs(snapshot) {
+    const recovery = this.#startupHistoryRecovery;
+    if (!recovery) return;
+    const target = snapshot?.tabs?.find((tab) => tab.tabId === recovery.targetTabId);
+    if (!target || target.kind !== recovery.targetTab.kind
+      || target.projectId !== recovery.targetTab.projectId
+      || target.documentId !== recovery.targetTab.documentId
+      || (target.kind === "history" && (
+        target.versionId !== recovery.targetTab.versionId
+        || target.versionOrdinal !== recovery.targetTab.versionOrdinal
+      ))) {
+      this.#cancelStartupHistoryRecovery();
+      return;
+    }
+    const focusedTabId = snapshot.pendingTabId || snapshot.activeTabId;
+    const expectedTabId = recovery.claimedTabId || recovery.targetTabId;
+    if (focusedTabId && focusedTabId !== expectedTabId) this.#cancelStartupHistoryRecovery();
+  }
+
+  #beginStartupHistoryRecovery(event, navigationSnapshot, tabsSession, { startupOnly = true } = {}) {
+    this.#cancelStartupHistoryRecovery();
+    if ((startupOnly && navigationSnapshot?.intent?.kind !== "startup-restore") || !tabsSession) return null;
+    const tabs = tabsSession.snapshot;
+    const targetTabId = tabs.pendingTabId || tabs.activeTabId;
+    const targetTab = tabsSession.resolveTab(targetTabId);
+    if (!targetTab || !["document", "history"].includes(targetTab.kind)) return null;
+    const context = event?.context && typeof event.context === "object"
+      ? Object.freeze({ ...event.context })
+      : null;
+    if (!context?.projectId || !context.documentId) return null;
+    const recovery = {
+      sequence: ++this.#startupHistoryRecoverySequence,
+      operationId: String(event.historyCreation.operationId),
+      context,
+      targetTabId: String(targetTab.tabId),
+      targetTab: Object.freeze({ ...targetTab }),
+      allowedAdmissionOrdinal: Number(navigationSnapshot.admissionOrdinal || 0),
+      claimedTabId: null,
+    };
+    this.#startupHistoryRecovery = recovery;
+    return recovery;
+  }
+
+  #startupHistoryRecoveryIsCurrent(recovery, expectedTabId = null) {
+    if (!recovery || this.#startupHistoryRecovery !== recovery || this.#disposed) return false;
+    if (!this.#projectSession.matches(recovery.context)) return false;
+    const navigation = this.#workbenchNavigationSession?.snapshot;
+    if (Number(navigation?.admissionOrdinal || 0) > recovery.allowedAdmissionOrdinal) return false;
+    const tabs = this.#workbenchTabsSession?.snapshot;
+    const target = tabs?.tabs?.find((tab) => tab.tabId === recovery.targetTabId);
+    if (!target || target.kind !== recovery.targetTab.kind
+      || target.projectId !== recovery.targetTab.projectId
+      || target.documentId !== recovery.targetTab.documentId
+      || (target.kind === "history" && (
+        target.versionId !== recovery.targetTab.versionId
+        || target.versionOrdinal !== recovery.targetTab.versionOrdinal
+      ))) return false;
+    const focusedTabId = tabs.pendingTabId || tabs.activeTabId;
+    const requiredTabId = expectedTabId || recovery.claimedTabId || recovery.targetTabId;
+    return !focusedTabId || focusedTabId === requiredTabId;
+  }
+
+  #waitForStartupHistorySurface(recovery, tabsSession, timeoutMs = 15_000) {
+    if (!this.#startupHistoryRecoveryIsCurrent(recovery)) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId = null;
+      let tabsUnsubscribe = () => {};
+      let navigationUnsubscribe = () => {};
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        tabsUnsubscribe();
+        navigationUnsubscribe();
+        resolve(value);
+      };
+      const check = () => {
+        if (!this.#startupHistoryRecoveryIsCurrent(recovery)) {
+          finish(false);
+          return;
+        }
+        const snapshot = tabsSession.snapshot;
+        const target = tabsSession.resolveTab(recovery.targetTabId);
+        if (!target || snapshot.pendingTabId || snapshot.activeTabId !== recovery.targetTabId) return;
+        finish(true);
+      };
+      tabsUnsubscribe = tabsSession.subscribe(check);
+      navigationUnsubscribe = this.#workbenchNavigationSession?.subscribe(check) || (() => {});
+      timeoutId = setTimeout(() => finish(false), timeoutMs);
+      check();
+    });
+  }
+
   #updateProjectCatalogFromEvent(event) {
     if (!event || typeof event !== "object") return;
     const current = this.#projectCatalogSnapshot;
     if (event.type === "project-hydrated" && event.historyCreation?.operationId) {
       const versionWorkflow = this.#versionWorkflow;
-      const restoringPersistedTab = this.#workbenchNavigationSession?.snapshot.intent?.kind
-        === "startup-restore";
-      if (!restoringPersistedTab) {
-        void versionWorkflow?.restoreHistoryCreation({
-          operationId: event.historyCreation.operationId,
-          context: event.context,
-        });
-      }
       const navigationWorkflow = this.#workbenchNavigationWorkflow;
-      const tabsSession = this.#workbenchTabsSession;
-      void (async () => {
-        if (!restoringPersistedTab) return;
-        await versionWorkflow?.queryHistoryCreation({
-          operationId: event.historyCreation.operationId,
-          context: event.context,
+      const restoreOpenedReceipt = async (context, recovery = null) => {
+        if (!versionWorkflow || !navigationWorkflow) return;
+        // Hydration publishes its supplemental event before the enclosing
+        // Workbench navigation transaction has released ownership. Waiting
+        // first prevents restoreHistoryCreation() from observing a transient
+        // busy phase and silently dropping the only opened-at repair attempt.
+        const navigationIdle = await navigationWorkflow.waitForIdle();
+        if (!navigationIdle || this.#disposed
+          || (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery))) return;
+        let liveContext = this.#projectSession.context;
+        if (
+          liveContext?.projectId !== context?.projectId
+          || liveContext?.documentId !== context?.documentId
+        ) return;
+        if (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        await versionWorkflow.restoreHistoryCreation({
+          operationId: recovery?.operationId || event.historyCreation.operationId,
+          context: liveContext,
         });
-        if (this.#disposed || !versionWorkflow || !navigationWorkflow || !tabsSession) return;
+        const creation = versionWorkflow.getSnapshot().creation;
+        const needsSettledCanvasRetry = Boolean(
+          creation?.result?.status === "created"
+          && creation.result.openedAt === null
+          && creation.result.recoveryState !== "superseded"
+          && ["created", "open-failed"].includes(creation.phase)
+        );
+        if (!needsSettledCanvasRetry) return;
+        liveContext = this.#projectSession.context;
+        if (
+          liveContext?.projectId !== context?.projectId
+          || liveContext?.documentId !== context?.documentId
+        ) return;
+        if (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        await versionWorkflow.returnToCurrent({ context: liveContext });
+      };
+      const navigationSnapshot = this.#workbenchNavigationSession?.snapshot;
+      const restoringPersistedTab = navigationSnapshot?.intent?.kind === "startup-restore";
+      const tabsSession = this.#workbenchTabsSession;
+      const recovery = this.#beginStartupHistoryRecovery(
+        event,
+        navigationSnapshot,
+        tabsSession,
+        { startupOnly: restoringPersistedTab },
+      );
+      if (!restoringPersistedTab) {
+        void (async () => {
+          if (!recovery) return;
+          const navigationIdle = navigationWorkflow
+            ? await navigationWorkflow.waitForIdle()
+            : true;
+          if (!navigationIdle || !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+          await restoreOpenedReceipt(recovery.context, recovery);
+        })();
+      }
+      void (async () => {
+        if (!restoringPersistedTab || !recovery) return;
+        await versionWorkflow?.queryHistoryCreation({
+          operationId: recovery.operationId,
+          context: recovery.context,
+        });
+        if (!versionWorkflow || !navigationWorkflow || !tabsSession
+          || !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
         const creation = versionWorkflow.getSnapshot().creation;
         const unresolvedCreateAndEdit = Boolean(
           creation?.result?.status === "created"
@@ -2756,48 +2928,38 @@ export class WorkspaceController {
           && ["created", "opened", "open-failed"].includes(creation.phase)
         );
         if (!unresolvedCreateAndEdit) return;
-        const tabs = tabsSession.snapshot;
-        const requested = tabsSession.resolveTab(tabs.pendingTabId)
-          || tabsSession.resolveTab(tabs.activeTabId);
-        if (
-          !["document", "history"].includes(requested?.kind)
-          || requested?.projectId !== event.context?.projectId
-          || requested.documentId !== event.context?.documentId
-        ) return;
-        if (tabs.activeTabId !== requested.tabId || tabs.pendingTabId) {
-          const restoredSurfaceActive = await new Promise((resolve) => {
-            let unsubscribe = () => {};
-            let timeoutId = null;
-            const finish = (ready) => {
-              if (timeoutId !== null) clearTimeout(timeoutId);
-              unsubscribe();
-              resolve(ready);
-            };
-            const check = (snapshot) => {
-              if (snapshot.activeTabId === requested.tabId && !snapshot.pendingTabId) {
-                finish(true);
-              }
-            };
-            unsubscribe = tabsSession.subscribe(check);
-            timeoutId = setTimeout(() => finish(false), 15_000);
-            check(tabsSession.snapshot);
-          });
-          if (!restoredSurfaceActive || this.#disposed) return;
-        }
-        if (requested.kind === "document") {
-          await versionWorkflow.restoreHistoryCreation({
-            operationId: event.historyCreation.operationId,
-            context: this.#projectSession.context,
-          });
+        if (!await this.#waitForStartupHistorySurface(recovery, tabsSession)) return;
+        if (!this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        if (recovery.targetTab.kind === "document") {
+          await restoreOpenedReceipt(this.#projectSession.context, recovery);
           return;
         }
         const currentTab = tabsSession.snapshot.tabs.find((tab) => (
           tab.kind === "document"
-          && tab.projectId === event.context.projectId
-          && tab.documentId === event.context.documentId
+          && tab.projectId === recovery.context.projectId
+          && tab.documentId === recovery.context.documentId
         ));
-        if (!currentTab) return;
-        await navigationWorkflow.activateTab(currentTab.tabId);
+        if (!currentTab || !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        // This activation is the one internal continuation owned by the
+        // recovery. Permit its single admission, while still rejecting any
+        // later user navigation before the final acknowledgement.
+        recovery.claimedTabId = currentTab.tabId;
+        recovery.allowedAdmissionOrdinal = Number(
+          this.#workbenchNavigationSession?.snapshot.admissionOrdinal || 0,
+        ) + 1;
+        const activation = await navigationWorkflow.activateTab(currentTab.tabId, {
+          intentKind: "startup-history-recovery",
+        });
+        if (activation?.status !== "succeeded"
+          || !this.#startupHistoryRecoveryIsCurrent(recovery, currentTab.tabId)) return;
+        // A persisted restart may have selected the immutable history tab
+        // while the current document tab is being restored.  Once that tab is
+        // active, re-run the current Canvas verification so a durable history
+        // creation acknowledgement is not stranded behind tab activation.
+        await versionWorkflow.restoreHistoryCreation({
+          operationId: recovery.operationId,
+          context: this.#projectSession.context,
+        });
       })();
     }
     if (["project-hydrated", "project-source-renamed", "project-source-relocated"].includes(event.type)) this.#captureCurrentVersionSummary();
@@ -2863,6 +3025,13 @@ export class WorkspaceController {
   #observeSessionSnapshots() {
     this.#projectSession.setObserver((snapshot) => {
       if (this.#disposed) return;
+      const recovery = this.#startupHistoryRecovery;
+      if (recovery && (
+        snapshot?.projectId !== recovery.context?.projectId
+        || snapshot?.documentId !== recovery.context?.documentId
+      )) {
+        this.#cancelStartupHistoryRecovery();
+      }
       this.#projectSessionSnapshot = snapshot;
       if (this.#sessionPublicationDepth > 0) return;
       this.#refreshEditAuthorRuntime();
@@ -2871,7 +3040,25 @@ export class WorkspaceController {
     });
     this.#documentSession.setObserver((snapshot) => {
       if (this.#disposed) return;
+      const previous = this.#documentSessionSnapshot;
       this.#documentSessionSnapshot = snapshot;
+      if (
+        snapshot.canvasAuthority?.status === "verified"
+        && previous?.canvasAuthority?.status !== "verified"
+      ) {
+        const creation = this.#versionWorkflow?.getSnapshot?.().creation;
+        if (
+          creation?.phase === "created"
+          && creation.result?.openedAt === null
+          && creation.operationId
+          && this.#projectSession.matches(creation.context)
+        ) {
+          void this.#versionWorkflow.restoreHistoryCreation({
+            operationId: creation.operationId,
+            context: this.#projectSession.context,
+          });
+        }
+      }
       if (this.#sessionPublicationDepth > 0) return;
       this.#refreshEditAuthorRuntime();
       this.#refreshDocumentSurfaceCache();

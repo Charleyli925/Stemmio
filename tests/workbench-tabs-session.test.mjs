@@ -89,16 +89,18 @@ test("settings is a singleton presentation tab and preserves the document runtim
   const documentTabId = session.snapshot.activeTabId;
 
   const first = session.createSettings({ focus: true });
-  const settingsTab = first.tabs.find((tab) => tab.kind === "settings");
+  const settingsTab = first;
   assert.ok(settingsTab);
-  assert.equal(first.activeTabId, settingsTab.tabId);
-  assert.equal(first.mountedDocumentTabId, null);
-  assert.equal(first.runtimeOwnerTabId, documentTabId);
+  assert.equal(settingsTab.kind, "settings");
+  assert.equal(session.snapshot.activeTabId, settingsTab.tabId);
+  assert.equal(session.snapshot.mountedDocumentTabId, null);
+  assert.equal(session.snapshot.runtimeOwnerTabId, documentTabId);
 
   const second = session.createSettings({ focus: true });
-  assert.equal(second.tabs.filter((tab) => tab.kind === "settings").length, 1);
-  assert.equal(second.activeTabId, settingsTab.tabId);
-  assert.equal(second.runtimeOwnerTabId, documentTabId);
+  assert.equal(second.tabId, settingsTab.tabId);
+  assert.equal(session.snapshot.tabs.filter((tab) => tab.kind === "settings").length, 1);
+  assert.equal(session.snapshot.activeTabId, settingsTab.tabId);
+  assert.equal(session.snapshot.runtimeOwnerTabId, documentTabId);
 });
 
 test("长期规则在项目内去重，并保留 HTML runtime owner", () => {
@@ -107,29 +109,35 @@ test("长期规则在项目内去重，并保留 HTML runtime owner", () => {
   const documentTabId = session.snapshot.activeTabId;
 
   const first = session.createProjectRules({ ...a, focus: true });
-  const rulesTab = first.tabs.find((tab) => tab.kind === "project-rules");
+  const rulesTab = first;
   assert.ok(rulesTab);
+  assert.equal(rulesTab.kind, "project-rules");
   assert.equal(rulesTab.title, "Alpha");
-  assert.equal(first.activeTabId, rulesTab.tabId);
-  assert.equal(first.mountedDocumentTabId, null);
-  assert.equal(first.runtimeOwnerTabId, documentTabId);
+  assert.equal(session.snapshot.activeTabId, rulesTab.tabId);
+  assert.equal(session.snapshot.mountedDocumentTabId, null);
+  assert.equal(session.snapshot.runtimeOwnerTabId, documentTabId);
 
   session.beginSwitch(rulesTab.tabId);
   session.commitProjectRules(rulesTab.tabId);
   const second = session.createProjectRules({ ...a, focus: true });
-  assert.equal(second.tabs.filter((tab) => tab.kind === "project-rules").length, 1);
-  assert.equal(second.activeTabId, rulesTab.tabId);
-  assert.equal(second.runtimeOwnerTabId, documentTabId);
+  assert.equal(second.tabId, rulesTab.tabId);
+  assert.equal(session.snapshot.tabs.filter((tab) => tab.kind === "project-rules").length, 1);
+  assert.equal(session.snapshot.activeTabId, rulesTab.tabId);
+  assert.equal(session.snapshot.runtimeOwnerTabId, documentTabId);
   const third = session.createProjectRules({ ...b, focus: true });
-  assert.equal(third.tabs.filter((tab) => tab.kind === "project-rules").length, 2);
+  assert.equal(third.kind, "project-rules");
+  assert.equal(session.snapshot.tabs.filter((tab) => tab.kind === "project-rules").length, 2);
   assert.match(JSON.stringify(session.serialize()), /project-rules/u);
 });
 
 test("历史标签在项目内复用并只在提交后更新所选版本", () => {
   const session = new WorkbenchTabsSession();
   session.bindDocument(a);
-  session.createHistory({ ...a, versionId: "ver_1", versionOrdinal: 1, focus: false });
-  session.createHistory({ ...a, versionId: "ver_3", versionOrdinal: 3, focus: false });
+  const created = session.createHistory({ ...a, versionId: "ver_1", versionOrdinal: 1, focus: false });
+  const reused = session.createHistory({ ...a, versionId: "ver_3", versionOrdinal: 3, focus: false });
+  assert.equal(created.kind, "history");
+  assert.equal(reused.tabId, created.tabId);
+  assert.equal(reused.versionId, "ver_1");
   let history = session.snapshot.tabs.filter((tab) => tab.kind === "history");
   assert.equal(history.length, 1);
   assert.equal(history[0].versionId, "ver_1");
@@ -233,10 +241,11 @@ test("serialized state contains identity and presentation only", () => {
 test("persisted null active identity restores Start without selecting a legacy document", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -248,10 +257,10 @@ test("persisted null active identity restores Start without selecting a legacy d
   assert.equal(session.serialize().activeTabId, null);
 });
 
-test("restored document titles are projected from the registry and never persisted", () => {
+test("tab hydration rejects missing or unknown kinds instead of assuming a document", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: "document:project_alpha:doc_alpha",
     tabs: [
       {
@@ -260,7 +269,32 @@ test("restored document titles are projected from the registry and never persist
         documentId: "doc_alpha",
       },
       {
+        tabId: "unknown:project_beta:doc_beta",
+        kind: "unknown",
+        projectId: "project_beta",
+        documentId: "doc_beta",
+      },
+    ],
+  });
+  assert.deepEqual(session.snapshot.tabs.map((tab) => tab.kind), ["start"]);
+  assert.equal(session.snapshot.pendingTabId, null);
+});
+
+test("restored document titles are projected from the registry and never persisted", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [
+      {
+        tabId: "document:project_alpha:doc_alpha",
+        kind: "document",
+        projectId: "project_alpha",
+        documentId: "doc_alpha",
+      },
+      {
         tabId: "document:project_beta:doc_beta",
+        kind: "document",
         projectId: "project_beta",
         documentId: "doc_beta",
       },
@@ -281,10 +315,11 @@ test("restored document titles are projected from the registry and never persist
 test("missing restored documents are removed and leave a usable Start tab", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: "document:project_alpha:doc_alpha",
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -310,10 +345,11 @@ test("restore reconciliation is deterministic when catalog readiness arrives fir
     registeredProjects,
   }), null);
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -330,10 +366,11 @@ test("restore reconciliation is deterministic when catalog readiness arrives fir
 test("restore reconciliation is deterministic when tabs hydration arrives first", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
