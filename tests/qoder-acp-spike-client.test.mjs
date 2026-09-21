@@ -793,7 +793,9 @@ const app = acp.agent({ name: "stemmio-stdio-agent" })
       sessionId,
       terminalId: terminal.terminalId,
     });
-    if (config.exitAfterStop) setTimeout(() => process.exit(0), 0);
+    if (config.exitAfterStop) {
+      setTimeout(() => process.stdout.end(() => process.exit(0)), 250);
+    }
     return { stopReason: "end_turn" };
   });
 
