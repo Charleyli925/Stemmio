@@ -315,8 +315,26 @@ export async function acquireCurrentRegistryWriteLock({
   const lockPath = currentRegistryWriteLockPath(projectsRoot);
   const deadlineAt = Date.now() + timeoutMs;
 
-  await assertRealPathInsideProject(projectsRoot, lockPath, "current Registry write lock");
   while (true) {
+    try {
+      await assertRealPathInsideProject(projectsRoot, lockPath, "current Registry write lock");
+    } catch (cause) {
+      if (cause?.code !== "ENOENT") throw cause;
+      // The lock may have disappeared after path-safety lstat() observed it
+      // and before its realpath() completed.  A legal release/retire owns this
+      // narrow race; retry the same bounded acquisition loop after proving the
+      // Projects root itself still exists.  Missing roots remain an error, and
+      // the next iteration re-runs the full symlink/path check.
+      if (!await directoryInformation(projectsRoot, "Projects root")) throw cause;
+      if (Date.now() >= deadlineAt) {
+        throw new ProjectFileRepositoryError(
+          "REGISTRY_BUSY",
+          "The project Registry is occupied. A lock left behind by an interrupted Stemmio process is reclaimed automatically after a short grace period.",
+        );
+      }
+      await waitForCurrentRegistryWriteLock();
+      continue;
+    }
     try {
       await mkdir(lockPath, { mode: 0o700 });
       await assertRealPathInsideProject(
