@@ -1149,7 +1149,7 @@ test("Qoder unstructured capacity wording stays generic with retry and no Reques
 
 test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
   tag: ["@smoke-provider"],
-}, async () => {
+}, async ({}, testInfo) => {
   test.setTimeout(120_000);
   const fixture = createSourceFixture("qoder-acp-managed-stop.html");
   const pidFile = path.join(fixture.sourceDirectory, "qoder-acp.pid");
@@ -1203,8 +1203,24 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
       `Bridge request order: ${bridgeTraffic.join(", ")}`,
     ).toBe(0);
 
-    await stopButton.click();
-    const endingButton = launched.page.getByRole("button", { name: "正在结束…" });
+    let releaseCancel;
+    const cancelGate = new Promise((resolve) => { releaseCancel = resolve; });
+    await launched.page.route("**/active-run/cancel", async (route) => {
+      await cancelGate;
+      await route.continue();
+    });
+    try {
+      await stopButton.click();
+      const stopping = launched.page.getByRole("button", { name: "正在停止", exact: true });
+      await expect(stopping).toBeVisible();
+      await expect(stopping).toBeDisabled();
+      await expect(launched.page.locator('aside[aria-label="本轮评论"]').getByRole("button", { name: "全局评论", exact: true })).toBeDisabled();
+      expect(readFileSync(workingCopyPath)).toEqual(workingBefore);
+      await launched.page.screenshot({ path: testInfo.outputPath("managed-agent-stopping.png"), animations: "disabled" });
+    } finally {
+      releaseCancel();
+    }
+    const endingButton = launched.page.getByRole("button", { name: "正在停止", exact: true });
     const roundStopButton = launched.page.getByRole("button", { name: "停止", exact: true });
     // Cancelling can finish before Playwright samples the disabled label. The
     // user contract is that stop ends the round and kills the Agent. If the
