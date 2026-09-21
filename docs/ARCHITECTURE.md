@@ -308,7 +308,7 @@ services.
 | Trusted-local Qoder installation discovery, read-only diagnosis, package/version/login/model preflight, error classification and ACP launch descriptor | `bridge/agent/providers/qoder-provider.mjs`; diagnosis uses only version/model-list commands and does not open ACP. Candidates are collected before selecting a valid user CLI, then a Stemmio-managed installation. A broken lower-priority candidate is diagnostic only when a valid higher-priority candidate exists. Current execution exposes only the canonical provider selection; removed delivery aliases fail closed |
 | Codex ACP installation discovery, pinned adapter+native closure, read-only login diagnosis, ACP initialize/session preflight and client-mediated launch | `bridge/agent/providers/codex-acp-provider.mjs`; candidates are collected before selecting explicit test configuration, Stemmio-managed installation, then user-global installation. A broken lower-priority candidate is diagnostic only when a valid higher-priority candidate exists. Start-time verification rechecks both the adapter and native executable identities against the ticket |
 | Stemmio native OpenAI-compatible HTTP Agent, bounded diagnosis, vendor Token preflight and model catalog | `bridge/agent/providers/openai-compatible-provider.mjs` plus `shared/openai-compatible-vendors.mjs`; built-in vendors may diagnose through `/models`, while Custom validates saved configuration without assuming that route. Session Token stays in Coordinator memory; an explicit remember writes only Main `safeStorage` ciphertext. Anthropic is not registered |
-| Provider-neutral ACP protocol, process supervisor and immutable standard event envelope | `bridge/agent/runtimes/acp-runtime.mjs`, `acp-protocol.mjs`, `acp-process.mjs` and `acp-verified-javascript.mjs`; `bridge/qoder-acp-client.mjs` is the current Qoder transport adapter |
+| Provider-neutral ACP protocol, process supervisor and immutable standard event envelope | `bridge/agent/runtimes/acp-runtime.mjs`, `acp-protocol.mjs`, `acp-process.mjs` and `acp-verified-javascript.mjs`; Qoder uses these shared runtime modules directly |
 | Stemmio native HTTP runtime: streaming `/chat/completions`, unique output write and official finalizer | `bridge/agent/runtimes/http-runtime.mjs`; SSE content is accumulated only inside Bridge, while reasoning/usage/heartbeat update activity without entering narration. HTTP and ACP turns use a 45-minute sliding inactivity watchdog rather than a total-duration deadline. A disconnect, cancellation or timeout before protocol completion writes no Candidate; Candidate authority remains the official finalizer |
 | Public Agent failure recovery | `agent-runtime-coordinator.mjs` computes `safeToRetry` independently from `recoveryKind`; `agent-session-projector.mjs` exposes only that structured pair plus a bounded error. Renderer actions never infer recovery from provider text and remain capped at two |
 | Frozen execution policy and single-output client-mediated Host Port | `bridge/agent/policies/` and `bridge/agent/hosts/`; these constrain only requests made through the ACP Client Host, never native filesystem/command actions inside an Agent process |
@@ -440,9 +440,9 @@ separately from a new semantic `fullPatchApply`.
 ## Persistence
 
 Desktop tab restoration uses a separate validated `workbench-tabs.json`. Its
-strict version-1 schema contains only tab IDs and durable `projectId +
-documentId` pairs; titles are refreshed from the Registry projection after
-open. It never persists source paths, HTML, Hashes or AI authority. Writes use
+strict version-2 schema contains explicit surface kinds, tab IDs and durable
+`projectId + documentId` pairs; titles are refreshed from the Registry
+projection after open. It never persists source paths, HTML, Hashes or AI authority. Writes use
 same-directory temporary creation plus atomic rename. `html-projects.json`
 continues to own `activePath` compatibility. Any valid tabs record suppresses
 that compatibility startup: `activeTabId: null` restores Start, while a stored

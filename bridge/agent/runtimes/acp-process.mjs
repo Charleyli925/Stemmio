@@ -163,6 +163,12 @@ export async function runAcpProcessTask({
   let turnStopObserved = false;
   const earlyExitPromise = childExitPromise.then(
     async (status) => {
+      // A clean exit closes stdout only after Node has handed its buffered bytes
+      // to the stream. Let the protocol reader consume those bytes instead of
+      // racing it with an arbitrary wall-clock drain window. If the clean exit
+      // happened before a valid stop, runAcpTask will reject on the closed
+      // connection and the catch below will preserve ACP_AGENT_EXITED_EARLY.
+      if (status?.exitCode === 0 && status.signal === null) return new Promise(() => {});
       await new Promise((resolve) => setTimeout(resolve, PROCESS_PROTOCOL_DRAIN_MS));
       if (turnStopObserved) return new Promise(() => {});
       throw acpPolicyError(

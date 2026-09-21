@@ -289,7 +289,7 @@ export type DocumentRecoveryJournalRebase = DocumentRecoveryJournalLocator & {
 };
 
 export type DocumentRecoveryJournalSummary = DocumentRecoveryJournalLocator & {
-  schemaVersion: "1.0.0" | "2.0.0";
+  schemaVersion: "2.0.0";
   sourcePath: string;
   workingCopyId: string;
   expectedSourceSha256: string | null;
@@ -302,12 +302,15 @@ export type DocumentRecoveryJournalSummary = DocumentRecoveryJournalLocator & {
 
 export type DesktopWorkbenchTabsApi = {
   get: () => Promise<{
-    version: 1;
+    version: 2;
     activeTabId: string | null;
     tabs: Array<{
       tabId: string;
+      kind: "document" | "project-rules" | "history";
       projectId: string;
       documentId: string;
+      versionId?: string;
+      versionOrdinal?: number;
     }>;
   } | null>;
   set: (state: Record<string, unknown>) => Promise<Record<string, unknown>>;

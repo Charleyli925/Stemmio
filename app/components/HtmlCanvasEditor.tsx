@@ -23,6 +23,7 @@ import {
   editRuntimeRegistrationProperty,
   isEditRuntimeFrameToken,
   type EditRuntimeDocumentAnalysis,
+  type EditRuntimeGrant,
 } from "../domain/edit-runtime-contract.js";
 import {
   decideEditRuntimeRefresh,
@@ -1253,7 +1254,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const runtimeSourceElementsRef = useRef<RuntimeSourceElements | null>(null);
   const runtimeSourceRegistrationCleanupRef = useRef<() => void>(emptyRuntimeRegistrationCleanup);
   const runtimeRefreshPendingRef = useRef<RuntimeRefreshPending | null>(null);
-  const lastEditRuntimeGrantRef = useRef(editRuntimeGrant);
+  const lastEditRuntimeGrantRef = useRef<EditRuntimeGrant | null>(null);
   const runtimeFrameCoordinatorRef = useRef<RuntimeFrameCoordinator | null>(null);
   if (!runtimeFrameCoordinatorRef.current) {
     runtimeFrameCoordinatorRef.current = new RuntimeFrameCoordinator();
@@ -9791,7 +9792,6 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     if (!iframe) return;
     const connectedFrameGeneration = frameRender.elementGeneration;
     let animationFrame = 0;
-    let attempts = 0;
     const startedAt = performance.now();
     const connectParsedFrame = () => {
       if (
@@ -9837,12 +9837,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         fallBackToStaticRuntimeFrame(runtimeFrame, "failed");
         return;
       }
-      attempts += 1;
-      const retryLimit = runtimeFrame?.elementGeneration === connectedFrameGeneration
+      const retryDeadlineMs = runtimeFrame?.elementGeneration === connectedFrameGeneration
         && !runtimeFrame.settled
-        ? Math.ceil(EDIT_AUTHOR_RUNTIME_BUDGET.runtimeDeadlineMs / 16) + 30
-        : 120;
-      if (attempts < retryLimit) {
+        ? EDIT_AUTHOR_RUNTIME_BUDGET.runtimeDeadlineMs
+        : EDIT_AUTHOR_RUNTIME_BUDGET.runtimeSurfaceDeadlineMs;
+      if (performance.now() - startedAt < retryDeadlineMs) {
         animationFrame = requestAnimationFrame(connectParsedFrame);
       }
     };
