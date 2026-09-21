@@ -241,10 +241,11 @@ test("serialized state contains identity and presentation only", () => {
 test("persisted null active identity restores Start without selecting a legacy document", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -256,10 +257,10 @@ test("persisted null active identity restores Start without selecting a legacy d
   assert.equal(session.serialize().activeTabId, null);
 });
 
-test("restored document titles are projected from the registry and never persisted", () => {
+test("tab hydration rejects missing or unknown kinds instead of assuming a document", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: "document:project_alpha:doc_alpha",
     tabs: [
       {
@@ -268,7 +269,32 @@ test("restored document titles are projected from the registry and never persist
         documentId: "doc_alpha",
       },
       {
+        tabId: "unknown:project_beta:doc_beta",
+        kind: "unknown",
+        projectId: "project_beta",
+        documentId: "doc_beta",
+      },
+    ],
+  });
+  assert.deepEqual(session.snapshot.tabs.map((tab) => tab.kind), ["start"]);
+  assert.equal(session.snapshot.pendingTabId, null);
+});
+
+test("restored document titles are projected from the registry and never persisted", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 2,
+    activeTabId: "document:project_alpha:doc_alpha",
+    tabs: [
+      {
+        tabId: "document:project_alpha:doc_alpha",
+        kind: "document",
+        projectId: "project_alpha",
+        documentId: "doc_alpha",
+      },
+      {
         tabId: "document:project_beta:doc_beta",
+        kind: "document",
         projectId: "project_beta",
         documentId: "doc_beta",
       },
@@ -289,10 +315,11 @@ test("restored document titles are projected from the registry and never persist
 test("missing restored documents are removed and leave a usable Start tab", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: "document:project_alpha:doc_alpha",
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -318,10 +345,11 @@ test("restore reconciliation is deterministic when catalog readiness arrives fir
     registeredProjects,
   }), null);
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],
@@ -338,10 +366,11 @@ test("restore reconciliation is deterministic when catalog readiness arrives fir
 test("restore reconciliation is deterministic when tabs hydration arrives first", () => {
   const session = new WorkbenchTabsSession();
   session.hydrate({
-    version: 1,
+    version: 2,
     activeTabId: null,
     tabs: [{
       tabId: "document:project_alpha:doc_alpha",
+      kind: "document",
       projectId: "project_alpha",
       documentId: "doc_alpha",
     }],

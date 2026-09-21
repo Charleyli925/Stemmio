@@ -369,10 +369,6 @@
         "to": "bridge/agent/hosts/execution-host.mjs"
       },
       {
-        "from": "bridge/qoder-acp-client.mjs",
-        "to": "bridge/qoder-acp-client.mjs"
-      },
-      {
         "from": "bridge/finalize-attempt.mjs",
         "to": "bridge/finalize-attempt.mjs"
       },
@@ -754,11 +750,8 @@
           "change-request.v3.schema.json",
           "committed-marker.v1.schema.json",
           "completion.v1.schema.json",
-          "conversation.v1.schema.json",
-          "conversation.v2.schema.json",
           "conversation.v3.schema.json",
           "conversation-index.v1.schema.json",
-          "conversation-draft.v1.schema.json",
           "conversation-draft.v2.schema.json",
           "current-version-transaction.v1.schema.json",
           "input-manifest.v1.schema.json",

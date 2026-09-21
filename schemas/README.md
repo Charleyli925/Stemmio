@@ -104,11 +104,8 @@ records.
 - `attempt-outcome.v1.schema.json`
 - `current-version-transaction.v1.schema.json`
 - `committed-marker.v1.schema.json`
-- `conversation.v1.schema.json`
-- `conversation.v2.schema.json`
 - `conversation.v3.schema.json`
 - `conversation-index.v1.schema.json`
-- `conversation-draft.v1.schema.json`
 - `conversation-draft.v2.schema.json`
 
 ## v4 project-file records
@@ -146,8 +143,10 @@ keep exact operations only as pending-save evidence, never as a restored undo
 cursor.
 
 `conversation.v3.schema.json` is the current writer and reader contract for one
-Stemmio AI conversation thread. The v1 and v2 schemas remain rejection fixtures
-only and are not accepted by the current reader. A Conversation
+Stemmio AI conversation thread. Older conversation and draft payloads are
+represented by small inline rejection fixtures in
+`tests/conversation-v2.test.mjs`; they are not accepted by the current reader.
+A Conversation
 belongs to exactly one Document and its contexts, turns and messages live in the
 same record, so reading one Document's thread can never surface another's. Two
 rules are load-bearing and pinned by
@@ -179,5 +178,5 @@ the generic `agent` actor plus `providerId` and the actual provider-namespaced
 model. Older conversation records and delivery fields are rejected.
 
 Deprecated main v1/v2 schemas and `migration-report.v1.schema.json` are not
-kept in the active source tree or release package. Their evidence exists only
-in the read-only pre-cutover backup.
+kept in the active source tree or release package. Their rejection evidence is
+kept only as the small current-format tests described above.

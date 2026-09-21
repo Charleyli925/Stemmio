@@ -82,6 +82,23 @@ test("recovery journal atomically commits and reads back exact verified HTML", a
   assert.equal(names.some((name) => name.endsWith(".tmp")), false);
 });
 
+test("recovery journal rejects the retired 1.0 envelope without rewriting it", async (t) => {
+  const { rootPath, store } = await fixture(t);
+  await store.commit(checkpoint());
+  const [name] = await readdir(rootPath);
+  const filePath = path.join(rootPath, name);
+  const before = await readFile(filePath, "utf8");
+  const envelope = JSON.parse(before);
+  envelope.schemaVersion = "1.0.0";
+  await writeFile(filePath, JSON.stringify(envelope));
+  const retired = await readFile(filePath, "utf8");
+  await assert.rejects(
+    store.readVerified(checkpoint()),
+    (error) => error.code === "RECOVERY_JOURNAL_SCHEMA_UNSUPPORTED",
+  );
+  assert.equal(await readFile(filePath, "utf8"), retired);
+});
+
 test("default journal limits read back JSON-escaped product-valid HTML", async (t) => {
   const { store } = await fixture(t);
   const html = `<!doctype html><html><body>${"\0".repeat(5 * 1024 * 1024)}</body></html>`;
