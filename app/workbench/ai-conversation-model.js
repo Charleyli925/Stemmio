@@ -178,7 +178,6 @@ const RUN_PROGRESS_STATES = Object.freeze([
 export function sidebarRunProgress({
   state,
   steps = [],
-  agentText = "",
   agentUpdates = [],
   agentTextTruncated = false,
 } = {}) {
@@ -207,9 +206,8 @@ export function sidebarRunProgress({
   // ADR 0037: the Agent narrates, Stemmio states the stage. The prose is an
   // annotation on the stage actually running and never claims a stage is done.
   // Canonical visible-text events preserve the Agent's public message boundaries.
-  // A blank-line split remains only for sessions recovered from the older cumulative
-  // text contract; the count matches the Bridge projection's bounded DOM budget.
-  const narration = typeof agentText === "string" ? agentText.trim() : "";
+  // No cumulative-text recovery path remains: interrupted sessions restart with
+  // an empty block list rather than rebuilding rows from an ambiguous string.
   const projectedUpdates = [];
   const seenUpdateIds = new Set();
   for (const update of Array.isArray(agentUpdates) ? agentUpdates.slice(0, MAX_NARRATION_BLOCKS) : []) {
@@ -220,16 +218,10 @@ export function sidebarRunProgress({
     seenUpdateIds.add(id);
     projectedUpdates.push(Object.freeze({ id, text }));
   }
-  const fallbackBlocks = narration
-    ? narration
-      .split(/\n{2,}/u)
-      .map((block) => block.trim())
-      .filter(Boolean)
-      .slice(0, MAX_NARRATION_BLOCKS)
-      .map((text, index) => Object.freeze({ id: `legacy:${index}`, text }))
-    : [];
-  const narrationUpdates = projectedUpdates.length > 0 ? projectedUpdates : fallbackBlocks;
-  const narrationText = narration || projectedUpdates.map((update) => update.text).join("");
+  const narrationUpdates = projectedUpdates;
+  // Copy and summary consumers derive a full sentence from ordered blocks at
+  // their boundary. A blank line is the public separator across messages.
+  const narrationText = narrationUpdates.map((update) => update.text).join("\n\n");
   const decisionOwnsSettledStatus = state === "ready-to-open" || state === "review-view";
   return Object.freeze({
     steps: Object.freeze(projected),

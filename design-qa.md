@@ -3688,6 +3688,27 @@ private-corpus coverage remains outside this package.
 
 final result: passed for the scoped P1 page/session identity contract.
 
+## 2026-09-20 — 交接、标签创建与 Agent 旁白合同收敛
+
+- Mode: DESIGN CHANGE + AI EXPERIENCE LENS, lightweight exception. 没有新增控件、文案、颜色、间距、布局或动效；继续复用现有缓存页、Canvas、标签与 Agent 旁白表面。
+- 可见连续性：静态缓存 iframe 在自身 `onLoad` 直接报告包含 tab、源码 Hash 与本次导航 handoff 身份的 ready 事件。交接所有者只接受当前精确候选，旧 iframe 即使 HTML Hash 相同也不能在新导航轮次完成交接；诊断 `data-*` 仍保留，但不再驱动生产控制链。
+- 旁白表示：侧栏以稳定 ID、有序公开旁白块为唯一输入；复制或展示全文时才以明确的双换行规则派生字符串。原始碎片仍先按消息组装、再脱敏，恢复、实时旁白和持久会话记录仍各自保持生命周期边界。
+- 实际 Electron 证据：在重建源码的合成页面上，快速 A→B→C（含同 Hash 重返的不同 handoff 身份）、Canvas 先于被延迟缓存 iframe 到达、缓存逐出后滚动位置与 Preview 恢复、以及多 Registry 标签冷启动恢复共 4 个定向场景均通过。该行为改变未引入视觉样式，静态截图不会增加对交接时序的有效证据。
+- 确定性合同证据：标签创建命令直接返回创建或复用目标；SourceReceipt 与 Preferences 的实现级类型变异检查继续分别覆盖原有负例，并共享执行基础设施而未降低断言。
+- Evidence boundary: 此处 Electron 用例是隔离工作树中的合成 HTML 行为证据，不是用户私有 HTML 语料、Developer Preview、已打包或已安装应用验收；也不宣称已量化减少闪烁或耗时。
+
+final result: scoped continuity and narration-contract evidence recorded; final task gate result is tracked separately by the delivery workflow.
+
+## 2026-09-20 — 缓存交接物理实例连续性修复
+
+- Mode: DESIGN CHANGE, lightweight exception. 没有新增控件、文案、颜色、间距、布局或动效；修复的是缓存面与 Canvas 接管之间已有的可见性和可操作性连续性。
+- 可见结果：已接受的 B 静态 iframe 在 C 候选尚未 ready 时继续显示，Canvas 同时保持 `inert`；C 的 iframe 保持隐藏。B 从候选变为保留展示面时不重挂载；同一 tab、同一 Hash 的下一轮导航创建独立的隐藏 iframe，不继承旧 iframe 的 ready 状态。
+- 迟到边界：C 的 Canvas 完成并释放缓存面后，再实际调用保存的 C 静态 `onLoad` 回调，不会重新显示遮罩或重新使 Canvas `inert`。Canvas 成功或失败必须属于当前 generation；导航提供精确 SourceReceipt 时还必须匹配该回执。没有 SourceReceipt 的已打开标签路径仍依赖 `DocumentSession` 已回执围栏的当前 Canvas authority，不能由旧画面的相同 Hash 提前收口。
+- 实际 Electron 证据：重建源码的两条合成 Electron 过程用例合并通过（2/2）：B → C 的旧展示 iframe 身份保持、C 候选隐藏、Canvas 接管后迟到 ready 被拒绝；以及经 A 返回 B 的同 Hash 重访中，旧 B 与新 B 同时挂载为两个不同物理 iframe、只有旧 B 可见。测试只在测试页面暂缓 Canvas 确认，以观察真实中间交接状态；未改生产控制链。
+- Evidence boundary: 这是隔离工作树上的合成 Electron 行为证据，不是用户私有 HTML 语料、Developer Preview、已打包或已安装应用验收；不据此量化闪烁、耗时或内存改善。
+
+final result: passed for the scoped physical-handoff continuity contract; final task-gate evidence is tracked separately by the delivery workflow.
+
 ## 2026-09-20 — Private-source distribution entry points
 
 - Mode: DESIGN CHANGE. About no longer presents the private source repository as a public destination. Its existing GitHub entry now opens the public Stemmio Releases channel and describes the available user outcomes: downloads, release notes and product support. Settings remains the sole surface for update controls.

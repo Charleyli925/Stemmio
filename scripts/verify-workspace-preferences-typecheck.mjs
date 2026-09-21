@@ -3,6 +3,13 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
+import {
+  assertOfficialJavaScriptInputs,
+  loadOfficialTypecheckConfig,
+  mutateExactly,
+  verifyImplementationMutations,
+} from "./typecheck-mutation-verifier.mjs";
+
 const productRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultConfigPath = path.join(productRoot, "tsconfig.workspace-preferences.json");
 const defaultSourcePath = path.join(
@@ -41,75 +48,8 @@ const mutations = Object.freeze([
   }),
 ]);
 
-function diagnosticMessage(diagnostic) {
-  return ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
-}
-
-function formatDiagnostics(diagnostics) {
-  return diagnostics.map((diagnostic) => {
-    const file = diagnostic.file?.fileName || "<configuration>";
-    if (!diagnostic.file || typeof diagnostic.start !== "number") {
-      return `${file}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
-    }
-    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-    return `${file}:${position.line + 1}:${position.character + 1}: TS${diagnostic.code} ${diagnosticMessage(diagnostic)}`;
-  }).join("\n");
-}
-
 export function loadWorkspacePreferencesTypecheckConfig(configPath = defaultConfigPath) {
-  const resolvedConfigPath = path.resolve(configPath);
-  const loaded = ts.readConfigFile(resolvedConfigPath, ts.sys.readFile);
-  if (loaded.error) {
-    throw new Error(`cannot read the official WorkspacePreferences config:\n${formatDiagnostics([loaded.error])}`);
-  }
-  const parsed = ts.parseJsonConfigFileContent(
-    loaded.config,
-    ts.sys,
-    path.dirname(resolvedConfigPath),
-    undefined,
-    resolvedConfigPath,
-  );
-  if (parsed.errors.length) {
-    throw new Error(`cannot parse the official WorkspacePreferences config:\n${formatDiagnostics(parsed.errors)}`);
-  }
-  return parsed;
-}
-
-function programFor({ parsedConfig, sourcePath, sourceText }) {
-  const resolvedSourcePath = path.resolve(sourcePath);
-  const host = ts.createCompilerHost(parsedConfig.options, true);
-  const defaultReadFile = host.readFile.bind(host);
-  host.readFile = (fileName) => (
-    path.resolve(fileName) === resolvedSourcePath ? sourceText : defaultReadFile(fileName)
-  );
-  host.getSourceFile = (fileName, languageVersion, onError) => {
-    const text = host.readFile(fileName);
-    if (text === undefined) {
-      onError?.(`cannot read ${fileName}`);
-      return undefined;
-    }
-    return ts.createSourceFile(
-      fileName,
-      text,
-      languageVersion,
-      true,
-      ts.getScriptKindFromFileName(fileName),
-    );
-  };
-  return ts.createProgram({
-    rootNames: parsedConfig.fileNames,
-    options: parsedConfig.options,
-    projectReferences: parsedConfig.projectReferences,
-    host,
-  });
-}
-
-function mutateExactly(sourceText, mutation) {
-  const count = sourceText.split(mutation.anchor).length - 1;
-  if (count !== 1) {
-    throw new Error(`${mutation.name} mutation anchor must match exactly once; matched ${count}`);
-  }
-  return sourceText.replace(mutation.anchor, mutation.replacement);
+  return loadOfficialTypecheckConfig({ configPath, subject: "WorkspacePreferences" });
 }
 
 export function verifyWorkspacePreferencesTypecheck({
@@ -121,58 +61,50 @@ export function verifyWorkspacePreferencesTypecheck({
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
   const resolvedConsumerPath = path.resolve(consumerPath);
-  if (parsedConfig.options.allowJs !== true || parsedConfig.options.checkJs !== true) {
-    throw new Error("official WorkspacePreferences config must enable allowJs and checkJs");
-  }
-  const compilerInputs = new Set(parsedConfig.fileNames.map((fileName) => path.resolve(fileName)));
-  if (!compilerInputs.has(resolvedSourcePath)) {
-    throw new Error(`WorkspacePreferences implementation is missing from the official compiler inputs: ${resolvedSourcePath}`);
-  }
-  if (!compilerInputs.has(resolvedConsumerPath)) {
-    throw new Error(`WorkspacePreferences consumer is missing from the official compiler inputs: ${resolvedConsumerPath}`);
-  }
+  const requiredInputs = [
+    { path: resolvedSourcePath, description: "WorkspacePreferences implementation" },
+    { path: resolvedConsumerPath, description: "WorkspacePreferences consumer" },
+  ];
+  assertOfficialJavaScriptInputs({
+    parsedConfig,
+    subject: "WorkspacePreferences",
+    requiredInputs,
+  });
   if (typeof sourceText !== "string") {
     throw new Error(`cannot read WorkspacePreferences implementation: ${resolvedSourcePath}`);
   }
   if (typeof consumerText !== "string") {
     throw new Error(`cannot read WorkspacePreferences consumer: ${resolvedConsumerPath}`);
   }
-  const baseline = ts.getPreEmitDiagnostics(programFor({
-    parsedConfig,
-    sourcePath: resolvedSourcePath,
-    sourceText: ts.sys.readFile(resolvedSourcePath),
-  }));
-  if (baseline.length) {
-    throw new Error(`official WorkspacePreferences typecheck must pass before mutation:\n${formatDiagnostics(baseline)}`);
-  }
-  const diagnosticCodes = mutations.map((mutation) => {
+  const sourceOverrides = new Map([
+    [resolvedSourcePath, sourceText],
+    [resolvedConsumerPath, consumerText],
+  ]);
+  const mutationCases = mutations.map((mutation) => {
     const mutationSourcePath = mutation.source === "consumer"
       ? resolvedConsumerPath
       : resolvedSourcePath;
     const mutationSourceText = mutation.source === "consumer" ? consumerText : sourceText;
-    const diagnostics = ts.getPreEmitDiagnostics(programFor({
-      parsedConfig,
+    mutateExactly(mutationSourceText, mutation);
+    return {
+      ...mutation,
+      diagnosticCode: 2322,
       sourcePath: mutationSourcePath,
-      sourceText: mutateExactly(mutationSourceText, mutation),
-    }));
-    const expected = diagnostics.filter((diagnostic) => (
-      diagnostic.code === 2322
-      && path.resolve(diagnostic.file?.fileName || "") === mutationSourcePath
-      && diagnosticMessage(diagnostic).includes(mutation.diagnosticFragment)
-    ));
-    if (expected.length !== 1 || diagnostics.length !== 1) {
-      throw new Error([
-        `official WorkspacePreferences config did not isolate the expected ${mutation.name} implementation type error`,
-        formatDiagnostics(diagnostics) || "<no diagnostics>",
-      ].join("\n"));
-    }
-    return expected[0].code;
+      sourceText: mutationSourceText,
+    };
+  });
+  const diagnostics = verifyImplementationMutations({
+    parsedConfig,
+    subject: "WorkspacePreferences",
+    requiredInputs,
+    sourceOverrides,
+    mutations: mutationCases,
   });
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
     sourcePath: resolvedSourcePath,
     consumerPath: resolvedConsumerPath,
-    diagnosticCodes: Object.freeze(diagnosticCodes),
+    diagnosticCodes: Object.freeze(diagnostics.map((diagnostic) => diagnostic.code)),
   });
 }
 

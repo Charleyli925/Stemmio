@@ -186,16 +186,26 @@ test("cache mounts only explicit ready handoff surfaces on live canvas geometry"
 
   assert.match(moduleCss, /\.cache\s*\{[\s\S]*?grid-column:\s*2/u);
   assert.match(moduleCss, /\.cache\[data-visible="true"\]\s*\{[\s\S]*?padding:\s*0/u);
-  assert.match(cacheComponent, /data-display-ready/u);
   assert.doesNotMatch(cacheComponent, /activeTabId/u);
   assert.match(cacheComponent, /candidateTabId/u);
-  assert.match(cacheComponent, /presentedToken/u);
-  assert.match(cacheComponent, /snapshot\.entries\.filter\(isExplicitHandoffSurface\)/u);
-  assert.match(cacheComponent, /data-mounted-count=\{handoffEntries\.length\}/u);
-  assert.match(cacheComponent, /entry\.tabId === candidateTabId && entry\.sourceSha256 === candidateSourceSha256/u);
-  assert.match(cacheComponent, /entry\.tabId === visibleTabId && entry\.sourceSha256 === visibleSourceSha256/u);
+  assert.match(cacheComponent, /candidateHandoffId/u);
+  assert.match(cacheComponent, /visibleHandoffId/u);
+  assert.match(cacheComponent, /acceptDisplayReady/u);
+  assert.match(cacheComponent, /sameDocumentSurfaceHandoffToken/u);
+  assert.match(cacheComponent, /presentationKey.*handoffId/u);
+  assert.match(cacheComponent, /handoffSurfaces/u);
+  assert.match(cacheComponent, /visibleHandoffToken/u);
+  assert.match(cacheComponent, /data-visible-handoff-id/u);
+  assert.match(cacheComponent, /data-surface-role/u);
+  assert.match(cacheComponent, /onDisplayReady=\{displayReadyToken \? reportDisplayReady : undefined\}/u);
+  assert.match(cacheComponent, /onScrollableReady=\{displayReadyToken \? reportScrollableReady : undefined\}/u);
+  assert.doesNotMatch(cacheComponent, /MutationObserver|querySelector|data-display-ready|presentedToken/u);
+  assert.doesNotMatch(cacheComponent, /sameDocumentSurfaceCacheToken\(visibleToken, candidateToken\)/u);
+  assert.doesNotMatch(cacheComponent, /\|\| "presented"/u);
+  assert.match(cacheComponent, /data-mounted-count=\{handoffSurfaces\.length\}/u);
+  assert.match(cacheComponent, /hidden=\{!isPresented\}/u);
+  assert.match(cacheComponent, /key=\{presentationKey\}/u);
   assert.match(cacheComponent, /data-source-sha256=\{entry\.sourceSha256\}/u);
-  assert.match(cacheComponent, /hidden=\{entry\.tabId !== renderedPresentedToken\?\.tabId[\s\S]*?entry\.sourceSha256 !== renderedPresentedToken\?\.sourceSha256/u);
 });
 
 test("settings stays a flat 780px canvas with one bordered row container", async () => {

@@ -96,8 +96,8 @@ controller.shell.getSnapshot().commentSession?.composerDraft;
 controller.shell.getSnapshot().commentSession?.editSession?.draftText;
 // @ts-expect-error shell cannot supply stale PROJECT.md text.
 controller.shell.getSnapshot().projectRules?.content;
-// @ts-expect-error streaming narration belongs to the runs facet.
-controller.shell.getSnapshot().runSession?.activeHandoff?.visibleText;
+// @ts-expect-error streaming narration blocks belong to the runs facet.
+controller.shell.getSnapshot().runSession?.activeHandoff?.visibleTextUpdates;
 // @ts-expect-error reader facets cannot mutate source or other capabilities.
 controller.conversation.flushDocument();
 void controller.conversation.getSnapshot()?.draftText;

@@ -57,6 +57,87 @@ async function openedExternalUrls(electronApp) {
   ));
 }
 
+async function holdCacheAndCanvasLoads(page) {
+  await page.evaluate(() => {
+    // `verifyInitialRender` can acknowledge a frame through its post-load
+    // probe as well as the React load handler. Hold that diagnostic until the
+    // test deliberately releases the saved real handler, so a fast local
+    // iframe cannot collapse the handoff interval being asserted.
+    const originalSetAttribute = Element.prototype.setAttribute;
+    window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__ = originalSetAttribute;
+    Element.prototype.setAttribute = function stemmioTestSetAttribute(name, value) {
+      if (
+        window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__
+        && name === "data-render-verified"
+        && this instanceof HTMLElement
+        && this.matches('[data-testid="html-canvas-editor"]')
+        && value === "true"
+      ) {
+        window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__ = this;
+        return originalSetAttribute.call(this, name, "false");
+      }
+      return originalSetAttribute.call(this, name, value);
+    };
+    const reactLoadHandler = (frame) => {
+      const propsKey = Object.keys(frame).find((key) => key.startsWith("__reactProps$"));
+      return propsKey ? frame[propsKey]?.onLoad || null : null;
+    };
+    const captureLoad = (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLIFrameElement)) return;
+      if (target.closest('[data-testid="workbench-document-surface-cache"]')) {
+        if (!window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__) return;
+        window.__STEMMIO_TEST_DELAYED_CACHE_FRAME__ = target;
+        window.__STEMMIO_TEST_DELAYED_CACHE_ON_LOAD__ = reactLoadHandler(target);
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        return;
+      }
+      if (
+        target.closest('[data-testid="html-canvas-editor"]')
+        && target.getAttribute("data-runtime-slot-role") === "active"
+        && window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__
+      ) {
+        window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__ = target;
+        window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__ = reactLoadHandler(target);
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      }
+    };
+    window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = false;
+    window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = true;
+    window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = true;
+    window.__STEMMIO_TEST_HANDOFF_LOAD_CAPTURE__ = captureLoad;
+    document.addEventListener("load", captureLoad, true);
+  });
+}
+
+async function releaseCacheAndCanvasLoadHold(page) {
+  await page.evaluate(() => {
+    const captureLoad = window.__STEMMIO_TEST_HANDOFF_LOAD_CAPTURE__;
+    if (captureLoad) document.removeEventListener("load", captureLoad, true);
+    delete window.__STEMMIO_TEST_HANDOFF_LOAD_CAPTURE__;
+    delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+    delete window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__;
+    window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = false;
+    const originalSetAttribute = window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
+    if (typeof originalSetAttribute === "function") {
+      Element.prototype.setAttribute = originalSetAttribute;
+    }
+    const pendingCanvasVerification = window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
+    if (pendingCanvasVerification instanceof HTMLElement) {
+      originalSetAttribute?.call(pendingCanvasVerification, "data-render-verified", "true");
+    }
+    delete window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
+    delete window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__;
+    delete window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
+    delete window.__STEMMIO_TEST_DELAYED_CACHE_FRAME__;
+    delete window.__STEMMIO_TEST_DELAYED_CACHE_ON_LOAD__;
+    delete window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+    delete window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+  }).catch(() => {});
+}
+
 async function confirmHistoryCreation(page) {
   const dialog = page.getByRole("dialog", { name: /创建新版本/u });
   const confirm = dialog.getByRole("button", { name: "创建并编辑", exact: true });
@@ -508,6 +589,422 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     } else {
       removeIsolatedUserData(first.isolatedUserData);
     }
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+    removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron fences rapid cached A-to-B-to-C returns by navigation handoff identity", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(300_000);
+  const projectA = createSourceFixture("cache-handoff-a.html");
+  const projectB = createSourceFixture("cache-handoff-b.html");
+  const projectC = createSourceFixture("cache-handoff-c.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectC.sourcePath);
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "cache-handoff-a" });
+    const tabB = tabs.filter({ hasText: "cache-handoff-b" });
+    const tabC = tabs.filter({ hasText: "cache-handoff-c" });
+    const tabCId = String(await tabC.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    await expect(tabs).toHaveCount(3);
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "3");
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const candidates = [];
+      let lastCandidate = "";
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+        const tabId = root?.getAttribute("data-candidate-tab-id") || "";
+        const handoffId = root?.getAttribute("data-candidate-handoff-id") || "";
+        const candidate = `${tabId}:${handoffId}`;
+        if (tabId && handoffId && candidate !== lastCandidate) {
+          candidates.push({ tabId, handoffId });
+          lastCandidate = candidate;
+        }
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, {
+        attributes: true,
+        attributeFilter: ["data-candidate-tab-id", "data-candidate-handoff-id"],
+        childList: true,
+        subtree: true,
+      });
+      sample();
+      window.__STEMMIO_TEST_HANDOFF_CANDIDATES__ = candidates;
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+
+    // Queue three returns without waiting for a prior Canvas to settle. The
+    // final C visit has the same bytes as the already-cached C tab, but must
+    // get a fresh handoff identity rather than accept an A/B callback.
+    await tabA.dispatchEvent("click");
+    await tabB.dispatchEvent("click");
+    await tabC.dispatchEvent("click");
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    await expect(tabC).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeLessThanOrEqual(2);
+
+    // A second C return proves that a same-Hash navigation round does not
+    // reuse the prior C surface's handoff token.
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await tabC.click();
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    await expect(tabC).toHaveAttribute("aria-selected", "true");
+    const observedCandidates = await launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_CANDIDATES__ || []
+    ));
+    const cHandoffs = observedCandidates
+      .filter((candidate) => candidate.tabId === tabCId)
+      .map((candidate) => candidate.handoffId);
+    expect(new Set(cHandoffs).size).toBeGreaterThanOrEqual(2);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+  } finally {
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_HANDOFF_CANDIDATES__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+    removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron releases a delayed cache iframe when the verified Canvas arrives first", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("cache-late-a.html");
+  const projectB = createSourceFixture("cache-late-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "cache-late-a" });
+    const tabB = tabs.filter({ hasText: "cache-late-b" });
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    const visibleReadyBefore = await launched.page.evaluate(() => (
+      performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark").length
+    ));
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      const blockCacheLoad = (event) => {
+        const target = event.target;
+        if (
+          target instanceof HTMLIFrameElement
+          && target.closest('[data-testid="workbench-document-surface-cache"]')
+        ) {
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+        }
+      };
+      document.addEventListener("load", blockCacheLoad, true);
+      sample();
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+      window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = blockCacheLoad;
+    });
+
+    await tabA.click();
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.__STEMMIO_TEST_HANDOFF_MAX__ || 0
+    ))).toBeGreaterThanOrEqual(1);
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await expect.poll(() => launched.page.evaluate(() => (
+      performance.getEntriesByName("stemmio:tab-cache:visible-ready", "mark").length
+    ))).toBe(visibleReadyBefore);
+
+    await launched.page.evaluate(() => {
+      const blockCacheLoad = window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+      if (blockCacheLoad) document.removeEventListener("load", blockCacheLoad, true);
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+    });
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+  } finally {
+    await launched.page.evaluate(() => {
+      const blockCacheLoad = window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+      if (blockCacheLoad) document.removeEventListener("load", blockCacheLoad, true);
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron retains an accepted B cache iframe while C waits, then ignores C's saved ready callback", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(240_000);
+  const projectA = createSourceFixture("cache-retained-b-a.html");
+  const projectB = createSourceFixture("cache-retained-b-b.html", (source) => source.replace(
+    /<\/body>/iu,
+    "<!-- retained-cache-b --></body>",
+  ));
+  const projectC = createSourceFixture("cache-retained-b-c.html", (source) => source.replace(
+    /<\/body>/iu,
+    "<!-- retained-cache-c --></body>",
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectC.sourcePath);
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabB = tabs.filter({ hasText: "cache-retained-b-b" });
+    const tabC = tabs.filter({ hasText: "cache-retained-b-c" });
+    const tabBId = String(await tabB.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const tabCId = String(await tabC.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    const canvasSurface = launched.page.getByTestId("workbench-active-document-canvas");
+
+    // Document capture holds B's real Canvas load handler while its
+    // script-disabled static iframe still reports ready. This gives us a real
+    // accepted cover to retain while the next candidate loads.
+    await holdCacheAndCanvasLoads(launched.page);
+    await tabB.click();
+    await expect(tabB).toHaveAttribute("aria-selected", "true");
+    await expect(surfaceCache).toHaveAttribute("data-visible-tab-id", tabBId);
+    await expect(surfaceCache).toHaveAttribute("data-candidate-tab-id", tabBId);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "1");
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const frame = root?.querySelector('[data-surface-role="presented"] iframe');
+      if (!(frame instanceof HTMLIFrameElement)) {
+        throw new Error(`B cache cover was not mounted: ${root?.outerHTML || "missing root"}`);
+      }
+      window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__ = frame;
+    });
+
+    // C's static and Canvas callbacks are both held. B must remain the actual
+    // visible iframe, while C cannot inherit B's ready state.
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = true;
+    });
+    await tabC.click();
+    await expect(tabC).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const presented = root?.querySelector('[data-surface-role="presented"] iframe');
+      const candidate = root?.querySelector('[data-surface-role="candidate"] iframe');
+      return {
+        visibleTabId: root?.getAttribute("data-visible-tab-id") || null,
+        candidateTabId: root?.getAttribute("data-candidate-tab-id") || null,
+        mounted: root?.getAttribute("data-mounted-count") || null,
+        samePresentedFrame: presented === window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__,
+        presentedConnected: Boolean(presented?.isConnected),
+        presentedHidden: presented?.closest("[data-surface-role]")?.hidden || false,
+        candidateHidden: candidate?.closest("[data-surface-role]")?.hidden || false,
+        candidateExists: candidate instanceof HTMLIFrameElement,
+        distinctFrames: candidate !== window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__,
+        canvasInert: document.querySelector('[data-testid="workbench-active-document-canvas"]')
+          ?.hasAttribute("inert") || false,
+      };
+    })).toEqual({
+      visibleTabId: tabBId,
+      candidateTabId: tabCId,
+      mounted: "2",
+      samePresentedFrame: true,
+      presentedConnected: true,
+      presentedHidden: false,
+      candidateHidden: true,
+      candidateExists: true,
+      distinctFrames: true,
+      canvasInert: true,
+    });
+    await expect.poll(() => launched.page.evaluate(() => ({
+      delayedCache: Boolean(window.__STEMMIO_TEST_DELAYED_CACHE_FRAME__),
+      savedReady: typeof window.__STEMMIO_TEST_DELAYED_CACHE_ON_LOAD__ === "function",
+      delayedCanvas: Boolean(window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__),
+      savedCanvasReady: typeof window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__ === "function",
+    }))).toEqual({
+      delayedCache: true,
+      savedReady: true,
+      delayedCanvas: true,
+      savedCanvasReady: true,
+    });
+
+    // Complete C through the saved real Canvas handler while its prior static
+    // load callback remains saved. Terminal Canvas authority must retire both
+    // static frames before that stale callback can be invoked.
+    await launched.page.evaluate(() => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      if (typeof onLoad !== "function" || !(frame instanceof HTMLIFrameElement)) {
+        throw new Error("C delayed Canvas ready callback was unavailable");
+      }
+      window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
+      onLoad({ currentTarget: frame });
+      window.__STEMMIO_TEST_BLOCK_CANVAS_VERIFICATION__ = false;
+      const originalSetAttribute = window.__STEMMIO_TEST_ORIGINAL_SET_ATTRIBUTE__;
+      if (typeof originalSetAttribute === "function") {
+        Element.prototype.setAttribute = originalSetAttribute;
+      }
+      const pendingCanvasVerification = window.__STEMMIO_TEST_PENDING_CANVAS_VERIFICATION__;
+      if (pendingCanvasVerification instanceof HTMLElement) {
+        originalSetAttribute?.call(pendingCanvasVerification, "data-render-verified", "true");
+      }
+    });
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await expect(canvasSurface).not.toHaveAttribute("inert", "");
+
+    // Invoke the saved real React handler after C's Canvas has taken over.
+    // The full handoff token has been retired, so it cannot restore a cover or
+    // make the Canvas inert again.
+    await launched.page.evaluate(async () => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CACHE_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CACHE_FRAME__;
+      if (typeof onLoad !== "function" || !(frame instanceof HTMLIFrameElement)) {
+        throw new Error("C delayed static ready callback was unavailable");
+      }
+      onLoad({ currentTarget: frame });
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    await expect(canvasSurface).not.toHaveAttribute("inert", "");
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+    removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(240_000);
+  const projectA = createSourceFixture("cache-repeat-hash-a.html");
+  const projectB = createSourceFixture("cache-repeat-hash-b.html");
+  const projectC = createSourceFixture("cache-repeat-hash-c.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectC.sourcePath);
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "cache-repeat-hash-a" });
+    const tabB = tabs.filter({ hasText: "cache-repeat-hash-b" });
+    const tabAId = String(await tabA.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const tabBId = String(await tabB.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+
+    await holdCacheAndCanvasLoads(launched.page);
+    await tabB.click();
+    await expect(tabB).toHaveAttribute("aria-selected", "true");
+    await expect(surfaceCache).toHaveAttribute("data-visible-tab-id", tabBId);
+    const oldHandoffId = String(await surfaceCache.getAttribute("data-visible-handoff-id") || "");
+    expect(oldHandoffId).not.toBe("");
+    await launched.page.evaluate(() => {
+      const frame = document.querySelector(
+        '[data-testid="workbench-document-surface-cache"] [data-surface-role="presented"] iframe',
+      );
+      if (!(frame instanceof HTMLIFrameElement)) throw new Error("B cache cover was not mounted");
+      window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__ = frame;
+      window.__STEMMIO_TEST_BLOCK_CACHE_LOAD__ = true;
+    });
+
+    // Re-enter B through a different navigation round while its accepted old
+    // cover remains on screen. Observe A as the first candidate before
+    // selecting B: this preserves the real navigation order without giving
+    // the held Canvas enough time to reach its timeout path.
+    await tabA.dispatchEvent("click");
+    await expect(surfaceCache).toHaveAttribute("data-candidate-tab-id", tabAId);
+    await tabB.dispatchEvent("click");
+    await expect(surfaceCache).toHaveAttribute("data-candidate-tab-id", tabBId);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "2");
+    const repeatHandoffState = await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const presented = root?.querySelector('[data-surface-role="presented"] iframe');
+      const candidate = root?.querySelector('[data-surface-role="candidate"] iframe');
+      return {
+        visibleTabId: root?.getAttribute("data-visible-tab-id") || null,
+        visibleHandoffId: root?.getAttribute("data-visible-handoff-id") || null,
+        candidateTabId: root?.getAttribute("data-candidate-tab-id") || null,
+        candidateHandoffId: root?.getAttribute("data-candidate-handoff-id") || null,
+        mounted: root?.getAttribute("data-mounted-count") || null,
+        samePresentedFrame: presented === window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__,
+        presentedHidden: presented?.closest("[data-surface-role]")?.hidden || false,
+        candidateHidden: candidate?.closest("[data-surface-role]")?.hidden || false,
+        candidateExists: candidate instanceof HTMLIFrameElement,
+        distinctFrames: candidate !== window.__STEMMIO_TEST_PRESENTED_CACHE_FRAME__,
+        canvasInert: document.querySelector('[data-testid="workbench-active-document-canvas"]')
+          ?.hasAttribute("inert") || false,
+      };
+    });
+    expect(repeatHandoffState).toMatchObject({
+      visibleTabId: tabBId,
+      visibleHandoffId: oldHandoffId,
+      candidateTabId: tabBId,
+      mounted: "2",
+      samePresentedFrame: true,
+      presentedHidden: false,
+      candidateHidden: true,
+      distinctFrames: true,
+      canvasInert: true,
+    });
+    const newHandoffId = String(await surfaceCache.getAttribute("data-candidate-handoff-id") || "");
+    expect(newHandoffId).not.toBe("");
+    expect(newHandoffId).not.toBe(oldHandoffId);
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
     removeSourceFixture(projectC.sourceDirectory);

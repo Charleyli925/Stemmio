@@ -1,26 +1,31 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 
 import type {
   DocumentSurfaceCacheToken,
   DocumentSurfaceCacheSnapshot,
 } from "../application/document-surface-cache-session.js";
+import {
+  documentSurfaceCacheToken,
+  sameDocumentSurfaceCacheToken,
+} from "../application/document-surface-cache-session.js";
 import HtmlDisplaySurface from "../components/HtmlDisplaySurface";
+import {
+  sameDocumentSurfaceHandoffToken,
+  type DocumentSurfaceHandoffToken,
+} from "./document-surface-presentation";
 import styles from "./workbench-document-surface-cache.module.css";
-
-function cacheTokenKey(token: DocumentSurfaceCacheToken | null): string | null {
-  return token ? `${token.tabId}:${token.sourceSha256}` : null;
-}
 
 export default function WorkbenchDocumentSurfaceCache({
   snapshot,
   visibleTabId,
   visibleSourceSha256,
+  visibleHandoffId = null,
   candidateTabId = null,
   candidateSourceSha256 = null,
-  onVisibleReady,
-  onHandoffComplete,
+  candidateHandoffId = null,
+  acceptDisplayReady,
   onHandoffScroll,
   onFirstScroll,
   height,
@@ -28,139 +33,86 @@ export default function WorkbenchDocumentSurfaceCache({
   snapshot: DocumentSurfaceCacheSnapshot;
   visibleTabId: string | null;
   visibleSourceSha256: string | null;
+  visibleHandoffId?: string | null;
   candidateTabId?: string | null;
   candidateSourceSha256?: string | null;
-  onVisibleReady: (token: DocumentSurfaceCacheToken) => boolean;
-  onHandoffComplete: (token: DocumentSurfaceCacheToken) => void;
+  candidateHandoffId?: string | null;
+  acceptDisplayReady: (token: DocumentSurfaceHandoffToken) => boolean;
   onHandoffScroll: (token: DocumentSurfaceCacheToken, scrollTop: number) => void;
   onFirstScroll: (tabId: string, scrollTop: number) => void;
   height: string;
 }) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const priorVisibleTokenRef = useRef<DocumentSurfaceCacheToken | null>(null);
-  // Keep the last ready projection painted while a newly selected cache entry
-  // hydrates. The target remains mounted (but hidden) so its static display
-  // can settle without exposing an unready frame.
-  const [presentedToken, setPresentedToken] = useState<DocumentSurfaceCacheToken | null>(null);
-  const readyTokenKeyRef = useRef<string | null>(null);
-  // Source projections are data-only until an exact tab-switch handoff asks
-  // for them. Normal inactive and active tabs own no display iframe.
-  const isExplicitHandoffSurface = (entry: DocumentSurfaceCacheSnapshot["entries"][number]) => (
-    (entry.tabId === candidateTabId && entry.sourceSha256 === candidateSourceSha256)
-    || (entry.tabId === visibleTabId && entry.sourceSha256 === visibleSourceSha256)
-  );
-  const handoffEntries = snapshot.entries.filter(isExplicitHandoffSurface);
   const visibleToken = useMemo(() => (
     visibleTabId && visibleSourceSha256
-      ? Object.freeze({ tabId: visibleTabId, sourceSha256: visibleSourceSha256 })
+      ? documentSurfaceCacheToken({ tabId: visibleTabId, sourceSha256: visibleSourceSha256 })
       : null
   ), [visibleSourceSha256, visibleTabId]);
   const candidateToken = useMemo(() => (
     candidateTabId && candidateSourceSha256
-      ? Object.freeze({ tabId: candidateTabId, sourceSha256: candidateSourceSha256 })
+      ? documentSurfaceCacheToken({ tabId: candidateTabId, sourceSha256: candidateSourceSha256 })
       : null
   ), [candidateSourceSha256, candidateTabId]);
-  const observedToken = candidateToken || visibleToken;
-  const observedTokenKey = cacheTokenKey(observedToken);
-  const presentedTokenIsRetained = Boolean(
-    presentedToken && handoffEntries.some((entry) => (
-      entry.tabId === presentedToken.tabId
-      && entry.sourceSha256 === presentedToken.sourceSha256
-    )),
-  );
-
-  useLayoutEffect(() => {
-    if (!presentedToken || presentedTokenIsRetained) return;
-    readyTokenKeyRef.current = null;
-    // A finished handoff must release its complete display document. Returning
-    // to the tab mounts a fresh hidden candidate and waits for its own ready.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPresentedToken(null);
-  }, [presentedToken, presentedTokenIsRetained]);
-
-  useEffect(() => {
-    const prior = priorVisibleTokenRef.current;
-    if (prior && cacheTokenKey(prior) !== cacheTokenKey(visibleToken)) {
-      performance.mark("stemmio:tab-cache:handoff-complete", {
-        detail: Object.freeze(prior),
-      });
-      onHandoffComplete(prior);
-    }
-    priorVisibleTokenRef.current = visibleToken;
-    if (!observedToken) {
-      readyTokenKeyRef.current = null;
-      return undefined;
-    }
-    if (readyTokenKeyRef.current !== observedTokenKey) readyTokenKeyRef.current = null;
-
-    const root = rootRef.current;
-    let frame = 0;
-    let observer: MutationObserver | null = null;
-    let marked = false;
-    let scrollableMarked = false;
-    const markWhenReady = () => {
-      const entry = [...(root?.querySelectorAll<HTMLElement>("[data-tab-id]") || [])]
-        .find((candidate) => (
-          candidate.dataset.tabId === observedToken.tabId
-          && candidate.dataset.sourceSha256 === observedToken.sourceSha256
-        ));
-      const surface = entry?.querySelector<HTMLElement>("[data-display-ready]");
-      if (surface?.dataset.displayReady !== "true") return false;
-      // A candidate may still be waiting for the parent to publish its
-      // retained id. It is safe to paint it now because this branch only runs
-      // after the surface itself reports data-display-ready.
-      if (!marked && readyTokenKeyRef.current !== observedTokenKey) {
-        if (!onVisibleReady(observedToken)) return false;
-        marked = true;
-        readyTokenKeyRef.current = observedTokenKey;
-        setPresentedToken(observedToken);
-        performance.mark("stemmio:tab-cache:visible-ready", {
-          detail: Object.freeze(observedToken),
-        });
-      } else {
-        setPresentedToken(observedToken);
-      }
-      if (!scrollableMarked && surface.dataset.scrollableReady === "true") {
-        scrollableMarked = true;
-        performance.mark("stemmio:tab-cache:scrollable-ready", {
-          detail: Object.freeze(observedToken),
-        });
-      }
-      return scrollableMarked;
-    };
-    frame = window.requestAnimationFrame(() => {
-      if (markWhenReady()) return;
-      observer = new MutationObserver(() => {
-        if (!markWhenReady()) return;
-        observer?.disconnect();
-        observer = null;
-      });
-      if (root) observer.observe(root, { attributes: true, subtree: true });
+  const candidateHandoffToken = useMemo<DocumentSurfaceHandoffToken | null>(() => (
+    candidateToken && candidateHandoffId
+      ? Object.freeze({ ...candidateToken, handoffId: candidateHandoffId })
+      : null
+  ), [candidateHandoffId, candidateToken]);
+  const visibleHandoffToken = useMemo<DocumentSurfaceHandoffToken | null>(() => (
+    visibleToken && visibleHandoffId
+      ? Object.freeze({ ...visibleToken, handoffId: visibleHandoffId })
+      : null
+  ), [visibleHandoffId, visibleToken]);
+  const reportScrollableReady = useCallback((token: DocumentSurfaceHandoffToken) => {
+    // Scroll wiring is observable separately, but it never admits a cache
+    // cover. Static-frame readiness alone asks the existing handoff owner.
+    if (!sameDocumentSurfaceHandoffToken(token, candidateHandoffToken)) return;
+    performance.mark("stemmio:tab-cache:scrollable-ready", {
+      detail: Object.freeze(token),
     });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
+  }, [candidateHandoffToken]);
+  const reportDisplayReady = useCallback((token: DocumentSurfaceHandoffToken) => {
+    if (!sameDocumentSurfaceHandoffToken(token, candidateHandoffToken)) return;
+    if (!acceptDisplayReady(token)) return;
+    performance.mark("stemmio:tab-cache:visible-ready", {
+      detail: Object.freeze(token),
+    });
+  }, [acceptDisplayReady, candidateHandoffToken]);
+  // The parent hook is the single presentation owner. It can legitimately
+  // retain one accepted iframe while a distinct candidate is still loading.
+  // Keep those physical instances separate even when their cache identity is
+  // the same: the newer iframe must never inherit the older ready state.
+  const handoffSurfaces = useMemo(() => {
+    const surfaces: Array<Readonly<{
+      entry: DocumentSurfaceCacheSnapshot["entries"][number];
+      token: DocumentSurfaceHandoffToken;
+    }>> = [];
+    const append = (token: DocumentSurfaceHandoffToken | null) => {
+      if (!token || surfaces.some((surface) => (
+        sameDocumentSurfaceHandoffToken(surface.token, token)
+      ))) return;
+      const entry = snapshot.entries.find((candidate) => (
+        sameDocumentSurfaceCacheToken(candidate, token)
+      ));
+      if (entry) surfaces.push(Object.freeze({ entry, token }));
     };
-  }, [observedToken, observedTokenKey, onHandoffComplete, onVisibleReady, visibleToken]);
-
-  const renderedPresentedToken = presentedToken
-    && visibleToken
-    && cacheTokenKey(presentedToken) === cacheTokenKey(visibleToken)
-    && handoffEntries.some((entry) => (
-      entry.tabId === presentedToken.tabId
-      && entry.sourceSha256 === presentedToken.sourceSha256
-    ))
-    ? presentedToken
-    : null;
+    append(visibleHandoffToken);
+    append(candidateHandoffToken);
+    return Object.freeze(surfaces);
+  }, [candidateHandoffToken, snapshot.entries, visibleHandoffToken]);
+  const renderedPresentedSurface = handoffSurfaces.find((surface) => (
+    sameDocumentSurfaceHandoffToken(surface.token, visibleHandoffToken)
+  )) || null;
   return (
     <div
-      ref={rootRef}
       className={styles.cache}
       data-testid="workbench-document-surface-cache"
-      data-visible={renderedPresentedToken ? "true" : undefined}
-      data-visible-tab-id={renderedPresentedToken?.tabId || undefined}
-      data-visible-source-sha256={renderedPresentedToken?.sourceSha256 || undefined}
-      data-mounted-count={handoffEntries.length}
+      data-visible={renderedPresentedSurface ? "true" : undefined}
+      data-visible-tab-id={renderedPresentedSurface?.token.tabId || undefined}
+      data-visible-source-sha256={renderedPresentedSurface?.token.sourceSha256 || undefined}
+      data-visible-handoff-id={renderedPresentedSurface?.token.handoffId || undefined}
+      data-candidate-tab-id={candidateHandoffToken?.tabId || undefined}
+      data-candidate-handoff-id={candidateHandoffToken?.handoffId || undefined}
+      data-mounted-count={handoffSurfaces.length}
       data-cache-entry-count={snapshot.entries.length}
       data-cold-count={snapshot.coldTabIds.length}
       data-cache-bytes={snapshot.totalBytes}
@@ -168,33 +120,43 @@ export default function WorkbenchDocumentSurfaceCache({
       data-presentation-bytes={snapshot.presentationBytes}
       data-max-cache-entries={snapshot.limits.maxEntries}
       data-max-cache-bytes={snapshot.limits.maxBytes}
-      aria-hidden={!renderedPresentedToken}
+      aria-hidden={!renderedPresentedSurface}
     >
-      {handoffEntries.map((entry) => (
-        <div
-          className={styles.entry}
-          data-tab-id={entry.tabId}
-          data-source-sha256={entry.sourceSha256}
-          data-scroll-top={entry.scrollTop}
-          hidden={entry.tabId !== renderedPresentedToken?.tabId
-            || entry.sourceSha256 !== renderedPresentedToken?.sourceSha256}
-          key={`${entry.tabId}:${entry.sourceSha256}`}
-        >
-          <HtmlDisplaySurface
-            presentationKey={`${entry.tabId}:${entry.sourceSha256}`}
-            html={entry.html}
-            sourcePath={entry.sourcePath}
-            height={height}
-            status={null}
-            initialScrollTop={entry.scrollTop}
-            onScrollTopChange={(scrollTop) => onHandoffScroll({
-              tabId: entry.tabId,
-              sourceSha256: entry.sourceSha256,
-            }, scrollTop)}
-            onFirstScroll={(scrollTop) => onFirstScroll(entry.tabId, scrollTop)}
-          />
-        </div>
-      ))}
+      {handoffSurfaces.map(({ entry, token }) => {
+        const isPresented = sameDocumentSurfaceHandoffToken(token, visibleHandoffToken);
+        const isCandidate = sameDocumentSurfaceHandoffToken(token, candidateHandoffToken);
+        const displayReadyToken = isCandidate ? token : null;
+        const presentationKey = `${entry.tabId}:${entry.sourceSha256}:${token.handoffId}`;
+        return (
+          <div
+            className={styles.entry}
+            data-tab-id={entry.tabId}
+            data-source-sha256={entry.sourceSha256}
+            data-handoff-id={token.handoffId}
+            data-surface-role={isPresented ? "presented" : "candidate"}
+            data-scroll-top={entry.scrollTop}
+            hidden={!isPresented}
+            key={presentationKey}
+          >
+            <HtmlDisplaySurface
+              presentationKey={presentationKey}
+              displayReadyToken={displayReadyToken}
+              html={entry.html}
+              sourcePath={entry.sourcePath}
+              height={height}
+              status={null}
+              initialScrollTop={entry.scrollTop}
+              onScrollTopChange={(scrollTop) => onHandoffScroll({
+                tabId: entry.tabId,
+                sourceSha256: entry.sourceSha256,
+              }, scrollTop)}
+              onFirstScroll={(scrollTop) => onFirstScroll(entry.tabId, scrollTop)}
+              onDisplayReady={displayReadyToken ? reportDisplayReady : undefined}
+              onScrollableReady={displayReadyToken ? reportScrollableReady : undefined}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

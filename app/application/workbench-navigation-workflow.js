@@ -173,9 +173,7 @@ export class WorkbenchNavigationWorkflow {
 
   createStart() {
     return this.#admit({ kind: "create-start" }, async (active) => {
-      const before = new Set(this.#tabs.snapshot.tabs.map((tab) => tab.tabId));
-      this.#tabs.createStart({ focus: false });
-      const created = this.#tabs.snapshot.tabs.find((tab) => !before.has(tab.tabId));
+      const created = this.#tabs.createStart({ focus: false });
       return created
         ? this.#activateTab(active, created.tabId, {})
         : { outcome: rejected("WORKBENCH_START_CREATE_FAILED", "无法创建新标签页。") };
@@ -184,10 +182,7 @@ export class WorkbenchNavigationWorkflow {
 
   createSettings() {
     return this.#admit({ kind: "create-settings" }, async (active) => {
-      const before = new Set(this.#tabs.snapshot.tabs.map((tab) => tab.tabId));
-      this.#tabs.createSettings({ focus: false });
-      const created = this.#tabs.snapshot.tabs.find((tab) => !before.has(tab.tabId))
-        || this.#tabs.snapshot.tabs.find((tab) => tab.kind === "settings");
+      const created = this.#tabs.createSettings({ focus: false });
       return created
         ? this.#activateTab(active, created.tabId, {})
         : { outcome: rejected("WORKBENCH_SETTINGS_CREATE_FAILED", "无法打开设置。") };
@@ -202,14 +197,7 @@ export class WorkbenchNavigationWorkflow {
           "缺少项目标识，暂时不能打开长期规则。",
         ) };
       }
-      const before = new Set(this.#tabs.snapshot.tabs.map((tab) => tab.tabId));
-      this.#tabs.createProjectRules({ ...requestedProject, focus: false });
-      const created = this.#tabs.snapshot.tabs.find((tab) => !before.has(tab.tabId))
-        || this.#tabs.snapshot.tabs.find((tab) => (
-          tab.kind === "project-rules"
-          && tab.projectId === requestedProject.projectId
-          && tab.documentId === requestedProject.documentId
-        ));
+      const created = this.#tabs.createProjectRules({ ...requestedProject, focus: false });
       return created
         ? this.#activateTab(active, created.tabId, {})
         : { outcome: rejected(
@@ -241,12 +229,6 @@ export class WorkbenchNavigationWorkflow {
           "历史版本缺少完整的项目或版本标识。",
         ) };
       }
-      const existing = this.#tabs.snapshot.tabs.find((tab) => (
-        tab.kind === "history"
-        && tab.projectId === requestedProject.projectId
-        && tab.documentId === requestedProject.documentId
-      ));
-      const versionChanged = Boolean(existing && existing.versionId !== versionId);
       const requestedHistory = Object.freeze({
         ...requestedProject,
         versionId,
@@ -254,15 +236,11 @@ export class WorkbenchNavigationWorkflow {
         versionLabel: String(version?.versionLabel || version?.label || `V${versionOrdinal}`),
         displayFileName: String(version?.displayFileName || ""),
       });
-      this.#tabs.createHistory({
+      const target = this.#tabs.createHistory({
         ...requestedHistory,
         focus: false,
       });
-      const target = this.#tabs.snapshot.tabs.find((tab) => (
-        tab.kind === "history"
-        && tab.projectId === requestedProject.projectId
-        && tab.documentId === requestedProject.documentId
-      ));
+      const versionChanged = Boolean(target && target.versionId !== versionId);
       return target
         ? this.#activateTab(active, target.tabId, {
           force: versionChanged,
@@ -285,9 +263,7 @@ export class WorkbenchNavigationWorkflow {
       }
       let next = snapshot.tabs[index + 1] || snapshot.tabs[index - 1] || null;
       if (!next) {
-        const before = new Set(snapshot.tabs.map((tab) => tab.tabId));
-        this.#tabs.createStart({ focus: false });
-        next = this.#tabs.snapshot.tabs.find((tab) => !before.has(tab.tabId)) || null;
+        next = this.#tabs.createStart({ focus: false });
       }
       if (!next) return { outcome: rejected("WORKBENCH_TAB_CLOSE_FAILED", "无法安全关闭这个标签页。") };
       if (closing.kind === "document") {
@@ -314,10 +290,7 @@ export class WorkbenchNavigationWorkflow {
         currentOverride: closing,
       });
       if (activated.outcome.status !== "succeeded") {
-        const before = new Set(this.#tabs.snapshot.tabs.map((tab) => tab.tabId));
-        this.#tabs.createStart({ focus: false });
-        const fallback = this.#tabs.snapshot.tabs.find((tab) => !before.has(tab.tabId))
-          || this.#tabs.snapshot.tabs.find((tab) => tab.kind === "start");
+        const fallback = this.#tabs.createStart({ focus: false });
         if (!fallback) return activated;
         this.#tabs.beginSwitch(fallback.tabId, { force: true });
         this.#tabs.commitStart(fallback.tabId);

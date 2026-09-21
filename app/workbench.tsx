@@ -5853,8 +5853,10 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  const { visibleCachedSurface, candidateCachedSurface, retainPresentedTab, completeHandoff, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, renderedSourceSha256: canvasMode === "preview" && canvasRenderAcks.preview?.generation === canvasGeneration ? canvasRenderAcks.preview.sha256 : renderedContentSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, controller: workspaceController });
-  const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface);
+  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
+  // This is the same complete accepted presentation that the cache component
+  // renders. A hidden candidate alone must never make the Canvas inert.
+  const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface && visibleHandoffId);
   const retryProjectHydrationFromCommentRail = useCallback(() => {
     void workspaceController?.retryProjectHydration();
   }, [workspaceController]);
@@ -6295,9 +6297,11 @@ export default function Workbench() {
         snapshot={documentSurfaceCacheSnapshot}
         visibleTabId={visibleCachedSurface?.tabId || null}
         visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
+        visibleHandoffId={visibleHandoffId}
         candidateTabId={candidateCachedSurface?.tabId || null}
         candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
-        onVisibleReady={retainPresentedTab} onHandoffComplete={completeHandoff}
+        candidateHandoffId={candidateHandoffId}
+        acceptDisplayReady={acceptDisplayReady}
         onHandoffScroll={updateHandoffScroll}
         onFirstScroll={markFirstScroll}
         height="var(--comment-canvas-height, 760px)"

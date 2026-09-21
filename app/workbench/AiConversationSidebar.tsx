@@ -122,8 +122,6 @@ export type AiConversationSidebarProps = {
     onReconnect?(selection: AgentSelection): Promise<unknown>;
     onBeginAccessRepair?(field?: "apiKey" | "login" | "install" | "model" | "provider"): void;
   }>;
-  /** What the selected Agent is saying while it works (ADR 0037). */
-  agentText?: string;
   /** Stable public message rows from canonical visible-text events. */
   agentUpdates?: readonly unknown[];
   /** True only when a bounded public-text projection omitted a suffix. */
@@ -247,7 +245,6 @@ export default function AiConversationSidebar({
   onCopyTask,
   agentAccess,
   deliveryMode = "managed-agent",
-  agentText = "",
   agentUpdates = [],
   agentTextTruncated = false,
   agentWorking = false,
@@ -336,7 +333,6 @@ export default function AiConversationSidebar({
   const runProgress = sidebarRunProgress({
     state,
     steps: runSteps,
-    agentText,
     agentUpdates,
     agentTextTruncated,
   });

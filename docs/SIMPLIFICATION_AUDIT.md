@@ -18,7 +18,7 @@ Ask the requester, or default to a full pass over these hot spots (ordered by ex
 
 | Area | What to look for |
 | --- | --- |
-| `app/workbench.tsx` and `app/workbench/` | God-file growth, effects/state that belong in `app/application/` per `docs/STATE_OWNERSHIP.md`; cross-check against `docs/WORKBENCH_ORCHESTRATION_REFACTOR_PLAN.md` before proposing anything already planned |
+| `app/workbench.tsx` and `app/workbench/` | God-file growth, effects/state that belong in `app/application/` per `docs/STATE_OWNERSHIP.md`; cross-check the current architecture map, ownership, contract and living ADR index before proposing work. `docs/WORKBENCH_ORCHESTRATION_REFACTOR_PLAN.md` is historical rationale and known-risk context, not a pending-plan source |
 | `scripts/` | Scripts not referenced by any `package.json` script, CI workflow, or other script; single-use scripts whose purpose has expired |
 | `scripts/check-architecture.mjs` | String/substring assertions validating runtime coordination (`docs/ARCHITECTURE_CONTRACT.md` reserves source-string tests for packaging/dependency/security only) |
 | `shared/` vs `scripts/` vs `desktop/` | Same-named or near-duplicate modules — verify re-export vs true duplicate before flagging |
