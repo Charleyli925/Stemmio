@@ -90,7 +90,7 @@ function createVirtualTimer() {
   };
 }
 
-async function createFixture(t) {
+async function createFixture(t, { rules = null } = {}) {
   const root = await realpath(
     await mkdtemp(path.join(tmpdir(), "stemmio-qoder-acp-test-")),
   );
@@ -107,6 +107,7 @@ async function createFixture(t) {
     expectedSourceSha256: sha256(Buffer.from(sourceHtml, "utf8")),
   });
   const { target } = imported;
+  if (rules !== null) await repository.updateProjectNotes({ target, content: rules });
   const managedSourceHtml = await readFile(target.exactSourcePath, "utf8");
   assert.equal(inspectSourceElementIdentity(managedSourceHtml).complete, true);
   const promptText = "Follow the Stemmio task contract.\n";
@@ -1665,4 +1666,26 @@ test("Codex frozen model and effort are applied before prompt; rejection prevent
     else await result;
     assert.deepEqual(calls, reject ? ["gpt-synthetic[high]"] : ["gpt-synthetic[high]", "prompt"]);
   }
+});
+
+
+test("ACP execution reads frozen rules A while current project rules advance to B", async (t) => {
+  const rulesA = "# Frozen ACP rules A";
+  const rulesB = "# Next ACP rules B";
+  const fixture = await createFixture(t, { rules: rulesA });
+  const frozenPath = path.join(fixture.requestPath, "input", "PROJECT.md");
+  const currentPath = path.join(fixture.target.projectRootPath, "PROJECT.md");
+  await fixture.repository.updateProjectNotes({ target: fixture.target, content: rulesB });
+  // Reload policy exactly as a retry/recovery does, after the mutable file changed.
+  const policy = await loadQoderAcpTaskPolicy(fixture.options);
+  assert.ok(policy.readableFiles.some(entry => entry.path === frozenPath));
+  assert.ok(policy.readableFiles.every(entry => entry.path !== currentPath));
+  const host = createRestrictedQoderAcpHost(policy);
+  t.after(() => host.dispose());
+  host.bindSessionId("rules_session");
+  assert.equal((await host.readTextFile({ sessionId: "rules_session", path: frozenPath })).content, rulesA);
+  await assert.rejects(host.readTextFile({ sessionId: "rules_session", path: currentPath }),
+    error => error.code === "ACP_READ_NOT_AUTHORIZED");
+  assert.equal(await readFile(frozenPath, "utf8"), rulesA);
+  assert.equal(await readFile(currentPath, "utf8"), rulesB);
 });
