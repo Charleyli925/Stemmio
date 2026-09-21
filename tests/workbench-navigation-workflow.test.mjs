@@ -834,6 +834,101 @@ test("长期规则在项目内去重，并在返回 HTML 时复用 runtime owner
   assert.deepEqual(harness.calls.filter((call) => call === "prepare"), ["prepare"]);
 });
 
+test("规则和历史导航允许缺失、空白标题，并在 Session 中使用 HTML fallback", async () => {
+  for (const title of [undefined, "", "   "]) {
+    const harness = fixture();
+    const rules = await harness.workflow.createProjectRules({
+      projectId: B.projectId,
+      documentId: B.documentId,
+      title,
+    });
+    assert.equal(rules.status, "succeeded");
+    assert.equal(
+      harness.tabs.snapshot.tabs.find((tab) => tab.kind === "project-rules")?.title,
+      "HTML",
+    );
+
+    const history = await harness.workflow.createHistory(
+      { projectId: B.projectId, documentId: B.documentId, title },
+      { versionId: "ver_2", ordinal: 2 },
+    );
+    assert.equal(history.status, "succeeded");
+    assert.equal(
+      harness.tabs.snapshot.tabs.find((tab) => tab.kind === "history")?.title,
+      "HTML",
+    );
+  }
+});
+
+test("reopening a title-less surface reuses its original tab and does not open the current draft", async () => {
+  const harness = fixture();
+  const rules = await harness.workflow.createProjectRules({ ...B, title: "   " });
+  assert.equal(rules.status, "succeeded");
+  const firstTabCount = harness.tabs.snapshot.tabs.length;
+  const firstActiveTabId = harness.tabs.snapshot.activeTabId;
+  const firstRulesReads = harness.calls.filter((call) => call === `rules:${B.projectId}`).length;
+  const reopenedRules = await harness.workflow.createProjectRules({ ...B, title: undefined });
+  assert.equal(reopenedRules.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.tabs.length, firstTabCount);
+  assert.equal(harness.tabs.snapshot.activeTabId, firstActiveTabId);
+  assert.equal(
+    harness.calls.filter((call) => call === `rules:${B.projectId}`).length,
+    firstRulesReads,
+  );
+
+  const history = await harness.workflow.createHistory(
+    { ...B, title: "" },
+    { versionId: "ver_2", ordinal: 2 },
+  );
+  assert.equal(history.status, "succeeded");
+  const historyTabId = `history:${B.projectId}:${B.documentId}`;
+  const historyTabCount = harness.tabs.snapshot.tabs.length;
+  const historyReads = harness.calls.filter((call) => call === `history:${B.projectId}:ver_2`).length;
+  const reopenedHistory = await harness.workflow.createHistory(
+    { ...B, title: "   " },
+    { versionId: "ver_2", ordinal: 2 },
+  );
+  assert.equal(reopenedHistory.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.tabs.length, historyTabCount);
+  assert.equal(harness.tabs.snapshot.activeTabId, historyTabId);
+  assert.equal(
+    harness.calls.filter((call) => call === `history:${B.projectId}:ver_2`).length,
+    historyReads,
+  );
+  assert.equal(harness.calls.some((call) => call === `open:registered:${B.projectId}`), false);
+});
+
+test("title fallback does not bypass invalid identity, version or repository surface target", async () => {
+  const identityHarness = fixture();
+  const invalidIdentity = await identityHarness.workflow.createProjectRules({
+    projectId: "not-a-project-id",
+    documentId: B.documentId,
+    title: "",
+  });
+  assert.equal(invalidIdentity.status, "rejected");
+  assert.equal(identityHarness.tabs.snapshot.tabs.some((tab) => tab.projectId === "not-a-project-id"), false);
+
+  const versionHarness = fixture();
+  const invalidVersion = await versionHarness.workflow.createHistory(
+    { ...B, title: "" },
+    { versionId: "", ordinal: 0 },
+  );
+  assert.equal(invalidVersion.status, "rejected");
+  assert.equal(versionHarness.tabs.snapshot.tabs.some((tab) => tab.kind === "history"), false);
+
+  const targetHarness = fixture();
+  targetHarness.projectWorkflow.resolveRegisteredSurfaceTarget = async () => ({
+    status: "rejected",
+    code: "PROJECT_SURFACE_TARGET_INVALID",
+    reason: "invalid authoritative target",
+  });
+  const invalidTarget = await targetHarness.workflow.createProjectRules({ ...B, title: "   " });
+  assert.equal(invalidTarget.status, "rejected");
+  assert.equal(invalidTarget.code, "PROJECT_SURFACE_TARGET_INVALID");
+  assert.equal(targetHarness.tabs.snapshot.tabs.some((tab) => tab.kind === "project-rules"), false);
+  assert.equal(targetHarness.calls.some((call) => call === `open:registered:${B.projectId}`), false);
+});
+
 test("跨项目规则和历史只在目标页面就绪后提交标签", async () => {
   const harness = fixture();
   const rules = await harness.workflow.createProjectRules({ ...B, title: B.name });
