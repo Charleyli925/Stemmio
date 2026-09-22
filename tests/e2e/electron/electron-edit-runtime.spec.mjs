@@ -2615,16 +2615,37 @@ test("independent projection groups refuse, recover and keep ordinary copies in-
   });
 });
 
-test("command-port keeps supported reorder closed and rejects insert/cross-parent move", {
+for (const sample of [
+  {
+    name: "paragraph",
+    markup: "<p data-native-case='loop-p'>普通段落</p>",
+    selectionText: "普通段落 副本",
+    formatSelectionText: "普通段落 副本",
+    formatSelectionMode: "whole-host",
+    script: '<script>document.body.dataset.runtimeReady = "true";</script>',
+  },
+  {
+    name: "static inline div",
+    markup: "<div data-native-case='loop-p'>普通<span><em>段落</em></span><br><strong>重点</strong></div>",
+    selectionText: "普通段落\n重点 副本",
+    // A range that crosses an authored <br> is a source structure boundary,
+    // so select the first text run across only the safe inline wrappers for
+    // the formatting step while retaining the copied div and its line break.
+    formatSelectionText: "普通段落",
+    formatSelectionMode: "first-line",
+    script: "",
+  },
+]) {
+test(`command-port ${sample.name} keeps supported reorder closed and rejects insert/cross-parent move`, {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
   const html = `<!doctype html>
 <html><head><title>Runtime structure loop</title></head><body>
   <main data-native-case="loop-main">
-    <p data-native-case="loop-p">普通段落</p>
+    ${sample.markup}
   </main>
   <aside data-native-case="loop-aside"></aside>
-  <script>document.body.dataset.runtimeReady = "true";</script>
+  ${sample.script}
 </body></html>`;
   const sourceDirectory = mkdtempSync(path.join(tmpdir(), "stemmio-runtime-structure-loop-e2e-"));
   const sourcePath = path.join(sourceDirectory, "runtime-report.html");
@@ -2639,14 +2660,83 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     const { page } = launched;
     let frame = (await loadedDiskFrame(page, sourcePath, "loop-p")).frame;
     const editor = page.getByTestId("html-canvas-editor");
+    const toolbar = page.getByRole("toolbar").filter({ visible: true });
     const beforeGeneration = await activeFrameGeneration(editor);
     await frame.locator('[data-native-case="loop-p"]').click();
+    const originalId = await frame.locator('[data-native-case="loop-p"]').getAttribute("data-stemmio-id");
+    const mainId = await frame.locator('[data-native-case="loop-main"]').getAttribute("data-stemmio-id");
+    const asideId = await frame.locator('[data-native-case="loop-aside"]').getAttribute("data-stemmio-id");
+    expect(originalId).toBeTruthy();
+    expect(mainId).toBeTruthy();
+    expect(asideId).toBeTruthy();
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+    const baselineWorkingCopy = await readPublishedWorkingCopy(workingCopyPath, "utf8");
+    const outsideMainBytes = (source) => {
+      const sourceIndex = buildSourceIndex(source, { scope: "full-document" });
+      const main = sourceIndex.byStemmioId.get(mainId);
+      if (!main?.range) throw new Error("loop-main source range is unavailable.");
+      return {
+        prefix: Buffer.from(source.slice(0, main.range.startOffset), "utf8"),
+        suffix: Buffer.from(source.slice(main.range.endOffset), "utf8"),
+      };
+    };
+    const baselineOutsideMain = outsideMainBytes(baselineWorkingCopy);
+    const outsideMainUnchanged = (source) => {
+      const actual = outsideMainBytes(source);
+      return actual.prefix.equals(baselineOutsideMain.prefix)
+        && actual.suffix.equals(baselineOutsideMain.suffix);
+    };
+    const commentText = `原件评论-${sample.name}`;
+    await toolbar.getByRole("button", { name: /留评论/u }).click();
+    const composer = page.getByRole("region", { name: "添加评论" });
+    await composer.getByRole("textbox", { name: "评论内容" }).fill(commentText);
+    await composer.getByRole("button", { name: "评论", exact: true }).click();
+    await expect(page.locator(".comment-card").filter({ hasText: commentText })).toHaveCount(1);
+    const readDraftComments = async () => {
+      const response = await bridgeJson(
+        page,
+        `/workspace?sourcePath=${encodeURIComponent(workingCopyPath)}`,
+      );
+      return response.body?.runtimeState?.draft?.comments
+        || response.body?.activeDraft?.comments
+        || [];
+    };
+    const originalCommentStillBound = async () => (
+      (await readDraftComments()).some((comment) => (
+        comment.text === commentText
+        && comment.sourceAnchor?.elementId === originalId
+        && comment.target?.elementId === originalId
+      ))
+    );
+    await expect.poll(originalCommentStillBound, { timeout: 30_000 }).toBe(true);
     await page.getByRole("button", { name: "复制元素", exact: true }).click();
     await waitForIndependentProjection(editor, "in-place", { reason: "verified-insert" });
+    await expect(editor.locator('iframe:not([data-frame-role])'))
+      .toHaveAttribute("data-frame-generation", beforeGeneration);
     frame = await currentEditorFrame(page);
     const copies = frame.locator('[data-native-case="loop-p"]');
     await expect(copies).toHaveCount(2);
     const copyId = await copies.nth(1).getAttribute("data-stemmio-id");
+    const subtreeIds = async (element) => element.evaluate((root) => [
+      root.getAttribute("data-stemmio-id"),
+      ...Array.from(root.querySelectorAll("[data-stemmio-id]"))
+        .map((child) => child.getAttribute("data-stemmio-id")),
+    ]);
+    const originalSubtreeIds = await subtreeIds(copies.nth(0));
+    const copySubtreeIds = await subtreeIds(copies.nth(1));
+    expect(originalSubtreeIds.every(Boolean)).toBe(true);
+    expect(copySubtreeIds.every(Boolean)).toBe(true);
+    expect(new Set(originalSubtreeIds).size).toBe(originalSubtreeIds.length);
+    expect(new Set(copySubtreeIds).size).toBe(copySubtreeIds.length);
+    const originalSubtreeIdSet = new Set(originalSubtreeIds);
+    expect(copySubtreeIds.every((id) => !originalSubtreeIdSet.has(id))).toBe(true);
+    await expect.poll(async () => {
+      const saved = await readPublishedWorkingCopy(workingCopyPath, "utf8");
+      return outsideMainUnchanged(saved)
+        && [...originalSubtreeIds, ...copySubtreeIds]
+          .every((id) => saved.split(`data-stemmio-id="${id}"`).length - 1 === 1);
+    }).toBe(true);
+    await expect.poll(originalCommentStillBound, { timeout: 30_000 }).toBe(true);
     await doubleClickRenderedText(copies.nth(1));
     await expect(copies.nth(1)).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
     await copies.nth(1).evaluate((element) => {
@@ -2668,7 +2758,27 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     });
     await expect.poll(() => copies.nth(1).evaluate((element) => (
       element.ownerDocument.getSelection()?.toString() || ""
-    ))).toBe("普通段落 副本");
+    ))).toBe(sample.selectionText);
+    await copies.nth(1).evaluate((element, formatSelectionMode) => {
+      const range = element.ownerDocument.createRange();
+      if (formatSelectionMode === "first-line") {
+        const firstText = element.firstChild;
+        const lastText = element.querySelector("em")?.firstChild;
+        if (!(firstText instanceof Text) || !(lastText instanceof Text)) {
+          throw new Error("Static inline div lost its expected first-line text nodes.");
+        }
+        range.setStart(firstText, 0);
+        range.setEnd(lastText, lastText.data.length);
+      } else {
+        range.selectNodeContents(element);
+      }
+      const selection = element.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, sample.formatSelectionMode);
+    await expect.poll(() => copies.nth(1).evaluate((element) => (
+      element.ownerDocument.getSelection()?.toString() || ""
+    ))).toBe(sample.formatSelectionText);
     const boldButton = editor.getByRole("button", { name: "加粗", exact: true });
     await expect(boldButton).toBeEnabled();
     await boldButton.click();
@@ -2676,10 +2786,9 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
       await managedWorkingCopyPath(page, sourcePath),
       "utf8",
     )).toContain("font-weight: 700");
+    await expect(editor.locator('iframe:not([data-frame-role])'))
+      .toHaveAttribute("data-frame-generation", beforeGeneration);
     await page.keyboard.press("Escape");
-    const asideId = await frame.locator('[data-native-case="loop-aside"]').getAttribute("data-stemmio-id");
-    const mainId = await frame.locator('[data-native-case="loop-main"]').getAttribute("data-stemmio-id");
-    const originalId = await copies.nth(0).getAttribute("data-stemmio-id");
     await copies.nth(1).click();
     expect(await invokeStructureCommand(page, "moveSelectedTo", {
       parentElementId: mainId,
@@ -2700,6 +2809,9 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
       );
       return saved.indexOf(copyId) < saved.indexOf(originalId);
     }).toBe(true);
+    await expect.poll(async () => outsideMainUnchanged(
+      await readPublishedWorkingCopy(workingCopyPath, "utf8"),
+    )).toBe(true);
     const settledBeforeCrossParent = await readPublishedWorkingCopy(
       await managedWorkingCopyPath(page, sourcePath),
       "utf8",
@@ -2745,10 +2857,14 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
       typeof element.__STEMMIO_E2E_STRUCTURE_COMMANDS__?.insertElement === "function"
     ))).toBe(false);
     await page.keyboard.press(keyShortcut("s"));
-    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
     await expect.poll(async () => (
       (await readPublishedWorkingCopy(workingCopyPath, "utf8")).includes("可编辑")
     )).toBe(true);
+    await expect.poll(async () => outsideMainUnchanged(
+      await readPublishedWorkingCopy(workingCopyPath, "utf8"),
+    )).toBe(true);
+    await expect.poll(originalCommentStillBound, { timeout: 30_000 }).toBe(true);
+    expect(readFileSync(sourcePath, "utf8")).toBe(html);
     const saved = await readPublishedWorkingCopy(workingCopyPath);
     writeFileSync(reopenPath, saved);
     await stopStemmio(electronApp, isolatedUserData);
@@ -2758,8 +2874,13 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     electronApp = reopened.electronApp;
     isolatedUserData = reopened.isolatedUserData;
     const reopenedFrame = (await loadedDiskFrame(reopened.page, reopenPath, "loop-main")).frame;
-    await expect(reopenedFrame.locator(`[data-stemmio-id="${copyId}"]`)).toContainText("可编辑");
-    expect(await reopenedFrame.locator(`[data-stemmio-id="${copyId}"]`).evaluate((element) => (
+    const reopenedCopy = reopenedFrame.locator(`[data-stemmio-id="${copyId}"]`);
+    await expect(reopenedCopy).toContainText("可编辑");
+    const reopenedFormattedText = sample.formatSelectionMode === "first-line"
+      ? reopenedCopy.locator('span[style*="font-weight"]').filter({ hasText: "普通" }).first()
+      : reopenedCopy;
+    await expect(reopenedFormattedText).toHaveCount(1);
+    expect(await reopenedFormattedText.evaluate((element) => (
       element.ownerDocument.defaultView.getComputedStyle(element).fontWeight
     ))).toBe("700");
     await expect(reopenedFrame.locator('[data-native-case="loop-inserted"]')).toHaveCount(0);
@@ -2770,6 +2891,7 @@ test("command-port keeps supported reorder closed and rejects insert/cross-paren
     removeValidatedTemporaryDirectory(sourceDirectory, "stemmio-runtime-structure-loop-e2e-");
   }
 });
+}
 
 test("a rejected complex copy does not become a stale Candidate or overwrite an in-place copy", {
   tag: ["@gate-smoke", "@smoke-editing"],

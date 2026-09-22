@@ -3803,3 +3803,10 @@ final result: passed for the scoped physical-handoff continuity contract; final 
 ## 2026-09-22 Native caret after transient iframe blur
 
 DESIGN CHANGE / interaction continuity. Synthetic Electron reproduction at27f2c8fb: typing the final X while frame state notification is held, then transient blur, restores the old caret before X; releasing the notification first passes. Source-only hypothesis became a controlled old-fail/new-pass result. The minimal fix reads the still-owned live selection before focus recovery; identity/lease and explicit external-focus fences remain. Diagnostic fixed run: original frozen element case plus both ordering controls3/3 passed. Permanent regression retains the same target, exact caret, Backspace landing and source persistence. Final permanent controls fail on old code only before RAF release; the after-release control passes. Fixed targeted Electron acceptance6/6 passed in27.3s, including Save/Document continuity, non-collapsed autosave selection and external comment focus. Full gate is recorded separately in PR evidence. No visual layout changed. Historical hosted trace lacks blur events, so its exact trigger is not uniquely established; private-corpus full qualification remains incomplete.
+
+## 2026-09-22 — 静态文字 div 的安全行内复制
+
+- Truth: 仅放宽静态文字 div 的直接文字限制，共用原有安全行内子树策略；仍需非空文字与完整源码/原位投影证明。菜单结构、移动和删除准入不扩展。
+- Evidence: policy Node 13/13；真实 Electron 的 paragraph 与 static inline div 两个 command-port 闭环 2/2，通过复制、编辑、格式、同父移动、跨父拒绝、删除、Undo/Redo、保存和重开。复制后代身份互不重复、原评论绑定原件、main 外源码字节及原文件保持不变，原位操作不增加帧代次。
+- First failure: 初次格式选择跨 authored br，现有结构边界正确禁用加粗；保留原始失败后将格式操作限定到同一复制件首行的安全行内范围。测试继续包含换行，并未放宽产品边界。
+- Status: passed（上述合成 Electron 操作）；无布局或视觉语言改动。真实复杂页面验收单独记录；本节不代表任意容器支持或全语料通过。首败、trace 与门禁报告保留在本地 output/m2-inline-div-evidence 与 output/test-runs。

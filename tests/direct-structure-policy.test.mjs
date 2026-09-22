@@ -78,7 +78,7 @@ test("copy admits simple list items and directly inline blockquotes", () => {
 
 test("copy rejects complex roots and unsafe descendants", () => {
   const cases = [
-    ["<div data-stemmio-id=\"sm1_00000000000040008000000000000010\"><span>text</span></div>", "copy-root-tag-unsupported"],
+    ["<div data-stemmio-id=\"sm1_00000000000040008000000000000010\"><div>text</div></div>", "copy-nested-block"],
     ["<blockquote data-stemmio-id=\"sm1_00000000000040008000000000000010\"><div>nested</div></blockquote>", "copy-nested-block"],
     ["<blockquote data-stemmio-id=\"sm1_00000000000040008000000000000010\"><ul><li>nested</li></ul></blockquote>", "copy-nested-list"],
     ["<p data-stemmio-id=\"sm1_00000000000040008000000000000010\"><button>run</button></p>", "copy-control"],
@@ -365,7 +365,7 @@ test("incomplete source identity fails closed before direct structure admission"
   assert.equal(result.reason, "source-index-invalid");
 });
 
-test("copy admits only static text-only divs through the existing source policy", () => {
+test("copy admits static text divs through the shared safe inline subtree policy", () => {
   const cases = [
     ['class="label"', "Text", "", "copy-supported"],
     ['id="author"', "Text", "", "copy-author-identity"],
@@ -390,9 +390,21 @@ test("copy admits only static text-only divs through the existing source policy"
     ['', "Text", '<a href="https://example.test/path">Other</a>', "copy-supported"],
     ['', "Text", '<a href="#anchor">Other</a>', "copy-supported"],
     ['style="background:url(image.png)"', "Text", "", "copy-resource-attribute"],
-    ['', "<img src='image.png'>", "", "copy-root-tag-unsupported"],
-    ['', "<span>Text</span>", "", "copy-root-tag-unsupported"],
-    ['', "<!--marker-->Text", "", "copy-root-tag-unsupported"],
+    ['', "Text<img src='image.png'>", "", "copy-media"],
+    ['', "<span>Text</span>", "", "copy-supported"],
+    ['', "Text<strong>bold</strong><em>emphasis</em><br>line", "", "copy-supported"],
+    ['', "<span><strong>Nested <em>format</em></strong></span>", "", "copy-supported"],
+    ['', "<div>Nested block</div>", "", "copy-nested-block"],
+    ['', "<p>Nested paragraph</p>", "", "copy-nested-block"],
+    ['', "Text<input>", "", "copy-control"],
+    ['', "Text<canvas></canvas>", "", "copy-media"],
+    ['', "Text<svg></svg>", "", "copy-svg-math"],
+    ['', "Text<style>.x{color:red}</style>", "", "copy-resource"],
+    ['', "<span id='authored'>Text</span>", "", "copy-author-identity"],
+    ['', "<span aria-labelledby='authored'>Text</span>", "", "copy-reference-rewrite"],
+    ['', "<ul><li>Item</li></ul>", "", "copy-nested-list"],
+    ['', "<span> </span><br>", "", "copy-root-tag-unsupported"],
+    ['', "<!--marker-->Text", "", "copy-comment"],
     ['', " ", "", "copy-root-tag-unsupported"],
   ];
   for (const [attributes, content, extra, reason] of cases) {
