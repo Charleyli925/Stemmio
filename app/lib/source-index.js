@@ -494,7 +494,10 @@ export function buildSourceIndex(html, options = {}) {
       const endTagRange = locationRange(node.sourceCodeLocation?.endTag);
       const attributes = scanStartTagAttributes(source, startTagRange);
       const decodedAttributes = new Map(
-        (node.attrs ?? []).map((attribute) => [attribute.name.toLowerCase(), attribute.value]),
+        (node.attrs ?? []).map((attribute) => [
+          `${attribute.prefix ? `${attribute.prefix}:` : ""}${attribute.name}`.toLowerCase(),
+          attribute.value,
+        ]),
       );
       for (const attribute of attributes) {
         attribute.value = decodedAttributes.has(attribute.name)

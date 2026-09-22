@@ -8,6 +8,7 @@ import {
   chooseClipboardDelivery,
   closeStemmioGracefully,
   createSourceFixture,
+  currentEditorFrame,
   documentToken,
   expectCheckpointPersisted,
   existsSync,
@@ -299,6 +300,79 @@ test("selected-text comments persist stable identity and stay exact after text r
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("static text-only div copy keeps an existing comment anchored to the original", async () => {
+  test.setTimeout(120_000);
+  const sourceDirectory = mkdtempSync(
+    path.join(tmpdir(), "stemmio-div-comment-copy-e2e-"),
+  );
+  const sourcePath = path.join(sourceDirectory, "static-div-comment-copy.html");
+  writeFileSync(sourcePath, `<!doctype html>
+<html><head><title>Static div copy</title></head><body>
+  <main>
+    <div data-native-case="static-div-comment-copy">Original static text.</div>
+    <p data-native-case="static-div-comment-copy-sibling">A plain sibling.</p>
+  </main>
+</body></html>`, "utf8");
+  const commentText = "原 div 的评论仍应留在原目标。";
+  const launched = await launchStemmio({ activeSourcePath: sourcePath });
+  try {
+    let { editor, frame } = await loadedDiskFrame(
+      launched.page,
+      sourcePath,
+      "static-div-comment-copy",
+    );
+    const managedSourcePath = await managedWorkingCopyPath(
+      launched.page,
+      sourcePath,
+    );
+    const originalSource = readFileSync(managedSourcePath, "utf8");
+    const originalId = originalSource.match(
+      /<div data-native-case="static-div-comment-copy" data-stemmio-id="(sm1_[a-f0-9]{32})">/u,
+    )?.[1];
+    expect(originalId).toMatch(/^sm1_[a-f0-9]{32}$/u);
+
+    await addCanvasComment(
+      launched.page,
+      frame,
+      "static-div-comment-copy",
+      commentText,
+    );
+    await expect.poll(
+      () => managedDraftComment(managedSourcePath, commentText),
+      { timeout: 20_000 },
+    ).not.toBeNull();
+    const commentBeforeCopy = managedDraftComment(managedSourcePath, commentText);
+    expect(commentBeforeCopy.target.elementId).toBe(originalId);
+    expect(commentBeforeCopy.sourceAnchor.elementId).toBe(originalId);
+
+    await frame.locator(caseSelector("static-div-comment-copy")).click();
+    await editor.getByRole("button", { name: "复制元素", exact: true }).click();
+    await expectCheckpointPersisted(launched.page, 0);
+    frame = await currentEditorFrame(launched.page);
+    const copiedTargets = frame.locator(caseSelector("static-div-comment-copy"));
+    await expect(copiedTargets).toHaveCount(2);
+    const copiedIds = await copiedTargets.evaluateAll((elements) => (
+      elements.map((element) => element.getAttribute("data-stemmio-id"))
+    ));
+    expect(copiedIds[0]).toBe(originalId);
+    expect(copiedIds[1]).toMatch(/^sm1_[a-f0-9]{32}$/u);
+    expect(copiedIds[1]).not.toBe(originalId);
+
+    const commentAfterCopy = managedDraftComment(managedSourcePath, commentText);
+    expect(commentAfterCopy.commentId).toBe(commentBeforeCopy.commentId);
+    expect(commentAfterCopy.target.elementId).toBe(originalId);
+    expect(commentAfterCopy.sourceAnchor.elementId).toBe(originalId);
+    expect(await launched.page.locator(".comment-card").filter({ hasText: commentText })
+      .getAttribute("data-resolution")).toMatch(/^(?:exact|rebound)$/u);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeValidatedTemporaryDirectory(
+      sourceDirectory,
+      "stemmio-div-comment-copy-e2e-",
+    );
   }
 });
 
