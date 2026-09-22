@@ -167,7 +167,8 @@ export function readFrozenSelection(bytes, expectedDigest) {
   }
   if (structureCore) {
     const binding = target.copyBinding;
-    requireFact(target.mapping === "self" && ["span", "p"].includes(target.selectedTag)
+    requireFact(target.mapping === "self" && (["span", "p"].includes(target.selectedTag)
+      || (target.selectedTag === "div" && plan.initialRuntime === "static"))
       && target.clickTag === target.selectedTag && plan.reopen === true
       && target.copyCapability?.expected === "AVAILABLE"
       && target.copyCapability?.basis === "REVIEWED_SOURCE_EQUIVALENT_LEAF"
@@ -203,9 +204,13 @@ export function readFrozenSelection(bytes, expectedDigest) {
         "FROZEN_STRUCTURE_PROJECTION_OVERRIDE_INVALID");
     }
     if (structureClosedLoop) {
+      const staticClosedLoop = plan.initialRuntime === "static";
       requireFact(PROJECTION_EXPECTATIONS.has(target.expectedProjection)
         && ID.test(target.destinationParentId || "")
-        && target.rebuildTrigger === "accepted-projection-failure"
+        && (staticClosedLoop
+          ? target.rebuildPath === "static-rebuild" && target.rebuildTrigger === undefined
+          : target.rebuildPath === "runtime-candidate"
+            && target.rebuildTrigger === "accepted-projection-failure")
         && target.destinationParentId === binding.parentId
         && ID.test(target.destinationBeforeElementId || "")
         && target.destinationBeforeElementId === target.selectedId
@@ -214,7 +219,7 @@ export function readFrozenSelection(bytes, expectedDigest) {
         && target.formatCapability?.scope === "element"
         && target.formatCapability?.basis === "SOURCE_ELEMENT_STYLE_NO_NEW_WRAPPER"
         && target.projectionByOperation?.copy === "in-place"
-        && target.projectionByOperation?.["move-copy"] === "recovered"
+        && target.projectionByOperation?.["move-copy"] === (staticClosedLoop ? "in-place" : "recovered")
         && target.continuationProbe === undefined,
       "FROZEN_STRUCTURE_CLOSED_LOOP_CONTRACT_INVALID");
       Object.freeze(target.formatCapability);

@@ -1447,12 +1447,14 @@ test("frozen executor ingress binds reviewed single target, seed bytes and manif
   const closedLoopPlan = {
     ...structurePlan,
     scope: "core-structure-closed-loop",
+    initialRuntime: "runtime",
     targets: [{
       ...structurePlan.targets[0],
       clickTag: "p",
       selectedTag: "p",
       operations: FROZEN_STRUCTURE_CLOSED_LOOP_OPERATIONS,
       expectedProjection: "in-place",
+      rebuildPath: "runtime-candidate",
       rebuildTrigger: "accepted-projection-failure",
       destinationParentId: structurePlan.targets[0].copyBinding.parentId,
       destinationBeforeElementId: structurePlan.targets[0].selectedId,
@@ -1469,10 +1471,18 @@ test("frozen executor ingress binds reviewed single target, seed bytes and manif
   assert.equal(readFrozenSelection(closedLoopBytes, frozenDigest(closedLoopBytes)).scope, "core-structure-closed-loop");
   const inPlaceClosedLoopBytes = Buffer.from(JSON.stringify({
     ...closedLoopPlan,
-    targets: [{ ...closedLoopPlan.targets[0], expectedProjection: "in-place",
+    initialRuntime: "static",
+    targets: [{ ...closedLoopPlan.targets[0], clickTag: "div", selectedTag: "div",
+      rebuildPath: "static-rebuild", rebuildTrigger: undefined,
+      expectedProjection: "in-place",
       projectionByOperation: { copy: "in-place", "move-copy": "in-place" } }],
   }));
-  assert.throws(() => readFrozenSelection(inPlaceClosedLoopBytes, frozenDigest(inPlaceClosedLoopBytes)), {
+  assert.equal(readFrozenSelection(inPlaceClosedLoopBytes, frozenDigest(inPlaceClosedLoopBytes)).initialRuntime, "static");
+  const runtimeInPlaceClosedLoopBytes = Buffer.from(JSON.stringify({
+    ...closedLoopPlan,
+    targets: [{ ...closedLoopPlan.targets[0], projectionByOperation: { copy: "in-place", "move-copy": "in-place" } }],
+  }));
+  assert.throws(() => readFrozenSelection(runtimeInPlaceClosedLoopBytes, frozenDigest(runtimeInPlaceClosedLoopBytes)), {
     code: "FROZEN_STRUCTURE_CLOSED_LOOP_CONTRACT_INVALID",
   });
   assert.throws(() => readFrozenSelection(Buffer.from(JSON.stringify({
@@ -1573,11 +1583,16 @@ test("frozen executor ingress binds reviewed single target, seed bytes and manif
   assert.doesNotThrow(() => readFrozenSelection(probeBytes, frozenDigest(probeBytes)));
   for (const change of [{ rebuildPath: "AUTO" }, { copyBinding: { kind: "find-new-id" } },
     { continuationProbe: "AUTO" }, { continuationProbe: "session-ended-no-refocus" },
-    { clickTag: "p" }, { clickTag: "div", selectedTag: "div" },
+    { clickTag: "p" },
     { copyCapability: { expected: "AVAILABLE", basis: "OBSERVED_UI", reason: "available" } }]) {
     const bytes = Buffer.from(JSON.stringify({ ...structurePlan, targets: [{ ...structurePlan.targets[0], ...change }] }));
     assert.throws(() => readFrozenSelection(bytes, frozenDigest(bytes)), { code: "FROZEN_STRUCTURE_CONTRACT_INVALID" });
   }
+  const runtimeDivBytes = Buffer.from(JSON.stringify({ ...structurePlan, initialRuntime: "runtime",
+    targets: [{ ...structurePlan.targets[0], clickTag: "div", selectedTag: "div" }] }));
+  assert.throws(() => readFrozenSelection(runtimeDivBytes, frozenDigest(runtimeDivBytes)), {
+    code: "FROZEN_STRUCTURE_CONTRACT_INVALID",
+  });
   for (const change of [{ operations: ["activate", "input"] },
     { historyAdoption: "runtime-candidate" },
     { textCapability: { expected: "AVAILABLE", basis: "OBSERVED_UI" } },

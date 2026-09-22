@@ -1661,40 +1661,94 @@ for (const input of ["wheel-up", "wheel-down", "keyboard-home", "scrollbar"]) {
   });
 }
 
-test("comment reveal and layout alignment preserve the latest reading intent", async ({}, testInfo) => {
-  const html = `<!doctype html><html><head><title>Reading comments</title>
-    <style>p { height: 120px; margin: 0; }</style></head><body>
-    ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
-    </body></html>`;
-  await withRuntimeProject("stemmio-reading-comments-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
-    const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
-    const stage = page.locator(".review-scroll-stage");
-    await stage.evaluate(element => { element.scrollTop = 1500; });
-    await frame.locator('[data-native-case="reading-14"]').click();
-    await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
-    await page.getByRole("textbox", { name: "评论内容" }).fill("Reading anchor comment");
-    await page.getByRole("button", { name: "评论", exact: true }).click();
-    await expect(page.locator(".comment-card").filter({ hasText: "Reading anchor comment" })).toBeVisible();
-    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
-    const bounds = await stage.boundingBox();
-    await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
-    await page.mouse.wheel(0, -900);
-    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
-    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const before = await stage.evaluate(element => element.scrollTop);
-    // Resizing the shell recomputes comment geometry; this is not a request to reveal a comment.
-    await page.setViewportSize({ width: 1100, height: 760 });
-    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
-    const token = await documentToken(page);
-    await page.getByRole("button", { name: "更多", exact: true }).click();
-    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
-    await expect.poll(() => documentToken(page)).not.toBe(token);
-    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
-    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
-    await page.screenshot({ path: testInfo.outputPath("reading-after-comment-and-resize.png") });
+for (const delayedHeaderResize of [false, true]) {
+  test(`comment reveal and layout alignment preserve the latest reading intent${delayedHeaderResize ? " with delayed header resize" : ""}`, async ({}, testInfo) => {
+    const html = `<!doctype html><html><head><title>Reading comments</title>
+      <style>p { height: 120px; margin: 0; }</style></head><body>
+      ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+      </body></html>`;
+    await withRuntimeProject("stemmio-reading-comments-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      await loadedDiskFrame(page, sourcePath, "reading-0");
+      if (delayedHeaderResize) {
+        await page.evaluate(() => {
+          const Native = window.ResizeObserver;
+          const state = { hold: false, pending: [], lastDeliveredHeight: 0 };
+          window.__STEMMIO_TEST_HEADER_RESIZE__ = state;
+          window.ResizeObserver = class extends Native {
+            constructor(callback) {
+              super((entries, observer) => {
+                const header = entries.find(entry => entry.target.matches?.(".comment-rail-header"));
+                if (header && state.hold) {
+                  state.pending.push(() => callback(entries, observer));
+                  return;
+                }
+                if (header) state.lastDeliveredHeight = header.target.getBoundingClientRect().height;
+                callback(entries, observer);
+              });
+            }
+          };
+          state.release = () => {
+            state.hold = false;
+            window.ResizeObserver = Native;
+            for (const deliver of state.pending.splice(0)) deliver();
+          };
+        });
+        // The real mode switch rebinds the already mounted header observer.
+        await page.getByRole("button", { name: "预览", exact: true }).click();
+        await expect(page.getByRole("button", { name: "预览", exact: true })).toHaveAttribute("aria-pressed", "true");
+        await page.getByRole("button", { name: "编辑", exact: true }).click();
+        await expect(page.getByRole("button", { name: "编辑", exact: true })).toHaveAttribute("aria-pressed", "true");
+      }
+      try {
+        const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
+        const stage = page.locator(".review-scroll-stage");
+        await stage.evaluate(element => { element.scrollTop = 1500; });
+        await frame.locator('[data-native-case="reading-14"]').click();
+        await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
+        await page.getByRole("textbox", { name: "评论内容" }).fill("Reading anchor comment");
+        if (delayedHeaderResize) {
+          await expect.poll(() => page.evaluate(() => window.__STEMMIO_TEST_HEADER_RESIZE__.lastDeliveredHeight)).toBe(79);
+          await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          await page.evaluate(() => { window.__STEMMIO_TEST_HEADER_RESIZE__.hold = true; });
+        }
+        await page.getByRole("button", { name: "评论", exact: true }).click();
+        if (delayedHeaderResize) {
+          await expect.poll(() => page.evaluate(() => window.__STEMMIO_TEST_HEADER_RESIZE__.pending.length)).toBeGreaterThan(0);
+          await expect.poll(() => page.locator(".comment-rail-header").evaluate(element => element.getBoundingClientRect().height)).toBe(62);
+        }
+        await expect(page.locator(".comment-card").filter({ hasText: "Reading anchor comment" })).toBeVisible();
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
+        if (delayedHeaderResize) {
+          await page.evaluate(() => window.__STEMMIO_TEST_HEADER_RESIZE__.release());
+        }
+        const bounds = await stage.boundingBox();
+        await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
+        await page.mouse.wheel(0, -900);
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
+        await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const before = await stage.evaluate(element => element.scrollTop);
+        // Resizing the shell recomputes comment geometry; this is not a request to reveal a comment.
+        await page.setViewportSize({ width: 1100, height: 760 });
+        await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        const token = await documentToken(page);
+        await page.getByRole("button", { name: "更多", exact: true }).click();
+        await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+        await expect.poll(() => documentToken(page)).not.toBe(token);
+        await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        await page.screenshot({ path: testInfo.outputPath("reading-after-comment-and-resize.png") });
+      } finally {
+        if (delayedHeaderResize && !page.isClosed()) {
+          await page.evaluate(() => {
+            window.__STEMMIO_TEST_HEADER_RESIZE__?.release();
+            delete window.__STEMMIO_TEST_HEADER_RESIZE__;
+          });
+        }
+      }
+    });
   });
-});
+}
 
 for (const input of ["outer-wheel", "iframe-wheel", "keyboard-home", "scrollbar"]) {
   test(`reading intent cancels a comment reveal waiting for its frame: ${input}`, async () => {
