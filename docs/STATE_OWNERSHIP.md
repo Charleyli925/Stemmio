@@ -256,6 +256,12 @@ Rules:
   observers or source serialization. Warm entries retain only allowlisted
   presentation context and scroll. Evicted tabs become cold identities without
   being closed, and every activation still enters canonical project open.
+  The display cover also retires when same-byte hydration publishes a newer
+  authority receipt within that exact navigation and document activation, once
+  the current Canvas generation and source hash are verified. This presentation
+  comparison permits existing local-path aliases only; session incarnation,
+  activation context and monotonic receipt sequence/generation remain fenced.
+  It does not relax exact source receipts used by Document or Canvas ACK owners.
   Start activation calls the same canonical `prepareSwitch`; only then
   does it unmount the document outlet while retaining `runtimeOwnerTabId`, so
   close/quit obligations remain owned by the same Controller. Close and activate
