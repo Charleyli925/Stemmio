@@ -3463,34 +3463,40 @@ test("accepting a Version shows static Active and unlocks editing before Runtime
   ));
   const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
   try {
-    const openedFrame = await loadedDiskFrame(launched.page, fixture.sourcePath);
-    const scrollAnchor = openedFrame.locator(caseSelector(ACCEPT_SCROLL_ANCHOR));
-    await expect(scrollAnchor).toBeVisible();
-    const anchorDocumentTop = await scrollAnchor.evaluate((element) => (
-      element.getBoundingClientRect().top
-      + Number(element.ownerDocument.defaultView?.scrollY || 0)
-    ));
-    await launched.page.locator(".review-scroll-stage").evaluate((stage, documentTop) => {
-      const iframe = [...stage.querySelectorAll(
-        '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
-      )].find((node) => node.getClientRects().length > 0);
-      if (!iframe) return;
-      const iframeOffset = iframe.getBoundingClientRect().top
-        - stage.getBoundingClientRect().top
-        + stage.scrollTop;
-      stage.scrollTop = Math.max(0, iframeOffset + documentTop - stage.clientHeight / 2);
-    }, anchorDocumentTop);
-    await expect.poll(async () => {
-      const snapshot = await readActiveAcceptSnapshot(launched.page);
-      return snapshot.outerScrollTop > 400 && snapshot.anchorInViewport && !snapshot.showingDocumentTop
-        ? snapshot
-        : false;
-    }).toBeTruthy();
-
+    await loadedDiskFrame(launched.page, fixture.sourcePath);
     const request = await addCommentAndSubmit(
       launched.page,
       launched.electronApp,
       fixture.sourcePath,
+      UPDATED_TEXT,
+      [],
+      async (activeSourcePath) => {
+        // Comment creation intentionally reveals its target. Establish the reading
+        // location after that gesture, immediately before entering Review.
+        const openedFrame = await loadedDiskFrame(launched.page, activeSourcePath);
+        const scrollAnchor = openedFrame.locator(caseSelector(ACCEPT_SCROLL_ANCHOR));
+        await expect(scrollAnchor).toBeVisible();
+        const anchorDocumentTop = await scrollAnchor.evaluate((element) => (
+          element.getBoundingClientRect().top
+          + Number(element.ownerDocument.defaultView?.scrollY || 0)
+        ));
+        await launched.page.locator(".review-scroll-stage").evaluate((stage, documentTop) => {
+          const iframe = [...stage.querySelectorAll(
+            '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
+          )].find((node) => node.getClientRects().length > 0);
+          if (!iframe) return;
+          const iframeOffset = iframe.getBoundingClientRect().top
+            - stage.getBoundingClientRect().top
+            + stage.scrollTop;
+          stage.scrollTop = Math.max(0, iframeOffset + documentTop - stage.clientHeight / 2);
+        }, anchorDocumentTop);
+        await expect.poll(async () => {
+          const snapshot = await readActiveAcceptSnapshot(launched.page);
+          return snapshot.outerScrollTop > 400 && snapshot.anchorInViewport && !snapshot.showingDocumentTop
+            ? snapshot
+            : false;
+        }).toBeTruthy();
+      },
     );
     const beforeAdoption = await captureReviewAcceptPersistence(launched.page);
     writeAiOutput(request.requestRoot, (base) => preserveCandidateSourceIdsForFixture(

@@ -381,6 +381,7 @@ export type HtmlCanvasEditorProps = {
   onRuntimeDegradationChange?: (state: HtmlCanvasRuntimeDegradation) => void;
   /** Mirrors the authored page scroll coordinate into the host comment rail. */
   onCommentLayout?: (state: HtmlCanvasCommentLayoutState) => void;
+  onReadingIntent?: () => void;
   /** Opens the host product's comment composer for the current selection. */
   onRequestComment?: (selection: HtmlCanvasSelection) => void;
   /** Callback alternative to using a ref. Receives null when the editor unmounts. */
