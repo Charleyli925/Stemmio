@@ -1858,6 +1858,7 @@ test("recursive polling is single-flight and speeds up only after public Agent t
   assert.deepEqual(harness.runSession.activeHandoff?.visibleTextUpdates, [{
     id: "message-read",
     sequence: 3,
+    firstSequence: 3,
     text: "正在读取冻结任务。",
   }]);
   assert.equal(harness.runSession.activeHandoff?.providerId, "codex");
@@ -1932,6 +1933,7 @@ test("a transient status failure preserves the last public Agent narration", asy
   assert.deepEqual(harness.runSession.activeHandoff?.visibleTextUpdates, [{
     id: "message-write",
     sequence: 1,
+    firstSequence: 1,
     text: "正在写入 Candidate。",
   }]);
   assert.equal(harness.runSession.activeHandoff?.status, "running");
@@ -4409,3 +4411,34 @@ for (const cancelStillPending of [false, true]) {
     harness.workflow.dispose();
   });
 }
+
+
+test("public activity ingress drops payloads and HTTP file claims without affecting execution", async () => {
+  let runtimeId = "acp";
+  const harness = createHarness({ bridge: { async status() { return {
+    status: "processing", agentSession: {
+      state: "running", runtimeId,
+      publicActivities: [
+        { id: "/tmp/private", kind: "file-read", sequence: 1, boundary: 0, text: "sk-secret" },
+        { kind: "generation-started", sequence: 2, boundary: 0, command: "private-command" },
+        { kind: "unknown-tool", sequence: 3, boundary: 0 },
+        { kind: "file-written", sequence: -1, boundary: 0 },
+      ],
+      visibleTextUpdates: [{ id: "message-a", sequence: 5, firstSequence: 2, text: "公开说明" }],
+      activitiesTruncated: true,
+    },
+  }; } } });
+  harness.runSession.trackRun(runRecord(), { activate: "always" });
+  await harness.workflow.pollNow();
+  assert.deepEqual(harness.runSession.activeHandoff.publicActivities, [
+    { id: "activity:1", kind: "file-read", sequence: 1, boundary: 0 },
+    { id: "activity:2", kind: "generation-started", sequence: 2, boundary: 0 },
+  ]);
+  assert.equal(harness.runSession.activeHandoff.visibleTextUpdates[0].firstSequence, 2);
+  assert.equal(harness.runSession.activeHandoff.activitiesTruncated, true);
+  runtimeId = "http";
+  await harness.workflow.pollNow();
+  assert.deepEqual(harness.runSession.activeHandoff.publicActivities.map(row => row.kind), ["generation-started"]);
+  assert.equal(harness.runSession.activeRun.status, "processing");
+  harness.workflow.dispose();
+});

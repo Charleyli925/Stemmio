@@ -70,6 +70,7 @@ capability revision fence remain the authority for launch.
 | Current-open Canvas undo/redo context, at most 20 exact Patch pairs, cursor and pending-save evidence | Renderer `SourceHistorySession` | bounded process memory only; recovery may retain exact save evidence but never a restorable cursor; no Bridge action route or persistent history schema exists | Canvas, Document session, desktop Edit intent router |
 | Durable AI Conversation, its Contexts, Turns and terminal messages, the per-Document current-conversation pointer and the Composer draft | Bridge-owned `ConversationRepository` in `bridge/conversation-repository.mjs` is the only writer | `.stemmio/conversations/`: one record per Conversation plus a per-project index and a separate small draft record, all atomically replaced. A Conversation belongs to exactly one Document, so a cross-Document read fails closed on identity rather than being filtered at read time. `sequence` is assigned from the record's own `lastSequence`; the single writer makes strict increase need no coordination. A streaming fragment is never written: `draft`, `queued` and `streaming` are refused, so every stored message is terminal and crash recovery repairs nothing. A stored message carries no interface member | typed Bridge routes `/conversation`, `/conversation/list` and `/conversation/draft`; renderer receives a read projection only |
 | Renderer conversation projection, load status and unsent Composer text/intent | Renderer `ConversationSession` | none; it holds a disposable projection of the Bridge record. Switching Document clears it before the next load so one Document's messages can never appear under another | AI sidebar through the existing Controller `conversation` reader facet; shell contains no message or draft copy |
+| AI sidebar disclosure, temporary follow/bottom preference, visible-message anchor and expanded historical process rows | Workbench top-level React ref store keyed by each open `tabId`; `AiConversationSidebar` reads/writes through the narrow `SidebarReadingStateStore` adapter | none; bounded per-open-tab presentation state only, cleaned when the tab closes and rejected when its `documentKey` no longer matches. It never enters Conversation, Request, Attempt, Document, iframe or business persistence | `RunConversationOutlet` passes the owner to `AiConversationSidebar`; the sidebar restores an anchor by message ID plus offset, preserves manual disclosure across remounts, and clears it only for a new Request or closed tab |
 | Conversation load ordering, document-keyed response acceptance and debounced single-flight draft persistence | Renderer `ConversationWorkflow`, composed by `WorkspaceController` | none; it publishes only through `ConversationSession` and reads only the Bridge projection. A response for a Document the user already left is discarded; draft writes capture the original document identity and latest text before deactivation; failed captures stay in the workflow until acknowledged and are restored on reopen. The Controller registers this workflow with DrainCoordinator so switch/close await writes; a failed close drain never claims the draft is saved. The existing ProjectWorkflow close phase freezes both draft command ingress and the input during preparing/ready, so a later drain cannot admit unsaved text; a failed/aborted close returns to idle and restores editing. | AI sidebar commands on `WorkspaceController` and the typed Bridge client |
 | Focused comment/rules/filename text input undo history and active composition | The native text control and Electron/Chromium editing engine; `ProjectRulesSession` records rules-editor composition and the workflow owns its eligibility/explicit restore orchestration | in-memory control-local history only | desktop Edit intent router, `ProjectRulesWorkflow` |
 | Active renderer draft revision, pending command and unknown-outcome reconciliation | Draft session | acknowledged aggregate fingerprint plus crash-only recovery outbox | comment rail, drain coordinator |
@@ -457,6 +458,11 @@ Rules:
 - `HtmlCanvasEditor` owns native-edit checkpoint disposition. Soft checkpoints
   materialize complete Working HTML and autosave/recovery evidence while
   retaining the iframe, contenteditable, Selection, caret and focus.
+  Transient iframe focus recovery prefers the live Selection still contained
+  in the same leased host before reclaiming focus; a RAF-delayed presentation
+  bookmark cannot overwrite a newer keystroke. If Selection has left that
+  host, only its last owned bookmark may be restored, and explicit outer
+  controls always retain focus.
   Host acceptance is final for that source command: failure to rebase the live
   native session retains the accepted HTML/history result, marks projection
   recovery required and reloads the editor from current source. It is not
@@ -788,6 +794,17 @@ the public event allowlist. Tool activity is translated from known event categor
 to fixed labels, with a distinct event identity for each occurrence. HTTP starts
 generation progress only after actual content arrives, separately reporting response
 receipt and validation.
+
+The same event reducer retains at most 80 `publicActivities`, separately from
+public text and private diagnostic events. Its closed kinds project only a
+sequence-derived identity, kind, sequence and boundary; no raw event payload is
+forwarded. Text `firstSequence` stays fixed across deltas. Consecutive activity
+grouping belongs to the sidebar model and retains the first event identity.
+Public text, stop, failure and completion facts break grouping. Activity overflow
+sets `activitiesTruncated`; current Run outcomes stay authoritative independently.
+Only the full runs capability subscribes to activity updates, not the workspace
+shell. Neither activities nor disclosure preferences are written to Conversation;
+restart yields no reconstructed activity detail. HTTP excludes file tool kinds.
 
 For submissions, the durable stop-requested fact fences late completion inside the repository serial writer while cleanup is unconfirmed. A Candidate already authoritative before stop remains available; only an explicit discard intent rejects it. Renderer cancellation reconciles a result-ready receipt instead of clearing that result. The stop-requested fact is not a cancelled result.
 
