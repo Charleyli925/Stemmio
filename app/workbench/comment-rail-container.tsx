@@ -817,6 +817,7 @@ export const CommentRailContainer = memo(function CommentRailContainer({
     let secondFrame = 0;
     firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
+        if (canvasPort.getSnapshot().revealRequest?.requestId !== request.requestId) return;
         const stage = context.reviewStageRef.current;
         const rail = commentsPanelRef.current;
         if (!stage || !rail) return;
