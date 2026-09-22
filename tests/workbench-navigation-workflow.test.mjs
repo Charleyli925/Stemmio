@@ -351,6 +351,25 @@ function fixture({
   return { tabs, navigation, phases, calls, controller, projectWorkflow, workflow, publish, apply };
 }
 
+function gatedExistingDocumentFixture({ failB = false } = {}) {
+  const gateB = deferred();
+  const harness = fixture({
+    open: async ({ input, apply }) => {
+      const project = [B, C, D].find((candidate) => candidate.projectId === input.projectId) || B;
+      if (project.projectId === B.projectId) {
+        await gateB.promise;
+        if (failB) return { status: "rejected", code: "OPEN_FAILED", reason: "B failed" };
+      }
+      const applied = apply(project);
+      return { status: "succeeded", value: { opened: true, applicationId: applied.applicationId } };
+    },
+  });
+  for (const project of [B, C, D]) {
+    harness.tabs.bindDocument({ ...project, title: project.name, focus: false });
+  }
+  return { ...harness, releaseB: gateB.resolve };
+}
+
 test("ACK-only retry completes without reapplying a project or requiring a new receipt", async () => {
   const harness = fixture({ confirm: async ({ input }) => ({
     status: "succeeded", value: { requestId: input.requestId, opened: true, acknowledged: true },
@@ -1365,6 +1384,174 @@ test("same-tick A then B is admitted in ordinal order without busy rejection", a
   assert.deepEqual(harness.calls, ["open:recent:/B.html", "open:recent:/C.html"]);
   assert.equal(harness.tabs.snapshot.activeTabId, `document:${C.projectId}:${C.documentId}`);
   assert.equal(harness.navigation.snapshot.admissionOrdinal, 2);
+});
+
+test("adjacent existing-tab activations execute only the latest target", async () => {
+  const harness = gatedExistingDocumentFixture();
+  const first = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const replaced = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+
+  assert.deepEqual(harness.calls, [`open:registered:${B.projectId}`]);
+  harness.releaseB();
+
+  assert.equal((await first).status, "succeeded");
+  assert.deepEqual(await replaced, {
+    status: "succeeded",
+    value: {
+      activated: false,
+      superseded: true,
+      supersededByTabId: `document:${D.projectId}:${D.documentId}`,
+    },
+  });
+  assert.equal((await latest).status, "succeeded");
+  assert.deepEqual(harness.calls, [
+    `open:registered:${B.projectId}`,
+    `open:registered:${D.projectId}`,
+  ]);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${D.projectId}:${D.documentId}`);
+  assert.equal(harness.navigation.snapshot.admissionOrdinal, 2);
+  harness.workflow.dispose();
+});
+
+test("duplicate existing-tab activation supersedes the earlier click without a second open", async () => {
+  const harness = gatedExistingDocumentFixture();
+  const first = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const duplicate = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+
+  harness.releaseB();
+  assert.equal((await first).status, "succeeded");
+  const duplicateOutcome = await duplicate;
+  assert.equal(duplicateOutcome.status, "succeeded");
+  assert.equal(duplicateOutcome.value.superseded, true);
+  assert.equal(duplicateOutcome.value.supersededByTabId, `document:${C.projectId}:${C.documentId}`);
+  assert.equal((await latest).status, "succeeded");
+  assert.deepEqual(harness.calls, [
+    `open:registered:${B.projectId}`,
+    `open:registered:${C.projectId}`,
+  ]);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${C.projectId}:${C.documentId}`);
+  harness.workflow.dispose();
+});
+
+test("a closed pending target remains an explicit failed admission", async () => {
+  const harness = gatedExistingDocumentFixture();
+  const first = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const closed = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  harness.tabs.close(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+
+  harness.releaseB();
+  assert.equal((await first).status, "succeeded");
+  assert.equal((await closed).code, "WORKBENCH_TAB_NOT_FOUND");
+  assert.equal((await latest).status, "succeeded");
+  assert.deepEqual(harness.calls, [
+    `open:registered:${B.projectId}`,
+    `open:registered:${D.projectId}`,
+  ]);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${D.projectId}:${D.documentId}`);
+  harness.workflow.dispose();
+});
+
+test("a failed executing tab activation still releases the latest pending target", async () => {
+  const harness = gatedExistingDocumentFixture({ failB: true });
+  const failed = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const replaced = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+  harness.releaseB();
+  assert.equal((await failed).code, "OPEN_FAILED");
+  const replacedOutcome = await replaced;
+  assert.equal(replacedOutcome.value.superseded, true);
+  assert.equal((await latest).status, "succeeded");
+  assert.deepEqual(harness.calls, [
+    `open:registered:${B.projectId}`,
+    `open:registered:${D.projectId}`,
+  ]);
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${D.projectId}:${D.documentId}`);
+  harness.workflow.dispose();
+});
+
+for (const barrier of ["rules", "history"]) {
+  test(`independent ${barrier} navigation remains a barrier for latest activation coalescing`, async () => {
+    const harness = gatedExistingDocumentFixture();
+    const first = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+    await nextTurn();
+    const middle = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+    const barrierNavigation = barrier === "rules"
+      ? harness.workflow.createProjectRules({ ...B, title: B.name })
+      : harness.workflow.createHistory(
+        { ...B, title: B.name },
+        { versionId: "ver_0002", ordinal: 2, versionLabel: "V2" },
+      );
+    const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+
+    harness.releaseB();
+    assert.equal((await first).status, "succeeded");
+    assert.equal((await middle).status, "succeeded");
+    assert.equal((await barrierNavigation).status, "succeeded");
+    assert.equal((await latest).status, "succeeded");
+    const middleIndex = harness.calls.indexOf(`open:registered:${C.projectId}`);
+    const barrierIndex = barrier === "rules"
+      ? harness.calls.indexOf(`rules:${B.projectId}`)
+      : harness.calls.indexOf(`history:${B.projectId}:ver_0002`);
+    const latestIndex = harness.calls.indexOf(`open:registered:${D.projectId}`);
+    assert.ok(middleIndex >= 0 && barrierIndex > middleIndex && latestIndex > barrierIndex);
+    assert.equal(harness.tabs.snapshot.activeTabId, `document:${D.projectId}:${D.documentId}`);
+    harness.workflow.dispose();
+  });
+}
+
+test("dispose drains a superseded activation and rejects the remaining pending target", async () => {
+  const gateAfterApply = deferred();
+  const harness = fixture({
+    open: async ({ input, apply }) => {
+      const project = [B, C, D].find((candidate) => candidate.projectId === input.projectId) || B;
+      const applied = apply(project);
+      if (project.projectId === B.projectId) await gateAfterApply.promise;
+      return { status: "succeeded", value: { opened: true, applicationId: applied.applicationId } };
+    },
+  });
+  for (const project of [B, C, D]) {
+    harness.tabs.bindDocument({ ...project, title: project.name, focus: false });
+  }
+  const active = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const replaced = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+  harness.workflow.dispose();
+  gateAfterApply.resolve();
+
+  const [activeOutcome, replacedOutcome, latestOutcome] = await Promise.all([
+    active,
+    replaced,
+    latest,
+  ]);
+  assert.ok(["succeeded", "rejected"].includes(activeOutcome.status));
+  assert.equal(replacedOutcome.value.superseded, true);
+  assert.equal(latestOutcome.code, "WORKBENCH_NAVIGATION_DISPOSED");
+});
+
+test("close waits for the executing activation while pending admissions settle", async () => {
+  const harness = gatedExistingDocumentFixture();
+  const active = harness.workflow.activateTab(`document:${B.projectId}:${B.documentId}`);
+  await nextTurn();
+  const replaced = harness.workflow.activateTab(`document:${C.projectId}:${C.documentId}`);
+  const latest = harness.workflow.activateTab(`document:${D.projectId}:${D.documentId}`);
+  assert.equal(harness.workflow.beginClose({ requestId: "close-latest-intent" }), true);
+  const closing = harness.workflow.prepareClose({ deadlineAt: 2_000 });
+  harness.releaseB();
+
+  assert.equal(await closing, true);
+  assert.equal((await active).status, "succeeded");
+  assert.equal((await replaced).value.superseded, true);
+  assert.equal((await latest).code, "WORKBENCH_NAVIGATION_CLOSE_FROZEN");
+  assert.equal(harness.workflow.abortClose({ requestId: "close-latest-intent" }), true);
+  harness.workflow.dispose();
 });
 
 test("display-ready releases the next tab admission while prior hydration is still pending", async () => {
