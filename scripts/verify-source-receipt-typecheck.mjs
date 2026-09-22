@@ -25,6 +25,7 @@ const defaultDocumentSessionFacadePath = path.join(
   productRoot,
   "app/application/document-session.d.ts",
 );
+const defaultSurfaceContextSourcePath = path.join(productRoot, "app/application/project-surface-context.js");
 const implementationContractAnchor = "/** @implements {DocumentSessionDeclaration} */";
 const mutationAnchor = "sessionIncarnation: revision(input.sessionIncarnation),";
 const mutatedAssignment = "sessionIncarnation: String(input.sessionIncarnation),";
@@ -144,10 +145,14 @@ export function verifySourceReceiptTypecheck({
   documentSessionSourceText = ts.sys.readFile(documentSessionSourcePath),
   documentSessionContractPath = defaultDocumentSessionContractPath,
   documentSessionFacadePath = defaultDocumentSessionFacadePath,
+  surfaceContextSourcePath = defaultSurfaceContextSourcePath,
+  surfaceContextSourceText = ts.sys.readFile(surfaceContextSourcePath),
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
   const resolvedDocumentSessionSourcePath = path.resolve(documentSessionSourcePath);
+  const resolvedSurfaceContextSourcePath = path.resolve(surfaceContextSourcePath);
   const requiredInputs = [
+    { path: resolvedSurfaceContextSourcePath, description: "Surface context required input" },
     { path: resolvedSourcePath, description: "SourceReceipt required input" },
     { path: resolvedDocumentSessionSourcePath, description: "SourceReceipt required input" },
     { path: documentSessionContractPath, description: "SourceReceipt required input" },
@@ -159,6 +164,9 @@ export function verifySourceReceiptTypecheck({
   }
   if (typeof documentSessionSourceText !== "string") {
     throw new Error(`cannot read DocumentSession implementation: ${resolvedDocumentSessionSourcePath}`);
+  }
+  if (typeof surfaceContextSourceText !== "string") {
+    throw new Error(`cannot read surface context implementation: ${resolvedSurfaceContextSourcePath}`);
   }
   assertImplementationContract(documentSessionSourceText);
   const receiptMutation = {
@@ -183,20 +191,32 @@ export function verifySourceReceiptTypecheck({
     sourcePath: resolvedDocumentSessionSourcePath,
     sourceText: documentSessionSourceText,
   }));
-  const [receiptDiagnostic, ...documentSessionDiagnostics] = verifyImplementationMutations({
+  const surfaceMutation = {
+    name: "surface-context-epoch",
+    sourcePath: resolvedSurfaceContextSourcePath,
+    sourceText: surfaceContextSourceText,
+    anchor: "epoch: Number(value.epoch ?? value.sessionEpoch),",
+    replacement: "epoch: String(value.epoch ?? value.sessionEpoch),",
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type 'string' is not assignable to type 'number'",
+  };
+  const [receiptDiagnostic, surfaceDiagnostic, ...documentSessionDiagnostics] = verifyImplementationMutations({
     parsedConfig,
     subject: "SourceReceipt",
     requiredInputs,
     sourceOverrides: new Map([
       [resolvedSourcePath, sourceText],
       [resolvedDocumentSessionSourcePath, documentSessionSourceText],
+      [resolvedSurfaceContextSourcePath, surfaceContextSourceText],
     ]),
-    mutations: [receiptMutationCase, ...documentSessionMutationCases],
+    mutations: [receiptMutationCase, surfaceMutation, ...documentSessionMutationCases],
   });
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
     sourcePath: resolvedSourcePath,
     documentSessionSourcePath: resolvedDocumentSessionSourcePath,
+    surfaceContextSourcePath: resolvedSurfaceContextSourcePath,
+    surfaceContextDiagnosticCode: surfaceDiagnostic.code,
     documentSessionContractPath: path.resolve(documentSessionContractPath),
     documentSessionFacadePath: path.resolve(documentSessionFacadePath),
     diagnosticCode: receiptDiagnostic.code,
@@ -209,6 +229,6 @@ export function verifySourceReceiptTypecheck({
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = verifySourceReceiptTypecheck();
   process.stdout.write(
-    `SourceReceipt and DocumentSession implementation mutations rejected by official config (TS${result.diagnosticCode}; ${result.documentSessionDiagnosticCodes.map((code) => `TS${code}`).join(", ")}).\n`,
+    `SourceReceipt, ProjectSurfaceContext and DocumentSession implementation mutations rejected by official config (TS${result.diagnosticCode}; ${result.documentSessionDiagnosticCodes.map((code) => `TS${code}`).join(", ")}).\n`,
   );
 }
