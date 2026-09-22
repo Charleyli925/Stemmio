@@ -189,6 +189,10 @@ export class DocumentWorkflow {
   }): boolean;
   resetForProjectTransition(options?: { clearRecovery?: boolean; context?: Partial<ProjectContext> }): void;
   clearRecovery(context?: Partial<ProjectContext>): void;
+  markCanvasRecoveryRequired(input?: {
+    context?: ProjectContext;
+    error?: unknown;
+  }): boolean;
   rebaseRecoveryJournal(input: {
     previousContext: Partial<ProjectContext>;
     context: Partial<ProjectContext>;

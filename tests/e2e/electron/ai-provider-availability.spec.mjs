@@ -43,8 +43,10 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
 }, async () => {
   test.setTimeout(180_000);
   const fixture = createSourceFixture("qoder-acp-agent-bridge.html");
+  const visibleTextStartGateFile = path.join(fixture.sourceDirectory, "public-text.release");
   const qoderCommand = createQoderAcpE2ECommand(fixture.sourceDirectory, {
     visibleText: true,
+    visibleTextStartGateFile,
     // Keep the first public chunk live long enough for the renderer to prove
     // its in-progress state before the synthetic Agent reaches finalization.
     visibleTextGateMs: 5_000,
@@ -98,6 +100,8 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     // before proving the separately rendered public chunks below.
     const thinking = launched.page.getByTestId("ai-conversation-thinking");
     await expect(thinking).toBeVisible({ timeout: 60_000 });
+    // Release the first chunk only after observing the transient no-text phase.
+    writeFileSync(visibleTextStartGateFile, "release", "utf8");
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
     await expect(narration).toHaveCount(1);
@@ -334,6 +338,7 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       "data-stemmio-qoder-acp",
     );
   } finally {
+    writeFileSync(visibleTextStartGateFile, "release", "utf8");
     try {
       // Finish intercepted history reads before shutting down their Bridge.
       await launched.page.unrouteAll({ behavior: "wait" });
@@ -1239,7 +1244,7 @@ test("Qoder unstructured capacity wording stays generic with retry and no Reques
 
 test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
   tag: ["@smoke-provider"],
-}, async () => {
+}, async ({}, testInfo) => {
   test.setTimeout(120_000);
   const fixture = createSourceFixture("qoder-acp-managed-stop.html");
   const pidFile = path.join(fixture.sourceDirectory, "qoder-acp.pid");
@@ -1293,8 +1298,24 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
       `Bridge request order: ${bridgeTraffic.join(", ")}`,
     ).toBe(0);
 
-    await stopButton.click();
-    const endingButton = launched.page.getByRole("button", { name: "正在结束…" });
+    let releaseCancel;
+    const cancelGate = new Promise((resolve) => { releaseCancel = resolve; });
+    await launched.page.route("**/active-run/cancel", async (route) => {
+      await cancelGate;
+      await route.continue();
+    });
+    try {
+      await stopButton.click();
+      const stopping = launched.page.getByRole("button", { name: "正在停止", exact: true });
+      await expect(stopping).toBeVisible();
+      await expect(stopping).toBeDisabled();
+      await expect(launched.page.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+      expect(readFileSync(workingCopyPath)).toEqual(workingBefore);
+      await launched.page.screenshot({ path: testInfo.outputPath("managed-agent-stopping.png"), animations: "disabled" });
+    } finally {
+      releaseCancel();
+    }
+    const endingButton = launched.page.getByRole("button", { name: "正在停止", exact: true });
     const roundStopButton = launched.page.getByRole("button", { name: "停止", exact: true });
     // Cancelling can finish before Playwright samples the disabled label. The
     // user contract is that stop ends the round and kills the Agent. If the

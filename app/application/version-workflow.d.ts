@@ -14,7 +14,12 @@ import type { ProjectSurfaceContext } from "./project-surface-context.js";
 export type VersionWorkflowOutcome<T = Record<string, unknown>> =
   | Readonly<{ status: "succeeded"; value: T }>
   | Readonly<{ status: "blocked"; code: string; reason: string }>
-  | Readonly<{ status: "rejected"; code: string; reason: string }>
+  | Readonly<{
+      status: "rejected";
+      code: string;
+      reason: string;
+      recovery?: Readonly<Record<string, unknown>>;
+    }>
   | Readonly<{ status: "unknown"; operationId: string; reason: string }>
   | Readonly<{ status: "stale"; identity: Readonly<Record<string, unknown>> }>;
 
@@ -185,6 +190,9 @@ export class VersionWorkflow {
     reviewLease?: VersionReviewLease | null;
     fromDeferred?: boolean;
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
+  completePageRecovery(input: {
+    run?: Record<string, unknown> | null;
+  }): VersionWorkflowOutcome<Record<string, unknown>>;
   viewHistory(input: {
     version?: Record<string, unknown> | null;
     context?: ProjectContext | ProjectSurfaceContext | null;

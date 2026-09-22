@@ -7,6 +7,7 @@ export type SidebarState =
   | "review-view"
   | "promoting"
   | "adoption-unknown"
+  | "adopted-recovery"
   | "run-error"
   | "no-change";
 
@@ -207,7 +208,7 @@ export function sidebarCopyTaskState(options?: {
 }): SidebarCopyTaskState;
 
 export function sidebarStateFromRun(options?: {
-  activeRun?: { status?: string } | null;
+  activeRun?: { status?: string; pageRecoveryRequired?: boolean } | null;
   activeHandoff?: {
     requestId?: string | null;
     attemptId?: string | null;
