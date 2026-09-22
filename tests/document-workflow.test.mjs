@@ -3410,10 +3410,50 @@ test("repairCurrentCanvas tolerates an exact observation confirmed by its compos
   const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
 
   assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.page.status, "restored");
   assert.equal(harness.documentSession.canvasAuthority.status, "verified");
   assert.ok(observation);
   assert.equal(harness.workflow.confirmCanvas(observation), false);
 });
+
+for (const mismatch of ["html", "hash", "receipt", "generation"]) {
+  test(`repairCurrentCanvas rejects a ${mismatch} mismatch after another observer confirms`, async () => {
+    const html = "<!doctype html><html><body><p>confirmed</p></body></html>";
+    let harness;
+    harness = createHarness({
+      html,
+      canvasOverrides: {
+        async verifyRendered(renderedHtml, renderedSha256, _context, receipt) {
+          const observation = {
+            receipt,
+            renderedHtml,
+            renderedSha256,
+            frameGeneration: harness.documentSession.canvasGeneration,
+          };
+          assert.equal(harness.workflow.confirmCanvas(observation), true);
+          if (mismatch === "html") return { ...observation, renderedHtml: `${html}<!--wrong-->` };
+          if (mismatch === "hash") return { ...observation, renderedSha256: sha256("wrong") };
+          return {
+            ...observation,
+            receipt: {
+              ...receipt,
+              ...(mismatch === "receipt"
+                ? { sequence: receipt.sequence - 1 }
+                : { canvasGeneration: receipt.canvasGeneration - 1 }),
+            },
+          };
+        },
+      },
+    });
+
+    const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(outcome.value.page.status, "repair-required");
+    assert.equal(harness.documentSession.canvasAuthority.status, "verified");
+    harness.workflow.dispose();
+  });
+}
 
 test("repairCurrentCanvas restores only the accepted projection without reading disk", async () => {
   const oldHtml = "<!doctype html><html><body><p>old</p></body></html>";
