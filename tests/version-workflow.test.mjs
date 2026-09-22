@@ -902,6 +902,62 @@ for (const advanceSourceIdentity of [false, true]) test(`activation keeps the Ca
   assert.equal(harness.calls.activate, 1);
 });
 
+test("verified page recovery completes the committed adoption cleanup after Run resolution", async () => {
+  const harness = createHarness({
+    verifyRendered: async (html) => {
+      if (html === CANDIDATE_HTML) throw new Error("canvas did not acknowledge candidate");
+    },
+  });
+  const run = readyRun();
+  harness.runSession.trackRun(run, { activate: "always" });
+
+  const failed = await harness.workflow.activateReadyVersion({ run });
+  assert.equal(failed.status, "rejected");
+  const recoveryRun = harness.runSession.activeRun;
+  assert.equal(recoveryRun?.pageRecoveryRequired, true);
+  const clearRecoveryBefore = harness.calls.clearRecovery;
+
+  // The real repair path reloads the accepted projection with the current
+  // managed context before acknowledging its Canvas generation.
+  harness.documentSession.publishAuthority({
+    html: CANDIDATE_HTML,
+    persistedSourceSha256: sha256(CANDIDATE_HTML),
+    pendingWrite: null,
+    context: harness.context,
+    operationId: "test-page-recovery-authority",
+  });
+  const receipt = harness.documentSession.sourceReceipt;
+  assert.equal(harness.documentSession.confirmCanvas({
+    receipt,
+    renderedHtml: CANDIDATE_HTML,
+    renderedSha256: sha256(CANDIDATE_HTML),
+    generation: harness.documentSession.canvasGeneration,
+  }), true);
+  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), true);
+
+  const recovered = harness.workflow.completePageRecovery({ run: recoveryRun });
+  assert.equal(recovered.status, "succeeded", JSON.stringify(recovered));
+  assert.equal(recovered.value.current, true);
+  assert.equal(harness.calls.clearAudit, 1);
+  assert.equal(harness.calls.queueDraft, 1);
+  assert.equal(harness.calls.clearRecovery, clearRecoveryBefore + 1);
+  assert.equal(harness.calls.refresh.length, 1);
+  assert.equal(harness.calls.refresh[0].sourcePath, SOURCE_A);
+  assert.equal(
+    harness.calls.refresh[0].authorityReceiptContinuation,
+    harness.documentSession.sourceReceipt,
+  );
+  assert.equal(harness.calls.catalogAfterSettlement.length, 1);
+  assert.equal(harness.calls.activate, 1);
+
+  // The existing Run page-recovery gate is one-shot; a late repeat cannot
+  // reach Version cleanup or create another adoption operation.
+  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), false);
+  assert.equal(harness.calls.clearAudit, 1);
+  assert.equal(harness.calls.queueDraft, 1);
+  assert.equal(harness.calls.refresh.length, 1);
+});
+
 test("activation rejects completion/version hash drift before publishing current source", async () => {
   const harness = createHarness({
     activation: async (input) => ({

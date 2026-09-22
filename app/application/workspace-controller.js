@@ -1909,7 +1909,23 @@ export class WorkspaceController {
   }
 
   resolveRunPageRecovery(input) {
-    return this.#requireRunWorkflow().resolvePageRecovery(input);
+    // RunWorkflow owns the verified Canvas gate and clears the one-shot
+    // pageRecoveryRequired flag. Keep the original flagged Run so
+    // VersionWorkflow can prove this is the same adoption while completing
+    // its post-Canvas cleanup exactly once.
+    const recoveryRun = input?.run || this.#runSession?.activeRun || null;
+    const resolved = this.#requireRunWorkflow().resolvePageRecovery(input);
+    if (
+      resolved.status !== "succeeded"
+      || !resolved.value?.current
+      || !this.#versionWorkflow
+    ) return resolved;
+    const finalized = this.#versionWorkflow.completePageRecovery({ run: recoveryRun });
+    if (finalized.status === "succeeded") return resolved;
+    if (finalized.status === "blocked") return blocked(finalized.code, finalized.reason);
+    if (finalized.status === "rejected") return rejected(finalized.code, finalized.reason);
+    if (finalized.status === "unknown") return unknown(finalized.operationId, finalized.reason);
+    return stale(finalized.identity);
   }
 
   resolveRunConflict(input) {

@@ -190,6 +190,9 @@ export class VersionWorkflow {
     reviewLease?: VersionReviewLease | null;
     fromDeferred?: boolean;
   }): Promise<VersionWorkflowOutcome<Record<string, unknown>>>;
+  completePageRecovery(input: {
+    run?: Record<string, unknown> | null;
+  }): VersionWorkflowOutcome<Record<string, unknown>>;
   viewHistory(input: {
     version?: Record<string, unknown> | null;
     context?: ProjectContext | ProjectSurfaceContext | null;

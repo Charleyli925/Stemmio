@@ -6,6 +6,7 @@ import {
   copyProjectSurfaceContext,
   isProjectSurfaceContext,
 } from "./project-surface-context.js";
+import { sameSourceReceiptContext } from "./source-receipt.js";
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const VERSION_ACTIVATION_PAGE_RECOVERY_REQUIRED =
@@ -731,6 +732,100 @@ export class VersionWorkflow {
     } finally {
       this.#finishNavigation(operation);
     }
+  }
+
+  /**
+   * Finish the post-Canvas part of an adoption whose Version and Working Copy
+   * were already committed.  The RunWorkflow recovery command is the one-shot
+   * gate: callers pass the pre-resolution Run so a second call cannot pass once
+   * that Run has lost `pageRecoveryRequired`.
+   */
+  completePageRecovery({ run } = {}) {
+    if (this.#disposed) {
+      return blocked("VERSION_WORKFLOW_DISPOSED", "版本工作流已经停止。");
+    }
+    if (!run?.requestId || run.pageRecoveryRequired !== true) {
+      return blocked(
+        "VERSION_PAGE_RECOVERY_UNAVAILABLE",
+        "当前没有等待版本收尾的页面恢复结果。",
+      );
+    }
+    const active = this.#runSession.activeRun;
+    if (!active || !this.#runMatches(active, run)) {
+      return stale(this.#runIdentity(run));
+    }
+    if (active.pageRecoveryRequired === true) {
+      return blocked(
+        "VERSION_PAGE_RECOVERY_NOT_SETTLED",
+        "页面恢复锁尚未由运行工作流确认。",
+      );
+    }
+    const context = copyContext(this.#projectSession.context);
+    if (
+      !context
+      || !this.#projectSession.matches(context)
+      || !this.#codecs.sameSourcePath(active.sourcePath, context.sourcePath)
+      || active.projectId !== context.projectId
+      || active.documentId !== context.documentId
+    ) {
+      return stale(context || this.#runIdentity(active));
+    }
+
+    const document = this.#documentSession.snapshot;
+    const canvas = document.canvasAuthority;
+    const receipt = document.sourceReceipt;
+    const expectedSourceSha256 = this.#candidateHash(run, "");
+    if (
+      !SHA256.test(expectedSourceSha256)
+      || canvas?.status !== "verified"
+      || canvas.generation !== document.canvasGeneration
+      || canvas.renderedSha256 !== expectedSourceSha256
+      || document.workingHtmlSha256 !== expectedSourceSha256
+      || document.persistedSourceSha256 !== expectedSourceSha256
+      || !receipt
+      || receipt.canvasGeneration !== document.canvasGeneration
+      || receipt.sourceSha256 !== expectedSourceSha256
+      || !sameSourceReceiptContext(receipt, { context })
+    ) {
+      return blocked(
+        "VERSION_PAGE_RECOVERY_NOT_VERIFIED",
+        "当前页面还没有完成采用后源码核验。",
+      );
+    }
+
+    const readyPayload = this.#codecs.isRecord(run.readyPayload)
+      ? run.readyPayload
+      : {};
+    const outcome = this.#codecs.isRecord(readyPayload.outcome)
+      ? readyPayload.outcome
+      : {};
+    const protocolViolation = Boolean(
+      run.status === "error"
+      || readyPayload.protocolViolation
+      || outcome.protocolViolation,
+    );
+    return this.#finalizeCommittedVersion({
+      context,
+      committedSourcePath: context.sourcePath,
+      versionId: String(
+        run.candidateVersionId
+        || readyPayload.versionId
+        || readyPayload.version?.versionId
+        || "",
+      ),
+      candidateLabel: String(
+        run.candidateVersionLabel
+        || readyPayload.candidateDisplayVersionLabel
+        || "",
+      ),
+      protocolViolation,
+      aiCompletedAt: String(
+        readyPayload.completion?.completedAt
+        || outcome.completedAt
+        || "",
+      ),
+      lastModifiedAt: "",
+    });
   }
 
   async viewHistory({
@@ -1686,6 +1781,30 @@ export class VersionWorkflow {
       return stale(context);
     }
 
+    return this.#finalizeCommittedVersion({
+      context,
+      committedSourcePath: resolvedCommittedSourcePath,
+      versionId: completion.versionId,
+      candidateLabel: completion.candidateLabel,
+      protocolViolation: completion.protocolViolation,
+      aiCompletedAt: completion.aiCompletedAt,
+      lastModifiedAt,
+    });
+  }
+
+  #finalizeCommittedVersion({
+    context,
+    committedSourcePath,
+    versionId,
+    candidateLabel,
+    protocolViolation = false,
+    aiCompletedAt = "",
+    lastModifiedAt = "",
+  } = {}) {
+    if (!context || !this.#projectSession.matches(context)) {
+      return stale(context || {});
+    }
+    const authorityReceipt = this.#documentSession.sourceReceipt;
     this.#documentWorkflow.clearAudit();
     this.#documentSession.markPersistenceIdle();
 
@@ -1693,26 +1812,27 @@ export class VersionWorkflow {
     this.#documentWorkflow.clearRecovery(context);
 
     // Workspace re-hydration only refreshes project metadata for panels; the
-    // Version bytes on the canvas are verified above. Run it in the background
-    // instead of holding the review overlay open, and surface a non-fatal
-    // warning through the event channel when it cannot complete.
+    // Version bytes on the canvas are verified above. Keep the current
+    // authority receipt attached so hydration cannot replace the verified
+    // generation or reintroduce page recovery while the adoption settles.
     const refreshFallback = "新版本已打开，但项目资料尚未完成复核。";
     void this.#projectWorkflow.refreshWorkspace({
-      sourcePath: resolvedCommittedSourcePath,
+      sourcePath: committedSourcePath,
       epoch: context.epoch,
+      authorityReceiptContinuation: authorityReceipt,
     }).then((refreshed) => {
       if (refreshed.status === "succeeded" || refreshed.status === "stale") return;
       this.#emitEvent({
         type: "version-refresh-warning",
         context,
-        candidateLabel: completion.candidateLabel,
+        candidateLabel,
         reason: refreshed.reason || refreshFallback,
       });
     }).catch((cause) => {
       this.#emitEvent({
         type: "version-refresh-warning",
         context,
-        candidateLabel: completion.candidateLabel,
+        candidateLabel,
         reason: this.#codecs.errorMessage(cause, refreshFallback),
       });
     });
@@ -1723,11 +1843,11 @@ export class VersionWorkflow {
     return succeeded({
       current: true,
       context,
-      versionId: completion.versionId,
-      candidateLabel: completion.candidateLabel,
-      protocolViolation: completion.protocolViolation,
-      aiCompletedAt: completion.aiCompletedAt,
-      committedSourcePath: resolvedCommittedSourcePath,
+      versionId,
+      candidateLabel,
+      protocolViolation,
+      aiCompletedAt,
+      committedSourcePath,
       lastModifiedAt,
     });
   }
