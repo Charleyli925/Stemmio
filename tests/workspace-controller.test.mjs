@@ -351,6 +351,8 @@ function createRecoveryControllerHarness() {
   const draftSession = new DraftSession({
     bridgeClient: { saveDraft: async () => ({}) },
   });
+  draftSession.activate(context, 0, authoritativeDraft());
+  const recoveryCalls = { write: 0, remove: 0 };
   const versionSession = new VersionSession();
   const sourceHistorySession = new SourceHistorySession();
   const scheduler = {
@@ -460,7 +462,11 @@ function createRecoveryControllerHarness() {
     },
     commentWorkflow: {
       runSession,
-      recoveryStore: commentRecoveryStore,
+      recoveryStore: {
+        readRecords: () => [],
+        write: () => { recoveryCalls.write += 1; return true; },
+        remove: () => { recoveryCalls.remove += 1; return true; },
+      },
       attachmentBinary: { prepare: async () => ({}) },
       codecs: commentWorkflowCodecs,
     },
@@ -512,6 +518,7 @@ function createRecoveryControllerHarness() {
     projectId: context.projectId,
     documentId: context.documentId,
     sourcePath,
+    sourceWorkingCopyId: "working_copy_recovery",
     requestId: "request_page_recovery",
     attemptId: "attempt_page_recovery",
     status: "complete",
@@ -540,6 +547,7 @@ function createRecoveryControllerHarness() {
     runSession,
     documentSession,
     canvasCalls,
+    recoveryCalls,
     candidateHtml,
     confirmCanvas,
     publishCandidate() {
@@ -579,6 +587,24 @@ test("page recovery keeps the Run gate locked until strict Version cleanup can p
   assert.equal(repeated.status, "blocked");
   assert.equal(repeated.code, "VERSION_PAGE_RECOVERY_NOT_PENDING");
   assert.equal(harness.canvasCalls.unlock, 1);
+});
+
+test("page recovery rejects a different Working Copy before any cleanup", (t) => {
+  const harness = createRecoveryControllerHarness();
+  t.after(() => harness.controller.dispose());
+  harness.publishCandidate();
+  const before = { ...harness.recoveryCalls };
+  const result = harness.controller.runs.commands.resolvePageRecovery({
+    run: { ...harness.run, sourceWorkingCopyId: "working_copy_stale" },
+  });
+  assert.equal(result.status, "stale");
+  assert.deepEqual(harness.recoveryCalls, before);
+  assert.equal(harness.canvasCalls.unlock, 0);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  const retry = harness.controller.runs.commands.resolvePageRecovery({ run: harness.run });
+  assert.equal(retry.status, "succeeded");
+  assert.equal(harness.canvasCalls.unlock, 1);
+  assert.equal(harness.recoveryCalls.remove, before.remove + 1);
 });
 
 function editEffectTarget(id, elementId = "sm1_11111111111141118111111111111111") {

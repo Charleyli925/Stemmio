@@ -751,7 +751,12 @@ export class VersionWorkflow {
       );
     }
     const active = this.#runSession.activeRun;
-    if (!active || !this.#runMatches(active, run)) {
+    if (
+      !active
+      || !this.#runMatches(active, run)
+      || (active.sourceWorkingCopyId && run.sourceWorkingCopyId
+        && active.sourceWorkingCopyId !== run.sourceWorkingCopyId)
+    ) {
       return stale(this.#runIdentity(run));
     }
     if (active.pageRecoveryRequired !== true) {

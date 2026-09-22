@@ -938,7 +938,7 @@ Agent 的同一公开消息只原位合并 token，新的公开消息增加一�
 采用已发布到当前源码后，即使后续 Canvas 核验失败，本轮仍显示“已采用，但页面需要恢复”。
 当前身份核对通过后回到 Preview 的固定侧栏布局，确保恢复标题和动作始终在视口内；
 固定行动区只提供“重试恢复页面”。原有页面恢复入口与此入口共同调用 DocumentWorkflow 的恢复操作；
-当前 Candidate Hash、持久化 Working Copy Hash、回执、Canvas generation 和 Request/Attempt
+当前 Candidate Hash、持久化 Working Copy Hash、已知 Working Copy 身份、回执、Canvas generation 和 Request/Attempt
 均匹配且 Canvas 已确认后，先完成采用收尾，再解除本轮恢复锁。
 不再提交第二次采用，不回退为待采用或“没有修改”；旧文档/旧 Attempt 的恢复回调不能解锁当前任务。
 严格核验或收尾失败时保留恢复锁与动作；成功后，VersionWorkflow 复用正常采用的收尾：清除旧编辑审计、排队当前评论草稿、清理恢复记录并刷新版本资料。

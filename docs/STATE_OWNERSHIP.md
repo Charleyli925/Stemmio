@@ -850,7 +850,8 @@ presentation state adds no durable adoption transaction or Conversation schema.
 External disk observations also retain their starting SourceReceipt and context;
 a result arriving after source publication cannot mark the new authority conflicted.
 WorkspaceController first asks VersionWorkflow to verify the exact Candidate
-Hash, persisted Working Copy Hash, Canvas receipt, generation and context while
+Hash, persisted Working Copy Hash, known Working Copy identity, Canvas receipt,
+generation and context while
 that existing one-shot Run gate remains flagged and locked. Only after those
 checks and the same post-Canvas cleanup used by normal adoption succeed does it
 ask RunWorkflow to clear the gate and unlock. That cleanup clears the old edit
