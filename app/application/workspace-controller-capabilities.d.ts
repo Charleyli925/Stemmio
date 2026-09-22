@@ -260,6 +260,9 @@ export interface RunControllerCommands {
     agentMayBeRunning?: boolean;
     reason?: string;
   }): Promise<RunWorkflowOutcome>;
+  resolvePageRecovery(input?: {
+    run?: ActiveRun | null;
+  }): RunWorkflowOutcome<{ run: ActiveRun; current: boolean }>;
   resolveConflict(input: {
     run?: ActiveRun | null;
     action: "adopt-ai" | "keep-external";

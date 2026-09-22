@@ -90,7 +90,11 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
       runStatus={activeRun?.status ?? null}
       candidateVersionLabel={activeRun?.candidateVersionLabel ?? null}
       candidateStatus={activeRun?.candidateAssessment?.status ?? null}
-      failureMessage={currentHandoff?.errorMessage || activeRun?.errorDetail || activeRun?.error || null}
+      failureMessage={currentHandoff?.errorMessage
+        || activeRun?.errorDetail
+        || activeRun?.error
+        || activeRun?.pageRecoveryReason
+        || null}
       failureCode={currentHandoff?.errorCode || activeRun?.errorCode || null}
       failureRetryable={typeof currentHandoff?.safeToRetry === "boolean"
         ? currentHandoff.safeToRetry

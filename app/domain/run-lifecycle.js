@@ -151,6 +151,15 @@ function deriveRunProgressCopy({
       "未生成新版本，页面未修改",
     );
   }
+  if (run.pageRecoveryRequired === true) {
+    return progressPresentationCopy(
+      "已采用 AI 修改",
+      "已采用，但页面需要恢复",
+      "需要恢复页面",
+      "源码已经接纳，当前页面尚未恢复",
+      run.pageRecoveryReason || "请重试恢复页面；这次采用已经记录，不会再次采用。",
+    );
+  }
   if (status === "awaiting-conflict-resolution") {
     return progressPresentationCopy(
       "需要处理",
@@ -402,6 +411,13 @@ function deriveRunProgressStepsFromContext({
       ? "页面变化较大，请先对比审阅再决定是否采用"
       : "审阅后决定是否采用";
     resultStep.state = "current";
+  } else if (run.pageRecoveryRequired === true) {
+    validationStep.detail = "HTML 已完成校验并已采用";
+    validationStep.state = "done";
+    resultStep.label = "已采用 AI 修改，页面需要恢复";
+    resultStep.detail = `${run.pageRecoveryReason
+      || "请重试恢复页面"} 这次采用已经记录，不会再次采用。`;
+    resultStep.state = "attention";
   } else if (status === "complete") {
     validationStep.detail = "HTML 健康检查与版本连续性检查完成";
     validationStep.state = "done";
@@ -709,6 +725,12 @@ export function activeRunFromRecord(raw) {
     ...(localizedError?.recoveryHint ? { recoveryHint: localizedError.recoveryHint } : {}),
     ...(localizedError?.errorPreview ? { errorPreview: localizedError.errorPreview } : {}),
     ...(completionObserved ? { completionObserved: true } : {}),
+    ...(raw.pageRecoveryRequired === true
+      ? { pageRecoveryRequired: true }
+      : {}),
+    ...(raw.pageRecoveryReason
+      ? { pageRecoveryReason: String(raw.pageRecoveryReason) }
+      : {}),
     ...(raw.conflictId || conflict.conflictId
       ? { conflictId: String(raw.conflictId || conflict.conflictId) }
       : {}),

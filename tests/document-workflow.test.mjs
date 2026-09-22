@@ -3022,6 +3022,37 @@ test("observeExternalSourceChange enters conflict without adopting disk bytes", 
   assert.equal(harness.documentSession.persistedSourceSha256, sha256(html));
 });
 
+test("an old disk observation cannot mark newly adopted source as conflicted", async () => {
+  const html = "<!doctype html><html><body><p>before adoption</p></body></html>";
+  const adopted = html.replace("before adoption", "adopted");
+  let finishStat;
+  let disk = html;
+  const harness = createHarness({ html, bridge: {
+    sourceStat() {
+      return new Promise((resolve) => { finishStat = () => resolve({ sha256: sha256(disk) }); });
+    },
+  } });
+  const observing = harness.workflow.observeExternalSourceChange({ sourcePath: SOURCE_PATH });
+  harness.documentSession.publishAuthority({
+    html: adopted, persistedSourceSha256: sha256(adopted), workingHtmlSha256: sha256(adopted),
+    context: harness.context, operationId: "adoption-during-disk-observation",
+  });
+  finishStat();
+  const outcome = await observing;
+  assert.equal(outcome.status, "stale");
+  assert.equal(harness.documentSession.persistState, "idle");
+  assert.equal(harness.documentSession.html, adopted);
+
+  // A fresh observation still detects a real external write against the new source.
+  disk = adopted.replace("adopted", "external");
+  const fresh = harness.workflow.observeExternalSourceChange({ sourcePath: SOURCE_PATH });
+  finishStat();
+  assert.equal((await fresh).value.conflict, true);
+  assert.equal(harness.documentSession.persistState, "conflict");
+  assert.equal(harness.documentSession.html, adopted);
+  harness.workflow.dispose();
+});
+
 test("observeExternalSourceChange ignores stale paths and in-flight writes", async () => {
   const html = "<!doctype html><html><body><p>one</p></body></html>";
   let sourceCalls = 0;

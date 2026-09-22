@@ -1,5 +1,6 @@
 import { isBridgeRequestError } from "./bridge-client.js";
 import { RUN_SESSION_COORDINATION } from "./run-session.js";
+import { sameSourceReceiptContext } from "./source-receipt.js";
 import { planRunSubmit, planRunSubmitEntry } from "./run/submit-plan.js";
 import { revalidateCommentTextLocators } from "./run/text-locator-validation.js";
 import { createRunWorkflowCodecs } from "./run-workflow-codecs.js";
@@ -1806,6 +1807,49 @@ export class RunWorkflow {
     } finally {
       this.#runSession.endOperation("cancel", operationKey);
     }
+  }
+
+  resolvePageRecovery({ run = this.#runSession.activeRun } = {}) {
+    if (!run?.requestId || run.pageRecoveryRequired !== true) {
+      return blocked(
+        "RUN_PAGE_RECOVERY_UNAVAILABLE",
+        "当前没有等待页面恢复的已采用结果。",
+      );
+    }
+    if (!this.#isCurrentRun(run)) return stale(run);
+    const document = this.#documentSession.snapshot;
+    const canvas = document.canvasAuthority;
+    const receipt = document.sourceReceipt;
+    const context = this.#projectSession.context;
+    if (
+      canvas?.status !== "verified"
+      || canvas.generation !== document.canvasGeneration
+      || canvas.renderedSha256 !== document.workingHtmlSha256
+      || !context
+      || !receipt?.context
+      || !sameSourceReceiptContext(receipt, { context })
+      || !receipt
+      || receipt.canvasGeneration !== document.canvasGeneration
+      || receipt.sourceSha256 !== canvas.renderedSha256
+    ) {
+      return blocked(
+        "RUN_PAGE_RECOVERY_NOT_VERIFIED",
+        "当前页面还没有完成采用后源码核验。",
+      );
+    }
+    if (!this.#runSession.resolvePageRecovery(run)) {
+      return stale(run);
+    }
+    const current = this.#isCurrentRun(run);
+    if (current) this.#canvasPort.unlock();
+    const settled = this.#runSession.activeRun || run;
+    this.#emitEvent({
+      type: "run-page-recovery-resolved",
+      run: settled,
+      current,
+    });
+    this.syncPolling();
+    return succeeded({ run: settled, current });
   }
 
   async resolveConflict({

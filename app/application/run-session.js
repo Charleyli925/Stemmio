@@ -539,6 +539,21 @@ export class RunSession {
     return true;
   }
 
+  resolvePageRecovery(run) {
+    const active = this.activeRun;
+    if (
+      !active
+      || !sameRun(active, run)
+      || active.pageRecoveryRequired !== true
+      || run?.pageRecoveryRequired !== true
+    ) return false;
+    const { pageRecoveryRequired, pageRecoveryReason, ...settled } = active;
+    void pageRecoveryRequired;
+    void pageRecoveryReason;
+    this.setActiveRun(settled);
+    return true;
+  }
+
   publishHandoff(state) {
     if (!state?.sourcePath) return false;
     const located = this.#locate(state.sourcePath);
@@ -899,7 +914,11 @@ export class RunSession {
     return Boolean(
       this.activeSubmission
       && this.activeSubmission.phase !== "preparing",
-    ) || isLockedLifecycleState(this.activeRun?.status);
+    )
+      || isLockedLifecycleState(this.activeRun?.status)
+      // A committed promotion keeps the edit surface fenced until the
+      // accepted bytes are rendered and DocumentWorkflow recovery succeeds.
+      || this.activeRun?.pageRecoveryRequired === true;
   }
 
   get runs() {
