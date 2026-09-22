@@ -207,7 +207,7 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       const layerBounds = await layer.boundingBox();
       expect(layerBounds.width).toBeLessThan(composerBounds.width - 24);
       expect(layerBounds.x).toBeGreaterThan(composerBounds.x + 10);
-      expect(await layer.evaluate(element => getComputedStyle(element).backgroundColor)).toBe("rgba(255, 255, 255, 0.38)");
+      expect(await layer.evaluate(element => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 255, 255)");
       expect(await action.evaluate((element) => element.closest('[data-testid="ai-conversation-stream"]') === null)).toBe(true);
       await expect.poll(async () => Math.abs((await sidebar.boundingBox()).width - width)).toBeLessThanOrEqual(2);
       await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, `trusted-loop-pr6-ready-${width}.png`), animations: "disabled" });

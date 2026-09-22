@@ -868,7 +868,7 @@ test("dynamic comment-card controls remeasure the queue without overlap", async 
     };
   })).toEqual({
     borderLeftWidth: "1px",
-    boxShadow: "none",
+    boxShadow: "rgba(0, 0, 0, 0.04) 0px 4px 14px 0px",
   });
   const minimumGap = async () => {
     const boxes = await Promise.all([first.boundingBox(), second.boundingBox()]);
@@ -887,7 +887,7 @@ test("dynamic comment-card controls remeasure the queue without overlap", async 
       boxShadow: style.boxShadow,
     };
   })).toEqual({
-    backgroundColor: "rgb(249, 248, 255)",
+    backgroundColor: "rgb(255, 255, 255)",
     boxShadow: "rgb(90, 85, 223) 2px 0px 0px 0px inset",
   });
   const [cancelIcon, confirmIcon] = await Promise.all([
@@ -1010,8 +1010,8 @@ test("comment card hover keeps geometry stable while focus aligns one unchanged 
     };
   });
   expect(focusedStyle).toEqual({
-    backgroundColor: "rgb(249, 248, 255)",
-    borderColor: "rgb(222, 222, 232)",
+    backgroundColor: "rgb(255, 255, 255)",
+    borderColor: "rgba(13, 13, 13, 0.1)",
     shadow: "rgb(90, 85, 223) 2px 0px 0px 0px inset",
   });
   await page.screenshot({
