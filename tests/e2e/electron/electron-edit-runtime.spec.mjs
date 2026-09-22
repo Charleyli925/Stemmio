@@ -3271,8 +3271,8 @@ test("Runtime text history ignores unrelated disposable clone drift", {
     ));
     expect(armedAt).toEqual(expect.any(Number));
     const editor = page.getByTestId("html-canvas-editor");
-    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
     const { frame } = await openRecentProject(page, sourcePath, "runtime-history-text");
+    const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
     await expect(frame.locator('[data-runtime-unrelated-clone="true"]')).toHaveCount(1);
     const initialRuntimeExecutions = await page.evaluate(() => (
       window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__

@@ -1,3 +1,5 @@
+import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
+import { activateNativeEdit, keyShortcut, setTextSelection } from "./electron-native-harness.mjs";
 import { expect, test } from "@playwright/test";
 import {
   preserveCandidateSourceIdsForFixture,
@@ -2323,6 +2325,17 @@ test("two AI versions activate in order and survive relaunch without identity dr
       relaunched.page,
       secondActive.sourcePath,
     )).locator(caseSelector("list-item"))).toHaveText(SECOND_UPDATED_TEXT);
+    // Adoption must leave a real editable Working Copy, including after relaunch.
+    const continuedFrame = await loadedDiskFrame(relaunched.page, secondActive.sourcePath);
+    const beforeContinuation = readFileSync(secondActive.sourcePath, "utf8");
+    const continuation = " POST_ADOPTION_EDIT";
+    await activateNativeEdit(continuedFrame, "list-item");
+    await setTextSelection(continuedFrame, "list-item", SECOND_UPDATED_TEXT.length);
+    await relaunched.page.keyboard.insertText(continuation);
+    await relaunched.page.keyboard.press(keyShortcut("s"));
+    await expect.poll(() => readPublishedWorkingCopy(secondActive.sourcePath, "utf8"))
+      .toBe(beforeContinuation.replace(SECOND_UPDATED_TEXT, SECOND_UPDATED_TEXT + continuation));
+    expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
   } finally {
     if (activeAppClosed) {
       removeAiLoopUserData(launched.isolatedUserData);
