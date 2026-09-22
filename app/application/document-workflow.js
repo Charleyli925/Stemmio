@@ -3253,10 +3253,9 @@ export class DocumentWorkflow {
     }).finally(() => {
       if (operation.freezeLeaseAcquired) {
         if (typeof operation.releaseFreeze === "function") {
-          if (sameOpenRoute(operation.context, this.#projectSession.context, this.#codecs.sameSourcePath)
-            && operation.checkpoint?.sourceReceipt?.sessionIncarnation === this.#documentSession.sourceReceipt?.sessionIncarnation) {
-            operation.releaseFreeze();
-          }
+          // The closure owns the original Canvas and freeze identity, including
+          // when this operation has become stale after a route/session change.
+          operation.releaseFreeze();
         } else if (this.#isCurrent(operation.context)) {
           this.#canvasPort.unlock?.();
         }

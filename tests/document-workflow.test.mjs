@@ -3252,7 +3252,7 @@ test(`repairCurrentCanvas freeze checkpoint: ${interleave}`, async () => {
   if (interleave !== "own-save") {
     assert.equal(outcome.status, saveFailed ? "blocked" : interleave === "verify-error" ? "succeeded" : "stale");
     if (interleave === "verify-error") assert.equal(outcome.value.page.status, "repair-required");
-    assert.equal(releases, saveFailed || ["project-switch", "version-switch"].includes(interleave) ? 0 : 1);
+    assert.equal(releases, saveFailed ? 0 : 1, "every acquired freeze settles through its original scoped release");
     assert.equal(harness.canvas.unlocks, 0);
     assert.equal(writes, 1);
     assert.equal(harness.canvas.rebuilds, 0);
