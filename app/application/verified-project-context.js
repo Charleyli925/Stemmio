@@ -1,24 +1,63 @@
+/** @typedef {import("./project-session.js").OpenTarget} OpenTarget */
+/** @typedef {import("./project-session.js").ProjectContext} ProjectContext */
+/** @typedef {Pick<import("./project-session.js").ProjectSession, "matches" | "epoch" | "sourcePath">} LiveProjectSession */
+/**
+ * @typedef {Object} VerifyProjectContextOptions
+ * @property {boolean} [disposed]
+ * @property {(left: string | null | undefined, right: string | null | undefined) => boolean} [sameSourcePath]
+ */
+/**
+ * @typedef {Object} VerifyOpenTargetOptions
+ * @property {string | null} [projectId]
+ * @property {string | null} [documentId]
+ * @property {string | null} [sourcePath]
+ * @property {string | null} [sourceSha256]
+ * @property {(left: string | null | undefined, right: string | null | undefined) => boolean} [sameSourcePath]
+ * @property {OpenTarget["targetKind"] | null} [targetKind]
+ */
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** @param {unknown} value @returns {value is OpenTarget["targetKind"]} */
+function isTargetKind(value) {
+  return value === "working-copy" || value === "version";
+}
+
+/** @param {unknown} context @returns {ProjectContext | null} */
 export function copyProjectContext(context) {
-  if (!context) return null;
+  if (!isRecord(context)) return null;
   const epoch = Number(context.epoch);
   const projectId = String(context.projectId || "");
   const documentId = String(context.documentId || "");
   const sourcePath = String(context.sourcePath || "");
   if (!Number.isSafeInteger(epoch) || !sourcePath) return null;
-  const target = context.projectRootPath && context.targetKind
-    ? {
-      projectRootPath: String(context.projectRootPath),
-      targetKind: String(context.targetKind),
-      workingCopyId: context.workingCopyId ? String(context.workingCopyId) : null,
-      versionId: context.versionId ? String(context.versionId) : null,
-      exactSourcePath: String(context.exactSourcePath || sourcePath),
-      sourceSha256: String(context.sourceSha256 || ""),
-      sessionEpoch: Number(context.sessionEpoch ?? epoch),
-    }
-    : {};
-  return Object.freeze({ epoch, projectId, documentId, sourcePath, ...target });
+
+  /** @type {{ epoch: number, projectId: string, documentId: string, sourcePath: string }} */
+  const base = { epoch, projectId, documentId, sourcePath };
+  if (!context.projectRootPath || !context.targetKind) return Object.freeze(base);
+  const targetKind = String(context.targetKind);
+  if (!isTargetKind(targetKind)) return null;
+  return Object.freeze({
+    ...base,
+    projectRootPath: String(context.projectRootPath),
+    targetKind,
+    workingCopyId: context.workingCopyId ? String(context.workingCopyId) : null,
+    versionId: context.versionId ? String(context.versionId) : null,
+    exactSourcePath: String(context.exactSourcePath || sourcePath),
+    sourceSha256: String(context.sourceSha256 || ""),
+    sessionEpoch: Number(context.sessionEpoch ?? epoch),
+  });
 }
 
+/**
+ * @param {unknown} candidate
+ * @param {LiveProjectSession | null | undefined} live
+ * @param {VerifyProjectContextOptions} [options]
+ * @returns {ProjectContext | null}
+ */
 export function verifyProjectContext(candidate, live, {
   disposed = false,
   sameSourcePath = (left, right) => left === right,
@@ -42,6 +81,9 @@ const OPEN_TARGET_SHA256 = /^sha256:[a-f0-9]{64}$/u;
  * Validate a complete managed OpenTarget without borrowing identity fields
  * from a surrounding workspace/request payload. Callers may provide a
  * verified source hash; when present it is an exact fence, never a fallback.
+ * @param {unknown} target
+ * @param {VerifyOpenTargetOptions} [options]
+ * @returns {Readonly<Record<string, unknown>> | null}
  */
 export function verifyOpenTarget(target, {
   projectId = null,
@@ -51,11 +93,9 @@ export function verifyOpenTarget(target, {
   sameSourcePath = (left, right) => left === right,
   targetKind = null,
 } = {}) {
+  if (!isRecord(target)) return null;
   if (
-    !target
-    || typeof target !== "object"
-    || Array.isArray(target)
-    || !String(target.projectId || "")
+    !String(target.projectId || "")
     || !String(target.documentId || "")
     || !String(target.projectRootPath || "")
     || !["working-copy", "version"].includes(String(target.targetKind || ""))

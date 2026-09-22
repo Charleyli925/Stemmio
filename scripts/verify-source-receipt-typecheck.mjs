@@ -26,6 +26,10 @@ const defaultDocumentSessionFacadePath = path.join(
   "app/application/document-session.d.ts",
 );
 const defaultSurfaceContextSourcePath = path.join(productRoot, "app/application/project-surface-context.js");
+const defaultVerifiedProjectContextSourcePath = path.join(
+  productRoot,
+  "app/application/verified-project-context.js",
+);
 const implementationContractAnchor = "/** @implements {DocumentSessionDeclaration} */";
 const mutationAnchor = "sessionIncarnation: revision(input.sessionIncarnation),";
 const mutatedAssignment = "sessionIncarnation: String(input.sessionIncarnation),";
@@ -147,12 +151,16 @@ export function verifySourceReceiptTypecheck({
   documentSessionFacadePath = defaultDocumentSessionFacadePath,
   surfaceContextSourcePath = defaultSurfaceContextSourcePath,
   surfaceContextSourceText = ts.sys.readFile(surfaceContextSourcePath),
+  verifiedProjectContextSourcePath = defaultVerifiedProjectContextSourcePath,
+  verifiedProjectContextSourceText = ts.sys.readFile(verifiedProjectContextSourcePath),
 } = {}) {
   const resolvedSourcePath = path.resolve(sourcePath);
   const resolvedDocumentSessionSourcePath = path.resolve(documentSessionSourcePath);
   const resolvedSurfaceContextSourcePath = path.resolve(surfaceContextSourcePath);
+  const resolvedVerifiedProjectContextSourcePath = path.resolve(verifiedProjectContextSourcePath);
   const requiredInputs = [
     { path: resolvedSurfaceContextSourcePath, description: "Surface context required input" },
+    { path: resolvedVerifiedProjectContextSourcePath, description: "Verified project context required input" },
     { path: resolvedSourcePath, description: "SourceReceipt required input" },
     { path: resolvedDocumentSessionSourcePath, description: "SourceReceipt required input" },
     { path: documentSessionContractPath, description: "SourceReceipt required input" },
@@ -167,6 +175,11 @@ export function verifySourceReceiptTypecheck({
   }
   if (typeof surfaceContextSourceText !== "string") {
     throw new Error(`cannot read surface context implementation: ${resolvedSurfaceContextSourcePath}`);
+  }
+  if (typeof verifiedProjectContextSourceText !== "string") {
+    throw new Error(
+      `cannot read verified project context implementation: ${resolvedVerifiedProjectContextSourcePath}`,
+    );
   }
   assertImplementationContract(documentSessionSourceText);
   const receiptMutation = {
@@ -200,7 +213,22 @@ export function verifySourceReceiptTypecheck({
     diagnosticCode: 2322,
     diagnosticFragment: "Type 'string' is not assignable to type 'number'",
   };
-  const [receiptDiagnostic, surfaceDiagnostic, ...documentSessionDiagnostics] = verifyImplementationMutations({
+  const verifiedProjectContextMutation = {
+    name: "verified-project-context-epoch",
+    sourcePath: resolvedVerifiedProjectContextSourcePath,
+    sourceText: verifiedProjectContextSourceText,
+    anchor: "const epoch = Number(context.epoch);",
+    replacement: "const epoch = String(context.epoch);",
+    diagnosticCode: 2322,
+    diagnosticFragment: "Type 'string' is not assignable to type 'number'",
+  };
+  mutateExactly(verifiedProjectContextSourceText, verifiedProjectContextMutation);
+  const [
+    receiptDiagnostic,
+    surfaceDiagnostic,
+    verifiedProjectContextDiagnostic,
+    ...documentSessionDiagnostics
+  ] = verifyImplementationMutations({
     parsedConfig,
     subject: "SourceReceipt",
     requiredInputs,
@@ -208,8 +236,14 @@ export function verifySourceReceiptTypecheck({
       [resolvedSourcePath, sourceText],
       [resolvedDocumentSessionSourcePath, documentSessionSourceText],
       [resolvedSurfaceContextSourcePath, surfaceContextSourceText],
+      [resolvedVerifiedProjectContextSourcePath, verifiedProjectContextSourceText],
     ]),
-    mutations: [receiptMutationCase, surfaceMutation, ...documentSessionMutationCases],
+    mutations: [
+      receiptMutationCase,
+      surfaceMutation,
+      verifiedProjectContextMutation,
+      ...documentSessionMutationCases,
+    ],
   });
   return Object.freeze({
     configPath: parsedConfig.options.configFilePath || defaultConfigPath,
@@ -217,6 +251,8 @@ export function verifySourceReceiptTypecheck({
     documentSessionSourcePath: resolvedDocumentSessionSourcePath,
     surfaceContextSourcePath: resolvedSurfaceContextSourcePath,
     surfaceContextDiagnosticCode: surfaceDiagnostic.code,
+    verifiedProjectContextSourcePath: resolvedVerifiedProjectContextSourcePath,
+    verifiedProjectContextDiagnosticCode: verifiedProjectContextDiagnostic.code,
     documentSessionContractPath: path.resolve(documentSessionContractPath),
     documentSessionFacadePath: path.resolve(documentSessionFacadePath),
     diagnosticCode: receiptDiagnostic.code,
@@ -229,6 +265,6 @@ export function verifySourceReceiptTypecheck({
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = verifySourceReceiptTypecheck();
   process.stdout.write(
-    `SourceReceipt, ProjectSurfaceContext and DocumentSession implementation mutations rejected by official config (TS${result.diagnosticCode}; ${result.documentSessionDiagnosticCodes.map((code) => `TS${code}`).join(", ")}).\n`,
+    `SourceReceipt, ProjectSurfaceContext, VerifiedProjectContext and DocumentSession implementation mutations rejected by official config (TS${result.diagnosticCode}; TS${result.surfaceContextDiagnosticCode}; TS${result.verifiedProjectContextDiagnosticCode}; ${result.documentSessionDiagnosticCodes.map((code) => `TS${code}`).join(", ")}).\n`,
   );
 }

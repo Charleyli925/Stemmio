@@ -23,6 +23,10 @@ const documentSessionFacadePath = path.join(
   productRoot,
   "app/application/document-session.d.ts",
 );
+const verifiedProjectContextSourcePath = path.join(
+  productRoot,
+  "app/application/verified-project-context.js",
+);
 
 test("the official SourceReceipt config rejects the implementation mutation", () => {
   const result = verifySourceReceiptTypecheck();
@@ -32,6 +36,8 @@ test("the official SourceReceipt config rejects the implementation mutation", ()
   assert.equal(result.documentSessionFacadePath, documentSessionFacadePath);
   assert.equal(result.diagnosticCode, 2322);
   assert.equal(result.surfaceContextDiagnosticCode, 2322);
+  assert.equal(result.verifiedProjectContextSourcePath, verifiedProjectContextSourcePath);
+  assert.equal(result.verifiedProjectContextDiagnosticCode, 2322);
   assert.deepEqual(
     result.documentSessionDiagnosticCodes,
     [2322, 2322, 2322, 2420, 2416, 2416],
@@ -172,4 +178,16 @@ test("the proof fails if the surface context implementation leaves compiler inpu
       fileNames: parsedConfig.fileNames.filter((fileName) => !fileName.endsWith("/project-surface-context.js")),
     },
   }), /Surface context required input is missing/u);
+});
+
+test("the proof fails if the verified project context implementation leaves compiler inputs", () => {
+  const parsedConfig = loadSourceReceiptTypecheckConfig();
+  assert.throws(() => verifySourceReceiptTypecheck({
+    parsedConfig: {
+      ...parsedConfig,
+      fileNames: parsedConfig.fileNames.filter(
+        (fileName) => path.resolve(fileName) !== verifiedProjectContextSourcePath,
+      ),
+    },
+  }), /Verified project context required input is missing/u);
 });

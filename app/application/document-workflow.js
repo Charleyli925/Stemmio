@@ -2331,6 +2331,23 @@ export class DocumentWorkflow {
         "INVALID_AUTOSAVE_ACK",
       );
     }
+    const repair = this.#sourceOperation;
+    const checkpoint = repair?.checkpoint;
+    if (repair?.kind === "repair-current-canvas"
+      && confirmation.completesCurrentDocument
+      && checkpoint?.html === write.html
+      && checkpoint.editRevision === write.revision
+      && checkpoint.sourceReceipt?.sessionIncarnation === this.#documentSession.sourceReceipt?.sessionIncarnation
+      && sameOpenRoute(repair.context, acknowledgedContext, this.#codecs.sameSourcePath)) {
+      // Only this checkpoint's validated save ACK may advance the repair Hash.
+      repair.savedSource = Object.freeze({
+        receipt: this.#documentSession.sourceReceipt,
+        context: acknowledgedContext,
+        html: acknowledgedHtml,
+        revision: write.revision,
+        sourceSha256,
+      });
+    }
     if (confirmation.authorityChanged) {
       this.#canvasPort.invalidateRenderAcks?.();
     }
@@ -3125,6 +3142,9 @@ export class DocumentWorkflow {
       context: Object.freeze({ ...context }),
       operationId: this.#nextOperationId(kind),
       freezeLeaseAcquired: false,
+      releaseFreeze: null,
+      checkpoint: null,
+      savedSource: null,
       promise: null,
     };
     const promise = (async () => {
@@ -3135,24 +3155,54 @@ export class DocumentWorkflow {
         operation: kind,
         context: operation.context,
       });
-      const frozen = await this.#freezeAuthority(
+      const freezing = this.#freezeAuthority(
         kind === "repair-current-canvas"
           ? "当前编辑画布尚未完成安全收口。"
           : "请点回文字完成输入，再切换 HTML 视图。",
       );
+      // freezeNow checkpoints synchronously. Capture that exact source before
+      // yielding to its save ACK; a later independent edit cannot replace it.
+      operation.checkpoint = this.#documentSession.snapshot;
+      const frozen = await freezing;
+      operation.releaseFreeze = frozen.release;
+      operation.freezeLeaseAcquired = frozen.ok;
       if (!frozen.ok) {
         return blocked("DOCUMENT_SOURCE_FREEZE_BLOCKED", frozen.reason);
       }
-      if (this.#sourceOperation !== operation || !this.#isCurrent(context)) {
-        return stale(context);
-      }
-      operation.freezeLeaseAcquired = true;
-      return await perform(operation.operationId, (nextContext) => {
+      const adoptOperationContext = (nextContext) => {
         const verified = copyContext(nextContext);
         if (!verified || !this.#isCurrent(verified)) return false;
+        if (kind === "repair-current-canvas") {
+          const saved = operation.savedSource;
+          const current = this.#documentSession.snapshot;
+          if (!saved
+            || !sameOpenRoute(operation.context, verified, this.#codecs.sameSourcePath)
+            || !sameOpenTarget(saved.context, verified, this.#codecs.sameSourcePath)
+            || !sameSourceReceipt(saved.receipt, current.sourceReceipt)
+            || current.html !== saved.html
+            || current.editRevision !== saved.revision
+            || current.lastPersistedRevision !== saved.revision
+            || current.hasPendingWrite
+            || saved.sourceSha256 !== current.workingHtmlSha256
+            || saved.sourceSha256 !== current.persistedSourceSha256) return false;
+        }
         operation.context = Object.freeze({ ...verified });
         return true;
-      });
+      };
+      if (this.#sourceOperation !== operation
+        || (!this.#isCurrent(context)
+          && !(kind === "repair-current-canvas" && adoptOperationContext(this.#projectSession.context)))) {
+        return stale(context);
+      }
+      if (kind === "repair-current-canvas"
+        && ((typeof frozen.html === "string" && frozen.html !== operation.checkpoint.html)
+          || (frozen.workingSourceSha256 && frozen.workingSourceSha256 !== operation.checkpoint.workingHtmlSha256)
+          || this.#documentSession.html !== operation.checkpoint.html
+          || this.#documentSession.editRevision !== operation.checkpoint.editRevision
+          || this.#documentSession.sourceReceipt?.sessionIncarnation !== operation.checkpoint.sourceReceipt?.sessionIncarnation)) {
+        return stale(operation.context);
+      }
+      return await perform(operation.operationId, adoptOperationContext);
     })().catch((cause) => {
       if (this.#sourceOperation !== operation || !this.#isCurrent(operation.context)) {
         return stale(operation.context);
@@ -3179,11 +3229,18 @@ export class DocumentWorkflow {
         message,
       );
     }).finally(() => {
+      if (operation.freezeLeaseAcquired) {
+        if (typeof operation.releaseFreeze === "function") {
+          if (sameOpenRoute(operation.context, this.#projectSession.context, this.#codecs.sameSourcePath)
+            && operation.checkpoint?.sourceReceipt?.sessionIncarnation === this.#documentSession.sourceReceipt?.sessionIncarnation) {
+            operation.releaseFreeze();
+          }
+        } else if (this.#isCurrent(operation.context)) {
+          this.#canvasPort.unlock?.();
+        }
+      }
       if (this.#sourceOperation !== operation) return;
       this.#sourceOperation = null;
-      if (operation.freezeLeaseAcquired && this.#isCurrent(operation.context)) {
-        this.#canvasPort.unlock?.();
-      }
       this.#emit({
         type: "document-source-operation",
         phase: "idle",
@@ -3481,7 +3538,7 @@ export class DocumentWorkflow {
     try {
       const result = await this.#canvasPort.freeze(reason);
       return result && result.ok
-        ? { ok: true, reason: "" }
+        ? { ok: true, reason: "", html: result.html, workingSourceSha256: result.workingSourceSha256, release: result.release }
         : { ok: false, reason: String(result?.reason || reason) };
     } catch (cause) {
       return {

@@ -13,6 +13,7 @@
     "app/application/source-receipt.js",
     "app/application/source-receipt-contract.d.ts",
     "app/application/project-session.d.ts",
+    "app/application/verified-project-context.js",
     "tests/source-receipt-contract.typecheck.ts",
     "app/application/project-surface-context.js"
   ],

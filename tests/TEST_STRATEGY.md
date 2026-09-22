@@ -155,13 +155,12 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   `page: not-current` 结果由 `tests/run-workflow.test.mjs` 拥有。这些 Node 用例不声称 IME、Focus 或真实 iframe 连续性；继续复用
   `electron-edit-runtime.spec.mjs` 中已有的 composition / 显式退出 / reload 合同和
   `conflict-force-unlock.spec.mjs` 的真实接纳接线。
-- `SourceReceipt` / `DocumentSession` 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
-  `source-receipt.js`、真实 `document-session.js`、单一实例合同 `document-session-contract.d.ts`、
-  runtime façade `document-session.d.ts` 与调用者合约，并从
-  `tsconfig.source-receipt.json` 解析同一组有效 compiler options、root files 和模块解析条件，
-  再以内存源码覆盖完成定向错误变异。`DocumentSession` 变异分别把 verified Hash 置空、
-  generation 改成字符串、把 accepted edit 结果改成错误形状、删除实例方法，以及让
-  Canvas / flush getter 返回错误类型，都必须在指定生产位置只产生预期类型错误；
+- SourceReceipt / project-context 实现类型闭环：`npm run typecheck:source-receipt` 同时检查
+  `source-receipt.js`、`project-surface-context.js`、`verified-project-context.js`、真实
+  `document-session.js`、单一实例合同 `document-session-contract.d.ts`、runtime façade
+  `document-session.d.ts` 与调用者合约，并从 `tsconfig.source-receipt.json` 解析同一组有效
+  compiler options、root files 和模块解析条件，再以内存源码覆盖完成 verifier 声明的定向错误变异。
+  每个实现变异都必须在指定生产位置只产生预期类型错误；
   若正式配置
   关闭 `checkJs`、移除实现输入，或变异位置不存在/不唯一，验证入口本身失败。不创建临时源码树，
   也不在变异阶段额外强开正式配置没有提供的保护；不打开全仓 `checkJs`。

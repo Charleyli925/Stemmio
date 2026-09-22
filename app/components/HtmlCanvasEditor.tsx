@@ -1289,6 +1289,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   ) => boolean>(() => false);
   const updateOverlayPositionRef = useRef<() => void>(() => undefined);
   const imperativeLockRef = useRef(false);
+  const imperativeFreezeIdRef = useRef(0);
   const lastPropRef = useRef({
     sessionIncarnation: sourceReceipt?.sessionIncarnation ?? null,
     receiptSequence: sourceReceipt?.sequence ?? null,
@@ -1507,6 +1508,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const runtimeFallbackReadOnly = runtimeDegradation === "static-preparing"
     || runtimeDegradation === "last-known-good-readonly";
   const effectiveReadOnly = readOnly || runtimeFallbackReadOnly;
+  // A release belongs to one Canvas instance, but may outlive its render.
+  const controlledAccessRef = useRef({ controlledInteractionLocked, effectiveReadOnly, enableReorder });
+  controlledAccessRef.current = { controlledInteractionLocked, effectiveReadOnly, enableReorder };
   const renderedMode: HtmlCanvasInteractionMode =
     controlledMode === "history"
       ? "history"
@@ -7962,6 +7966,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     });
     if (!committed.ok) return committed;
     const frozenHtml = committed.html;
+    const freezeId = ++imperativeFreezeIdRef.current;
     imperativeLockRef.current = true;
     lockedRef.current = true;
     readOnlyRef.current = true;
@@ -7986,6 +7991,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     onSelectRef.current?.(null);
     return {
       ok: true,
+      freezeId,
       html: frozenHtml,
       workingSourceSha256: committed.workingSourceSha256,
       renderedProjectionSha256: committed.renderedProjectionSha256,
@@ -7995,19 +8001,23 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
   }, [freezeWorkingSource]);
 
-  const unlockNow = useCallback((): boolean => {
+  const unlockNow = useCallback((freezeId?: number): boolean => {
+    if (freezeId !== undefined
+      && (freezeId !== imperativeFreezeIdRef.current || !imperativeLockRef.current)) return false;
+    imperativeFreezeIdRef.current += 1;
     imperativeLockRef.current = false;
     setImperativeLocked(false);
-    if (controlledInteractionLocked) return false;
+    const access = controlledAccessRef.current;
+    if (access.controlledInteractionLocked) return false;
     lockedRef.current = false;
-    readOnlyRef.current = effectiveReadOnly;
-    enableReorderRef.current = enableReorder;
+    readOnlyRef.current = access.effectiveReadOnly;
+    enableReorderRef.current = access.enableReorder;
     iframeRef.current?.contentDocument?.documentElement.removeAttribute(
       "data-html-canvas-locked",
     );
     requestAnimationFrame(() => updateOverlayPosition());
     return true;
-  }, [controlledInteractionLocked, effectiveReadOnly, enableReorder, updateOverlayPosition]);
+  }, [updateOverlayPosition]);
 
   const showCommitBlocked = useCallback((reason?: string) => {
     setEditFeedback({
