@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createPublicAgentTextAccumulator } from "./agent-session-projector.mjs";
+import { createPublicAgentTextAccumulator, createPublicAgentActivityAccumulator } from "./agent-session-projector.mjs";
 
 const DEFAULT_TEXT_LIMIT = 64 * 1024;
 const DEFAULT_EVENT_LIMIT = 2_048;
@@ -61,6 +61,7 @@ export function createAgentEventReducer({
         eventCount: 0,
         retainedEvents: [],
         publicText: createPublicAgentTextAccumulator({ maxTextLength: textLimit }),
+        publicActivities: createPublicAgentActivityAccumulator(),
       };
       turns.set(turnId, state);
     }
@@ -74,6 +75,7 @@ export function createAgentEventReducer({
     eventCount: state.eventCount,
     retainedEvents: Object.freeze([...state.retainedEvents]),
     ...state.publicText.snapshot(),
+    ...state.publicActivities.snapshot(),
   });
 
   return Object.freeze({
@@ -94,6 +96,7 @@ export function createAgentEventReducer({
       state.lastSequence = event.sequence;
       state.lastTimestamp = event.timestamp;
       state.eventCount = Math.min(Number.MAX_SAFE_INTEGER, state.eventCount + 1);
+      state.publicActivities.append(event);
       if (event.kind === "visible-text") {
         state.publicText.append(event);
       }

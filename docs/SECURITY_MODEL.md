@@ -386,6 +386,14 @@ closure checks remain required; native login/status still use the verified
 native executable. Native authentication success is distinct from adapter
 initialization success and never authorizes sending without formal preflight.
 
+Public execution activities are a bounded, read-only whitelist projection of
+structured Host/runtime events. Their IDs are derived from canonical sequence;
+raw IDs, commands, paths, tool parameters, file contents and error output are
+never forwarded. The Renderer decodes only fixed activity kinds and integer
+ordering fields. Activities grant no filesystem or execution capability, never
+prove Candidate readiness and are not persisted as a complete log. HTTP exposes
+response/generation/checking events without pretending to use ACP file tools.
+
 Discussion is not an authorized Agent surface. The Bridge has no discussion
 routes, policy, Host, snapshot or session owner, and provider capabilities and
 preflight tickets reject any non-execution purpose. Historical Conversation

@@ -141,6 +141,7 @@ export function createCommentCanvasPort() {
       });
     },
     resetLayout() {
+      revealSequence += 1;
       applyCanvasHeight(760);
       publish({
         ...snapshot,
@@ -158,7 +159,13 @@ export function createCommentCanvasPort() {
         railResetRevision: snapshot.railResetRevision + 1,
       });
     },
-    requestReveal(target, itemKey) {
+    captureRevealIntent: () => revealSequence,
+    cancelReveal() {
+      revealSequence += 1;
+      if (snapshot.revealRequest) publish({ ...snapshot, revealRequest: null });
+    },
+    requestReveal(target, itemKey, expectedIntent = revealSequence) {
+      if (expectedIntent !== revealSequence) return;
       publish({
         ...snapshot,
         revealRequest: Object.freeze({

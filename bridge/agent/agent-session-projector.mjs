@@ -84,11 +84,11 @@ function publicParagraphs(message) {
       else leading += "\n\n";
       continue;
     }
-    result.push({ id: `${message.id}:${index}`, sequence: message.sequence, text: leading + text });
+    result.push({ id: `${message.id}:${index}`, sequence: message.sequence, firstSequence: message.paragraphSequences?.[index] ?? message.firstSequence, text: leading + text });
     leading = "";
   }
   if (!result.length && message.text) {
-    result.push({ id: `${message.id}:0`, sequence: message.sequence, text: message.text });
+    result.push({ id: `${message.id}:0`, sequence: message.sequence, firstSequence: message.firstSequence, text: message.text });
   }
   return result;
 }
@@ -123,12 +123,14 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
         if (!message) {
           const eventId = cleanPublicId(event.eventId, `visible-${Number(event.sequence) || 0}`);
           message = { id: groupId ? `message:${groupId}:0` : eventId,
-            groupId, sequence: 0, text: "" };
+            groupId, sequence: 0, firstSequence: event.sequence, paragraphSequences: [], text: "" };
           messages.push(message);
           if (groupId) byGroup.set(groupId, message);
           rawLength += separatorLength;
         }
         message.text += text;
+        const paragraphCount = message.text.split("\n\n").length;
+        while (message.paragraphSequences.length < paragraphCount) message.paragraphSequences.push(event.sequence);
         message.sequence = Number.isSafeInteger(event.sequence) ? event.sequence : 0;
         rawLength += text.length;
       }
@@ -149,7 +151,7 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
         const separatorLength = bounded.length ? 2 : 0;
         const text = slicePublicText(update.text, remaining - separatorLength);
         if (text) {
-          bounded.push({ id: update.id, sequence: update.sequence, text });
+          bounded.push({ id: update.id, sequence: update.sequence, firstSequence: update.firstSequence, text });
           remaining -= text.length + separatorLength;
         }
         if (text.length < update.text.length) { publicTruncated = true; break; }
@@ -157,7 +159,7 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
       if (bounded.length > MAX_VISIBLE_TEXT_UPDATES) {
         const collapsed = bounded.splice(0, bounded.length - MAX_VISIBLE_TEXT_UPDATES + 1);
         bounded.unshift({ id: `earlier:${collapsed[0].id}`,
-          sequence: collapsed.at(-1).sequence,
+          sequence: collapsed.at(-1).sequence, firstSequence: collapsed[0].firstSequence,
           text: collapsed.map((update) => update.text).join("\n\n") });
       }
       const visibleTextUpdates = Object.freeze(bounded.map(Object.freeze));
@@ -172,6 +174,14 @@ export function createPublicAgentTextAccumulator({ maxTextLength = 65536 } = {})
 
 export function publicExecutionSession(entry) {
   if (!entry) return null;
+  const activities = publicAgentActivities(entry.publicActivities, entry.runtimeId);
+  const earlier = entry.visibleTextUpdates?.find((update) => update.id.startsWith("earlier:"));
+  // A compacted text block cannot preserve activities interleaved inside it.
+  // Keep all public words and disclose omitted activities instead of inventing order.
+  const publicActivities = earlier
+    ? Object.freeze(activities.filter((activity) => activity.sequence < earlier.firstSequence
+      || activity.sequence > earlier.sequence))
+    : activities;
   return Object.freeze({
     providerId: entry.providerId || null,
     runtimeId: entry.runtimeId || null,
@@ -188,9 +198,12 @@ export function publicExecutionSession(entry) {
     eventCount: entry.eventCount || 0,
     visibleTextUpdates: Object.freeze((entry.visibleTextUpdates || []).map((update, index) => Object.freeze({
       id: cleanPublicId(update.id, `public-${index}`), sequence: update.sequence,
+      firstSequence: update.firstSequence,
       text: safePublicAgentText(update.text),
     }))),
     textTruncated: entry.textTruncated === true,
+    publicActivities,
+    activitiesTruncated: entry.activitiesTruncated === true || publicActivities.length < activities.length,
     retryable: entry.retryable === true,
     safeToRetry: typeof entry.safeToRetry === "boolean"
       ? entry.safeToRetry
@@ -198,5 +211,49 @@ export function publicExecutionSession(entry) {
     recoveryKind: entry.recoveryKind || "end",
     errorCode: entry.errorCode || null,
     errorMessage: entry.errorMessage ? safePublicAgentText(entry.errorMessage).slice(0, 1000) : null,
+  });
+}
+
+// Only structured host/runtime facts enter this projection. Object names, raw
+// event IDs, paths, payloads and tool results have no public representation.
+const PUBLIC_ACTIVITY_KINDS = new Set([
+  "file-read", "file-written", "response-started", "generation-started",
+  "response-ended", "html-validation-completed", "review-preparation-started",
+  "cancel-requested", "host-cancelling",
+]);
+const ACTIVITY_BOUNDARIES = new Set([
+  "visible-text", "error", "failed", "completion", "completion-verified",
+  "turn-stopping", "turn-stopped", "cancel-requested", "host-cancelling",
+  "cancel-acknowledged", "termination-confirmed", "durable-cancelled",
+]);
+const MAX_PUBLIC_ACTIVITIES = 80;
+
+export function publicAgentActivities(activities, runtimeId) {
+  return Object.freeze((Array.isArray(activities) ? activities : []).slice(-MAX_PUBLIC_ACTIVITIES)
+    .filter((activity) => activity && PUBLIC_ACTIVITY_KINDS.has(activity.kind)
+      && Number.isSafeInteger(activity.sequence) && activity.sequence >= 0
+      && Number.isSafeInteger(activity.boundary) && activity.boundary >= 0
+      && !(runtimeId === "http" && ["file-read", "file-written"].includes(activity.kind)))
+    .map(({ kind, sequence, boundary }) => Object.freeze({
+      id: `activity:${sequence}`, kind, sequence, boundary,
+    })));
+}
+
+export function createPublicAgentActivityAccumulator() {
+  const activities = [];
+  let boundary = 0;
+  let truncated = false;
+  let stopping = false;
+  return Object.freeze({
+    append(event) {
+      if (ACTIVITY_BOUNDARIES.has(event.kind)) boundary = event.sequence;
+      if (["cancel-requested", "host-cancelling"].includes(event.kind)) stopping = true;
+      if (!PUBLIC_ACTIVITY_KINDS.has(event.kind)) return;
+      if (stopping && !["cancel-requested", "host-cancelling"].includes(event.kind)) return;
+      activities.push(Object.freeze({ id: `activity:${event.sequence}`, kind: event.kind,
+        sequence: event.sequence, boundary }));
+      if (activities.length > MAX_PUBLIC_ACTIVITIES) { activities.shift(); truncated = true; }
+    },
+    snapshot() { return { publicActivities: Object.freeze([...activities]), activitiesTruncated: truncated }; },
   });
 }

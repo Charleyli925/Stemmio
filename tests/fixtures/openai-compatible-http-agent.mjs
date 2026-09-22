@@ -22,7 +22,7 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function sendSse(response, content, delayMs, beforeComplete, publicProgress = false) {
+async function sendSse(response, content, delayMs, beforeComplete, publicProgress = false, includePublicProgress = true) {
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache",
@@ -31,10 +31,10 @@ async function sendSse(response, content, delayMs, beforeComplete, publicProgres
   const midpoint = Math.max(1, Math.floor(content.length / 2));
   const record = (type, text) => `${JSON.stringify({ type, text })}\n`;
   const first = publicProgress
-    ? record("progress", "我会先检查页面结构，再调整标题与配色。") + record("html", content.slice(0, midpoint))
+    ? (includePublicProgress ? record("progress", "我会先检查页面结构，再调整标题与配色。") : "") + record("html", content.slice(0, midpoint))
     : content.slice(0, midpoint);
   const last = publicProgress
-    ? record("progress", "标题与配色已调整，正在整理完整页面供审阅。") + record("html", content.slice(midpoint))
+    ? (includePublicProgress ? record("progress", "标题与配色已调整，正在整理完整页面供审阅。") : "") + record("html", content.slice(midpoint))
     : content.slice(midpoint);
   const frames = [
     ": fixture-heartbeat\n\n",
@@ -102,6 +102,7 @@ export function startOpenAiCompatibleHttpAgent({
   rejectedApiKeys = [],
   streamDelayMs = 25,
   beforeStreamComplete,
+  includePublicProgress = true,
 } = {}) {
   const rejected = new Set(rejectedApiKeys.map((value) => String(value)));
   return new Promise((resolve, reject) => {
@@ -151,7 +152,7 @@ export function startOpenAiCompatibleHttpAgent({
             appliedReasoning(payload),
           );
           if (payload.stream === true) {
-            await sendSse(response, candidate, streamDelayMs, isPreflight ? undefined : beforeStreamComplete, !isPreflight && raw.includes("Return a JSONL stream"));
+            await sendSse(response, candidate, streamDelayMs, isPreflight ? undefined : beforeStreamComplete, !isPreflight && raw.includes("Return a JSONL stream"), includePublicProgress);
           } else {
             sendJson(response, 200, {
               choices: [{ message: { content: candidate } }],

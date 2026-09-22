@@ -1,7 +1,15 @@
 import { verifyOpenTarget } from "./verified-project-context.js";
 
+/** @typedef {import("./project-surface-context.js").ProjectSurfaceContext} ProjectSurfaceContext */
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
+/** @param {unknown} value */
 function comparableSurfacePath(value) {
   let sourcePath = String(value || "").normalize("NFC");
   if (sourcePath === "/private/var" || sourcePath.startsWith("/private/var/")) {
@@ -12,6 +20,7 @@ function comparableSurfacePath(value) {
   return sourcePath;
 }
 
+/** @param {unknown} left @param {unknown} right */
 function sameSurfacePath(left, right) {
   return Boolean(
     left
@@ -20,14 +29,13 @@ function sameSurfacePath(left, right) {
   );
 }
 
+/** @param {unknown} value @returns {value is ProjectSurfaceContext} */
 export function isProjectSurfaceContext(value) {
+  if (!isRecord(value)) return false;
   const epoch = Number(value?.epoch);
   const sessionEpoch = Number(value?.sessionEpoch);
   return Boolean(
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && String(value.surfaceContextId || "")
+    String(value.surfaceContextId || "")
     && String(value.projectId || "")
     && String(value.documentId || "")
     && String(value.sourcePath || "")
@@ -46,6 +54,7 @@ export function isProjectSurfaceContext(value) {
   );
 }
 
+/** @param {unknown} value @returns {ProjectSurfaceContext | null} */
 export function copyProjectSurfaceContext(value) {
   if (!isProjectSurfaceContext(value)) return null;
   return Object.freeze({
@@ -55,7 +64,7 @@ export function copyProjectSurfaceContext(value) {
     documentId: String(value.documentId),
     sourcePath: String(value.sourcePath),
     projectRootPath: String(value.projectRootPath),
-    targetKind: String(value.targetKind),
+    targetKind: String(value.targetKind) === "version" ? "version" : "working-copy",
     workingCopyId: value.workingCopyId ? String(value.workingCopyId) : null,
     versionId: value.versionId ? String(value.versionId) : null,
     exactSourcePath: String(value.exactSourcePath),
@@ -64,7 +73,12 @@ export function copyProjectSurfaceContext(value) {
   });
 }
 
+/**
+ * @param {{ transactionId?: string | null, project: unknown }} input
+ * @returns {ProjectSurfaceContext | null}
+ */
 export function createProjectSurfaceContext({ transactionId, project }) {
+  if (!isRecord(project)) return null;
   const projectId = String(project?.projectId || "");
   const documentId = String(project?.documentId || "");
   const sourcePath = String(project?.sourcePath || "");
@@ -103,6 +117,7 @@ export function createProjectSurfaceContext({ transactionId, project }) {
   });
 }
 
+/** @param {unknown} left @param {unknown} right */
 export function sameProjectSurfaceContext(left, right) {
   const a = copyProjectSurfaceContext(left);
   const b = copyProjectSurfaceContext(right);

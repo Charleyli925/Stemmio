@@ -770,18 +770,6 @@ function rememberVisibleCanvasViewport({
     selectedElement: null,
     selectedSourceSelection: null,
   });
-  const previous = destination.current;
-  // Comment-rail alignment can jump the shared stage back toward a marker
-  // near the top. Same-document HTML replacement should keep the last
-  // reading position instead of that snap.
-  if (
-    previous
-    && previous.outerScrollTop !== null
-    && next.outerScrollTop !== null
-    && previous.outerScrollTop - next.outerScrollTop > 400
-  ) {
-    return;
-  }
   destination.current = next;
 }
 
@@ -1079,6 +1067,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     onEditRuntimeLoadOutcome,
     onRuntimeDegradationChange,
     onCommentLayout,
+    onReadingIntent,
     onRequestComment,
     onReady,
     onRequestFlush,
@@ -1313,6 +1302,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const onEditRuntimeLoadOutcomeRef = useRef(onEditRuntimeLoadOutcome);
   const onRuntimeDegradationChangeRef = useRef(onRuntimeDegradationChange);
   const onCommentLayoutRef = useRef(onCommentLayout);
+  const onReadingIntentRef = useRef(onReadingIntent);
   const onRequestCommentRef = useRef(onRequestComment);
   const onRequestFlushRef = useRef(onRequestFlush);
 
@@ -1535,6 +1525,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   onEditRuntimeLoadOutcomeRef.current = onEditRuntimeLoadOutcome;
   onRuntimeDegradationChangeRef.current = onRuntimeDegradationChange;
   onCommentLayoutRef.current = onCommentLayout;
+  onReadingIntentRef.current = onReadingIntent;
   onRequestCommentRef.current = onRequestComment;
   onRequestFlushRef.current = onRequestFlush;
   onRequestExportRef.current = onRequestExport;
@@ -5145,8 +5136,20 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       && outerActive !== iframeRef.current,
     );
     if (explicitExternalFocus) return false;
-    // Restore the last owned caret, not the session's initial baseline. This
-    // is used after host-owned async work such as Save.
+    // State notifications run on RAF. A transient iframe blur can precede
+    // that notification after the latest keystroke, so preserve the still
+    // owned live selection before focus() can reset it to an older bookmark.
+    const liveSelection = active.rootElement.ownerDocument.getSelection();
+    if (
+      liveSelection?.rangeCount === 1
+      && liveSelection.anchorNode
+      && liveSelection.focusNode
+      && active.rootElement.contains(liveSelection.anchorNode)
+      && active.rootElement.contains(liveSelection.focusNode)
+    ) {
+      active.selection = active.session.getSelection();
+    }
+    // If selection left this host, retain only the last owned bookmark.
     active.rootElement.focus({ preventScroll: true });
     active.session.restoreSelection(active.selection);
     if (!nativeEditFocusIsCurrent(active)) {
@@ -9263,6 +9266,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ? new LayoutResizeObserver(() => updateOverlayPosition())
       : null;
     if (documentNode.body) layoutObserver?.observe(documentNode.body);
+    // Input inside the iframe does not bubble to the outer reading stage.
+    const handleReadingIntent = () => onReadingIntentRef.current?.();
+    documentNode.addEventListener("wheel", handleReadingIntent, { capture: true, passive: true });
+    documentNode.addEventListener("pointerdown", handleReadingIntent, true);
+    documentNode.addEventListener("keydown", handleReadingIntent, true);
     documentNode.addEventListener("click", handleClick, true);
     documentNode.addEventListener("mousedown", handleMouseDown, true);
     documentNode.addEventListener("mouseup", handleMouseUp, true);
@@ -9409,6 +9417,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
 
     cleanupFrameRef.current = () => {
       cancelPendingHoverResolution();
+      documentNode.removeEventListener("wheel", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", handleReadingIntent, true);
+      documentNode.removeEventListener("keydown", handleReadingIntent, true);
       documentNode.removeEventListener("click", handleClick, true);
       documentNode.removeEventListener("mousedown", handleMouseDown, true);
       documentNode.removeEventListener("mouseup", handleMouseUp, true);

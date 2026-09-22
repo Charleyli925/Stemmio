@@ -708,6 +708,11 @@ export class AgentRuntimeCoordinator {
     // Runtime callbacks can outlive their turn. A late event must not advance
     // the entry sequence or mutate this Request's public session projection.
     if (!canonical || canonical.turnId !== entry.turnId) return;
+    if (["file-read", "file-written", "response-started", "generation-started", "response-ended",
+      "html-validation-completed", "review-preparation-started"].includes(canonical.kind)
+      && (!LIVE_STATES.has(entry.state) || entry.cancelState || entry.state === "cancelling")) return;
+    if (["cancel-requested", "host-cancelling"].includes(canonical.kind)
+      && !LIVE_STATES.has(entry.state)) return;
     entry.nextSequence = nextSequence;
     // A Provider can flush buffered narration while cancellation is in flight.
     // It must never make a cancelled Request look active again.
@@ -731,6 +736,8 @@ export class AgentRuntimeCoordinator {
     }
     entry.visibleTextUpdates = reduced.projection.visibleTextUpdates;
     entry.textTruncated = reduced.projection.textTruncated;
+    entry.publicActivities = reduced.projection.publicActivities;
+    entry.activitiesTruncated = reduced.projection.activitiesTruncated;
     if (reduced.event.kind === "initialized") {
       if (["starting", "running"].includes(entry.state)) entry.state = "running";
       entry.agentName = cleanAgentText(reduced.event.agentName) || "Local Agent";
@@ -966,6 +973,8 @@ export class AgentRuntimeCoordinator {
       controller,
       promise: null,
       visibleTextUpdates: [],
+      publicActivities: [],
+      activitiesTruncated: false,
       textTruncated: false,
       completionVerified: false,
     };
@@ -1139,6 +1148,8 @@ export class AgentRuntimeCoordinator {
       eventCount: 0,
       receivedBytes: 0,
       visibleTextUpdates: [],
+      publicActivities: [],
+      activitiesTruncated: false,
       textTruncated: false,
       retryable: false,
       safeToRetry: false,
@@ -1167,6 +1178,7 @@ export class AgentRuntimeCoordinator {
     entry.cancelState = "requested";
     entry.state = "cancelling";
     entry.phase = "cancelling";
+    this.#observe(entry, { kind: "cancel-requested" }, executionPhaseForEvent);
     this.#touch(entry);
     await this.#queueExecutionFact(entry, "stop-requested");
     entry.controller.abort(new AgentRuntimeError("AGENT_CANCELLED", "Cancelled by Stemmio."));

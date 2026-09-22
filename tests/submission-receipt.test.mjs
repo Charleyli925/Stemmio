@@ -324,7 +324,7 @@ test("sealed public summary is sanitized, bounded and restored once after failur
   const summaries = conversation.messages.filter((message) => message.messageId === "message_event_public_summary_0001");
   assert.equal(summaries.length, 1);
   assert.equal(summaries[0].actor, "agent");
-  assert.equal(summaries[0].kind, "result-summary");
+  assert.equal(summaries[0].kind, "process-summary");
   assert.ok(summaries[0].text.startsWith("已检查标题。"));
   assert.ok(summaries[0].text.length <= 4096);
   assert.doesNotMatch(JSON.stringify(conversation), /sk-synthetic|private-source|hidden-synthetic|raw-synthetic/);

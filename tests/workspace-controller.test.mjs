@@ -2906,13 +2906,15 @@ test("Agent narration blocks, clock and bytes notify only the run facet; phase, 
   h.controller.shell.subscribe(() => { shellUpdates += 1; });
   h.controller.runs.subscribe(() => { runUpdates += 1; });
   for (let index = 1; index <= 40; index += 1) {
-    h.runSession.publishHandoff({ ...handoff, visibleTextUpdates: [{ id: "message", sequence: index, text: `message ${index}` }], receivedBytes: index, lastActivityAt: String(index), updatedAt: String(index) });
+    h.runSession.publishHandoff({ ...handoff, visibleTextUpdates: [{ id: "message", sequence: index, text: `message ${index}` }], receivedBytes: index, lastActivityAt: String(index), updatedAt: String(index), publicActivities: [{ id: `activity:${index}`, kind: "file-read", sequence: index, boundary: 0 }] });
   }
   assert.equal(runUpdates, 40);
   assert.equal(shellUpdates, 0);
   assert.equal(h.controller.shell.getSnapshot(), initial);
   assert.equal("visibleTextUpdates" in initial.runSession.activeHandoff, false);
   assert.equal("receivedBytes" in initial.runSession.activeHandoff, false);
+  assert.equal("publicActivities" in initial.runSession.activeHandoff, false);
+  assert.equal(h.controller.runs.getSnapshot().session.activeHandoff.publicActivities[0].sequence, 40);
   assert.deepEqual(h.controller.runs.getSnapshot().session.activeHandoff.visibleTextUpdates, [{
     id: "message",
     sequence: 40,
