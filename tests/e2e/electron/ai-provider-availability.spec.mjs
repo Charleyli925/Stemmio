@@ -1280,6 +1280,7 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
     const qoderSettingsCard = await openQoderAvailability(launched.page);
     await expect(qoderSettingsCard.getByText("已连接", { exact: true }))
       .toBeVisible({ timeout: 60_000 });
+    expect(existsSync(pidFile), "Settings diagnosis must not publish the task PID").toBe(false);
     await closeQoderAvailability(launched.page);
     await chooseModifyIntent(launched.page);
     await launched.page.getByRole("button", { name: "交给 Qoder 修改" }).click();
@@ -1289,6 +1290,8 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
     await expect.poll(() => existsSync(pidFile)).toBe(true);
     const pid = Number(readFileSync(pidFile, "utf8"));
     expect(Number.isSafeInteger(pid)).toBe(true);
+    expect(pid).toBeGreaterThan(0);
+    expect(() => process.kill(pid, 0), "the task Agent must be alive before stop").not.toThrow();
     await launched.page.waitForTimeout(750);
     const falseFailureToast = launched.page.locator(".toast.show").filter({
       hasText: "Qoder CLI 没有完成本轮",

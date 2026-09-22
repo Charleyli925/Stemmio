@@ -29,9 +29,6 @@ if (!process.argv.includes("--acp")) {
 }
 
 const pidFileArgument = process.argv.find((argument) => argument.startsWith("--pid-file="));
-if (pidFileArgument) {
-  writeFileSync(pidFileArgument.slice("--pid-file=".length), `${process.pid}\n`, "utf8");
-}
 const hang = process.argv.includes("--hang");
 const runtimeFailure = process.argv.includes("--runtime-failure");
 const visibleText = process.argv.includes("--visible-text");
@@ -80,6 +77,11 @@ const app = acp.agent({ name: "stemmio-e2e-qoder" })
     return { sessionId };
   })
   .onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
+    // Settings and preflight also start ACP processes. Publish only the PID
+    // that actually receives this task, so stop/crash tests observe its owner.
+    if (pidFileArgument) {
+      writeFileSync(pidFileArgument.slice("--pid-file=".length), `${process.pid}\n`, "utf8");
+    }
     if (hang) return new Promise(() => {});
     if (runtimeFailure) {
       throw new Error("Synthetic ACP runtime connection interrupted.");
