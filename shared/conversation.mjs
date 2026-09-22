@@ -63,6 +63,7 @@ const MESSAGE_KINDS = new Set([
   "context-boundary",
   "permission-boundary",
   "result-summary",
+  "process-summary",
 ]);
 // draft, queued and streaming are in-memory only. Writing one would break the
 // guarantee that every stored message is terminal.

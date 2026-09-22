@@ -137,7 +137,10 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await draftCdp.detach();
     await expect(narration).not.toContainText("fixture-hidden");
     await expect(narration).not.toContainText("<!DOCTYPE");
-    await expect(sidebar.getByTestId("ai-turn-process").first().locator("li").first()).toBeVisible();
+    const process = sidebar.getByTestId("ai-turn-process").first();
+    await expect(process.locator("summary")).toHaveCount(1);
+    await process.locator("summary").click();
+    await expect(process.locator("li").first()).toBeVisible();
     await expect(sidebar.getByTestId("ai-conversation-run-summary")).toHaveCount(0);
     await expect(sidebar.getByText("Thinking", { exact: true })).toHaveCount(0);
     const separator = await launched.page.evaluate(() => {

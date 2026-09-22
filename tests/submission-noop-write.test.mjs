@@ -116,7 +116,7 @@ for (const fault of [
     const record = await readConversation(f.context, f.receipt.conversationId);
     assert.equal(Boolean(stored.eventsTruncated), capped);
     assert.equal(record.messages.filter((message) => capped
-      ? message.messageId.endsWith("_truncated") : message.kind === "result-summary").length, 1);
+      ? message.messageId.endsWith("_truncated") : message.kind === "process-summary").length, 1);
     const index = await readConversationIndex(f.context);
     const summary = index.documents[0].conversations.find((item) => item.conversationId === record.conversationId);
     assert.equal(summary.messageCount, record.messages.length);

@@ -13,10 +13,13 @@ import {
   existsSync,
   expandSettingsAgent,
   launchStemmio,
+  loadedDiskFrame,
   managedProjectRoots,
   mkdirSync,
   openAgentSettingsPage,
+  openRecentProject,
   openQoderAvailability,
+  requestDirectoryCount,
   stemmioHttpAgentEnv,
   path,
   productRoot,
@@ -104,12 +107,14 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       "正在读取冻结任务。正在写入 Candidate。正在等待校验。",
       { timeout: 60_000 },
     );
+    const narrationToggle = narration.getByTestId("ai-conversation-narration-toggle");
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "false");
+    await narrationToggle.click();
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "true");
     await expect(narration.getByTestId("ai-conversation-narration").locator("p"))
       .toHaveCount(3);
     await expect(launched.page.getByTestId("ai-conversation-thinking")).toHaveCount(0);
-    await expect.poll(() => launched.page.getByTestId("ai-conversation-stream").evaluate(
-      (stream) => Math.round(stream.scrollHeight - stream.clientHeight - stream.scrollTop),
-    )).toBeLessThanOrEqual(1);
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "true");
     await launched.page.screenshot({
       path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "qoder-processing-thinking.png"),
       fullPage: false,
@@ -123,22 +128,24 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await expect(launched.page.getByTestId("ai-conversation-action-bar"))
       .toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
     await expect(launched.page.getByTestId("ai-conversation-thinking")).toHaveCount(0);
-    await expect.poll(() => launched.page.getByTestId("ai-conversation-stream").evaluate(
-      (stream) => Math.round(stream.scrollHeight - stream.clientHeight - stream.scrollTop),
-    )).toBeLessThanOrEqual(1);
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "true");
     const process = launched.page.locator('[data-testid="ai-turn-process"][data-actor="agent"]')
       .filter({ hasText: "正在读取本轮资料" }).first();
     await expect(process).toBeVisible();
-    await expect(process.locator("summary")).toHaveCount(0);
+    await expect(process.locator("summary")).toHaveCount(1);
+    await process.locator("summary").click();
     await expect(process).toContainText("Qoder");
-    await expect(launched.page.getByTestId("ai-conversation-message").filter({ hasText: "正在读取冻结任务。正在写入 Candidate。正在等待校验。" })).toHaveCount(1);
+    await expect(launched.page.getByTestId("ai-conversation-message").filter({ hasText: "正在读取冻结任务。正在写入 Candidate。正在等待校验。" })).toHaveCount(0);
     await expect(process.locator("li").first()).toBeVisible();
     const processTime = process.locator("time").first();
+    await expect(process.locator("summary")).toBeFocused();
+    await expect(processTime).toHaveCSS("opacity", "1");
+    await launched.page.getByRole("textbox", { name: "修改要求草稿" }).focus();
     await launched.page.mouse.move(0, 0);
     await expect(processTime).toHaveCSS("opacity", "0");
     await processTime.hover();
     await expect(processTime).toHaveCSS("opacity", "1");
-    const agentMessage = launched.page.locator('[data-testid="ai-conversation-message"][data-actor="agent"]').last();
+    const agentMessage = narration;
     const copyMetadata = agentMessage.getByRole("button", { name: "复制", exact: true }).locator('..');
     await launched.page.mouse.move(0, 0);
     await expect(copyMetadata).toHaveCSS("opacity", "0");
@@ -236,6 +243,39 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
         createdAt: new Date().toISOString(),
       });
     };
+    syntheticMessages.push({
+      messageId: "message_historical_process", actor: "agent", providerId: "qoder",
+      kind: "process-summary", status: "completed", requestId: "historical_request", attemptId: "historical_attempt",
+      text: Array.from({ length: 45 }, (_, index) => `历史公开过程 ${index}：从展开入口开始阅读。`).join("\n\n"),
+      createdAt: new Date().toISOString(),
+    });
+    const historical = launched.page.getByTestId("ai-conversation-narration-message").filter({ hasText: "历史公开过程 0" });
+    const historicalToggle = historical.getByTestId("ai-conversation-narration-toggle");
+    await expect(historicalToggle).toHaveAttribute("aria-expanded", "false");
+    const readingStream = launched.page.getByTestId("ai-conversation-stream");
+    const readingFeedback = launched.page.getByTestId("ai-conversation-unseen-content");
+    if (await readingFeedback.isVisible()) await readingFeedback.click();
+    else {
+      await readingStream.hover();
+      await launched.page.mouse.wheel(0, 100_000);
+    }
+    await expect.poll(() => readingStream.evaluate((element) => (
+      element.scrollHeight - element.clientHeight - element.scrollTop
+    ))).toBeLessThanOrEqual(2);
+    await expect(readingFeedback).toHaveCount(0);
+    const triggerTop = (await historicalToggle.boundingBox()).y;
+    await historicalToggle.click();
+    await expect(historicalToggle).toHaveAttribute("aria-expanded", "true");
+    expect(await historical.evaluate((element) => element.clientHeight)).toBeGreaterThan(2 * await readingStream.evaluate((element) => element.clientHeight));
+    await expect.poll(async () => Math.abs((await historicalToggle.boundingBox()).y - triggerTop)).toBeLessThanOrEqual(2);
+    await expect(readingFeedback).toHaveText("回到最新");
+    syntheticMessages.push({ messageId: "message_after_historical_expansion", actor: "stemmio", kind: "text", status: "completed",
+      text: "新增的合成公开事实", createdAt: new Date().toISOString() });
+    await expect(readingStream).toContainText("新增的合成公开事实");
+    await expect(readingFeedback).toHaveText("有新进展");
+    await expect.poll(async () => Math.abs((await historicalToggle.boundingBox()).y - triggerTop)).toBeLessThanOrEqual(2);
+    await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "history-disclosure-keeps-trigger.png"), animations: "disabled" });
+    await readingFeedback.click();
     await appendSyntheticHistory(20, "long_history_fixture");
     const stream = launched.page.getByTestId("ai-conversation-stream");
     await expect(stream).toContainText("长历史验收 long_history_fixture 19");
@@ -298,6 +338,255 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     }
   }
 });
+
+async function sidebarReadingSnapshot(page) {
+  return page.getByTestId("ai-conversation-stream").evaluate((stream) => {
+    const streamRect = stream.getBoundingClientRect();
+    const anchors = [...stream.querySelectorAll("[data-reading-anchor-id]")];
+    const anchor = anchors.find((element) => element.getBoundingClientRect().bottom > streamRect.top + 1)
+      || anchors.at(-1);
+    return {
+      scrollTop: stream.scrollTop,
+      scrollHeight: stream.scrollHeight,
+      clientHeight: stream.clientHeight,
+      anchorId: anchor?.getAttribute("data-reading-anchor-id") || null,
+      anchorOffset: anchor ? anchor.getBoundingClientRect().top - streamRect.top : null,
+      frameGeneration: document.querySelector(
+        '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
+      )?.getAttribute("data-frame-generation") || null,
+    };
+  });
+}
+
+for (const expandedAtSeal of [false, true]) {
+test(`Qoder long public narration preserves reading state across updates and A-B-A tabs (sealed ${expandedAtSeal ? "expanded" : "collapsed"})`, {
+  tag: ["@smoke-provider"],
+}, async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  const fixtureA = createSourceFixture("qoder-reading-a.html");
+  const fixtureB = createSourceFixture("qoder-reading-b.html", (source) => source.replace(
+    /<title>.*?<\/title>/iu,
+    "<title>Qoder 阅读 B</title>",
+  ));
+  const qoderCommand = createQoderAcpE2ECommand(fixtureA.sourceDirectory, {
+    visibleText: true,
+    visibleTextLong: true,
+    visibleTextGateMs: 300,
+  });
+  const launched = await launchStemmio({
+    activeSourcePath: fixtureA.sourcePath,
+    recentSourcePaths: [fixtureA.sourcePath, fixtureB.sourcePath],
+    injectedEnv: {
+      STEMMIO_QODER_ACP_ALLOW_TEST_COMMAND: "1",
+      STEMMIO_QODER_ACP_COMMAND: qoderCommand,
+    },
+  });
+  let releaseSealedRead;
+  const sealedReadGate = new Promise((resolve) => { releaseSealedRead = resolve; });
+  await launched.page.route(/\/conversation(?:\?|$)/u, async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (payload.conversation?.messages.some((message) => message.kind === "process-summary")) {
+      await sealedReadGate;
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  try {
+    const workingCopyPath = await addComment(
+      launched.page,
+      fixtureA.sourcePath,
+      "请保留页面结构，只验证长公开说明的阅读稳定性。",
+    );
+    const originalSource = readFileSync(fixtureA.sourcePath);
+    const workingBeforeReading = readFileSync(workingCopyPath);
+    await launched.page.getByRole("button", { name: /AI 助手/u }).click();
+    const qoderSettingsCard = await openQoderAvailability(launched.page);
+    await expect(qoderSettingsCard.getByText("已连接", { exact: true }))
+      .toBeVisible({ timeout: 60_000 });
+    await closeQoderAvailability(launched.page);
+    const sidebar = await chooseModifyIntent(launched.page);
+    const requestCountBefore = requestDirectoryCount(launched.workspace);
+    await sidebar.getByRole("button", { name: /交给 Qoder 修改/u }).click();
+
+    const narration = launched.page.getByTestId("ai-conversation-narration-message");
+    await expect(narration).toBeVisible({ timeout: 60_000 });
+    const toggle = narration.getByTestId("ai-conversation-narration-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.focus();
+    await toggle.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await launched.page.emulateMedia({ reducedMotion: "reduce" });
+    await expect.poll(() => launched.page.evaluate(() => (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ))).toBe(true);
+    await expect(narration).toContainText("长公开说明 1/18", { timeout: 60_000 });
+    const stream = launched.page.getByTestId("ai-conversation-stream");
+    await expect.poll(async () => narration.getByTestId("ai-conversation-narration")
+      .locator("p").count(), { timeout: 60_000 }).toBeGreaterThan(8);
+    await expect.poll(() => stream.evaluate((element) => element.scrollHeight - element.clientHeight), {
+      timeout: 60_000,
+    }).toBeGreaterThan(180);
+
+    await narration.evaluate((element) => {
+      window.__stemmioLongNarrationArticle = element;
+    });
+    const beforeScroll = await stream.evaluate((element) => {
+      element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      const top = Math.min(80, Math.max(0, element.scrollHeight - element.clientHeight - 20));
+      element.scrollTop = top;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      return { top, scrollHeight: element.scrollHeight };
+    });
+    await expect(launched.page.getByTestId("ai-conversation-unseen-content")).toBeVisible();
+    await expect.poll(() => narration.textContent()).toContain("长公开说明 12/18");
+    await expect(narration).toHaveCount(1);
+    expect(await narration.evaluate((element) => element === window.__stemmioLongNarrationArticle)).toBe(true);
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(beforeScroll.top + 2);
+
+    const selectedText = await narration.getByTestId("ai-conversation-narration")
+      .locator("p").first().evaluate((element) => {
+        const text = element.firstChild;
+        if (!text) return "";
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, Math.min(12, text.textContent.length));
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return selection?.toString() || "";
+      });
+    expect(selectedText.length).toBeGreaterThan(0);
+    await expect.poll(() => narration.textContent()).toContain("最终公开段落：结果仍需 Stemmio 校验。");
+    expect(await launched.page.evaluate(() => window.getSelection()?.toString() || ""))
+      .toBe(selectedText);
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(beforeScroll.top + 2);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(narration.getByTestId("ai-conversation-narration").locator("p").first())
+      .toBeHidden();
+    await toggle.focus();
+    await toggle.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await launched.page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+    if (!expandedAtSeal) await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", String(expandedAtSeal));
+    const sealAnchor = await sidebarReadingSnapshot(launched.page);
+    const sealProcessTop = await toggle.evaluate((element) => element.getBoundingClientRect().top);
+    releaseSealedRead();
+    await expect(narration).toHaveAttribute("data-process-state", "sealed", { timeout: 60_000 });
+    await expect(launched.page.getByTestId("ai-conversation-action-bar"))
+      .toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
+    await expect(toggle).toHaveAttribute("aria-expanded", String(expandedAtSeal));
+    await expect(launched.page.locator('[data-testid="ai-conversation-message"][data-actor="agent"]').filter({ hasText: "长公开说明" })).toHaveCount(0);
+    expect(await narration.evaluate((element) => element === window.__stemmioLongNarrationArticle)).toBe(true);
+    await testInfo.attach("seal-reading-anchors.json", {
+      body: JSON.stringify({ before: sealAnchor, after: await sidebarReadingSnapshot(launched.page), processBefore: sealProcessTop, processAfter: await toggle.evaluate((element) => element.getBoundingClientRect().top) }, null, 2),
+      contentType: "application/json",
+    });
+    // Disclosure intent anchors the control the user clicked, even when
+    // delayed earlier facts enter above it during Conversation reconciliation.
+    await expect.poll(async () => toggle.evaluate((element, beforeTop) => {
+      const stream = element.closest('[data-testid="ai-conversation-stream"]');
+      const delta = element.getBoundingClientRect().top - beforeTop;
+      // A short collapsed thread may not have enough scroll range; preserve
+      // the nearest reachable position instead of inventing blank content.
+      const remainingDown = stream.scrollHeight - stream.clientHeight - stream.scrollTop;
+      return Math.abs(delta > 0 ? Math.min(delta, remainingDown) : Math.max(delta, -stream.scrollTop));
+    }, sealProcessTop)).toBeLessThanOrEqual(2);
+    // Sealing and the following execution-ended fact are separate writes.
+    // Observe the latter arriving before asserting its stored ordering.
+    // Candidate readiness may precede sealing and keeps its stored sequence.
+    await expect.poll(() => narration.evaluate((element) => {
+      const later = [...document.querySelectorAll('[data-testid="ai-turn-process"]')].find((node) => node.textContent.includes("本轮执行已结束。"));
+      return Boolean(later && (element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING));
+    })).toBe(true);
+    if (!expandedAtSeal) await toggle.click();
+    await expect(toggle).toContainText("最终公开段落：结果仍需 Stemmio 校验。");
+    await expect(toggle.locator("span").last()).toHaveCSS("text-overflow", "ellipsis");
+    await expect(narration).toHaveCount(1);
+    await expect(launched.page.getByTestId("ai-conversation-action-bar")).toBeVisible();
+    // Pure reading in an already-ready preview must preserve its physical
+    // document. Switching A/B is a separate navigation boundary and may assign
+    // another frame generation; it is covered by reading-anchor checks below.
+    const previewIframe = launched.page.locator('iframe[title="HTML 交互预览"]').filter({ visible: true });
+    const previewHandle = await previewIframe.elementHandle();
+    const previewFrame = await previewHandle.contentFrame();
+    await previewFrame.evaluate(() => { window.__agentReadingDocument = document; });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await launched.page.screenshot({ path: testInfo.outputPath("collapsed-process-ready.png"), animations: "disabled" });
+    await toggle.click();
+    await narration.getByRole("button", { name: "复制", exact: true }).click();
+    expect(await previewFrame.evaluate(() => document === window.__agentReadingDocument)).toBe(true);
+    expect(await previewIframe.evaluate((element, before) => element === before, previewHandle)).toBe(true);
+    await launched.page.screenshot({ path: testInfo.outputPath("expanded-process-ready.png"), animations: "disabled" });
+    // Copy can scroll its button into view. Explicitly resume reading older
+    // content before testing the tab-scoped reading anchor.
+    await stream.evaluate((element) => {
+      element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      element.scrollTop = 80;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect(launched.page.getByTestId("ai-conversation-unseen-content")).toBeVisible();
+    const beforeTabs = await sidebarReadingSnapshot(launched.page);
+    expect(beforeTabs.anchorId).toBeTruthy();
+    const requestCountAtReady = requestDirectoryCount(launched.workspace);
+    expect(requestCountAtReady).toBe(requestCountBefore + 1);
+
+    await openRecentProject(launched.page, fixtureB.sourcePath);
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "qoder-reading-a" });
+    const tabB = tabs.filter({ hasText: "qoder-reading-b" });
+    await expect(tabB).toHaveAttribute("aria-selected", "true");
+    await expect(tabs).toHaveCount(2);
+    const workingCopyBPath = await launched.page.evaluate(
+      async () => (await window.stemmioProjects?.getActiveProject())?.sourcePath || "",
+    );
+    await loadedDiskFrame(launched.page, workingCopyBPath);
+    await tabA.click();
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await loadedDiskFrame(launched.page, workingCopyPath, { editable: false });
+    if (!await launched.page.getByTestId("ai-conversation-sidebar").isVisible()) {
+      await launched.page.getByRole("button", { name: /AI 助手/u }).click();
+    }
+    const restoredSidebar = launched.page.getByTestId("ai-conversation-sidebar");
+    await expect(restoredSidebar.getByTestId("ai-conversation-action-bar"))
+      .toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]').locator('[data-native-case="list-item"]'))
+      .toContainText("列表项中的文字保持项目符号和缩进。", { timeout: 60_000 });
+    const restoredNarration = restoredSidebar.getByTestId("ai-conversation-narration-message");
+    const restoredToggle = restoredNarration.getByTestId("ai-conversation-narration-toggle");
+    await expect(restoredToggle).toHaveAttribute("aria-expanded", "true");
+    await testInfo.attach("tab-reading-anchors.json", {
+      body: JSON.stringify({ before: beforeTabs, after: await sidebarReadingSnapshot(launched.page) }, null, 2),
+      contentType: "application/json",
+    });
+    await expect.poll(async () => {
+      const current = await sidebarReadingSnapshot(launched.page);
+      return current.anchorId === beforeTabs.anchorId
+        && Math.abs(current.anchorOffset - beforeTabs.anchorOffset) <= 2;
+    }, { timeout: 30_000 }).toBe(true);
+    expect(requestDirectoryCount(launched.workspace)).toBe(requestCountAtReady);
+    expect(readFileSync(fixtureA.sourcePath).equals(originalSource)).toBe(true);
+    expect(readFileSync(workingCopyPath).equals(workingBeforeReading)).toBe(true);
+    await launched.page.screenshot({ path: testInfo.outputPath("restored-process-reading.png"), animations: "disabled" });
+  } catch (cause) {
+    await launched.page.screenshot({ path: testInfo.outputPath("reading-failure.png"), animations: "disabled" }).catch(() => {});
+    throw cause;
+  } finally {
+    releaseSealedRead();
+    await launched.page.unrouteAll({ behavior: "wait" });
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixtureA.sourceDirectory);
+    removeSourceFixture(fixtureB.sourceDirectory);
+  }
+});
+
+}
 
 test("Codex ACP shares the public execution stream and retains its frozen identity", {
   tag: ["@smoke-provider"],
@@ -365,6 +654,10 @@ test("Codex ACP shares the public execution stream and retains its frozen identi
       "先读取冻结任务。再写入 Candidate。最后等待校验。",
       { timeout: 60_000 },
     );
+    const narrationToggle = narration.getByTestId("ai-conversation-narration-toggle");
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "false");
+    await narrationToggle.click();
+    await expect(narrationToggle).toHaveAttribute("aria-expanded", "true");
     await expect(narration.getByTestId("ai-conversation-narration").locator("p"))
       .toHaveCount(3);
     await expect(launched.page.getByTestId("ai-conversation-thinking")).toHaveCount(0);

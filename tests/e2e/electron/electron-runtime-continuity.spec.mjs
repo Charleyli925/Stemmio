@@ -203,12 +203,47 @@ test("frozen element entry rejects wrong text bindings and edits heading paragra
           expect(readFileSync(working)).toEqual(before);
         }
         const operationRows = rows();
+        // Observe native key delivery and selection changes without repairing
+        // focus or synthesizing a caret. Retain only this synthetic target.
+        const focusTrace = await frame.evaluateHandle((targetId) => {
+          const host = document.querySelector(`[data-stemmio-id="${targetId}"]`);
+          const events = [];
+          const nodePath = (node) => {
+            if (!node || !host.contains(node)) return null;
+            const path = [];
+            while (node !== host) {
+              path.unshift(Array.prototype.indexOf.call(node.parentNode.childNodes, node));
+              node = node.parentNode;
+            }
+            return path;
+          };
+          const observe = (event) => {
+            // A microtask sees whether any product handler canceled the key.
+            queueMicrotask(() => {
+              const selection = document.getSelection();
+              events.push({ type: event.type, key: event.key, metaKey: event.metaKey,
+                defaultPrevented: event.defaultPrevented, time: performance.now(),
+                documentFocused: document.hasFocus(), activeId: document.activeElement?.getAttribute("data-stemmio-id"),
+                anchor: nodePath(selection?.anchorNode), anchorOffset: selection?.anchorOffset,
+                focus: nodePath(selection?.focusNode), focusOffset: selection?.focusOffset,
+                selectedText: selection?.toString(), collapsed: selection?.isCollapsed });
+              if (events.length > 120) events.shift();
+            });
+          };
+          const types = ["keydown", "keyup", "selectionchange", "focusin", "focusout"];
+          types.forEach(type => document.addEventListener(type, observe, true));
+          return { events, stop: () => types.forEach(type => document.removeEventListener(type, observe, true)) };
+        }, id);
         let result;
         try { result = await executeFrozenText({ ...input, target, rows: operationRows }); }
         catch (error) {
           await test.info().attach("frozen-operation-failure", { contentType: "application/json",
-            body: JSON.stringify({ name, rows: operationRows, code: error.code, details: error.details }) });
+            body: JSON.stringify({ name, rows: operationRows, code: error.code, details: error.details,
+              events: await focusTrace.evaluate(trace => trace.events) }) });
           throw error;
+        } finally {
+          await focusTrace.evaluate(trace => trace.stop());
+          await focusTrace.dispose();
         }
         expect(result.state).toBe("PASS");
       }

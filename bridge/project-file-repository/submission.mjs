@@ -149,7 +149,7 @@ export async function projectSubmissionReceipt(loaded, receipt) {
     for (const input of receipt.events || []) {
       const event = submissionExecutionFact(input);
       const messageId = `message_${event.eventId}`;
-      const messageKind = event.kind === "public-summary" ? "result-summary"
+      const messageKind = event.kind === "public-summary" ? "process-summary"
         : ["promoted", "rejected"].includes(event.kind) ? "decision-outcome"
         : ["candidate-ready", "no-change", "cancelled", "error", "failed", "interrupted", "stop-confirmed"].includes(event.kind) ? "result-summary" : "progress";
       const agentOwned = ["public-summary", "reading-task", "writing-candidate", "finalizing",

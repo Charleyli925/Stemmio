@@ -1,5 +1,28 @@
 # Design QA
 
+## 2026-09-22 — AI 公开过程折叠与阅读稳定性
+
+- Truth: 公开过程默认折叠为最新非空公开段落的一行预览；typed `result-summary` 与 Stemmio
+  校验、失败、采用事实保持可见。展开、历史过程和阅读锚点只属于打开标签的临时展示状态。
+- Evidence: `tests/ai-conversation-sidebar.test.mjs` 47 项纯函数检查通过；新增 Electron 场景
+  `Qoder long public narration preserves reading state across updates and A-B-A tabs` 使用 18 段合成公开增量，
+  验证同一消息 DOM、上滚/选区、键盘折叠、reduced-motion、结果就绪保留展开和固定行动区、
+  切回文档后恢复同一消息锚点。已就绪预览中的展开/收起/复制保持物理 iframe/document 身份；
+  Request 只由提交新增一次，阅读前后原文件与当前稿字节相同。
+- Visual QA: 检查 `output/playwright/agent-reading-seventh/results/` 的折叠、展开与回访截图；
+  预览已载入真实合成内容，决策区保持独立，单行预览无横向跑动。
+- First failures retained: 初次场景的 recent 列表漏了当前文件；后续实测发现 grid 覆盖 hidden 的真实缺陷，
+  已修复。其余夹具修正区分只读等待、合法导航与纯阅读的 iframe 身份，并等待稳定回访页面。
+  完整门禁还发现历史展开后焦点仍在 summary，旧测试错误地仅移开鼠标就要求时间戳隐藏；
+  已分开检查 focus-within 可见与焦点移出后隐藏。历次结果保留于本地 `output/agent-interaction/`，不将失败尝试改写成通过。
+- Hosted CI: 首轮 #599 的 Linux 通过，Electron 75/77；两个既有 history 测试把交互前累计 Runtime 执行数
+  写死为 1。改为同文件 reorder oracle 已采用的 settled frame 基线：history cancel 每次严格 +1，
+  原位 undo/redo 次数严格不变，并继续核对 document、generation 与无 Candidate；初始次数写入测试注解。
+  原测试精确提交本地 2/2 通过，修正后定向 2/2 通过。隐藏/可见窗口探针各观察到一个 Candidate；
+  hosted 初始替换的具体原因仍未复现，不将其归为环境或确定产品缺陷。独立复核确认操作约束未放宽。
+- Review: 只读源码审查未发现 P0/P1；历史公开文本保留真实截断提示。显式新 Request 带活动选区时仍可能
+  保留原阅读位置，此低风险细节不扩展本次范围。完整任务门禁由 `task:finish` 记录；未做发布或打包。
+
 ## 2026-09-12 — 一份当前稿与不可变历史
 
 - Truth: 用户确认的当前稿模型及 `docs/VERSION_AND_PROJECT_FILES_PRD.md`、ADR 0073。
