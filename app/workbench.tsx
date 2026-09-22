@@ -1150,7 +1150,16 @@ export default function Workbench() {
               Boolean(rebuildFence),
             );
           },
-          freeze: (reason) => fenceAndFreezeCurrentCanvasRef.current(reason),
+          freeze: (reason) => {
+            const editor = editorRef.current;
+            const frozen = fenceAndFreezeCurrentCanvasRef.current(reason);
+            return {
+              ...frozen,
+              release: frozen.ok && frozen.freezeId !== undefined
+                ? () => { editor?.unlockNow(frozen.freezeId); }
+                : undefined,
+            };
+          },
           unlock: () => editorRef.current?.unlockNow?.(),
           captureActiveFrameFence: () => Object.freeze({
               previousFrameGeneration: editorRef.current?.getRenderedFrameGeneration() ?? null,

@@ -160,6 +160,8 @@ export type HtmlCanvasEditRuntimeSettlement = Readonly<{
 
 export type HtmlCanvasFreezeSnapshot = {
   ok: boolean;
+  /** Identifies this successful imperative freeze; a newer freeze supersedes it. */
+  freezeId?: number;
   html: string;
   /** Hash of the latest complete source returned in html. */
   workingSourceSha256: string;
@@ -296,7 +298,7 @@ export type HtmlCanvasEditorHandle = {
   /** Captures pending text and synchronously blocks every mutation entrypoint. */
   freezeNow: () => HtmlCanvasFreezeSnapshot;
   /** Releases an imperative freeze when the controlled mode is editing. */
-  unlockNow: () => boolean;
+  unlockNow: (freezeId?: number) => boolean;
   /** Keeps a failed commit explanation beside the canvas instead of escalating it globally. */
   showCommitBlocked: (reason?: string) => void;
   /** True while source-uncommitted native text or marked text still exists. */

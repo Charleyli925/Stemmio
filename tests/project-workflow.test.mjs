@@ -6049,6 +6049,7 @@ test("same-path managed publication advances the entire OpenTarget without repla
   const h = createHarness({ openTarget: target });
   const epoch = h.projectSession.epoch;
   const nextTarget = { ...target, versionId: "ver_0002", sourceSha256: sha256(A_HTML) };
+  h.documentSession.recordPersistenceFailure({ conflict: true, error: "old draft differs from committed bytes" });
   let publishedContext;
   const result = h.workflow.commitManagedSourceTransition({
     prepared: { updatesCurrentProject: true, previousSourcePath: OLD_PATH, nextSourcePath: OLD_PATH,
@@ -6063,4 +6064,6 @@ test("same-path managed publication advances the entire OpenTarget without repla
   assert.deepEqual(publishedContext, result);
   assert.equal(h.documentSession.html, A_HTML);
   assert.equal(h.documentSession.persistedSourceSha256, result.sourceSha256);
+  assert.equal(h.documentSession.persistState, "idle");
+  assert.equal(h.documentSession.snapshot.persistError, "");
 });

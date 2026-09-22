@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { agentCredentialRecoveryAction } from "../app/application/agent-credential-operation.js";
+import { credentialErrorField } from "../shared/agent-access-operation.mjs";
 import { settingsCredentialRemoveAction } from "../app/components/settings-agent-action-gate.js";
 
 async function source(relativePath) {
@@ -39,7 +41,6 @@ test("the generic Agent card owns provider presentation", async () => {
   assert.match(card, /验证成功后才会替换当前连接/u);
   assert.match(card, /persistFailed \|\| outcome\?\.reason/u);
   assert.match(card, /已连接，但新的 API Key 未保存/u);
-  assert.match(card, /credentialPersist\?\.operationKind !== "clear"/u);
   assert.match(card, /移除状态未确认/u);
   assert.match(card, /重试保存/u);
   assert.match(card, /kind: "api-key", label: "连接"/u);
@@ -94,8 +95,6 @@ test("About is product information while Settings owns Agent checks and update c
   assert.match(settings, /settings-preference-error/u);
   assert.match(settings, /设置暂未保存/u);
   assert.match(settings, /onRetryWorkspacePreferences/u);
-  assert.match(settings, /initialApiKeyOpen=\{selectedCard\.credentialPersist\?\.status === "failed"/u);
-  assert.match(settings, /无法读取已保存的连接凭证/u);
   assert.doesNotMatch(settings, /setConfirmAction\(null\);\s+if \(action\.kind === "remove-key"\)/u);
 });
 
@@ -146,4 +145,32 @@ test("the conversation sidebar names stemmio from the connection summary", async
   assert.doesNotMatch(sidebar, /DeepSeek ·/u);
   assert.match(sidebar, /recovery\.lastOutcome/u);
   assert.doesNotMatch(sidebar, /ai-conversation-service-choices|ai-conversation-model-choices/u);
+});
+
+test("credential recovery is unchanged by translated or unrelated reason text", () => {
+  for (const status of ["failed", "unreadable", "unavailable", "rejected", "unknown"]) {
+    for (const reason of ["无法读取已保存的连接凭证", "连接信息暂时不可用", "完全不同的说明", ""]) {
+      const facts = { status, reason, code: "AGENT_CREDENTIAL_STATUS_UNAVAILABLE", operationId: "test-operation" };
+      assert.equal(agentCredentialRecoveryAction({ ...facts, operationKind: "startup" }), "reconnect");
+      assert.equal(agentCredentialRecoveryAction({ ...facts, operationKind: "persist" }), "retry-persist");
+      assert.equal(agentCredentialRecoveryAction({ ...facts, operationKind: "clear" }), null);
+    }
+  }
+  for (const status of ["saved", "missing", "pending", "skipped", "superseded"]) {
+    assert.equal(agentCredentialRecoveryAction({ status, operationKind: "startup" }), null);
+    assert.equal(agentCredentialRecoveryAction({ status, operationKind: "persist" }), null);
+  }
+});
+
+test("connection failures use the shared field mapping and unknown errors stay on the form", () => {
+  for (const [code, field] of [
+    ["AGENT_AUTH_REQUIRED", "apiKey"],
+    ["AGENT_SESSION_CREDENTIAL_INVALID", "apiKey"],
+    ["AGENT_SELECTION_UNSUPPORTED", "modelId"],
+    ["AGENT_MODEL_ACCESS_DENIED", "modelId"],
+    ["AGENT_ENDPOINT_REGION_MISMATCH", "baseUrl"],
+    ["AGENT_NETWORK_UNAVAILABLE", "form"],
+    ["AGENT_PROVIDER_UNAVAILABLE", "form"],
+    ["UNKNOWN_CODE", "form"],
+  ]) assert.equal(credentialErrorField(code) || "form", field);
 });

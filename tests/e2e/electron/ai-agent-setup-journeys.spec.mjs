@@ -388,3 +388,87 @@ test("known incompatible Codex offers other AI without reinstalling the same com
     removeSourceFixture(fixture.sourceDirectory);
   }
 });
+
+test("credential recovery actions follow startup or persist facts despite misleading wording", async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("credential-recovery.html");
+  const httpAgent = await startStemmioHttpAgent();
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath, injectedEnv: stemmioHttpAgentEnv(httpAgent.baseUrl) });
+  try {
+    await loadedDiskFrame(launched.page, fixture.sourcePath);
+    const reloadRenderer = async () => {
+      // Deferred Bridge readiness is a one-shot startup IPC; carry the same
+      // isolated connection into the intentionally re-created test renderer.
+      const connection = await launched.page.evaluate(() => window.stemmioRuntime.getBridgeConnection());
+      await launched.page.reload();
+      await launched.electronApp.evaluate(({ BrowserWindow }, connection) => {
+        BrowserWindow.getAllWindows()[0].webContents.send("stemmio-app:bridge-ready", connection);
+      }, connection);
+      await loadedDiskFrame(launched.page, fixture.sourcePath);
+    };
+    for (const reason of ["凭证暂时不可读取，请重新连接。", "已连接，但新的 API Key 未保存。"]) {
+      await launched.electronApp.evaluate(({ ipcMain }, reason) => {
+        ipcMain.removeHandler("html-agent-access:credential-status");
+        ipcMain.handle("html-agent-access:credential-status", () => ({
+          protocol: "stemmio-project-result", version: 1, ok: true, value: {
+          available: true, remembered: false, providerId: "stemmio", status: "unreadable",
+          unreadable: true, reconnectRequired: true, code: "AGENT_CREDENTIAL_RESTORE_FAILED", reason,
+          },
+        }));
+      }, reason);
+      await reloadRenderer();
+      const settings = await openAgentSettingsPage(launched.page);
+      await expandSettingsAgent(settings, "stemmio");
+      const card = settings.getByTestId("settings-agent-row-stemmio");
+      await expect(card.locator(".qoder-card-error")).toContainText(reason);
+      await expect(card.getByText("DeepSeek · 已连接", { exact: true })).toHaveCount(0);
+      await expect(card.getByRole("textbox", { name: "API Key" })).toBeVisible();
+      await expect(card.getByRole("button", { name: "重试保存", exact: true })).toHaveCount(0);
+      await expect(card.getByRole("button", { name: "重新连接", exact: true })).toBeVisible();
+      await launched.page.getByRole("button", { name: "返回工作台", exact: true }).click();
+      await loadedDiskFrame(launched.page, fixture.sourcePath);
+    }
+    await launched.electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("html-agent-access:credential-status");
+      ipcMain.handle("html-agent-access:credential-status", () => ({
+          protocol: "stemmio-project-result", version: 1, ok: true, value: {
+        available: true, remembered: false, providerId: "stemmio", status: "missing",
+          },
+      }));
+    });
+    await reloadRenderer();
+    const settings = await openAgentSettingsPage(launched.page);
+    await expandSettingsAgent(settings, "stemmio");
+    const card = settings.getByTestId("settings-agent-row-stemmio");
+    for (const reason of ["本机未能保存，本次连接仍有效。", "无法读取已保存的连接凭证。合成保存失败。"]) {
+      await launched.electronApp.evaluate(({ ipcMain }, reason) => {
+        ipcMain.removeHandler("html-agent-access:persist-credential");
+        globalThis.__M1_PERSIST_CALLS__ = [];
+        ipcMain.handle("html-agent-access:persist-credential", (_event, payload) => {
+          globalThis.__M1_PERSIST_CALLS__.push({ operationId: payload.operationId, hasKey: Boolean(payload.apiKey) });
+          return { protocol: "stemmio-project-result", version: 1, ok: true, value: {
+            ok: false, available: false, status: "unavailable", remembered: false,
+            operationId: payload.operationId, code: "AGENT_CREDENTIAL_STORE_UNAVAILABLE", reason } };
+        });
+      }, reason);
+      await card.getByRole("textbox", { name: "API Key" }).fill("sk-e2e-recovery");
+      await card.getByRole("checkbox", { name: "在此 Mac 上记住 API Key" }).check();
+      await card.getByRole("button", { name: "连接", exact: true }).click();
+      await expect(card).toContainText("DeepSeek · 已连接");
+      await expect(card.getByRole("button", { name: "重试保存", exact: true })).toBeEnabled();
+      await expect(card.getByTestId("agent-credential-summary")).not.toContainText("需要重新连接");
+      await card.getByRole("textbox", { name: "API Key" }).fill("");
+      await card.getByRole("button", { name: "重试保存", exact: true }).click();
+      await expect.poll(() => launched.electronApp.evaluate(() => globalThis.__M1_PERSIST_CALLS__.length)).toBe(2);
+      const calls = await launched.electronApp.evaluate(() => globalThis.__M1_PERSIST_CALLS__);
+      expect(calls[0].hasKey && calls[1].hasKey).toBe(true);
+      await expect(card.getByRole("button", { name: "重试保存", exact: true })).toBeEnabled();
+      await expect(card).toContainText("DeepSeek · 已连接");
+    }
+    await launched.page.screenshot({ path: testInfo.outputPath("credential-recovery-persist.png"), animations: "disabled" });
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    await httpAgent.close();
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});

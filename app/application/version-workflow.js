@@ -1578,7 +1578,15 @@ export class VersionWorkflow {
       const [versionPayload, sourcePayload] = await Promise.all([
         this.#bridgeClient.versionFile(committedSourcePath, completion.versionId),
         this.#bridgeClient.source(committedSourcePath),
-      ]);
+      ]).catch((cause) => {
+        if (!activationOperationId) throw cause;
+        // Promotion already committed. Keep its decision alive while reads are
+        // unavailable so reconciliation cannot drain the replaced draft or
+        // start another adoption. Identity and hash rejection stays below.
+        throw Object.assign(new Error("已采用版本的内容暂时无法读取。", { cause }), {
+          projectOutcome: "unknown",
+        });
+      });
       if (!this.#isNavigationCurrent(operation)) return stale(this.#runIdentity(run));
       this.#assertVersionFileIdentity(versionPayload, run, completion.versionId);
       this.#assertSourceIdentity(sourcePayload, run, { allowSourceTransition: true });

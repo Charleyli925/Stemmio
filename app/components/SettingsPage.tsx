@@ -29,6 +29,7 @@ import type {
 import { BoundAgentSetupPanel, type BoundAgentSetupPanelProps } from "./AgentSetupPanel";
 import { agentSetupRecovery, agentSetupOperationLabel } from "../domain/agent-provider-state.js";
 import type { AgentProviderCardData } from "./agent-provider-card-types";
+import { agentCredentialRecoveryAction } from "../application/agent-credential-operation.js";
 import { agentServiceLabel } from "../application/workspace-agent-preference.js";
 import type { ApplicationUpdateResult } from "../workbench/types";
 import type { WorkspacePreferences } from "./desktop-ui-preferences-api";
@@ -465,9 +466,7 @@ function AgentSettings({
             const snapshot = recovery || card.presentation.availability(card.availability);
             const disconnected = card.availability.reason === "disabled"
               || card.availability.status === "unavailable" && card.availability.reason === "disabled";
-            const credentialRestoreFailed = card.selection.providerId === "stemmio"
-              && card.credentialPersist?.status === "failed"
-              && String(card.credentialPersist.reason || "").startsWith("无法读取已保存的连接凭证");
+            const credentialRestoreFailed = agentCredentialRecoveryAction(card.credentialPersist) === "reconnect";
             const removeKeyAction = settingsCredentialRemoveAction({
               card,
               rememberedKey: Boolean(rememberedKey),
@@ -770,8 +769,7 @@ function AgentSettings({
                       onUseOtherProvider={() => showOtherProvider(id)}
                       actionButtonRef={actionButtonRef}
                       hideDisconnectAction
-                      initialApiKeyOpen={selectedCard.credentialPersist?.status === "failed"
-                        && String(selectedCard.credentialPersist.reason || "").startsWith("无法读取已保存的连接凭证")}
+                      initialApiKeyOpen={agentCredentialRecoveryAction(selectedCard.credentialPersist) === "reconnect"}
                       onCopyGuidance={onCopyGuidance}
                       onStartLogin={onStartLogin}
                       onReopenLogin={onReopenLogin}

@@ -72,6 +72,15 @@ export type DocumentWorkflowTransitionAuthority = Readonly<{
   sourceHistoryOperations: SourceHistoryEntry[];
 }>;
 
+export type DocumentCanvasFreezeResult = Readonly<{
+  ok: boolean;
+  reason?: string;
+  html?: string;
+  workingSourceSha256?: string;
+  /** Releases only this freeze on its original Canvas instance. */
+  release?(): void;
+}>;
+
 export type DocumentWorkflowCanvasPort = Readonly<{
   invalidateRenderAcks(): void;
   unlock?(): void;
@@ -84,7 +93,7 @@ export type DocumentWorkflowCanvasPort = Readonly<{
     receipt?: DocumentSourceReceipt | null,
     rebuildFence?: unknown,
   ): Promise<DocumentCanvasRenderObservation>;
-  freeze?(reason: string): Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
+  freeze?(reason: string): Promise<DocumentCanvasFreezeResult> | DocumentCanvasFreezeResult;
   adoptHistorySource?(
     html: string,
     target: unknown,

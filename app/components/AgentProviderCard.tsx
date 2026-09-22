@@ -9,6 +9,8 @@ import type {
   AgentDiagnosticSnapshot,
   AgentProviderGuidanceKind,
 } from "../domain/agent-provider-state.js";
+import { agentCredentialRecoveryAction } from "../application/agent-credential-operation.js";
+import { credentialErrorField } from "../../shared/agent-access-operation.mjs";
 import { agentSetupRecovery } from "../domain/agent-provider-state.js";
 
 type AgentActionOutcome = Readonly<{
@@ -109,21 +111,6 @@ type CardAction = Readonly<{
   copiedLabel: string;
 }>;
 
-function fieldForConnectError(code: string | undefined): ApiKeyField {
-  switch (String(code || "")) {
-    case "AGENT_AUTH_REQUIRED":
-    case "AGENT_SESSION_CREDENTIAL_INVALID":
-      return "apiKey";
-    case "AGENT_SELECTION_UNSUPPORTED":
-    case "AGENT_MODEL_ACCESS_DENIED":
-      return "modelId";
-    case "AGENT_ENDPOINT_REGION_MISMATCH":
-      return "baseUrl";
-    default:
-      return "form";
-  }
-}
-
 function actionsForAvailability(
   availability: AgentProviderAvailabilitySnapshot,
   presentation: AgentProviderCardPresentation,
@@ -201,17 +188,14 @@ export default function AgentProviderCard({
       ? String(selectedModelId || models[0]?.id || "").replace(/^stemmio:/u, "")
       : "",
   );
-  const persistFailed = credentialPersist?.operationKind !== "clear" && [
-    "failed",
-    "unreadable",
-    "unavailable",
-    "rejected",
-    "unknown",
-  ].includes(String(credentialPersist?.status || ""));
+  const credentialRecovery = agentCredentialRecoveryAction(credentialPersist);
+  const persistFailed = credentialRecovery !== null;
+  const credentialRestoreFailed = credentialRecovery === "reconnect";
   const persistReason = persistFailed
-    ? (credentialPersist?.reason || "已连接，但新的 API Key 未保存。")
+    ? (credentialPersist?.reason || (credentialRestoreFailed
+      ? "无法读取已保存的连接凭证，请重新连接。"
+      : "已连接，但新的 API Key 未保存。"))
     : "";
-  const credentialRestoreFailed = persistReason.startsWith("无法读取已保存的连接凭证");
   const formError = persistReason || actionError;
   const formFieldError = persistFailed ? "form" : fieldError;
   const recovery = provider.credentialKind === "api-token" ? null : agentSetupRecovery(diagnostic, availability);
@@ -408,7 +392,7 @@ export default function AgentProviderCard({
       const succeeded = Boolean(outcome && ["succeeded", "stale"].includes(outcome.status));
       if (!succeeded) {
         const message = outcome?.reason || "API Key 无效或已失效。";
-        setFieldError(fieldForConnectError(outcome?.code));
+        setFieldError(credentialErrorField(outcome?.code) || "form");
         setActionError(message);
         return;
       }
@@ -665,7 +649,8 @@ export default function AgentProviderCard({
       {provider.credentialKind === "api-token" && connection ? (
         <div className="qoder-card-credential-summary" data-testid="agent-credential-summary">
           <span>API Key</span>
-          <span>{credentialPersist?.status === "saved" ? "已在此 Mac 保存"
+          <span>{credentialRestoreFailed ? "需要重新连接"
+            : credentialPersist?.status === "saved" ? "已在此 Mac 保存"
             : credentialPersist?.operationKind === "clear"
               ? ["pending", "unknown", "unavailable", "unreadable"].includes(String(credentialPersist.status || ""))
                 ? "移除状态未确认"
@@ -826,7 +811,7 @@ export default function AgentProviderCard({
           {formError && (formFieldError === "form" || !formFieldError) ? (
             <span className="qoder-card-error" role="alert">{formError}</span>
           ) : null}
-          {persistFailed && onRetryPersistCredential ? (
+          {credentialRecovery === "retry-persist" && onRetryPersistCredential ? (
             <button
               type="button"
               data-kind="retry-persist"

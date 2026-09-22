@@ -1,5 +1,14 @@
 # Design QA
 
+## 2026-09-22 — 凭据恢复动作与编辑恢复连续性
+
+- 凭据动作由 operationKind / status 决定，启动恢复失败显示重新连接，保存失败保留本次连接并提供重试保存；错误字段沿用共享 code 映射。
+- Electron 已验证两组不同中文提示（包含误导性的旧前缀）不改变动作；清空输入框后仍能使用操作持有的 Key 重试保存。已检查 `credential-recovery-persist.png`，连接状态、保存说明与重试按钮完整可见，未新增通知或布局。
+- Runtime 的历史原位编辑、静态重试、只读恢复后续写三案通过；初始动态文档之前已启用有界诊断。确定性 AI 两次采用、重启后继续编辑保存通过，磁盘仅改变授权目标。
+- 首次失败保留在本地忽略输出：历史用例在开项目之前读取工作路径；凭据用例缺少 IPC envelope、重载后的单次 Bridge ready 通知，以及误用当前文档就绪条件等待设置页。修正测试前置条件，没有放宽产品断言。最终 AI 批次还捕获续写保存期间直接读盘的短暂 ENOENT；改用已有发布感知读取 helper，保留逐字节范围断言。
+- M3 的精确 freeze / 保存交错由受控 Node 正反例证明；上述 Electron 证明实际恢复入口和后续编辑，不宣称重现同一时间交错。私有真实页面结果与最终任务门禁另由版本绑定报告记录。
+
+
 ## 2026-09-22 — Agent 交互评审修复
 
 - 实时与封存过程按 Request / Attempt 复用同一节点；`process-summary` 与真实结果分开，用户的折叠选择不被封存覆盖。
@@ -3829,3 +3838,5 @@ The next Ready head `9130dbb767e528426b8b4d753fa13e5673feda25` passed the correc
 Hosted recovery diagnosis: the same unchanged recovery assertion also failed in the preceding main PR #602, run `35706620691`, before this appearance change. A local complete 52-case AI run under Node 22.23.2 with `CI=true` passed, but does not reproduce hosted macOS 14 / Node 22.13.0. A temporary branch-only renderer diagnostic records repair outcomes and authority status (without HTML, paths, hashes or request payloads) so the next hosted attempt can locate the failure. It must be removed before the final merge candidate; this diagnostic commit is not a delivery candidate. The narrow geometry correction retains the measured 240px requirement. Local targeted recovery, renderer build and TypeScript checking passed after moving the diagnostic source backup to a non-TypeScript suffix; the initial backup-related typecheck failure remains recorded.
 
 The temporary diagnostic head `e8c3726195e5ccc1e7037f503d4253c0354cd410` completed Ready run `35713918874` with every source lane and release-gate successful, including all 52 AI cases with zero retries/skips. Its hosted trace recorded generation 3 failed → generation 4 verified, repair success in about 83ms, and one-shot recovery settlement; persisted and rendered identities matched. This successful observation does not explain or reclassify the earlier hosted failures. Local renderer build and focused recovery also passed under exact Node 22.13.0. The diagnostic source and test listeners are now removed, restoring both files byte-for-byte to `9130dbb7`; final source changes since that head are solely the narrow-sidebar readiness correction and this evidence record. The final source must pass its own complete Ready matrix, and the inherited intermittent recovery failure remains disclosed as an unclassified validation limit rather than a claimed product fix.
+
+Final nondiagnostic head `3a57e3eebdf8573d9482869c828243f5c0bb16e4` passed all 17 complete Ready checks in run `35715193703`, including the unchanged recovery assertion and release-gate. Before merge, main advanced to `6ae998f7678311ea1ac55d54aca541c334fa9864` (PR #603). That authoritative update is integrated without changing its product or test implementation; only the concurrent CHANGELOG additions conflicted and both were retained. The visual diff against the new base remains the same, while final acceptance must now validate the combined source on that base. Earlier unclassified recovery failures remain recorded; the newly inherited main fix is not used to retroactively classify them.

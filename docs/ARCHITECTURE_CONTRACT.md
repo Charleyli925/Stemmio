@@ -557,7 +557,13 @@ after an acknowledgement timeout, publish at most one replacement receipt.
 `repairCurrentCanvas` instead captures the old physical-frame fence, publishes
 one authority receipt whose Canvas effect is the sole rebuild executor, and
 only verifies that result; its timeout remains `repair-required` until an
-explicit later retry. A clean source mismatch triggers at most one authoritative
+explicit later retry. Its synchronous freeze checkpoint may advance the operation context
+only through that checkpoint's validated save ACK: route and session incarnation,
+exact receipt, HTML, revision and persisted/working Hash must all still match.
+Independent edits and route changes never inherit this permission. Cleanup releases
+only the acquired freeze on its original Canvas instance, fenced by its freeze ID;
+it reads current controlled access and cannot remove a later freeze or AI/read-only lock.
+A clean source mismatch triggers at most one authoritative
 reread before its rebuild. Neither recovery path delegates internal
 reconciliation to the user.
 
