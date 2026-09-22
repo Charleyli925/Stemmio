@@ -458,6 +458,11 @@ Rules:
 - `HtmlCanvasEditor` owns native-edit checkpoint disposition. Soft checkpoints
   materialize complete Working HTML and autosave/recovery evidence while
   retaining the iframe, contenteditable, Selection, caret and focus.
+  Transient iframe focus recovery prefers the live Selection still contained
+  in the same leased host before reclaiming focus; a RAF-delayed presentation
+  bookmark cannot overwrite a newer keystroke. If Selection has left that
+  host, only its last owned bookmark may be restored, and explicit outer
+  controls always retain focus.
   Host acceptance is final for that source command: failure to rebase the live
   native session retains the accepted HTML/history result, marks projection
   recovery required and reloads the editor from current source. It is not

@@ -1,5 +1,6 @@
 const STATUS = new Set(["normal", "processing", "review-ready", "error", "opening"]);
 const PROJECT_TAB_KINDS = new Set(["document", "project-rules", "history"]);
+const DEFAULT_PROJECT_TAB_TITLE = "HTML";
 
 function documentKey(projectId, documentId) {
   return `${projectId}\u0000${documentId}`;
@@ -38,12 +39,13 @@ function normalizedProjectTab(value) {
   const projectId = String(value.projectId || "");
   const documentId = String(value.documentId || "");
   const tabId = String(value.tabId || "");
-  const title = String(value.title || "").trim();
+  const rawTitle = value.title;
+  if (rawTitle !== undefined && rawTitle !== null && typeof rawTitle !== "string") return null;
+  const title = (rawTitle || "").trim() || DEFAULT_PROJECT_TAB_TITLE;
   if (
     !/^project_[A-Za-z0-9_-]+$/.test(projectId)
     || !/^doc_[A-Za-z0-9_-]+$/.test(documentId)
     || !/^[A-Za-z0-9:_-]{1,240}$/.test(tabId)
-    || !title
     || title.length > 180
   ) return null;
   const versionId = kind === "history" ? String(value.versionId || "") : null;
@@ -609,24 +611,31 @@ export class WorkbenchTabsSession {
     const missing = [];
     let changed = false;
     const tabs = this.#snapshot.tabs.flatMap((tab) => {
-      if (!["document", "project-rules", "history"].includes(tab.kind)
-        || !this.#restoredDocumentTabIds.has(tab.tabId)) {
+      const isProjectSurface = ["document", "project-rules", "history"].includes(tab.kind);
+      const isRestoredDocument = this.#restoredDocumentTabIds.has(tab.tabId);
+      if (!isProjectSurface) {
         return [tab];
       }
       const project = registry.get(documentKey(tab.projectId, tab.documentId));
       if (!project || project.availability !== "ready") {
+        if (!isRestoredDocument) return [tab];
         missing.push(tab);
         this.#restoredDocumentTabIds.delete(tab.tabId);
         changed = true;
         return [];
       }
-      const title = String(project.projectName || "").trim();
-      if (!title || title === tab.title) return [tab];
+      const title = typeof project.projectName === "string"
+        ? project.projectName.trim()
+        : "";
+      const canRefreshTitle = isRestoredDocument
+        || tab.kind === "project-rules"
+        || tab.kind === "history";
+      if (!canRefreshTitle || !title || title.length > 180 || title === tab.title) return [tab];
       changed = true;
       return [freezeTab({ ...tab, title })];
     });
     if (!changed) return Object.freeze({ snapshot: this.#snapshot, missing: Object.freeze([]) });
-    if (!tabs.some((tab) => tab.kind === "start")) tabs.unshift(startTab());
+    if (missing.length > 0 && !tabs.some((tab) => tab.kind === "start")) tabs.unshift(startTab());
     const activeStillExists = tabs.some((tab) => tab.tabId === this.#snapshot.activeTabId);
     const activeTabId = activeStillExists
       ? this.#snapshot.activeTabId
@@ -701,12 +710,13 @@ export function projectAppliedEventToWorkbenchTabs({ session, event, title }) {
   ) return null;
   const projectId = String(event.project.projectId || "");
   const documentId = String(event.project.documentId || "");
-  const tabTitle = String(title || event.project.name || "").trim();
+  const rawTitle = title === undefined ? event.project.name : title;
   if (
     !/^project_[A-Za-z0-9_-]+$/.test(projectId)
     || !/^doc_[A-Za-z0-9_-]+$/.test(documentId)
-    || !tabTitle
+    || (rawTitle !== undefined && rawTitle !== null && typeof rawTitle !== "string")
   ) return null;
+  const tabTitle = typeof rawTitle === "string" ? rawTitle.trim() : "";
   const activeTab = session.resolveTab(session.snapshot.activeTabId);
   return session.bindDocument({
     projectId,

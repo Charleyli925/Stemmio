@@ -303,9 +303,9 @@ export interface NavigationControllerCommands {
   ): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   createStartTab(): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   createSettingsTab(): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
-  createProjectRulesTab(project: { projectId: string; documentId: string; title: string }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
+  createProjectRulesTab(project: { projectId: string; documentId: string; title?: string | null }): Promise<import("./workbench-navigation-workflow.js").WorkbenchNavigationOutcome>;
   createHistoryTab(
-    project: { projectId: string; documentId: string; title: string },
+    project: { projectId: string; documentId: string; title?: string | null },
     version: {
       id?: string;
       versionId?: string;
@@ -319,7 +319,7 @@ export interface NavigationControllerCommands {
   openRegisteredProject(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     status?: import("./workbench-tabs-session.js").WorkbenchTabStatus;
     force?: boolean;
     intentKind?: string;
