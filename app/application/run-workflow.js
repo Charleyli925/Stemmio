@@ -291,8 +291,18 @@ function agentHandoffState(run, session) {
     if (remaining <= 0) break;
     const boundedText = text.slice(0, remaining);
     visibleTextLength += boundedText.length;
-    visibleTextUpdates.push(Object.freeze({ id, sequence, text: boundedText }));
+    const firstSequence = Number.isSafeInteger(update.firstSequence) && update.firstSequence >= 0
+      && update.firstSequence <= sequence ? update.firstSequence : sequence;
+    visibleTextUpdates.push(Object.freeze({ id, sequence, firstSequence, text: boundedText }));
   }
+  const activityKinds = new Set(["file-read", "file-written", "response-started", "generation-started",
+    "response-ended", "html-validation-completed", "review-preparation-started", "cancel-requested", "host-cancelling"]);
+  const publicActivities = Object.freeze((Array.isArray(session.publicActivities) ? session.publicActivities : [])
+    .slice(-80).filter((activity) => activity && activityKinds.has(activity.kind)
+      && Number.isSafeInteger(activity.sequence) && activity.sequence >= 0
+      && Number.isSafeInteger(activity.boundary) && activity.boundary >= 0
+      && !(session.runtimeId === "http" && ["file-read", "file-written"].includes(activity.kind)))
+    .map(({ kind, sequence, boundary }) => Object.freeze({ id: `activity:${sequence}`, kind, sequence, boundary })));
   return {
     sourcePath: run.sourcePath,
     requestId: run.requestId,
@@ -311,6 +321,8 @@ function agentHandoffState(run, session) {
     // ADR 0037: narration only. It reaches the view so the user can see what the
     // Agent is doing, and it carries no authority over the Candidate.
     visibleTextUpdates: Object.freeze(visibleTextUpdates),
+    publicActivities,
+    activitiesTruncated: session.activitiesTruncated === true,
     textTruncated: session.textTruncated === true,
     startedAt: typeof session.startedAt === "string" ? session.startedAt : null,
     lastActivityAt: typeof session.lastActivityAt === "string" ? session.lastActivityAt : null,
@@ -1602,6 +1614,8 @@ export class RunWorkflow {
         agentName: presentation.agentName || presentation.displayName || "Agent",
         agentVersion: null,
         visibleTextUpdates: [],
+        publicActivities: [],
+        activitiesTruncated: false,
         textTruncated: false,
         startedAt: null,
         updatedAt: null,

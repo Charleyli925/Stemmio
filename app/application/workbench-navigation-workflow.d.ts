@@ -32,7 +32,7 @@ export class WorkbenchNavigationWorkflow {
   openRegisteredProject(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     status?: WorkbenchTabStatus;
     force?: boolean;
     intentKind?: string;
@@ -45,9 +45,9 @@ export class WorkbenchNavigationWorkflow {
   }): Promise<WorkbenchNavigationOutcome>;
   createStart(): Promise<WorkbenchNavigationOutcome>;
   createSettings(): Promise<WorkbenchNavigationOutcome>;
-  createProjectRules(project: { projectId: string; documentId: string; title: string }): Promise<WorkbenchNavigationOutcome>;
+  createProjectRules(project: { projectId: string; documentId: string; title?: string | null }): Promise<WorkbenchNavigationOutcome>;
   createHistory(
-    project: { projectId: string; documentId: string; title: string },
+    project: { projectId: string; documentId: string; title?: string | null },
     version: {
       id?: string;
       versionId?: string;

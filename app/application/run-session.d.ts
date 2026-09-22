@@ -13,7 +13,17 @@ export type RunSubmission = {
 export type RunVisibleTextUpdate = Readonly<{
   id: string;
   sequence: number;
+  firstSequence?: number;
   text: string;
+}>;
+
+export type RunPublicActivity = Readonly<{
+  id: string;
+  kind: "file-read" | "file-written" | "response-started" | "generation-started"
+    | "response-ended" | "html-validation-completed" | "review-preparation-started"
+    | "cancel-requested" | "host-cancelling";
+  sequence: number;
+  boundary: number;
 }>;
 
 export type RunHandoffState = {
@@ -38,6 +48,8 @@ export type RunHandoffState = {
   /** Canonical stable public message rows. Hidden reasoning and tool events never enter this list. */
   visibleTextUpdates?: readonly RunVisibleTextUpdate[];
   textTruncated?: boolean;
+  publicActivities?: readonly RunPublicActivity[];
+  activitiesTruncated?: boolean;
   agentVersion?: string | null;
   startedAt?: string | null;
   lastActivityAt?: string | null;

@@ -216,7 +216,11 @@ import {
   PreviewNavigationBanner,
 } from "./workbench/presentation";
 import { deriveWorkbenchInspector } from "./workbench/inspector-presentation.js";
-import { RunConversationOutlet } from "./workbench/run-conversation-outlet";
+import {
+  RunConversationOutlet,
+  type SidebarReadingState,
+  type SidebarReadingStateStore,
+} from "./workbench/run-conversation-outlet";
 import { WorkbenchReviewOverlay } from "./workbench/workbench-review-overlay";
 import WorkbenchActiveDocumentCanvas from "./workbench/WorkbenchActiveDocumentCanvas";
 import WorkbenchDocumentSurfaceCache from "./workbench/WorkbenchDocumentSurfaceCache";
@@ -568,6 +572,7 @@ export default function Workbench() {
   const pendingSidebarHistoryRef = useRef<ProjectVersionSummary | null>(null);
   const pendingSidebarHistoryAttemptRef = useRef<ProjectVersionSummary | null>(null);
   const pendingPresentationCaptureRef = useRef<string | null>(null);
+  const conversationReadingStateRef = useRef(new Map<string, SidebarReadingState>());
   useEffect(() => () => {
     pendingSidebarHistoryRef.current = null;
     pendingSidebarHistoryAttemptRef.current = null;
@@ -593,6 +598,18 @@ export default function Workbench() {
     : null;
   const workbenchTabsSnapshot = shellSnapshot?.workbenchTabs
     ?? INITIAL_WORKBENCH_TABS_SNAPSHOT;
+  const conversationReadingStateStore = useMemo<SidebarReadingStateStore>(() => ({
+    get: (key) => conversationReadingStateRef.current.get(key) || null,
+    set: (key, state) => {
+      conversationReadingStateRef.current.set(key, state);
+    },
+  }), []);
+  useEffect(() => {
+    const openTabIds = new Set(workbenchTabsSnapshot.tabs.map((tab) => tab.tabId));
+    for (const key of conversationReadingStateRef.current.keys()) {
+      if (!openTabIds.has(key)) conversationReadingStateRef.current.delete(key);
+    }
+  }, [workbenchTabsSnapshot.tabs, workbenchTabsSnapshot.revision]);
   const activeWorkbenchTab = workbenchTabsSnapshot.tabs.find(
     (tab) => tab.tabId === workbenchTabsSnapshot.activeTabId,
   ) || workbenchTabsSnapshot.tabs[0];
@@ -4015,12 +4032,14 @@ export default function Workbench() {
   const queueReviewPairReveal = useCallback((
     target: HtmlCanvasSelection,
     itemKey: string,
+    expectedIntent?: number,
   ) => {
     const sourceTarget = target.commentAnchor ?? target;
     const visualHint = commentVisualHintForSelection(target);
     commentCanvasPort.requestReveal(
       visualHint ? { ...sourceTarget, visualHint } : sourceTarget,
       itemKey,
+      expectedIntent,
     );
   }, [commentCanvasPort]);
 
@@ -4340,6 +4359,7 @@ export default function Workbench() {
       );
       return;
     }
+    const revealIntent = commentCanvasPort.captureRevealIntent();
     // Opening an external HTML can start project registration just before the
     // composer is submitted. Await that same registration boundary here so a
     // slow desktop cannot turn a valid composer into a stale-context no-op.
@@ -4356,7 +4376,7 @@ export default function Workbench() {
     const comment = (outcome.value as { comment: CommentItem }).comment;
     commentCanvasPort.setComposerOpen(false);
     updateFocusedComment(comment.commentId);
-    queueReviewPairReveal(commentVisualTarget(comment), comment.commentId);
+    queueReviewPairReveal(commentVisualTarget(comment), comment.commentId, revealIntent);
     captureUsageEvent("comment_saved", {
       target_level: comment.sourceAnchor.level === "insertion"
         ? "insertion"
@@ -5801,6 +5821,8 @@ export default function Workbench() {
           capability={runCapability}
           conversationCapability={workspaceController!.conversation}
           conversationContext={aiConversation.context}
+          readingStateKey={presentedReadyReviewSession.tabId}
+          readingStateStore={conversationReadingStateStore}
           sidebarProps={{
             ...aiConversation.sidebarProps,
             onAction: handleAiDecision,
@@ -6399,6 +6421,9 @@ export default function Workbench() {
         aria-labelledby={`workbench-tab-${activeWorkbenchTab.tabId}`}
         ref={reviewStageRef}
         className="review-scroll-stage"
+        onWheelCapture={commentCanvasPort.cancelReveal}
+        onPointerDownCapture={commentCanvasPort.cancelReveal}
+        onKeyDownCapture={commentCanvasPort.cancelReveal}
         data-inspector={workbenchInspector}
         data-review-active={readyReviewOverlay ? "true" : undefined}
         data-surface-hidden={settingsPageActive || startPageActive || projectRulesPageActive
@@ -6494,6 +6519,7 @@ export default function Workbench() {
                     setRuntimeDegradationSnapshot({ key: runtimeDegradationKey, state });
                   }}
                   onCommentLayout={commentCanvasPort.publishLayout}
+                  onReadingIntent={commentCanvasPort.cancelReveal}
                   onSelect={handleCanvasSelection}
                   onRequestComment={openCommentComposer}
                   onRequestFlush={requestUserFlush}
@@ -6579,6 +6605,8 @@ export default function Workbench() {
               capability={runCapability}
               conversationCapability={workspaceController!.conversation}
               conversationContext={aiConversation.context}
+              readingStateKey={activeWorkbenchTab.tabId}
+              readingStateStore={conversationReadingStateStore}
               sidebarProps={{
                 ...aiConversation.sidebarProps,
                 onAction: handleAiDecision,

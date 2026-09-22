@@ -15,12 +15,14 @@ import {
   sidebarConversationGroups,
   sidebarExecutionStatus,
   sidebarModePresentation,
+  sidebarNarrationPreview,
   sidebarResolvedIntent,
   sidebarSendState,
   sidebarCopyTaskState,
   sidebarRunProgress,
   sidebarStateFromRun,
   sidebarTimestampLabel,
+  sidebarTurnPresentation,
 } from "../app/workbench/ai-conversation-model.js";
 
 function factMessage(overrides = {}) {
@@ -1069,7 +1071,6 @@ test("adoption uncertainty takes precedence over Review and exposes no opposite 
 });
 
 test("turn presentation preserves Conversation sequence across Agent and Stemmio facts", async () => {
-  const { sidebarTurnPresentation } = await import("../app/workbench/ai-conversation-model.js");
   const requirements = factMessage({ actor: "user", text: "调整标题" });
   const progress = factMessage({ kind: "progress", text: "正在生成修改。" });
   const summary = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
@@ -1082,6 +1083,27 @@ test("turn presentation preserves Conversation sequence across Agent and Stemmio
   assert.deepEqual(presentation.timeline.map((block) => block.messages), [
     [requirements], [progress], [summary], [result], [ended], [decision],
   ]);
+});
+
+test("ordinary Agent text stays in the collapsible process timeline while typed results stay visible", () => {
+  const ordinary = factMessage({ actor: "agent", kind: "text", text: "先读取页面结构。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
+  const presentation = sidebarTurnPresentation([ordinary, result]);
+  assert.deepEqual(presentation.process, [ordinary]);
+  assert.deepEqual(presentation.primary, [result]);
+  assert.deepEqual(presentation.timeline.map((block) => block.process), [true, false]);
+});
+
+test("the compact narration preview picks the latest non-empty paragraph without rewriting it", () => {
+  assert.equal(
+    sidebarNarrationPreview([
+      { id: "one", text: "第一段。\n\n第二段。" },
+      { id: "two", text: "   \n\n 最后一段  有空格 " },
+    ]),
+    "最后一段 有空格",
+  );
+  assert.equal(sidebarNarrationPreview([{ id: "blank", text: " \n\n " }]), null);
+  assert.equal(sidebarNarrationPreview([{ id: "line", text: "一行公开说明。" }]), "一行公开说明。");
 });
 
 
@@ -1123,4 +1145,28 @@ test("sidebar local facts reject the previous Document before a new load and pre
   assert.equal(closing.draftText, "unsent one");
   assert.equal(sidebarConversationPresentation(snapshot, context).draftAvailable, true);
   assert.equal(sidebarConversationPresentation({ ...snapshot, status: "failed" }, context).draftAvailable, false);
+});
+
+
+test("activity grouping stays on its first event and never crosses public narration", async () => {
+  const { sidebarActivityTimeline } = await import("../app/workbench/ai-conversation-model.js");
+  const a = { id: "activity:1", kind: "file-read", sequence: 1, boundary: 0 };
+  const b = { id: "activity:2", kind: "file-read", sequence: 2, boundary: 0 };
+  const text = { id: "message:a", text: "公开说明", sequence: 7, firstSequence: 3 };
+  const after = { id: "activity:4", kind: "file-read", sequence: 4, boundary: 3 };
+  assert.equal(sidebarActivityTimeline([], [a])[0].id, sidebarActivityTimeline([], [a, b])[0].id);
+  const rows = sidebarActivityTimeline([text], [a, b, after]);
+  assert.deepEqual(rows.map(row => row.id), ["activity:1", "message:a", "activity:4"]);
+  assert.deepEqual(rows.filter(row => row.kind === "activity").map(row => row.label), ["读取本轮资料", "读取本轮资料"]);
+  assert.equal(rows.some(row => /文件|成功|已完成|[0-9]/u.test(row.label || "")), false);
+  assert.deepEqual(sidebarActivityTimeline([], [a, { ...b, boundary: 2 }]).map(row => row.id), [a.id, b.id]);
+});
+
+test("sealed process stays distinct from true results and fixed stage groups", () => {
+  const stage = factMessage({ actor: "agent", kind: "progress" });
+  const sealed = factMessage({ actor: "agent", kind: "process-summary", text: "处理过程。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "最终结果。" });
+  const timeline = sidebarTurnPresentation([stage, sealed, result]);
+  assert.deepEqual(timeline.timeline.map((block) => block.messages), [[stage], [sealed], [result]]);
+  assert.deepEqual(timeline.primary, [result]);
 });
