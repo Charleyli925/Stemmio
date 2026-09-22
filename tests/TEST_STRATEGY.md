@@ -250,6 +250,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   测试必须证明水合仍 pending 时下一标签可以进入、旧水合按 epoch 退休、后台失败只标记标签并锁住
   编辑。已登记项目的 exact open envelope 必须证明 Renderer 水合不再重复 `/source`，干净且 generation/
   Hash 完全一致的 verified Canvas 必须证明不会重复 render fence。
+  Electron 通过暂停 B 的真实规则文件读取后点击 C/D，证明相邻待执行激活只执行 B/D、被替代的 C 及其余命令都到达终态；插入创建或关闭操作时必须仍执行 C。最终活动页、挂载文档和 Runtime owner 要与可见规则页一致，未保存和 IME 围栏沿用原导航场景。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
   20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
   标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。缓存交接的受控暂停必须阻断新 Canvas 文档的可用性，

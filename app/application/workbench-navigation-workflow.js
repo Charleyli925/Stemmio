@@ -19,6 +19,14 @@ function succeeded(value = {}) {
   return Object.freeze({ status: "succeeded", value: Object.freeze(value) });
 }
 
+function supersededNavigationOutcome(tabId) {
+  return succeeded({
+    activated: false,
+    superseded: true,
+    supersededByTabId: String(tabId || ""),
+  });
+}
+
 function outcomeError(outcome, fallbackCode, fallbackReason) {
   return Object.freeze({
     code: String(outcome?.code || fallbackCode),
@@ -81,6 +89,7 @@ export class WorkbenchNavigationWorkflow {
   #setTimer;
   #clearTimer;
   #admissionTail = Promise.resolve();
+  #pendingAdmission = null;
   #busy = false;
   #active = null;
   #ordinal = 0;
@@ -1287,8 +1296,31 @@ export class WorkbenchNavigationWorkflow {
     const predecessor = this.#admissionTail.catch(() => {});
     let release;
     const completion = new Promise((resolve) => { release = resolve; });
+    const queued = this.#busy || this.#pendingAdmission !== null;
+    const ordinaryActivation = this.#isOrdinaryActivationIntent(intent);
+    const pending = queued
+      ? {
+        intent,
+        execute,
+        release,
+        startupHistoryContinuationSequence,
+        ordinaryActivation,
+        superseded: false,
+        outcome: null,
+      }
+      : null;
+    if (
+      queued
+      && !this.#closeFreeze
+      && ordinaryActivation
+      && this.#pendingAdmission
+      && this.#canSupersedePendingActivation(this.#pendingAdmission, intent)
+    ) {
+      this.#pendingAdmission.superseded = true;
+      this.#pendingAdmission.outcome = supersededNavigationOutcome(intent.tabId);
+    }
     this.#admissionTail = predecessor.then(() => completion);
-    if (!this.#busy) {
+    if (!queued) {
       return this.#beginAdmission(
         intent,
         execute,
@@ -1296,12 +1328,37 @@ export class WorkbenchNavigationWorkflow {
         startupHistoryContinuationSequence,
       );
     }
-    return predecessor.then(() => this.#beginAdmission(
-      intent,
-      execute,
-      release,
-      startupHistoryContinuationSequence,
-    ));
+    this.#pendingAdmission = pending;
+    return predecessor.then(() => {
+      if (this.#pendingAdmission === pending) this.#pendingAdmission = null;
+      if (pending.superseded) {
+        pending.release();
+        return pending.outcome || supersededNavigationOutcome(intent.tabId);
+      }
+      return this.#beginAdmission(
+        pending.intent,
+        pending.execute,
+        pending.release,
+        pending.startupHistoryContinuationSequence,
+      );
+    });
+  }
+
+  #isOrdinaryActivationIntent(intent) {
+    return intent?.kind === "tab-activation"
+      && typeof intent.tabId === "string"
+      && Boolean(this.#tabs.resolveTab(intent.tabId));
+  }
+
+  #canSupersedePendingActivation(pending, nextIntent) {
+    return Boolean(
+      pending
+      && pending.ordinaryActivation
+      && !pending.superseded
+      && this.#isOrdinaryActivationIntent(nextIntent)
+      && this.#tabs.resolveTab(pending.intent.tabId)
+      && this.#tabs.resolveTab(nextIntent.tabId),
+    );
   }
 
   #cancelStartupHistoryContinuation() {
