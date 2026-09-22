@@ -13,7 +13,8 @@
     "app/application/source-receipt.js",
     "app/application/source-receipt-contract.d.ts",
     "app/application/project-session.d.ts",
-    "tests/source-receipt-contract.typecheck.ts"
+    "tests/source-receipt-contract.typecheck.ts",
+    "app/application/project-surface-context.js"
   ],
   "exclude": [
     "node_modules"
