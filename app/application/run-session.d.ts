@@ -109,6 +109,7 @@ export class RunSession {
     options?: { clearActive?: boolean },
   ): boolean;
   clearActiveRun(): boolean;
+  resolvePageRecovery(run: ActiveRun): boolean;
   publishHandoff(state: RunHandoffState): boolean;
   handoffForSource(
     sourcePath: string | null | undefined,

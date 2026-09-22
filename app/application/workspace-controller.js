@@ -675,6 +675,7 @@ export class WorkspaceController {
         copyHandoff: (input) => this.copyRunHandoff(input),
         startAgent: (input) => this.startRunAgent(input),
         cancel: (input) => this.cancelRun(input),
+        resolvePageRecovery: (input) => this.resolveRunPageRecovery(input),
         resolveConflict: (input) => this.resolveRunConflict(input),
         prepareReview: (input) => this.prepareReviewCandidate(input),
         activateReadyVersion: (input) => this.activateReadyVersion(input),
@@ -1909,6 +1910,22 @@ export class WorkspaceController {
 
   cancelRun(input) {
     return this.#requireRunWorkflow().cancel(input);
+  }
+
+  resolveRunPageRecovery(input) {
+    // Complete the strict Version/document/receipt checks while the Run is
+    // still flagged and the Canvas is still locked. RunWorkflow remains the
+    // one-shot owner that clears pageRecoveryRequired and unlocks only after
+    // this synchronous cleanup succeeds.
+    const recoveryRun = input?.run || this.#runSession?.activeRun || null;
+    const finalized = this.#requireVersionWorkflow().completePageRecovery({ run: recoveryRun });
+    if (finalized.status !== "succeeded") {
+      if (finalized.status === "blocked") return blocked(finalized.code, finalized.reason);
+      if (finalized.status === "rejected") return rejected(finalized.code, finalized.reason);
+      if (finalized.status === "unknown") return unknown(finalized.operationId, finalized.reason);
+      return stale(finalized.identity);
+    }
+    return this.#requireRunWorkflow().resolvePageRecovery({ run: recoveryRun });
   }
 
   resolveRunConflict(input) {

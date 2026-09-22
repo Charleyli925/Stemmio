@@ -1,5 +1,41 @@
 # Design QA
 
+## 2026-09-22 — Agent 交互评审修复
+
+- 实时与封存过程按 Request / Attempt 复用同一节点；`process-summary` 与真实结果分开，用户的折叠选择不被封存覆盖。
+- 展开过程按触发器保留阅读位置，布局滚动不恢复跟随；离开底部先显示“回到最新”，收到新正文或活动才显示“有新进展”。
+- Electron 定向验收已覆盖展开/收起两种封存交接、超过两屏的历史展开及新内容、A-B-A 阅读恢复、物理 iframe 和源字节不变。
+- 采用后恢复复用正常 Version 收尾。扩展 `accepted source survives a display verification failure and repairs without adopting twice` 已实际通过：不重开项目查看 V2、返回当前稿编辑保存、下一 Request 仅携带新评论、最新字节及恢复后的唯一新审计；采用仅一次。
+- 首失败保留：历史测试曾用直接设置 scrollTop 冒充用户回底，改为真实返回最新入口；恢复测试曾错误要求新编辑审计为空，并把保存发布中的短暂 ENOENT 当成终态。修正测试前置条件和断言，没有放宽保存或采用协议。
+- 组合树已同步最新主线；完整任务门禁、CI 和交付阶段由版本绑定报告及 PR 记录，不能把旧绿色分支相加为组合验收。私有语料和所有截图仍仅保留在本地忽略输出中。
+
+## 2026-09-22 — 采用事实、停止与页面恢复
+
+- Truth: 采用发布和页面核验是两个事实。已采用后的 Canvas 失败沿用 DocumentWorkflow 恢复，
+  固定行动区只显示“已采用，但页面需要恢复”和恢复按钮；既有 Preview 布局保证标题、按钮完整在视口中。
+  停止回执未到时保持锁定；采用未知继续复用同一决定，旧 run / context 不可解锁或切回当前文档。
+- Evidence: 整合 Node 定向检查 234 项通过，新增采用后 source identity 推进的负向实验先得到
+  `stale`（预期 `rejected`），修复后 VersionWorkflow 76 项通过。最终形状类型检查通过。
+  `agent-recovery-seventh` Electron 2/2 通过：延迟取消回执时停止按钮禁用且编辑不可用；
+  采用后注入 Canvas 核验失败，磁盘已采用内容保留、恢复动作完整可见、恢复后可编辑，采用 POST 恰好一次。
+- Visual QA: 已检查本轮 stopping、accepted-page-needs-recovery 与 recovered 截图。
+  实测发现直接在 Edit 的共享长画布里显示侧栏会让恢复标题离屏，因此复用已有固定 Preview 布局，
+  不新增侧栏状态 owner 或滚动服务。
+- Real HTML: 本地指定 T1 用原文件副本完成三组检查：Preview 过程阅读、Review 过程阅读、
+  采用后失败与恢复。展开/收起/复制不写当前稿、不新建 Request，所检查的 iframe/document 身份保持；
+  恢复不重复采用且保留已采用字节，原始 T1 Hash/字节数不变。私有 manifest、结果和截图仅在忽略的 output 内。
+- First failures retained: 初次暴露恢复侧栏被 Edit 隐藏；随后身份推进场景暴露旧 context 围栏导致
+  同一采用决定再次核对，已通过失败回归修复。夹具另修正了隐藏评论栏断言与异步剪贴板读取；
+  临时变量声明顺序错误及各次失败仍保留，不作为通过证据。最终源码复核没有已证实 P0/P1。
+- CI recovery follow-up: 初次 CI 和同 SHA 本地复现均在点击恢复后仍保留按钮，失败证据保留。
+  控制 Node 实验确认两条竞态：后台已确认同一 Canvas 后，恢复命令仍误报 repair-required；
+  采用期间返回的旧磁盘读取结果可误把新源码标记为冲突。恢复现在只复用精确 receipt/generation/hash/HTML
+  的既有验证，磁盘观察在发布冲突前重验原始源码回执；不匹配验证仍拒绝，新观察的真实外部写仍进入冲突。
+  两条反例均先失败；修复后 DocumentWorkflow 110 项通过，已有恢复 Electron 场景通过。
+  T1 三组检查复测通过且原始文件不变。此次没有新增视觉或生产诊断接口。
+- Boundary: 不宣称 T2–T8、真实外部模型、打包/已安装应用或完整私有语料矩阵已执行。
+  最终任务门禁另有版本绑定报告；Ready 与合并按本次明确授权及 PR 门禁执行。
+
 ## 2026-09-22 — 安全公开活动与连续分组
 
 - Truth: 运行时只投影固定活动种类、顺序与分组边界；不传递工具参数、路径、HTML、命令或私有推理。

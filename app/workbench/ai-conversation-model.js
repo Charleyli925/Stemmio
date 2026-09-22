@@ -23,6 +23,7 @@ const SIDEBAR_STATES = new Set([
   "review-view",
   "promoting",
   "adoption-unknown",
+  "adopted-recovery",
   "run-error",
 ]);
 
@@ -68,6 +69,7 @@ const MODE_PRESENTATION = Object.freeze({
     label: "审阅中",
   },
   "adoption-unknown": { label: "采用结果待确认" },
+  "adopted-recovery": { label: "需要恢复页面" },
   promoting: {
     label: "采用中",
   },
@@ -109,6 +111,7 @@ export function sidebarStateFromRun({
   submissionPending = false,
   reviewing = false,
 } = {}) {
+  if (activeRun?.pageRecoveryRequired === true) return "adopted-recovery";
   if (activeRun?.adoptionPhase === "unknown") return "adoption-unknown";
   if (activeRun?.adoptionPhase === "applying") return "promoting";
   if (reviewing) return "review-view";
@@ -163,11 +166,13 @@ export function sidebarStateFromRun({
 const MAX_NARRATION_BLOCKS = 80;
 
 const RUN_PROGRESS_STATES = Object.freeze([
+  "run-error",
   "preparing-delivery",
   "processing",
   "validating",
   "promoting",
   "adoption-unknown",
+  "adopted-recovery",
   // The result states keep the record on screen. The process drawer used to be the
   // only place the round's stages existed, so once it is gone the thread has to
   // hold them — a user deciding whether to adopt still wants to see what happened.
@@ -597,6 +602,30 @@ export function sidebarActionBar({
   handoffStatus = null,
   credentialKind = null,
 } = {}) {
+  if (state === "adopted-recovery") {
+    const reason = boundedFailureReason(
+      failureMessage || "新版本已经采用，但当前页面尚未完成恢复。",
+    );
+    return {
+      kind: "blocked",
+      title: "已采用，但页面需要恢复",
+      detail: `${reason} 这次采用已经记录，不会再次采用。`,
+      actions: [{ id: "repair-page", label: "重试恢复页面", tone: "primary" }],
+    };
+  }
+  // An adoption decision already in flight owns the action area. A stale
+  // conflict lifecycle label must never expose the opposite decision while
+  // the same Candidate operation is being reconciled.
+  if (state === "promoting" || state === "adoption-unknown") {
+    return {
+      kind: "progress",
+      title: state === "adoption-unknown" ? "采用结果待确认" : "正在采用候选版本",
+      detail: state === "adoption-unknown"
+        ? "正在自动核对已提交的采用决定，确认后会切换到新页面。"
+        : "采用完成后会切换到新页面。",
+      actions: [],
+    };
+  }
   if (runStatus === "awaiting-conflict-resolution") {
     return {
       kind: "decision",
@@ -722,7 +751,7 @@ export function sidebarActionBar({
         kind: "progress",
         title: null,
         detail: null,
-        actions: [{ id: "cancel", label: "正在结束…", tone: "quiet", disabled: true }],
+        actions: [{ id: "cancel", label: "正在停止", tone: "quiet", disabled: true }],
       };
     }
     // The timeline above already narrates the round, and the header already says the
@@ -746,14 +775,6 @@ export function sidebarActionBar({
       title: "未识别到明确的页面变化",
       detail: "原评论和附件都已保留，调整要求后可以重新发送。",
       actions: [{ id: "dismiss", label: "结束本轮", tone: "quiet" }],
-    };
-  }
-  if (state === "promoting" || state === "adoption-unknown") {
-    return {
-      kind: "progress",
-      title: state === "adoption-unknown" ? "采用结果待确认" : "正在采用候选版本",
-      detail: state === "adoption-unknown" ? "正在自动核对已提交的采用决定，确认后会切换到新页面。" : "采用完成后会切换到新页面。",
-      actions: [],
     };
   }
   return null;
@@ -823,6 +844,14 @@ export function sidebarSendState({
       canSend: false,
       label: "",
       reason: null,
+    };
+  }
+  if (state === "adopted-recovery") {
+    return {
+      kind: "status",
+      canSend: false,
+      label: "",
+      reason: "页面恢复完成后才能开始下一轮修改",
     };
   }
   if (state === "processing" || state === "validating") {
@@ -995,6 +1024,9 @@ export function sidebarCopyTaskState({
   }
   if (state === "promoting" || state === "adoption-unknown") {
     return { canCopy: false, reason: "正在采用候选版本" };
+  }
+  if (state === "adopted-recovery") {
+    return { canCopy: false, reason: "页面恢复完成后才能开始下一轮修改" };
   }
   if (queued) {
     return { canCopy: false, reason: "正在等待上一个任务完成" };

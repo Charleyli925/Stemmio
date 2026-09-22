@@ -158,6 +158,21 @@ test("run progress keeps completion, validation, and result facts separate", () 
   assert.equal(conflict[3].label, "请选择当前 HTML");
 });
 
+test("a committed run reports page recovery without reopening adoption", () => {
+  const run = {
+    requestId: "req_0001",
+    status: "complete",
+    pageRecoveryRequired: true,
+    pageRecoveryReason: "画布没有确认采用后的 HTML。",
+  };
+  const presentation = deriveRunProgressPresentation(run);
+  assert.equal(presentation.header.title, "已采用，但页面需要恢复");
+  assert.equal(presentation.statusLabel, "需要恢复页面");
+  assert.equal(presentation.steps[2].state, "done");
+  assert.equal(presentation.steps[3].state, "attention");
+  assert.match(presentation.steps[3].detail, /不会再次采用/u);
+});
+
 test("run presentation copy follows the four stages and keeps exception actions distinct", () => {
   const copyOf = (run, handoffStatus = "idle") => {
     const presentation = deriveRunProgressPresentation(run, handoffStatus);
