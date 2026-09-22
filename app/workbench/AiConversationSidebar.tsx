@@ -24,6 +24,7 @@ import {
   sidebarTurnPresentation,
   sidebarNarrationParagraphs,
   sidebarNarrationPreview,
+  sidebarActivityTimeline,
   sidebarProcessRows,
   sidebarModePresentation,
   sidebarResolvedIntent,
@@ -36,6 +37,7 @@ import {
   type SidebarHistoryGroup,
   type SidebarMessage,
 } from "./ai-conversation-model.js";
+import type { RunPublicActivity } from "../application/run-session.js";
 import type { AgentSelection } from "../domain/agent-provider-state.js";
 import { type BoundAgentSetupPanelProps } from "../components/AgentSetupPanel";
 import type { AgentProviderCardData } from "../components/agent-provider-card-types";
@@ -134,6 +136,8 @@ export type AiConversationSidebarProps = {
   agentUpdates?: readonly unknown[];
   /** True only when a bounded public-text projection omitted a suffix. */
   agentTextTruncated?: boolean;
+  agentActivities?: readonly RunPublicActivity[];
+  agentActivitiesTruncated?: boolean;
   /** A managed Agent is actively thinking or processing this round. */
   agentWorking?: boolean;
   agentStartedAt?: string | null;
@@ -344,6 +348,8 @@ export default function AiConversationSidebar({
   deliveryMode = "managed-agent",
   agentUpdates = [],
   agentTextTruncated = false,
+  agentActivities = [],
+  agentActivitiesTruncated = false,
   agentWorking = false,
   agentStartedAt = null,
   agentReceivedBytes = 0,
@@ -517,6 +523,8 @@ export default function AiConversationSidebar({
     : null;
   const contentKey = [
     runKey || "",
+    agentActivities.map((activity) => activity.id).join(","),
+    agentActivitiesTruncated ? "activities-truncated" : "",
     runProgress?.liveLabel || runProgress?.headline || "",
     runProgress?.narrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
     runProgress?.narrationTruncated ? "truncated" : "",
@@ -529,7 +537,7 @@ export default function AiConversationSidebar({
     }];
     // Conversation reads can lag the Run. Keep its receipt-keyed row outside
     // historical groups until the stored turn identity arrives.
-    if (runKey && (liveNarrationUpdates || executionStatusActive)
+    if (runKey && (liveNarrationUpdates || agentActivities.length > 0 || executionStatusActive)
       && !groups.some((group) => group.kind === "current")
       && !stream.some((message) => message.kind === "process-summary"
         && `${message.requestId}:${message.attemptId}` === runKey)) {
@@ -537,7 +545,7 @@ export default function AiConversationSidebar({
     }
     return groups.map((group) => {
       const messages = stream.filter((_message, index) => group.messageIndices.includes(index));
-      if (group.kind === "current" && runKey && (liveNarrationUpdates || executionStatusActive)
+      if (group.kind === "current" && runKey && (liveNarrationUpdates || agentActivities.length > 0 || executionStatusActive)
         && !messages.some((message) => message.kind === "process-summary"
           && `${message.requestId}:${message.attemptId}` === runKey)) {
         const [requestId, attemptId] = runKey.split(":");
@@ -554,7 +562,7 @@ export default function AiConversationSidebar({
       }
       return { ...group, ...sidebarTurnPresentation(messages) };
     });
-  }, [historyGroups, stream, runKey, liveNarrationUpdates, executionStatusActive, executionProviderName]);
+  }, [historyGroups, stream, runKey, liveNarrationUpdates, agentActivities.length, executionStatusActive, executionProviderName]);
 
   const persistReadingState = useCallback(() => {
     if (!readingStateStore) return;
@@ -809,6 +817,7 @@ export default function AiConversationSidebar({
       : message.text ? [{ id: message.messageId, text: message.text }] : null;
     const body = updates?.map((update) => update.text).join("\n\n") || "";
     const preview = sidebarNarrationPreview(updates || []);
+    const publicTimeline = sidebarActivityTimeline(updates || [], current ? agentActivities : []);
     const expanded = current ? processExpanded : expandedHistoryKeys.has(processKey);
     const panelId = `${narrationPanelId}-${message.messageId}`;
     return (
@@ -836,7 +845,7 @@ export default function AiConversationSidebar({
                 />
               ) : null}
             </span>
-            {updates && preview ? (
+            {publicTimeline.length > 0 ? (
               <div
                 className={styles.processDisclosure}
                 data-testid="ai-conversation-narration"
@@ -853,16 +862,23 @@ export default function AiConversationSidebar({
                   <span className={styles.narrationDisclosureIcon} aria-hidden="true">
                     {expanded ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
                   </span>
-                  <span>{preview}</span>
+                  <span>{preview || "查看过程"}</span>
                 </button>
                 <div
                   id={panelId}
                   className={styles.narrationText}
                   hidden={!expanded}
                 >
-                  {updates.map((update) => (
-                    <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
+                  {publicTimeline.map((entry) => entry.kind === "activity" ? (
+                    <div key={entry.id} className={styles.publicActivity} data-testid="ai-conversation-public-activity">
+                      {entry.label}
+                    </div>
+                  ) : (
+                    <div key={entry.id}>{sidebarNarrationParagraphs(entry.text || "").map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
                   ))}
+                  {current && agentActivitiesTruncated ? (
+                    <small className={styles.truncated}>部分活动记录已省略</small>
+                  ) : null}
                   {body ? (
                     <div className={styles.messageMeta}>
                       <button

@@ -174,6 +174,8 @@ function recoveredAgentHandoff(run) {
     agentName: null,
     agentVersion: null,
     visibleTextUpdates: [],
+    publicActivities: [],
+    activitiesTruncated: false,
     textTruncated: false,
     startedAt: null,
     lastActivityAt: null,

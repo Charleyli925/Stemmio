@@ -745,6 +745,25 @@
   line-height: 1;
 }
 
+.publicActivity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6f6c78;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.publicActivity::before {
+  content: "";
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .6;
+}
+
 .narrationLine {
   margin: 0;
   white-space: pre-wrap;

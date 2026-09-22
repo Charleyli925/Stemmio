@@ -1,5 +1,21 @@
 # Design QA
 
+## 2026-09-22 — 安全公开活动与连续分组
+
+- Truth: 运行时只投影固定活动种类、顺序与分组边界；不传递工具参数、路径、HTML、命令或私有推理。
+  文本首次序号固定，同类活动只在相邻且边界相同时合并，沿用第一条 ID，不显示文件计数或成功勾选。
+  活动最多保留 80 条，缺失时明确省略；重启不编造未保存的活动。HTTP 不投影文件工具，剪贴板模式不接入活动。
+- Evidence: 后端编辑门禁 801 项通过；界面接线后编辑门禁 471 项通过。类型检查与定向 lint 无错误。
+  `agent-activities` Electron 4/4 通过：Qoder 读写事实与无权限入口、长公开文本 DOM/锚点与 A-B-A、
+  HTTP 无公开文本的安静指示及无复制入口、DeepSeek 真实响应/生成/校验/审阅活动与运行中 IME 草稿稳定性。
+- Visual QA: 已检查 `output/design-qa/agent-setup-journeys/narrow-sidebar-generating.png` 与
+  `output/design-qa/ai-assistant-redesign/http-without-public-text.png`。活动为中性只读小字，
+  元数据保留一份，无文本时仅实际活动和三点指示，固定停止与草稿可达。
+- Failure provenance: 首轮后端检查暴露新增字段后的旧期望值；已调整精确形状，未放宽脱敏断言。
+  ACP 夹具在进程退出前排空 completion，避免丢失自己刚写出的协议帧。原始失败与后续结果保留在本地 output。
+- Boundary: 这是合成 Agent 的真实 Electron UI 验收；不声称真实外部服务、完整跨重启活动日志或视觉正确性校验。
+  最终任务门禁另有版本绑定报告；未打包、发布或合并。
+
 ## 2026-09-22 — AI 公开过程折叠与阅读稳定性
 
 - Truth: 公开过程默认折叠为最新非空公开段落的一行预览；typed `result-summary` 与 Stemmio
