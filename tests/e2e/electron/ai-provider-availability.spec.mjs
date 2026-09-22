@@ -502,9 +502,10 @@ test(`Qoder long public narration preserves reading state across updates and A-B
       const remainingDown = stream.scrollHeight - stream.clientHeight - stream.scrollTop;
       return Math.abs(delta > 0 ? Math.min(delta, remainingDown) : Math.max(delta, -stream.scrollTop));
     }, sealProcessTop)).toBeLessThanOrEqual(2);
-    // The following execution-ended fact stays after the sealed process.
+    // Sealing and the following execution-ended fact are separate writes.
+    // Observe the latter arriving before asserting its stored ordering.
     // Candidate readiness may precede sealing and keeps its stored sequence.
-    expect(await narration.evaluate((element) => {
+    await expect.poll(() => narration.evaluate((element) => {
       const later = [...document.querySelectorAll('[data-testid="ai-turn-process"]')].find((node) => node.textContent.includes("本轮执行已结束。"));
       return Boolean(later && (element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING));
     })).toBe(true);
