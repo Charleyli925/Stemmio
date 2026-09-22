@@ -164,6 +164,14 @@ Qoder process, so it must not be repurposed for real user Requests. See
 
 ## Test lanes
 
+`typecheck:source-receipt` also checks the `project-surface-context.js`
+implementation against its existing context type. Its implementation mutation
+proof rejects a string-valued epoch and verifies that the JS file is loaded by
+the official compiler configuration. This does not extend implementation checking
+to `verified-project-context.js`, navigation or rules workflows, and does not
+replace their runtime identity and stale-response tests.
+
+
 Private real-HTML execution is now fronted by the thin frozen scenario entry
 `tests/e2e/electron/frozen-html-scenarios.mjs`. It has four explicit modes:
 

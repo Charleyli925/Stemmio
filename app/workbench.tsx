@@ -4015,12 +4015,14 @@ export default function Workbench() {
   const queueReviewPairReveal = useCallback((
     target: HtmlCanvasSelection,
     itemKey: string,
+    expectedIntent?: number,
   ) => {
     const sourceTarget = target.commentAnchor ?? target;
     const visualHint = commentVisualHintForSelection(target);
     commentCanvasPort.requestReveal(
       visualHint ? { ...sourceTarget, visualHint } : sourceTarget,
       itemKey,
+      expectedIntent,
     );
   }, [commentCanvasPort]);
 
@@ -4340,6 +4342,7 @@ export default function Workbench() {
       );
       return;
     }
+    const revealIntent = commentCanvasPort.captureRevealIntent();
     // Opening an external HTML can start project registration just before the
     // composer is submitted. Await that same registration boundary here so a
     // slow desktop cannot turn a valid composer into a stale-context no-op.
@@ -4356,7 +4359,7 @@ export default function Workbench() {
     const comment = (outcome.value as { comment: CommentItem }).comment;
     commentCanvasPort.setComposerOpen(false);
     updateFocusedComment(comment.commentId);
-    queueReviewPairReveal(commentVisualTarget(comment), comment.commentId);
+    queueReviewPairReveal(commentVisualTarget(comment), comment.commentId, revealIntent);
     captureUsageEvent("comment_saved", {
       target_level: comment.sourceAnchor.level === "insertion"
         ? "insertion"
@@ -6391,6 +6394,9 @@ export default function Workbench() {
         aria-labelledby={`workbench-tab-${activeWorkbenchTab.tabId}`}
         ref={reviewStageRef}
         className="review-scroll-stage"
+        onWheelCapture={commentCanvasPort.cancelReveal}
+        onPointerDownCapture={commentCanvasPort.cancelReveal}
+        onKeyDownCapture={commentCanvasPort.cancelReveal}
         data-inspector={workbenchInspector}
         data-review-active={readyReviewOverlay ? "true" : undefined}
         data-surface-hidden={settingsPageActive || startPageActive || projectRulesPageActive
@@ -6486,6 +6492,7 @@ export default function Workbench() {
                     setRuntimeDegradationSnapshot({ key: runtimeDegradationKey, state });
                   }}
                   onCommentLayout={commentCanvasPort.publishLayout}
+                  onReadingIntent={commentCanvasPort.cancelReveal}
                   onSelect={handleCanvasSelection}
                   onRequestComment={openCommentComposer}
                   onRequestFlush={requestUserFlush}

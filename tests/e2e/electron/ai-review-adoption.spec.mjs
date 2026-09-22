@@ -1118,15 +1118,72 @@ ${REVIEW_MASK_UNION_BEFORE}
     );
     expect(beforeRewriteGroup).toBeTruthy();
     expect(afterRewriteGroup).toBeTruthy();
+    // Source text atoms can have several marker occurrences. The mask belongs
+    // to the analyzer's focus region; its representative visible atom may
+    // change with layout and is not the region's identity.
+    const rewriteRegions = [];
+    for (const [frame, marker] of [
+      [beforeReviewFrame, beforeRewriteMarker],
+      [afterReviewFrame, afterRewriteMarker],
+    ]) {
+      const groupId = await resolvedMarkerRegion(marker);
+      expect(groupId).toBeTruthy();
+      const bar = frame.locator(
+        `[data-stemmio-review-region-bar][data-stemmio-review-focus-group="${groupId}"]`,
+      );
+      await expect(bar).toHaveCount(1);
+      const regionId = await bar.getAttribute("data-stemmio-review-focus-region");
+      expect(regionId).toBeTruthy();
+      rewriteRegions.push({ frame, groupId, regionId });
+    }
     await activateReviewMarkerGroup(beforeReviewFrame, beforeRewriteMarker);
-    const beforeRewriteHole = beforeReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${beforeRewriteGroup}"]`,
-    );
-    const afterRewriteHole = afterReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${afterRewriteGroup}"]`,
-    );
-    await expect(beforeRewriteHole).toHaveCount(1);
-    await expect(afterRewriteHole).toHaveCount(1);
+    try {
+      for (const { frame, groupId, regionId } of rewriteRegions) {
+        await expect(frame.locator("html"))
+          .toHaveAttribute("data-stemmio-review-focus-group", groupId);
+        await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(1);
+        await expect(frame.locator(
+          `[data-stemmio-review-mask-hole][data-stemmio-review-focus-group="${groupId}"]`
+            + `[data-stemmio-review-focus-region="${regionId}"]`,
+        )).toHaveCount(1);
+      }
+    } catch (failure) {
+      // Preserve the actual region/atom evidence before Electron teardown;
+      // the locator failure alone cannot distinguish a missing mask from a
+      // different representative atom in a valid aggregated region.
+      try {
+        const projection = await Promise.all([beforeReviewFrame, afterReviewFrame].map((frame) => (
+          frame.locator("html").evaluate((root) => {
+            const attributes = (node) => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {
+                ...Object.fromEntries([...node.attributes]
+                  .filter((attribute) => attribute.name.startsWith("data-"))
+                  .map((attribute) => [attribute.name, attribute.value])),
+                bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                display: style.display, visibility: style.visibility, opacity: style.opacity,
+              };
+            };
+            return {
+              root: attributes(root),
+              fonts: document.fonts.status,
+              viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },
+              holes: [...document.querySelectorAll("[data-stemmio-review-mask-hole]")].map(attributes),
+              bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map(attributes),
+              markers: [...document.querySelectorAll("[data-review-readable-rewrite] [data-stemmio-review-text]")]
+                .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+            };
+          })
+        )));
+        await test.info().attach("rewrite-mask-failure.json", {
+          body: Buffer.from(JSON.stringify(projection, null, 2)), contentType: "application/json",
+        });
+      } catch (diagnosticFailure) {
+        console.warn("Review mask diagnostics unavailable:", String(diagnosticFailure));
+      }
+      throw failure;
+    }
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect(frame.locator('[data-stemmio-review-overlay-box][data-tone^="text-"]'))
         .toHaveCount(0);
@@ -3406,34 +3463,40 @@ test("accepting a Version shows static Active and unlocks editing before Runtime
   ));
   const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
   try {
-    const openedFrame = await loadedDiskFrame(launched.page, fixture.sourcePath);
-    const scrollAnchor = openedFrame.locator(caseSelector(ACCEPT_SCROLL_ANCHOR));
-    await expect(scrollAnchor).toBeVisible();
-    const anchorDocumentTop = await scrollAnchor.evaluate((element) => (
-      element.getBoundingClientRect().top
-      + Number(element.ownerDocument.defaultView?.scrollY || 0)
-    ));
-    await launched.page.locator(".review-scroll-stage").evaluate((stage, documentTop) => {
-      const iframe = [...stage.querySelectorAll(
-        '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
-      )].find((node) => node.getClientRects().length > 0);
-      if (!iframe) return;
-      const iframeOffset = iframe.getBoundingClientRect().top
-        - stage.getBoundingClientRect().top
-        + stage.scrollTop;
-      stage.scrollTop = Math.max(0, iframeOffset + documentTop - stage.clientHeight / 2);
-    }, anchorDocumentTop);
-    await expect.poll(async () => {
-      const snapshot = await readActiveAcceptSnapshot(launched.page);
-      return snapshot.outerScrollTop > 400 && snapshot.anchorInViewport && !snapshot.showingDocumentTop
-        ? snapshot
-        : false;
-    }).toBeTruthy();
-
+    await loadedDiskFrame(launched.page, fixture.sourcePath);
     const request = await addCommentAndSubmit(
       launched.page,
       launched.electronApp,
       fixture.sourcePath,
+      UPDATED_TEXT,
+      [],
+      async (activeSourcePath) => {
+        // Comment creation intentionally reveals its target. Establish the reading
+        // location after that gesture, immediately before entering Review.
+        const openedFrame = await loadedDiskFrame(launched.page, activeSourcePath);
+        const scrollAnchor = openedFrame.locator(caseSelector(ACCEPT_SCROLL_ANCHOR));
+        await expect(scrollAnchor).toBeVisible();
+        const anchorDocumentTop = await scrollAnchor.evaluate((element) => (
+          element.getBoundingClientRect().top
+          + Number(element.ownerDocument.defaultView?.scrollY || 0)
+        ));
+        await launched.page.locator(".review-scroll-stage").evaluate((stage, documentTop) => {
+          const iframe = [...stage.querySelectorAll(
+            '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
+          )].find((node) => node.getClientRects().length > 0);
+          if (!iframe) return;
+          const iframeOffset = iframe.getBoundingClientRect().top
+            - stage.getBoundingClientRect().top
+            + stage.scrollTop;
+          stage.scrollTop = Math.max(0, iframeOffset + documentTop - stage.clientHeight / 2);
+        }, anchorDocumentTop);
+        await expect.poll(async () => {
+          const snapshot = await readActiveAcceptSnapshot(launched.page);
+          return snapshot.outerScrollTop > 400 && snapshot.anchorInViewport && !snapshot.showingDocumentTop
+            ? snapshot
+            : false;
+        }).toBeTruthy();
+      },
     );
     const beforeAdoption = await captureReviewAcceptPersistence(launched.page);
     writeAiOutput(request.requestRoot, (base) => preserveCandidateSourceIdsForFixture(

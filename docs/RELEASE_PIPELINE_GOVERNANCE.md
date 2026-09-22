@@ -43,8 +43,12 @@ feedback, not reusable release evidence.
 
 `PR Feedback` and the source-candidate jobs share a per-PR concurrency key
 inside `ci.yml`. A new commit therefore cancels an in-flight complete run for
-the stale head; `release-gate` skips that cancelled run instead of recording
-an artificial gate failure. Returning to Draft skips the full matrix; a later commit on a
+the stale head; `release-gate` still evaluates every lane, so cancelled or
+unexpectedly skipped lanes cannot satisfy a required check. Only Ready PR runs
+use the `release-gate` check name; Draft and main runs use
+`release-gate-inactive`. Before attestation, the gate verifies the current Ready
+PR head/base and the tested merge commit. Repository protection must separately
+require an up-to-date branch and the GitHub Actions `release-gate` check. Returning to Draft skips the full matrix; a later commit on a
 Ready PR reruns the complete matrix for the new head. Keep parallel PR scope a
 judgement call, not a fixed capacity rule.
 
