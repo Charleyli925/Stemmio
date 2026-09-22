@@ -6049,6 +6049,14 @@ export default function Workbench() {
       && activeRun.documentId === activeSurfaceDocumentId
     )),
   );
+  const activeSurfaceProjectRulesLocked = Boolean(
+    runSnapshot.activeSubmission
+    && ["frozen", "uncertain"].includes(runSnapshot.activeSubmission.phase)
+    && (!activeRun || (
+      activeRun.projectId === activeSurfaceProjectId
+      && activeRun.documentId === activeSurfaceDocumentId
+    )),
+  );
   const workbenchStyle = useMemo(() => ({
     "--workbench-sidebar-width-saved": `${workspacePreferencesController.panelWidths.sidebarWidth}px`,
     "--workbench-inspector-width": `${workspacePreferencesController.panelWidths.inspectorWidth}px`,
@@ -6464,7 +6472,7 @@ export default function Workbench() {
         <ProjectRulesEditorPage
           activeTabId={activeWorkbenchTab.tabId}
           capability={workspaceController!.projectRules}
-          runLocked={activeSurfaceRunLocked}
+          runLocked={activeSurfaceProjectRulesLocked}
           onChange={updateProjectRules}
           onBeginComposition={beginProjectRulesComposition}
           onFinishComposition={finishProjectRulesComposition}

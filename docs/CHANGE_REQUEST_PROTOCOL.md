@@ -206,6 +206,8 @@ execution Turn 可以仍 queued。后续执行事实和重启恢复在 ADR 0071 
 - `change-request.json`
 - `PROMPT.md`
 
+项目当前 `PROJECT.md` 不属于该冻结目录。Request 发布、提交协调结束后，用户可保存下一轮规则；执行、重试和恢复仍读取本 Request 的 `input/PROJECT.md`，采纳 Candidate 不回写当前规则。提交冻结和发布结果未确认期间仍保留规则保存协调。
+
 冻结后这些文件不可修改。用户在内部 AI 对话中新增、修订或撤销要求时，内部 AI 必须先调用 Prompt 提供的受控 helper，把用户原话追加到当前 Attempt 的 `USER_SUPPLEMENT.json`；helper 返回成功后才能执行。原始 Request 不变。Attempt 已封存后，任何新要求都必须创建新 Request。
 
 ## 5. Change Request v3

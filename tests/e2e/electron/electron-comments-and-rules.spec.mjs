@@ -1259,3 +1259,53 @@ test("workspace failure keeps the current page visible with export and relaunch 
     );
   }
 });
+
+test("published request keeps frozen rules while the rules tab saves the next round", async ({}, testInfo) => {
+  const fixture = createSourceFixture("frozen-project-rules.html", source => process.env.STEMMIO_RULES_HTML
+    ? readFileSync(process.env.STEMMIO_RULES_HTML, "utf8") : source);
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await waitForProjectReady(page);
+    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+    const toggle = page.getByRole("button", { name: "展开左侧边栏" });
+    if (await toggle.count()) await toggle.click();
+    const rulesEntry = page.locator(".sidebar-project-rules-row");
+    await rulesEntry.click();
+    const editor = page.getByRole("textbox", { name: "长期规则内容" });
+    await editor.fill("# Frozen rules A");
+    await page.keyboard.press("Meta+s");
+    const managed = await managedWorkingCopyPath(page, fixture.sourcePath);
+    const currentRules = path.join(path.dirname(managed), "PROJECT.md");
+    await expect.poll(() => readFileSync(currentRules, "utf8")).toBe("# Frozen rules A");
+    await page.getByRole("tab", { name: /· 当前稿$/u }).click();
+    await openRailGlobalCommentComposer(page);
+    await page.getByRole("textbox", { name: "评论内容" }).fill("Keep the page structure and update its wording.");
+    await page.getByRole("button", { name: "评论", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "评论内容" })).toBeHidden();
+    await page.getByRole("button", { name: /AI 助手/u }).click();
+    await chooseClipboardDelivery(page);
+    let promptPath = "";
+    await expect.poll(async () => {
+      const copied = await launched.electronApp.evaluate(({ clipboard }) => clipboard.readText());
+      promptPath = copied.match(/请执行\s+(.+?\/PROMPT\.md)\s+中的单轮任务/u)?.[1] || "";
+      return Boolean(promptPath && existsSync(promptPath));
+    }).toBe(true);
+    const frozenRules = path.join(path.dirname(promptPath), "input", "PROJECT.md");
+    expect(readFileSync(frozenRules, "utf8")).toBe("# Frozen rules A");
+    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("aria-readonly", "true");
+    await rulesEntry.click();
+    await expect(editor).toBeEnabled();
+    await editor.fill("# Next rules B");
+    // Use the real autosave timer, rather than a test-only write path.
+    await expect.poll(() => readFileSync(currentRules, "utf8")).toBe("# Next rules B");
+    expect(readFileSync(frozenRules, "utf8")).toBe("# Frozen rules A");
+    await page.screenshot({ path: testInfo.outputPath("next-rules-during-frozen-request.png") });
+    await page.getByRole("tab", { name: /· 当前稿$/u }).click();
+    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("aria-readonly", "true");
+    expect(readFileSync(currentRules, "utf8")).toBe("# Next rules B");
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
