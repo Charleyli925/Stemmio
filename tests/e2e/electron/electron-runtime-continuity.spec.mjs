@@ -32,12 +32,19 @@ import {
   removeValidatedTemporaryDirectory,
   stopStemmio,
   tmpdir,
+  openRecentProject,
   writeFileSync,
   waitForRuntimeHandoffSettled,
   waitForProjectReady,
 } from "./electron-native-harness.mjs";
 
-async function withRuntimeProject(prefix, files, run, launchOptions = {}) {
+async function withRuntimeProject(
+  prefix,
+  files,
+  run,
+  launchOptions = {},
+  evidence = null,
+) {
   const sourceDirectory = mkdtempSync(path.join(tmpdir(), prefix));
   const sourcePath = path.join(sourceDirectory, "runtime-report.html");
   for (const [relativePath, content] of Object.entries(files)) {
@@ -45,17 +52,31 @@ async function withRuntimeProject(prefix, files, run, launchOptions = {}) {
     mkdirSync(path.dirname(targetPath), { recursive: true });
     writeFileSync(targetPath, content, "utf8");
   }
+  const evidenceEnabled = Boolean(evidence?.testInfo && evidence?.caseId);
+  const diagnosticSourcePath = path.join(sourceDirectory, "runtime-diagnostic.html");
+  if (evidenceEnabled) {
+    writeFileSync(
+      diagnosticSourcePath,
+      "<!doctype html><html><head><title>Runtime diagnostic</title></head><body><main>诊断起始页</main></body></html>",
+      "utf8",
+    );
+  }
   const session = {
     electronApp: null,
     page: null,
     isolatedUserData: null,
   };
+  let hadFailure = false;
   try {
     Object.assign(session, await launchStemmio({
       activeSourcePath: sourcePath,
       ...launchOptions,
+      ...(evidenceEnabled ? {
+        activeSourcePath: diagnosticSourcePath,
+        recentSourcePaths: [diagnosticSourcePath, sourcePath],
+      } : {}),
     }));
-    await run({
+    const runProject = () => run({
       get page() {
         return session.page;
       },
@@ -93,17 +114,45 @@ async function withRuntimeProject(prefix, files, run, launchOptions = {}) {
         return session;
       },
     });
+    if (evidenceEnabled) {
+      await withRuntimeFailureEvidence(
+        session.page,
+        evidence.testInfo,
+        runProject,
+        { caseId: evidence.caseId },
+      );
+    } else {
+      await runProject();
+    }
+  } catch (cause) {
+    hadFailure = true;
+    throw cause;
   } finally {
+    let cleanupError = null;
     if (session.electronApp && session.isolatedUserData) {
       try {
         await stopStemmio(session.electronApp, session.isolatedUserData);
-      } catch {
-        removeValidatedTemporaryDirectory(session.isolatedUserData, "stemmio-native-e2e-");
+      } catch (cause) {
+        cleanupError ||= cause;
+        try {
+          removeValidatedTemporaryDirectory(session.isolatedUserData, "stemmio-native-e2e-");
+        } catch (fallbackCause) {
+          cleanupError ||= fallbackCause;
+        }
       }
     } else if (session.isolatedUserData) {
-      removeValidatedTemporaryDirectory(session.isolatedUserData, "stemmio-native-e2e-");
+      try {
+        removeValidatedTemporaryDirectory(session.isolatedUserData, "stemmio-native-e2e-");
+      } catch (cause) {
+        cleanupError ||= cause;
+      }
     }
-    removeValidatedTemporaryDirectory(sourceDirectory, prefix);
+    try {
+      removeValidatedTemporaryDirectory(sourceDirectory, prefix);
+    } catch (cause) {
+      cleanupError ||= cause;
+    }
+    if (!hadFailure && cleanupError) throw cleanupError;
   }
 }
 
@@ -879,6 +928,15 @@ const DELAYED_CHART_PAGE = `<!doctype html><html><head><title>Continuous report<
 <script>
  parent.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ =
    (parent.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ || 0) + 1;
+ if (parent.__STEMMIO_RUNTIME_FAILURE_EVIDENCE__) {
+   const events = parent.__STEMMIO_RUNTIME_RECOVERY_EVENTS__ ||= [];
+   events.push({ kind: 'execute', executionId: crypto.randomUUID(),
+     time: parent.performance.timeOrigin + parent.performance.now(),
+     count: parent.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__,
+     generation: frameElement?.getAttribute('data-frame-generation'),
+     candidate: frameElement?.getAttribute('data-runtime-candidate-id') });
+   if (events.length > 128) events.shift();
+ }
  const text = document.querySelector('[data-native-case="format-chart"]').textContent;
  if (text.includes('FAIL_CHART')) {
    parent.__STEMMIO_DELAYED_CHART_FAILURE_COUNT__ =
@@ -1130,8 +1188,18 @@ test("owned composition snapshots keep formatted source nodes editable but autho
 });
 
 test("the read-only recovery notice reloads source authority even when dynamic preparation fails", async ({}, testInfo) => {
-  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => withRuntimeFailureEvidence(page, testInfo, async () => {
-    await loadedDiskFrame(page, sourcePath, 'format-chart');
+  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => {
+    const armedAt = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_FAILURE_EVIDENCE__?.armedAt || null
+    ));
+    expect(armedAt).toEqual(expect.any(Number));
+    await openRecentProject(page, sourcePath, "format-chart");
+    const initialRuntimeCount = await page.evaluate(() => (
+      window.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ || 0
+    ));
+    expect(initialRuntimeCount).toBeGreaterThan(0);
+    expect(await page.evaluate(() => performance.timeOrigin + performance.now()))
+      .toBeGreaterThan(armedAt);
     await disableStructuralInPlace(page);
     const editor = page.getByTestId('html-canvas-editor');
     const frame = editor.frameLocator('iframe[data-runtime-slot-role="active"]');
@@ -1181,13 +1249,27 @@ test("the read-only recovery notice reloads source authority even when dynamic p
     await page.keyboard.insertText(' RECOVERED');
     await page.keyboard.press(keyShortcut('s'));
     await expect.poll(() => readPublishedWorkingCopy(working)).toContain('RECOVERED');
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ || 0
+    ))).toBeGreaterThan(initialRuntimeCount);
+    const runtimeEvidence = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_FAILURE_EVIDENCE__?.read() || null
+    ));
+    expect(runtimeEvidence?.authorCounts?.recovery).toBeGreaterThanOrEqual(initialRuntimeCount);
+    expect(runtimeEvidence.recoveryEvents[0].time).toBeGreaterThanOrEqual(armedAt);
+    expect(new Set(runtimeEvidence.recoveryEvents.map(event => event.executionId)).size)
+      .toBe(runtimeEvidence.authorCounts.recovery);
+    const observedGenerations = (runtimeEvidence?.entries || []).flatMap((entry) => (
+      entry.data?.frames || []
+    )).map((frame) => frame["data-frame-generation"]).filter(Boolean);
+    expect(observedGenerations.length).toBeGreaterThan(0);
     await page.screenshot({ path: testInfo.outputPath('reload-editing-restored.png') });
-  }), {
+  }, {
     injectedEnv: {
       STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
       STEMMIO_E2E_STATIC_CANDIDATE_FAILURE: "1",
     },
-  });
+  }, { testInfo, caseId: "format-chart" });
 });
 
 test("Canvas shortcuts follow the promoted frame and same-source reload keeps charts running", async ({}, testInfo) => {

@@ -3196,6 +3196,83 @@ test("repairCurrentCanvas joins the existing document save before rebuilding the
   assert.equal(harness.canvas.unlocks, 1);
 });
 
+for (const interleave of ["own-save", "project-switch", "version-switch", "independent-edit", "wrong-freeze-receipt", "invalid-save-ack", "save-failure", "dispose", "verify-error"]) {
+test(`repairCurrentCanvas freeze checkpoint: ${interleave}`, async () => {
+  const before = "<!doctype html><html><body><p>one</p></body></html>";
+  const after = before.replace("one", "native checkpoint");
+  const freezeComplete = deferred();
+  const saved = deferred();
+  const openTarget = (sourceSha256) => ({
+    projectId: PROJECT_ID, documentId: DOCUMENT_ID,
+    projectRootPath: "/tmp/document-workflow-project", targetKind: "working-copy",
+    workingCopyId: "working_document_workflow", versionId: "version_document_workflow",
+    exactSourcePath: SOURCE_PATH, sourceSha256,
+  });
+  let writes = 0;
+  let releases = 0;
+  let freezes = 0;
+  const harness = createHarness({
+    html: before,
+    bridge: {
+      async autosave(body) {
+        writes += 1;
+        if (interleave === "save-failure") throw new Error("synthetic save failure");
+        return { ok: true, content: body.html, sha256: interleave === "invalid-save-ack" ? sha256("wrong") : sha256(body.html),
+          persistedRevision: body.editRevision, lastModifiedAt: "2026-09-22T00:00:00.000Z",
+          openTarget: openTarget(sha256(body.html)) };
+      },
+    },
+    canvasOverrides: {
+      async verifyRendered() {
+        if (interleave === "verify-error") throw new Error("synthetic render failure");
+      },
+      async freeze() {
+        if (freezes++ > 0) return { ok: true };
+        harness.workflow.enqueueEdit({ html: after, sourceTransaction: operation(before, after), context: harness.projectSession.context });
+        const outcome = await harness.workflow.flush();
+        saved.resolve(outcome);
+        await freezeComplete.promise;
+        return { ok: outcome.status === "succeeded", html: interleave === "wrong-freeze-receipt" ? before : after, workingSourceSha256: sha256(after),
+          release: () => { releases += 1; } };
+      },
+    },
+  });
+  const context = harness.projectSession.refreshOpenTarget(openTarget(sha256(before)));
+  const repair = harness.workflow.repairCurrentCanvas({ context });
+  const saveOutcome = await saved.promise;
+  const saveFailed = ["invalid-save-ack", "save-failure"].includes(interleave);
+  assert.equal(saveOutcome.status === "succeeded", !saveFailed);
+  if (!saveFailed) assert.equal(harness.projectSession.matches(context), false, "save advanced the exact open-target Hash during freeze");
+  if (interleave === "project-switch") harness.projectSession.openLocator(NEXT_SOURCE_PATH);
+  if (interleave === "version-switch") harness.projectSession.refreshOpenTarget({ ...openTarget(sha256(after)), targetKind: "version", versionId: "other-version" });
+  if (interleave === "independent-edit") harness.workflow.enqueueEdit({ html: after + " ", context: harness.projectSession.context });
+  if (interleave === "dispose") harness.workflow.dispose();
+  freezeComplete.resolve();
+  const outcome = await repair;
+  if (interleave !== "own-save") {
+    assert.equal(outcome.status, saveFailed ? "blocked" : interleave === "verify-error" ? "succeeded" : "stale");
+    if (interleave === "verify-error") assert.equal(outcome.value.page.status, "repair-required");
+    assert.equal(releases, saveFailed ? 0 : 1, "every acquired freeze settles through its original scoped release");
+    assert.equal(harness.canvas.unlocks, 0);
+    assert.equal(writes, 1);
+    assert.equal(harness.canvas.rebuilds, 0);
+    if (interleave === "independent-edit") assert.equal(harness.documentSession.html, after + " ");
+    return;
+  }
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.value.page.status, "restored");
+  assert.equal(outcome.value.source.sourceSha256, sha256(after));
+  assert.equal(releases, 1);
+  assert.equal(harness.canvas.unlocks, 0, "owned release does not call the unscoped unlock port");
+  assert.equal(writes, 1);
+  const continued = after.replace("native checkpoint", "continued editing");
+  harness.workflow.enqueueEdit({ html: continued, context: harness.projectSession.context });
+  assert.equal((await harness.workflow.flush()).status, "succeeded");
+  assert.equal(harness.documentSession.persistedSourceSha256, sha256(continued));
+  assert.equal(writes, 2);
+});
+}
+
 test("repairCurrentCanvas rejects a hash refresh when an independent edit changes the source", async () => {
   const before = "<!doctype html><html><body><p>one</p></body></html>";
   const pending = before.replace("one", "pending save");

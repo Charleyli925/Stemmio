@@ -81,3 +81,18 @@ export function interpretAgentCredentialOperation(input, options = {}) {
     terminal: ["saved", "missing", "superseded", "rejected"].includes(status),
   });
 }
+
+/**
+ * Choose recovery from the existing public operation facts, never from copy.
+ * Unknown clears remain owned by the original clear reconciliation command.
+ * @param {{status?: string, operationKind?: AgentCredentialOperationKind | null} | null | undefined} projection
+ * @returns {"reconnect" | "retry-persist" | null}
+ */
+export function agentCredentialRecoveryAction(projection) {
+  if (!projection || !["failed", "unreadable", "unavailable", "rejected", "unknown"].includes(projection.status || "")) {
+    return null;
+  }
+  if (projection.operationKind === "startup") return "reconnect";
+  if (projection.operationKind === "persist") return "retry-persist";
+  return null;
+}

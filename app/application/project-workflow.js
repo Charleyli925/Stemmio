@@ -4966,6 +4966,8 @@ export class ProjectWorkflow {
         persistedSourceSha256: sourceSha256,
         ...(editRevision !== undefined ? { editRevision } : {}),
         ...(lastPersistedRevision !== undefined ? { lastPersistedRevision } : {}),
+        persistState: "idle",
+        persistError: "",
         pendingWrite: null,
         context: this.#projectSession.context,
         operationId: "managed-source-transition",

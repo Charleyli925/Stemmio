@@ -1967,6 +1967,68 @@ test("lost adoption reply reconciles the same Candidate decision without a new o
   assert.equal(harness.calls.commit.length, 1);
 });
 
+test("committed adoption read failure reconciles the same decision without draining the old draft again", async (t) => {
+  let reads = 0;
+  const harness = createHarness({ sourceRead: async (sourcePath) => {
+    if (++reads === 1) throw new BridgeRequestError("current bytes unavailable", { outcome: "rejected" });
+    return {
+      projectId: "project_a", documentId: "document_a", sourcePath,
+      content: CANDIDATE_HTML, sha256: sha256(CANDIDATE_HTML),
+      currentBasedOnVersionId: "ver_0002", currentExactVersionId: "ver_0002",
+      restoredFromVersionId: null, lastModifiedAt: "2026-08-12T00:00:02.000Z",
+    };
+  } });
+  t.after(() => harness.workflow.dispose());
+  const run = readyRun();
+  harness.runSession.trackRun(run, { activate: "always" });
+
+  const outcome = await harness.workflow.activateReadyVersion({ run });
+
+  assert.equal(outcome.status, "unknown");
+  assert.equal(outcome.operationId, "promote_candidate_ready_0001");
+  assert.equal(harness.calls.commit.length, 0);
+  assert.equal(harness.documentSession.html, BASE_HTML);
+  assert.equal(harness.runSession.activeRun.adoptionPhase, "unknown");
+  assert.equal((await harness.workflow.activateReadyVersion({ run })).code, "VERSION_ACTIVATION_BUSY");
+
+  await new Promise((resolve) => setTimeout(resolve, 1150));
+
+  assert.equal(harness.runSession.activeRun.status, "complete");
+  assert.equal(harness.calls.activate, 2);
+  assert.deepEqual(harness.calls.activateInputs[0], harness.calls.activateInputs[1]);
+  assert.equal(harness.calls.drain.length, 1);
+  assert.equal(harness.calls.commit.length, 1);
+  assert.equal(harness.documentSession.html, CANDIDATE_HTML);
+  assert.equal(harness.runSession.isOperationBusy("activate", operationKey(run)), false);
+});
+
+test("adoption read reconciliation retains a real source conflict instead of publishing different bytes", async (t) => {
+  let reads = 0;
+  const harness = createHarness({ sourceRead: async (sourcePath) => {
+    if (++reads === 1) throw new BridgeRequestError("current bytes unavailable", { outcome: "rejected" });
+    return {
+      projectId: "project_a", documentId: "document_a", sourcePath,
+      content: B_HTML, sha256: sha256(B_HTML),
+      lastModifiedAt: "2026-08-12T00:00:02.000Z",
+    };
+  } });
+  t.after(() => harness.workflow.dispose());
+  const run = readyRun();
+  harness.runSession.trackRun(run, { activate: "always" });
+  assert.equal((await harness.workflow.activateReadyVersion({ run })).status, "unknown");
+  harness.documentSession.recordPersistenceFailure({ conflict: true, error: "external bytes changed" });
+
+  await new Promise((resolve) => setTimeout(resolve, 1150));
+
+  assert.equal(harness.calls.activate, 2);
+  assert.deepEqual(harness.calls.activateInputs[0], harness.calls.activateInputs[1]);
+  assert.equal(harness.calls.commit.length, 0);
+  assert.equal(harness.documentSession.html, BASE_HTML);
+  assert.equal(harness.documentSession.persistState, "conflict");
+  assert.equal(harness.runSession.activeRun.adoptionPhase, undefined);
+  assert.equal(harness.runSession.isOperationBusy("activate", operationKey(run)), false);
+});
+
 test("adoption preserves and reconciles the Candidate decision when managed transition outcome is unknown", async (t) => {
   const candidateId = "candidate_transition_unknown";
   let transitions = 0;
