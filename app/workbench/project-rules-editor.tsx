@@ -75,7 +75,7 @@ function formatSelection(
 function statusLabel(snapshot: ProjectRulesSnapshot, runLocked: boolean, dirty: boolean) {
   if (snapshot.loading) return "正在读取…";
   if (snapshot.error) return "读取失败";
-  if (runLocked) return "AI 处理中，暂时只读";
+  if (runLocked) return "正在确认发送，暂时只读";
   if (snapshot.saving) return "自动保存中…";
   if (snapshot.saveError) return "保存失败";
   if (dirty) return "待自动保存";

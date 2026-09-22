@@ -23,10 +23,37 @@ import type { WorkbenchTabsSnapshot } from "../application/workbench-tabs-sessio
 import type { PageViewContext } from "../lib/page-view-context.js";
 import type { CanvasMode, HtmlProject } from "./types";
 import type { ActiveRun } from "../domain/run-lifecycle.js";
-import { sameSourceReceipt } from "../application/document-session.js";
+import { isSourceReceipt, sameSourceReceipt, sameSourceReceiptContext } from "../application/document-session.js";
+import { sameLocalSourcePath } from "./project-model";
 import type { DocumentSourceReceipt } from "../application/document-session.js";
 import type { WorkbenchNavigationReceipt } from "../application/workbench-navigation-session.js";
 import type { HtmlDisplaySurfaceReadyToken } from "../components/HtmlDisplaySurface";
+
+export function isSameActivationAuthoritySuccessor(
+  current: DocumentSourceReceipt | null | undefined,
+  initial: DocumentSourceReceipt | null | undefined,
+): boolean {
+  if (!isSourceReceipt(current) || !isSourceReceipt(initial)
+    || !current.context || !initial.context
+    || current.origin !== "authority"
+    || current.sessionIncarnation !== initial.sessionIncarnation
+    || current.sequence <= initial.sequence
+    || current.canvasGeneration <= initial.canvasGeneration
+    || current.editRevision < initial.editRevision
+    || current.sourceSha256 !== initial.sourceSha256) return false;
+  const paths = ["sourcePath", "projectRootPath", "exactSourcePath"] as const;
+  if (!paths.every((key) => sameLocalSourcePath(
+    current.context?.[key], initial.context?.[key],
+  ))) return false;
+  // Only compare an already accepted successor for presentation retirement.
+  // The source/Canvas owners continue to require the original exact receipts.
+  return sameSourceReceiptContext(current, { context: {
+    ...initial.context,
+    sourcePath: current.context.sourcePath,
+    projectRootPath: current.context.projectRootPath,
+    exactSourcePath: current.context.exactSourcePath,
+  } });
+}
 
 export type DocumentSurfaceHandoffToken = HtmlDisplaySurfaceReadyToken;
 
@@ -160,8 +187,9 @@ export function useDocumentSurfaceHandoff({
   // A cached handoff is never terminal merely because the currently mounted
   // Canvas happens to be verified. During B -> C, that Canvas may still be B
   // (and a same-Hash return makes the hash insufficient too). When the
-  // navigation path published an exact receipt, only that receipt plus its
-  // current Canvas generation retires the retained cover. Some already-open
+  // navigation path published an exact receipt, that receipt (or a verified
+  // same-activation hydration successor) must match the current Canvas before
+  // it retires the retained cover. Some already-open
   // tab paths publish a document receipt without a SourceReceipt; their
   // current Canvas authority is still receipt-fenced by DocumentSession and
   // must be allowed to retire the cover rather than leave it intercepting the
@@ -170,8 +198,18 @@ export function useDocumentSurfaceHandoff({
     canvasAuthority?.status === "failed"
     && canvasAuthority.generation === canvasGeneration,
   );
+  const verifiedHydrationSuccessor = Boolean(
+    exactReceiptApplies
+    && navigationReceipt?.transactionId === terminalHandoffToken?.handoffId
+    && active?.kind === "document"
+    && active.tabId === terminalHandoffToken?.tabId
+    && sourceReceipt?.canvasGeneration === canvasGeneration
+    && sourceReceipt?.sourceSha256 === terminalHandoffToken?.sourceSha256
+    && isSameActivationAuthoritySuccessor(sourceReceipt, navigationReceipt?.sourceReceipt)
+    && canvasVerified,
+  );
   const terminal = exactReceiptApplies
-    ? receiptVerified && (canvasVerified || canvasFailed)
+    ? (receiptVerified && (canvasVerified || canvasFailed)) || verifiedHydrationSuccessor
     : canvasVerified || canvasFailed;
   const retainedCandidateIsActive = Boolean(
     retainedCandidateHandoffToken
