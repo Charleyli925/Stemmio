@@ -160,6 +160,10 @@ Rules:
 - External `importSourceKey` is a lookup, not a write credential. Equal HTML
   bytes at another path remain a new project. Multiple claims for one source
   key fail closed and do not present a chooser.
+- Registry-catalog refresh may activate the persisted startup selection only
+  before the first navigation admission. Once navigation has begun, its pending
+  tab belongs to that transaction; catalog refresh only reconciles presentation
+  and may not append startup restoration or close an ordinary pending tab.
 - Recent and Registry-catalog lists are deferrable projections. Automatic
   refreshes run only after the authoritative transition has settled
   (hydration, Working Copy confirmation or synchronous cross-Session
@@ -840,6 +844,11 @@ source hash. Both UI recovery entries use that one repair path. This transient
 presentation state adds no durable adoption transaction or Conversation schema.
 External disk observations also retain their starting SourceReceipt and context;
 a result arriving after source publication cannot mark the new authority conflicted.
+After RunWorkflow resolves that existing one-shot gate, WorkspaceController asks
+VersionWorkflow to finish the same post-Canvas cleanup used by normal adoption:
+clear the old edit audit, queue the current comment draft, clear recovery and
+refresh project/version metadata. The refresh carries the current authority
+receipt continuation; no second promotion or recovery-state owner is created.
 
 Before accepting a submission, Conversation Repository reserves 128 messages, two contexts, one turn and 2 MiB for the bounded execution history, public summary and adoption decision. Near message/context/turn/byte limits it rotates only a settled Conversation, preserving both links and all prior records; interrupted rotation repairs the current index from the archived link. Submission requirements are losslessly split into bounded messages; more than 1 MiB of JSON-encoded requirements is rejected before acceptance or provider contact. Progress is capped before projection, while Request/Promotion terminal facts remain authoritative and replayable.
 Every RunWorkflow submit exit before a known Request settles the original submission identity in finally, including stale navigation after receipt or ticket arrival. A dispatched unknown Request is excluded and stays with existing reconciliation. The in-memory pending run is removed only after this pre-Request settlement path; navigation never changes its target.

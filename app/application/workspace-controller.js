@@ -1472,7 +1472,11 @@ export class WorkspaceController {
       });
     }
     const pending = this.#workbenchTabsSession.snapshot.pendingTabId;
-    if (!pending || !this.#workbenchNavigationWorkflow) {
+    // Only the initial persisted selection may start a restoration. Later
+    // pending tabs belong to admitted navigation; a catalog refresh must not
+    // queue another activation or close that ordinary tab on restore failure.
+    if (!pending || !this.#workbenchNavigationWorkflow
+      || this.#workbenchNavigationSession.snapshot.admissionOrdinal > 0) {
       if (this.#workbenchTabsSession.snapshot.revision !== priorRevision) {
         this.#workbenchTabsPersistenceCoordinator?.commit(this.#workbenchTabsSession.serialize());
       }

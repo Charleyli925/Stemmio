@@ -1215,3 +1215,12 @@ test("failed runs retain public narration beside the recovery decision", () => {
   assert.equal(progress.narration, "已读取本轮资料，修改尚未提交。");
   assert.equal(progress.headline, "生成中断");
 });
+
+test("sealed process stays distinct from true results and fixed stage groups", () => {
+  const stage = factMessage({ actor: "agent", kind: "progress" });
+  const sealed = factMessage({ actor: "agent", kind: "process-summary", text: "处理过程。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "最终结果。" });
+  const timeline = sidebarTurnPresentation([stage, sealed, result]);
+  assert.deepEqual(timeline.timeline.map((block) => block.messages), [[stage], [sealed], [result]]);
+  assert.deepEqual(timeline.primary, [result]);
+});
