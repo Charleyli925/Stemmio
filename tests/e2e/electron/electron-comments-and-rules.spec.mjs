@@ -762,6 +762,17 @@ test("automatic update actions keep the sidebar product geometry and split About
     await launched.page.getByRole("button", { name: "软件更新", exact: true }).click();
     await expect(settings.getByRole("heading", { name: "软件更新" })).toBeFocused();
     await expect(settings.getByRole("button", { name: "下载更新" })).toBeVisible();
+    await launched.electronApp.evaluate(({ ipcMain }, value) => {
+      ipcMain.removeHandler("html-updates:check-now");
+      ipcMain.handle("html-updates:check-now", event => {
+        event.sender.send("html-updates:status", value);
+        return { protocol: "stemmio-project-result", version: 1, ok: true, value };
+      });
+    }, { ...updateStatus, status: "available", latestVersion: "9.10.0" });
+    await settings.getByRole("button", { name: "再次检查", exact: true }).click();
+    await expect(settings.getByText("9.10.0", { exact: true })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "下载更新", exact: true })).toBeEnabled();
+
     if (toolbarCleanupOutput) {
       await launched.page.screenshot({
         path: path.join(toolbarCleanupOutput, "03-settings.png"),
