@@ -3720,34 +3720,15 @@ export default function Workbench() {
   }: {
     expectedRun?: ActiveRun | null;
   } = {}): Promise<boolean> => {
-    const diag = (point: string, result: unknown = null) => {
-      const document = currentDocumentSessionSnapshot();
-      const run = currentRunSessionSnapshot().activeRun;
-      console.info("STEMMIO_PAGE_REPAIR_DIAGNOSTIC", JSON.stringify({
-        point,
-        result,
-        generation: document.canvasGeneration,
-        authority: document.canvasAuthority.status,
-        authorityError: document.canvasAuthority.error,
-        persisted: document.workingHtmlSha256 === document.persistedSourceSha256,
-        rendered: document.canvasAuthority.renderedSha256 === document.workingHtmlSha256,
-        recoveryRequired: run?.pageRecoveryRequired === true,
-      }));
-    };
-    diag("entry");
     const context = captureProjectContext();
     const controller = workspaceControllerRef.current;
     if (!context || !controller || projectLoadError || persistState === "conflict") {
-      diag("entry-guard", { hasContext: Boolean(context), hasController: Boolean(controller), projectLoadError, persistState });
       return false;
     }
     const outcome = await controller.repairDocumentCanvas({
       context,
       expectedSourceReceipt: currentDocumentSessionSnapshot().sourceReceipt,
     });
-    diag("repair-outcome", outcome.status === "succeeded"
-      ? { status: outcome.status, page: outcome.value.page }
-      : { status: outcome.status, code: "code" in outcome ? outcome.code : null, reason: "reason" in outcome ? outcome.reason : null });
     const restoredContext = outcome.status === "succeeded"
       ? outcome.value.source.receipt?.context || null
       : null;
@@ -3760,10 +3741,7 @@ export default function Workbench() {
       // to prove that the requested, restored, and still-visible routes agree.
       && sameProjectRoute(context, restoredContext)
       && sameProjectRoute(currentContext, restoredContext);
-    if (!restored) {
-      diag("not-restored", { requestedRouteMatches: sameProjectRoute(context, restoredContext), currentRouteMatches: sameProjectRoute(currentContext, restoredContext) });
-      return false;
-    }
+    if (!restored) return false;
     const visibleRun = currentRunSessionSnapshot().activeRun;
     const recoveryRun = expectedRun?.pageRecoveryRequired === true
       ? expectedRun
@@ -3780,12 +3758,8 @@ export default function Workbench() {
         || currentRun.requestId !== recoveryRun.requestId
         || currentRun.attemptId !== recoveryRun.attemptId
         || !sameLocalSourcePath(currentRun.sourcePath, recoveryRun.sourcePath)
-      ) {
-        diag("run-mismatch");
-        return false;
-      }
+      ) return false;
       const settled = runCapability?.commands.resolvePageRecovery({ run: recoveryRun });
-      diag("settled", settled ? { status: settled.status, code: "code" in settled ? settled.code : null, reason: "reason" in settled ? settled.reason : null } : null);
       if (settled?.status !== "succeeded") return false;
     }
     setFileStatusNotice("页面已重新加载，可以继续编辑");

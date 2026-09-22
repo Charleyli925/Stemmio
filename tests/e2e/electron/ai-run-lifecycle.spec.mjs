@@ -435,8 +435,6 @@ test("accepted source survives a display verification failure and repairs withou
 }, async ({}, testInfo) => {
   const fixture = createSourceFixture("accepted-page-recovery.html");
   const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
-  launched.page.on("console", message => { if (message.text().startsWith("STEMMIO_PAGE_REPAIR_DIAGNOSTIC")) console.log(message.text()); });
-  launched.page.on("pageerror", error => console.log("STEMMIO_PAGE_REPAIR_ERROR", error.message));
   const decisions = [];
   try {
     const request = await addCommentAndSubmit(launched.page, launched.electronApp, fixture.sourcePath);
