@@ -1623,9 +1623,21 @@ test("same-source history cancellation reloads through a fixed Runtime candidate
     );
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
-    ))).toBe(1);
+    ))).toBeGreaterThan(0);
+    // As in the reorder oracle above, count from the settled pre-interaction
+    // Runtime. Startup candidates are outside the history operation contract.
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
+    ));
+    test.info().annotations.push({
+      type: "initial-runtime-executions",
+      description: String(initialRuntimeExecutions),
+    });
 
-    for (const expectedExecutionCount of [2, 3]) {
+    for (const expectedExecutionCount of [
+      initialRuntimeExecutions + 1,
+      initialRuntimeExecutions + 2,
+    ]) {
       await activateNativeEdit(frame, "runtime-history-cancel");
       await armRuntimeHandoffSamples(page);
       const candidateStarted = page.waitForFunction(() => Boolean(
@@ -3181,6 +3193,14 @@ test("Runtime text history ignores unrelated disposable clone drift", {
     const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
     const frame = (await loadedDiskFrame(page, sourcePath, "runtime-history-text")).frame;
     await expect(frame.locator('[data-runtime-unrelated-clone="true"]')).toHaveCount(1);
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__
+    ));
+    expect(initialRuntimeExecutions).toBeGreaterThan(0);
+    test.info().annotations.push({
+      type: "initial-runtime-executions",
+      description: String(initialRuntimeExecutions),
+    });
     const historyDocument = await documentToken(page);
     const historyGeneration = await editor.locator('iframe:not([data-frame-role])')
       .getAttribute("data-frame-generation");
@@ -3216,7 +3236,8 @@ test("Runtime text history ignores unrelated disposable clone drift", {
     );
     await expect(editor).toHaveAttribute("data-history-adopt-path", "editable-island-in-place");
     await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
-    expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__)).toBe(1);
+    expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__))
+      .toBe(initialRuntimeExecutions);
   });
 });
 
@@ -3278,15 +3299,38 @@ test("latest required Runtime candidate wins across slow ECharts, in-place text 
     await expect.poll(() => reviewStage.evaluate((element) => element.scrollTop)).toBe(480);
 
     const candidateIds = [];
-    const currentActiveRuntimeFrame = async () => {
+    const currentActiveRuntimeFrame = async ({ timeout } = {}) => {
       const activeIframe = editor.locator('iframe:not([data-frame-role])');
-      await expect(activeIframe).toHaveCount(1);
-      const activeHandle = await activeIframe.elementHandle();
+      await expect(activeIframe).toHaveCount(1, { timeout });
+      const activeHandle = await activeIframe.elementHandle({ timeout });
       const activeFrame = await activeHandle?.contentFrame();
       if (!activeFrame || activeFrame.isDetached()) {
         throw new Error("Latest-wins active Runtime frame is unavailable.");
       }
       return activeFrame;
+    };
+    const waitForInteractiveActiveRuntime = async () => {
+      await expect.poll(() => page.evaluate(() => {
+        const editorElement = document.querySelector('[data-testid="html-canvas-editor"]');
+        const activeFrame = editorElement?.querySelector('iframe:not([data-frame-role])');
+        if (!(activeFrame instanceof HTMLIFrameElement)) return false;
+        const style = getComputedStyle(activeFrame);
+        const handoff = editorElement?.getAttribute("data-runtime-handoff");
+        return Boolean(
+          activeFrame.isConnected
+          && activeFrame.contentDocument?.documentElement
+          && style.visibility === "visible"
+          && style.opacity !== "0"
+          && style.pointerEvents !== "none"
+          && (handoff === "active" || handoff === null)
+          && !editorElement?.hasAttribute("data-runtime-refresh-pending")
+          && editorElement?.querySelectorAll('iframe[data-frame-role="runtime-candidate"]')
+            .length === 0,
+        );
+      }), {
+        timeout: 1_000,
+        intervals: [50, 100, 250],
+      }).toBe(true);
     };
     const waitForNewCandidate = async (previousId) => {
       const candidateHandle = await page.waitForFunction((priorCandidateId) => {
@@ -3342,14 +3386,23 @@ test("latest required Runtime candidate wins across slow ECharts, in-place text 
     await expect.poll(async () => (
       await editor.getAttribute("data-runtime-degradation") || "none"
     )).toBe("none");
-    // Duplicate replacement can still be settling the Active frame. Re-resolve
-    // and dblclick until Native Edit actually starts, instead of firing one
-    // synthetic MouseEvent into a frame that is about to be replaced.
+    // Candidate removal precedes the positioning fence ending. Wait for the
+    // public interactive state, then bound each attempt so replacement can
+    // re-resolve the frame within the existing outer retry budget.
     await expect(async () => {
-      frame = await currentActiveRuntimeFrame();
+      await waitForInteractiveActiveRuntime();
+      frame = await currentActiveRuntimeFrame({ timeout: 1_000 });
       const target = frame.locator('[data-native-case="runtime-latest-wins-text"]').first();
-      await doubleClickRenderedText(target);
-      await expect(target).toHaveAttribute("contenteditable", "true");
+      const targetHandle = await target.elementHandle({ timeout: 1_000 });
+      if (!targetHandle) throw new Error("Latest-wins text target is unavailable.");
+      try {
+        // A handle makes glyph evaluation immediate on this exact element;
+        // a stale locator could otherwise wait for another full action budget.
+        await doubleClickRenderedText(targetHandle, { timeout: 1_000 });
+        await expect(target).toHaveAttribute("contenteditable", "true", { timeout: 1_000 });
+      } finally {
+        await targetHandle.dispose();
+      }
     }).toPass({ timeout: 30_000, intervals: [250, 500, 1_000] });
     frame = await currentActiveRuntimeFrame();
     let heading = frame.locator('[data-native-case="runtime-latest-wins-text"]').first();

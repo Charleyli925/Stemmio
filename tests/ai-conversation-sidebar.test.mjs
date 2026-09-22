@@ -1161,3 +1161,12 @@ test("activity grouping stays on its first event and never crosses public narrat
   assert.equal(rows.some(row => /文件|成功|已完成|[0-9]/u.test(row.label || "")), false);
   assert.deepEqual(sidebarActivityTimeline([], [a, { ...b, boundary: 2 }]).map(row => row.id), [a.id, b.id]);
 });
+
+test("sealed process stays distinct from true results and fixed stage groups", () => {
+  const stage = factMessage({ actor: "agent", kind: "progress" });
+  const sealed = factMessage({ actor: "agent", kind: "process-summary", text: "处理过程。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "最终结果。" });
+  const timeline = sidebarTurnPresentation([stage, sealed, result]);
+  assert.deepEqual(timeline.timeline.map((block) => block.messages), [[stage], [sealed], [result]]);
+  assert.deepEqual(timeline.primary, [result]);
+});

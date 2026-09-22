@@ -877,10 +877,9 @@
 .executionDetails summary { cursor: pointer; }
 
 
-.turnGroup { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.turnGroup + .turnGroup { border-top: 1px solid var(--border, rgb(32 29 49 / 10%)); padding-top: 18px; }
-.turnGroup .historyGroup { text-align: center; font-size: 10px; font-weight: 500; margin: 4px 0 10px; }
-.turnGroup .text { font-size: 13px; overflow-wrap: anywhere; }
+.stream > .historyGroup:not(:first-child) { border-top: 1px solid var(--border, rgb(32 29 49 / 10%)); padding-top: 18px; }
+.stream .historyGroup { text-align: center; font-size: 10px; font-weight: 500; margin: 4px 0 10px; }
+.stream .text { font-size: 13px; overflow-wrap: anywhere; }
 .currentActions { min-width: 0; max-height: 40vh; overflow-y: auto; padding: 0 14px; }
 .currentActions:has(.actionBar) { border-top: 1px solid var(--border, rgb(32 29 49 / 10%)); padding-top: 12px; padding-bottom: 12px; }
 .currentActions .actionBar { display: block; margin: 0; }
@@ -897,8 +896,8 @@
   .send { white-space: normal; }
 }
 
-.turnGroup .message[data-actor="stemmio"] .messageMeta { display: none; }
-.turnGroup .message[data-actor="stemmio"] { font-weight: 400; }
+.stream .message[data-actor="stemmio"] .messageMeta { display: none; }
+.stream .message[data-actor="stemmio"] { font-weight: 400; }
 
 .close { margin-left: auto; width: 28px; height: 28px; flex: none; border: 0; border-radius: 6px; background: transparent; color: #666171; font-size: 20px; cursor: pointer; }
 .close:hover { background: #e9e7f0; }
@@ -910,7 +909,6 @@
 .turnProcess li > svg { align-self: start; margin-top: 3px; color: var(--faint); }
 .turnProcess time { color: var(--faint); font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .actorDetail { margin-left: 6px; color: var(--faint); font-weight: 400; }
-.turnGroup { gap: 18px; }
 .actor { color: var(--muted); font-size: 11px; }
 .message[data-actor="user"] { align-self: flex-end; max-width: 92%; grid-template-columns: minmax(0, 1fr) 26px; }
 .message[data-actor="user"] > *:not(.avatar) { grid-column: 1; }

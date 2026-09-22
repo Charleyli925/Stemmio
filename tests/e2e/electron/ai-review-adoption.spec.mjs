@@ -80,7 +80,38 @@ async function resolvedMarkerRegion(marker) {
 }
 
 async function activateReviewMarkerGroup(frame, marker) {
-  await expect.poll(() => resolvedMarkerRegion(marker), { timeout: 30_000 }).toBeTruthy();
+  try {
+    await expect.poll(() => resolvedMarkerRegion(marker), { timeout: 30_000 }).toBeTruthy();
+  } catch (cause) {
+    const diagnostic = await marker.evaluate((element) => {
+      const rects = (node) => [...node.getClientRects()].map(({ x, y, width, height }) => ({ x, y, width, height }));
+      const attrs = (node) => Object.fromEntries([...node.attributes].filter((attribute) => attribute.name.startsWith("data-stemmio-review-")).map(({ name, value }) => [name, value]));
+      const owners = [];
+      for (let owner = element; owner; owner = owner.parentElement) {
+        owners.push({ tag: owner.tagName, attributes: attrs(owner), rects: rects(owner) });
+      }
+      const markers = [
+        ...(element.matches("[data-stemmio-review-marker]") ? [element] : []),
+        ...element.querySelectorAll("[data-stemmio-review-marker]"),
+      ].map((marker) => {
+        const changeId = marker.getAttribute("data-stemmio-review-marker") || "";
+        const projectionFacts = JSON.parse(marker.getAttribute("data-stemmio-review-projection-facts") || "[]");
+        return { changeId, projectionFacts, rects: rects(marker), expectedGroups: projectionFacts.map((fact) => {
+          const displayGroupId = fact.displayGroupId || `display-fact-${fact.id || ""}`;
+          return fact.structureChange === "style" ? `focus-${displayGroupId}` : `focus-${changeId}-${displayGroupId}`;
+        }) };
+      });
+      return {
+        marker: attrs(element), rects: rects(element), owners, markers,
+        displayOwners: [...document.querySelectorAll("[data-stemmio-review-display-owner]")].slice(0, 200)
+          .map((owner) => ({ attributes: attrs(owner), rects: rects(owner) })),
+        root: attrs(document.documentElement),
+        bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map((bar) => ({ attributes: attrs(bar), rects: rects(bar) })),
+      };
+    }).catch((error) => ({ captureError: String(error) }));
+    await test.info().attach("unresolved-review-marker.json", { body: JSON.stringify(diagnostic, null, 2), contentType: "application/json" });
+    throw cause;
+  }
   const focusGroupId = await resolvedMarkerRegion(marker);
   expect(focusGroupId).toBeTruthy();
   if (await frame.locator("html").getAttribute("data-stemmio-review-focus-group") === focusGroupId) {
@@ -1118,15 +1149,72 @@ ${REVIEW_MASK_UNION_BEFORE}
     );
     expect(beforeRewriteGroup).toBeTruthy();
     expect(afterRewriteGroup).toBeTruthy();
+    // Source text atoms can have several marker occurrences. The mask belongs
+    // to the analyzer's focus region; its representative visible atom may
+    // change with layout and is not the region's identity.
+    const rewriteRegions = [];
+    for (const [frame, marker] of [
+      [beforeReviewFrame, beforeRewriteMarker],
+      [afterReviewFrame, afterRewriteMarker],
+    ]) {
+      const groupId = await resolvedMarkerRegion(marker);
+      expect(groupId).toBeTruthy();
+      const bar = frame.locator(
+        `[data-stemmio-review-region-bar][data-stemmio-review-focus-group="${groupId}"]`,
+      );
+      await expect(bar).toHaveCount(1);
+      const regionId = await bar.getAttribute("data-stemmio-review-focus-region");
+      expect(regionId).toBeTruthy();
+      rewriteRegions.push({ frame, groupId, regionId });
+    }
     await activateReviewMarkerGroup(beforeReviewFrame, beforeRewriteMarker);
-    const beforeRewriteHole = beforeReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${beforeRewriteGroup}"]`,
-    );
-    const afterRewriteHole = afterReviewFrame.locator(
-      `[data-stemmio-review-mask-hole][data-text-group="${afterRewriteGroup}"]`,
-    );
-    await expect(beforeRewriteHole).toHaveCount(1);
-    await expect(afterRewriteHole).toHaveCount(1);
+    try {
+      for (const { frame, groupId, regionId } of rewriteRegions) {
+        await expect(frame.locator("html"))
+          .toHaveAttribute("data-stemmio-review-focus-group", groupId);
+        await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(1);
+        await expect(frame.locator(
+          `[data-stemmio-review-mask-hole][data-stemmio-review-focus-group="${groupId}"]`
+            + `[data-stemmio-review-focus-region="${regionId}"]`,
+        )).toHaveCount(1);
+      }
+    } catch (failure) {
+      // Preserve the actual region/atom evidence before Electron teardown;
+      // the locator failure alone cannot distinguish a missing mask from a
+      // different representative atom in a valid aggregated region.
+      try {
+        const projection = await Promise.all([beforeReviewFrame, afterReviewFrame].map((frame) => (
+          frame.locator("html").evaluate((root) => {
+            const attributes = (node) => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {
+                ...Object.fromEntries([...node.attributes]
+                  .filter((attribute) => attribute.name.startsWith("data-"))
+                  .map((attribute) => [attribute.name, attribute.value])),
+                bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                display: style.display, visibility: style.visibility, opacity: style.opacity,
+              };
+            };
+            return {
+              root: attributes(root),
+              fonts: document.fonts.status,
+              viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },
+              holes: [...document.querySelectorAll("[data-stemmio-review-mask-hole]")].map(attributes),
+              bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map(attributes),
+              markers: [...document.querySelectorAll("[data-review-readable-rewrite] [data-stemmio-review-text]")]
+                .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+            };
+          })
+        )));
+        await test.info().attach("rewrite-mask-failure.json", {
+          body: Buffer.from(JSON.stringify(projection, null, 2)), contentType: "application/json",
+        });
+      } catch (diagnosticFailure) {
+        console.warn("Review mask diagnostics unavailable:", String(diagnosticFailure));
+      }
+      throw failure;
+    }
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect(frame.locator('[data-stemmio-review-overlay-box][data-tone^="text-"]'))
         .toHaveCount(0);

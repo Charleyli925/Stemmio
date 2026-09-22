@@ -80,7 +80,7 @@
         "turnId": { "type": "string" },
         "sequence": { "type": "integer", "minimum": 1 },
         "actor": { "enum": ["user", "agent", "stemmio"] },
-        "kind": { "enum": ["text", "progress", "decision-outcome", "error", "context-boundary", "permission-boundary", "result-summary"] },
+        "kind": { "enum": ["text", "progress", "decision-outcome", "error", "context-boundary", "permission-boundary", "result-summary", "process-summary"] },
         "status": { "enum": ["completed", "interrupted", "failed", "cancelled"] },
         "text": { "type": "string", "maxLength": 131072 },
         "contextId": { "type": "string" },
