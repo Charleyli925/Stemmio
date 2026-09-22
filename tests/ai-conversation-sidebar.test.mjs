@@ -591,6 +591,30 @@ test("conflict and failed results keep their recovery decisions in the conversat
   ]);
 });
 
+test("a committed adoption with a failed Canvas stays adopted and exposes only page recovery", () => {
+  const state = sidebarStateFromRun({
+    activeRun: {
+      status: "complete",
+      pageRecoveryRequired: true,
+    },
+    // A stale conflict status must not outrank the committed adoption fact.
+    reviewing: true,
+  });
+  assert.equal(state, "adopted-recovery");
+  assert.equal(sidebarModePresentation(state).label, "需要恢复页面");
+  const bar = sidebarActionBar({
+    state,
+    runStatus: "awaiting-conflict-resolution",
+    failureMessage: "画布没有确认采用后的页面。",
+  });
+  assert.equal(bar.title, "已采用，但页面需要恢复");
+  assert.match(bar.detail, /不会再次采用/u);
+  assert.deepEqual(bar.actions.map((action) => action.id), ["repair-page"]);
+  assert.match(sidebarActionBar({ state }).detail, /新版本已经采用/u);
+  assert.equal(sidebarSendState({ state }).canSend, false);
+  assert.equal(sidebarCopyTaskState({ state }).canCopy, false);
+});
+
 test("structured recovery kinds expose only actions that can resolve the failure", () => {
   const matrix = [
     ["retry", ["resend-agent", "dismiss"]],
@@ -929,6 +953,21 @@ test("the clipboard round says what is actually happening and keeps the task rea
   assert.equal(managed.detail, null);
   assert.deepEqual(managed.actions.map((action) => action.id), ["cancel"]);
 
+  const managedCancelling = sidebarActionBar({
+    state: "processing",
+    deliveryMode: "managed-agent",
+    handoffStatus: "cancelling",
+  });
+  assert.equal(managedCancelling.actions[0].label, "正在停止");
+  assert.equal(managedCancelling.actions[0].disabled, true);
+
+  const clipboardCancelling = sidebarActionBar({
+    state: "processing",
+    deliveryMode: "clipboard",
+    handoffStatus: "cancelling",
+  });
+  assert.equal(clipboardCancelling.actions.find((action) => action.id === "cancel").label, "结束本轮");
+
   // And the clipboard detail no longer repeats the header sentence either.
   assert.equal(clipboard.detail, "粘贴给任意能读写本机文件的 AI。");
 
@@ -1068,6 +1107,12 @@ test("adoption uncertainty takes precedence over Review and exposes no opposite 
     assert.equal(sidebarSendState({ state }).canSend, false);
     if (adoptionPhase === "unknown") assert.equal(bar.title, "采用结果待确认");
   }
+  const staleConflict = sidebarActionBar({
+    state: "adoption-unknown",
+    runStatus: "awaiting-conflict-resolution",
+  });
+  assert.equal(staleConflict.kind, "progress");
+  assert.deepEqual(staleConflict.actions, []);
 });
 
 test("turn presentation preserves Conversation sequence across Agent and Stemmio facts", async () => {
@@ -1160,6 +1205,15 @@ test("activity grouping stays on its first event and never crosses public narrat
   assert.deepEqual(rows.filter(row => row.kind === "activity").map(row => row.label), ["读取本轮资料", "读取本轮资料"]);
   assert.equal(rows.some(row => /文件|成功|已完成|[0-9]/u.test(row.label || "")), false);
   assert.deepEqual(sidebarActivityTimeline([], [a, { ...b, boundary: 2 }]).map(row => row.id), [a.id, b.id]);
+});
+
+test("failed runs retain public narration beside the recovery decision", () => {
+  const progress = sidebarRunProgress({ state: "run-error",
+    steps: [{ key: "agent", label: "生成中断", state: "failed" }],
+    agentUpdates: [{ id: "public-before-failure", text: "已读取本轮资料，修改尚未提交。" }],
+  });
+  assert.equal(progress.narration, "已读取本轮资料，修改尚未提交。");
+  assert.equal(progress.headline, "生成中断");
 });
 
 test("sealed process stays distinct from true results and fixed stage groups", () => {

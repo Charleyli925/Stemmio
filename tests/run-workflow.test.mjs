@@ -2081,6 +2081,78 @@ test("cancel and conflict commands keep their scoped identities and do not alter
   assert.equal(harness.calls.cancel[0].sourcePath, SOURCE_B);
 });
 
+test("page recovery requires a verified current Canvas and exact run identity", () => {
+  const harness = createHarness();
+  const run = runRecord({
+    status: "complete",
+    pageRecoveryRequired: true,
+    pageRecoveryReason: "页面尚未确认采用后的 HTML。",
+  });
+  harness.runSession.trackRun(run, { activate: "always" });
+
+  const unverified = harness.workflow.resolvePageRecovery({ run });
+  assert.equal(unverified.status, "blocked");
+  assert.equal(unverified.code, "RUN_PAGE_RECOVERY_NOT_VERIFIED");
+  assert.equal(harness.calls.unlock, 0);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+
+  harness.documentSession.reset({ html: HTML_A, persistedSourceSha256: sha256(HTML_A),
+    context: { ...harness.context, epoch: harness.context.epoch + 1 } });
+  assert.equal(harness.documentSession.confirmCanvas({
+    receipt: harness.documentSession.sourceReceipt, renderedHtml: HTML_A,
+    renderedSha256: sha256(HTML_A), generation: harness.documentSession.canvasGeneration,
+  }), true);
+  assert.equal(harness.workflow.resolvePageRecovery({ run }).code, "RUN_PAGE_RECOVERY_NOT_VERIFIED");
+  assert.equal(harness.calls.unlock, 0);
+  harness.documentSession.reset({ html: HTML_A, persistedSourceSha256: sha256(HTML_A), context: harness.context });
+
+  const receipt = harness.documentSession.sourceReceipt;
+  assert.equal(harness.documentSession.confirmCanvas({
+    receipt,
+    renderedHtml: HTML_A,
+    renderedSha256: sha256(HTML_A),
+    generation: harness.documentSession.canvasGeneration,
+  }), true);
+
+  const repaired = harness.workflow.resolvePageRecovery({ run });
+  assert.equal(repaired.status, "succeeded");
+  assert.equal(repaired.value.current, true);
+  assert.equal(harness.calls.unlock, 1);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, undefined);
+
+  const oldAttempt = runRecord({
+    requestId: "request_recovery",
+    attemptId: "attempt_001",
+    status: "complete",
+    pageRecoveryRequired: true,
+  });
+  harness.runSession.trackRun(oldAttempt, { activate: "always" });
+  const newAttempt = { ...oldAttempt, attemptId: "attempt_002", status: "processing" };
+  harness.runSession.trackRun(newAttempt, { activate: "always" });
+  const lateAttempt = harness.workflow.resolvePageRecovery({ run: oldAttempt });
+  assert.equal(lateAttempt.status, "stale");
+  assert.equal(harness.calls.unlock, 1);
+  assert.equal(harness.runSession.activeRun?.attemptId, "attempt_002");
+
+  const oldDocument = runRecord({
+    requestId: "request_old_document",
+    status: "complete",
+    pageRecoveryRequired: true,
+  });
+  harness.runSession.trackRun(oldDocument, { activate: "always" });
+  harness.projectSession.openLocator(SOURCE_B);
+  harness.projectSession.register({
+    epoch: harness.projectSession.epoch,
+    sourcePath: SOURCE_B,
+    projectId: "project_b",
+    documentId: "document_b",
+  });
+  const lateDocument = harness.workflow.resolvePageRecovery({ run: oldDocument });
+  assert.equal(lateDocument.status, "stale");
+  assert.equal(harness.calls.unlock, 1);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+});
+
 test("a late cancel result cannot unlock or clear a reopened project generation", async () => {
   const cancellation = deferred();
   const harness = createHarness({

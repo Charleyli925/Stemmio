@@ -300,6 +300,7 @@ export function createQoderAcpE2ECommand(directory, {
   visibleText = false,
   visibleTextLong = false,
   visibleTextGateMs = 0,
+  visibleTextStartGateFile = null,
 } = {}) {
   const command = path.join(directory, "stemmio-qoder-acp-e2e");
   const agent = path.join(productRoot, "tests", "fixtures", "qoder-acp-agent.mjs");
@@ -312,6 +313,7 @@ export function createQoderAcpE2ECommand(directory, {
     visibleText ? "--visible-text" : null,
     visibleTextLong ? "--visible-text-long" : null,
     visibleTextGateMs > 0 ? `--visible-text-gate-ms=${visibleTextGateMs}` : null,
+    visibleTextStartGateFile ? `--visible-text-start-gate=${visibleTextStartGateFile}` : null,
   ].filter(Boolean).map(shellQuote).join(" ");
   writeFileSync(
     command,

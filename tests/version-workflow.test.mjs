@@ -184,6 +184,7 @@ function createHarness({
   observeExternalSourceChange = async () => ({ status: "succeeded" }),
   onCatalogAfterSettlement = null,
   prepareTransition = null,
+  advanceSourceIdentity = false,
   currentDraft = false,
   createCurrent = null,
   queryCurrent = null,
@@ -235,6 +236,7 @@ function createHarness({
     unlock: 0,
     freeze: 0,
     clearRecovery: 0,
+    pageRecovery: [],
     clearAudit: 0,
     resetComments: 0,
     queueDraft: 0,
@@ -341,7 +343,7 @@ function createHarness({
     commitManagedSourceTransition({ prepared, html, sourceSha256, publishVersion, publishSessions }) {
       calls.commit.push({ prepared, html, sourceSha256 });
       let nextContext = projectSession.context;
-      if (!sameSourcePath(projectSession.sourcePath, prepared.nextSourcePath)) {
+      if (advanceSourceIdentity || !sameSourcePath(projectSession.sourcePath, prepared.nextSourcePath)) {
         nextContext = projectSession.transitionSource({
           previousSourcePath: prepared.previousSourcePath,
           sourcePath: prepared.nextSourcePath,
@@ -408,6 +410,10 @@ function createHarness({
     clearRecovery() {
       calls.clearRecovery += 1;
       recoveryState.status = "cleared";
+    },
+    markCanvasRecoveryRequired(input) {
+      calls.pageRecovery.push(input);
+      return true;
     },
     clearAudit() {
       calls.clearAudit += 1;
@@ -860,8 +866,9 @@ test("activation publishes committed display identity before Canvas verification
   assert.equal(harness.runSession.activeRun?.status, "complete");
 });
 
-test("activation keeps the Canvas locked when rendered-byte verification fails", async () => {
+for (const advanceSourceIdentity of [false, true]) test(`activation keeps the Canvas locked when rendered-byte verification fails (new source identity: ${advanceSourceIdentity})`, async () => {
   const harness = createHarness({
+    advanceSourceIdentity,
     verifyRendered: async (html) => {
       if (html === CANDIDATE_HTML) throw new Error("canvas did not acknowledge candidate");
     },
@@ -876,14 +883,80 @@ test("activation keeps the Canvas locked when rendered-byte verification fails",
   assert.equal(harness.calls.commit.length, 1);
   assert.equal(harness.documentSession.html, CANDIDATE_HTML);
   assert.equal(harness.versionSession.snapshot.currentExactVersionId, "ver_0002");
-  assert.equal(harness.runSession.activeRun?.status, "ready-to-open");
+  assert.equal(harness.runSession.activeRun?.status, "complete");
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  assert.match(harness.runSession.activeRun?.pageRecoveryReason, /canvas did not acknowledge candidate/u);
   assert.equal(harness.runSession.activeLocked, true);
   assert.equal(harness.calls.unlock, 0);
+  assert.equal(harness.calls.pageRecovery.length, 1);
   assert.equal(harness.calls.clearAudit, 0);
   assert.equal(harness.calls.resetComments, 0);
   assert.equal(harness.calls.draftAuthorities.length, 1);
   assert.equal(harness.calls.queueDraft, 0);
   assert.equal(harness.calls.refresh.length, 0);
+
+  const repeat = await harness.workflow.activateReadyVersion({
+    run: harness.runSession.activeRun,
+  });
+  assert.equal(repeat.status, "blocked");
+  assert.equal(harness.calls.activate, 1);
+});
+
+test("verified page recovery completes cleanup before Run resolution", async () => {
+  const harness = createHarness({
+    verifyRendered: async (html) => {
+      if (html === CANDIDATE_HTML) throw new Error("canvas did not acknowledge candidate");
+    },
+  });
+  const run = readyRun();
+  harness.runSession.trackRun(run, { activate: "always" });
+
+  const failed = await harness.workflow.activateReadyVersion({ run });
+  assert.equal(failed.status, "rejected");
+  const recoveryRun = harness.runSession.activeRun;
+  assert.equal(recoveryRun?.pageRecoveryRequired, true);
+  const clearRecoveryBefore = harness.calls.clearRecovery;
+
+  // The real repair path reloads the accepted projection with the current
+  // managed context before acknowledging its Canvas generation.
+  harness.documentSession.publishAuthority({
+    html: CANDIDATE_HTML,
+    persistedSourceSha256: sha256(CANDIDATE_HTML),
+    pendingWrite: null,
+    context: harness.context,
+    operationId: "test-page-recovery-authority",
+  });
+  const receipt = harness.documentSession.sourceReceipt;
+  assert.equal(harness.documentSession.confirmCanvas({
+    receipt,
+    renderedHtml: CANDIDATE_HTML,
+    renderedSha256: sha256(CANDIDATE_HTML),
+    generation: harness.documentSession.canvasGeneration,
+  }), true);
+
+  const recovered = harness.workflow.completePageRecovery({ run: recoveryRun });
+  assert.equal(recovered.status, "succeeded", JSON.stringify(recovered));
+  assert.equal(recovered.value.current, true);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), true);
+  assert.equal(harness.calls.clearAudit, 1);
+  assert.equal(harness.calls.queueDraft, 1);
+  assert.equal(harness.calls.clearRecovery, clearRecoveryBefore + 1);
+  assert.equal(harness.calls.refresh.length, 1);
+  assert.equal(harness.calls.refresh[0].sourcePath, SOURCE_A);
+  assert.equal(
+    harness.calls.refresh[0].authorityReceiptContinuation,
+    harness.documentSession.sourceReceipt,
+  );
+  assert.equal(harness.calls.catalogAfterSettlement.length, 1);
+  assert.equal(harness.calls.activate, 1);
+
+  // The existing Run page-recovery gate is one-shot; a late repeat cannot
+  // reach Version cleanup or create another adoption operation.
+  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), false);
+  assert.equal(harness.calls.clearAudit, 1);
+  assert.equal(harness.calls.queueDraft, 1);
+  assert.equal(harness.calls.refresh.length, 1);
 });
 
 test("activation rejects completion/version hash drift before publishing current source", async () => {
