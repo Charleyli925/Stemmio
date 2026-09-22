@@ -186,6 +186,9 @@ Task Spec 和服务快照。它不授予执行权限。预检失败持久化 not
 Conversation 是不可变事实投影。提交回执先落盘，携带固定 conversationId、turnId 和
 可重复推导的 messageId；投影失败重放同一回执，不启动 Agent。用户要求是一条已完成消息，
 execution Turn 可以仍 queued。后续执行事实和重启恢复在 ADR 0071 / PR-4 中接通。
+已脱敏公开说明的 `public-summary` 事实投影为 Conversation V3 的 `process-summary`，
+与真正的 `result-summary` 区分；沿用固定 messageId 和 Request / Attempt，不按正文猜测用途，
+重放不改写既存不可变消息的类型。此投影不改变 Request / Candidate 或采用权威。
 
 设置诊断不创建提交、Request 或 ticket。执行预检仍是一次性 ticket 权威，超时不应自动重发。
 源字节、身份、附件与完整 HTML 的最终 Request 冻结校验保持不变。

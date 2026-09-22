@@ -1,3 +1,4 @@
+import { withRuntimeFailureEvidence } from "./helpers/runtime-failure-evidence.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
@@ -33,6 +34,7 @@ import {
   tmpdir,
   writeFileSync,
   waitForRuntimeHandoffSettled,
+  waitForProjectReady,
 } from "./electron-native-harness.mjs";
 
 async function withRuntimeProject(prefix, files, run, launchOptions = {}) {
@@ -201,18 +203,118 @@ test("frozen element entry rejects wrong text bindings and edits heading paragra
           expect(readFileSync(working)).toEqual(before);
         }
         const operationRows = rows();
+        // Observe native key delivery and selection changes without repairing
+        // focus or synthesizing a caret. Retain only this synthetic target.
+        const focusTrace = await frame.evaluateHandle((targetId) => {
+          const host = document.querySelector(`[data-stemmio-id="${targetId}"]`);
+          const events = [];
+          const nodePath = (node) => {
+            if (!node || !host.contains(node)) return null;
+            const path = [];
+            while (node !== host) {
+              path.unshift(Array.prototype.indexOf.call(node.parentNode.childNodes, node));
+              node = node.parentNode;
+            }
+            return path;
+          };
+          const observe = (event) => {
+            // A microtask sees whether any product handler canceled the key.
+            queueMicrotask(() => {
+              const selection = document.getSelection();
+              events.push({ type: event.type, key: event.key, metaKey: event.metaKey,
+                defaultPrevented: event.defaultPrevented, time: performance.now(),
+                documentFocused: document.hasFocus(), activeId: document.activeElement?.getAttribute("data-stemmio-id"),
+                anchor: nodePath(selection?.anchorNode), anchorOffset: selection?.anchorOffset,
+                focus: nodePath(selection?.focusNode), focusOffset: selection?.focusOffset,
+                selectedText: selection?.toString(), collapsed: selection?.isCollapsed });
+              if (events.length > 120) events.shift();
+            });
+          };
+          const types = ["keydown", "keyup", "selectionchange", "focusin", "focusout"];
+          types.forEach(type => document.addEventListener(type, observe, true));
+          return { events, stop: () => types.forEach(type => document.removeEventListener(type, observe, true)) };
+        }, id);
         let result;
         try { result = await executeFrozenText({ ...input, target, rows: operationRows }); }
         catch (error) {
           await test.info().attach("frozen-operation-failure", { contentType: "application/json",
-            body: JSON.stringify({ name, rows: operationRows, code: error.code, details: error.details }) });
+            body: JSON.stringify({ name, rows: operationRows, code: error.code, details: error.details,
+              events: await focusTrace.evaluate(trace => trace.events) }) });
           throw error;
+        } finally {
+          await focusTrace.evaluate(trace => trace.stop());
+          await focusTrace.dispose();
         }
         expect(result.state).toBe("PASS");
       }
     } finally { await editor.evaluate(stopRuntimeLifecycleObservation); }
   });
 });
+
+for (const releaseBeforeBlur of [false, true]) {
+  test(`transient native blur preserves the latest caret before Backspace: state RAF released=${releaseBeforeBlur}`, async () => {
+    const html = '<!doctype html><html><head><title>Native caret</title></head><body>'
+      + '<p data-native-case="entry-paragraph">  Paragraph <i>tail</i>.</p></body></html>';
+    await withRuntimeProject("stemmio-native-blur-caret-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      const { frame } = await loadedDiskFrame(page, sourcePath, "entry-paragraph");
+      const target = frame.locator('[data-native-case="entry-paragraph"]');
+      const working = await managedWorkingCopyPath(page, sourcePath);
+      const id = await target.getAttribute("data-stemmio-id");
+      const handle = await target.elementHandle();
+      await doubleClickRenderedText(target);
+      await expect(target).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+      await page.keyboard.press(keyShortcut("ArrowDown"));
+      await page.keyboard.type(" PRCORE_H02");
+      // Use the host realm: the static document intentionally forbids author
+      // scripts, so callbacks created inside that realm cannot drive waits.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const before = await target.textContent();
+      await page.evaluate(() => {
+        const frameWindow = document.querySelector('iframe[data-runtime-slot-role="active"]').contentWindow;
+        const request = frameWindow.requestAnimationFrame.bind(frameWindow);
+        const held = [];
+        // Freeze this exact frame's notifications for one keystroke. No input,
+        // focus or Selection is replaced; releasing runs the original callbacks.
+        frameWindow.requestAnimationFrame = callback => { held.push(callback); return -1000-held.length; };
+        window.__STEMMIO_TEST_NATIVE_CARET_RAF__ = {
+          held,
+          release() {
+            frameWindow.requestAnimationFrame = request;
+            for (const callback of held.splice(0)) request(callback);
+          },
+        };
+      });
+      try {
+        await page.keyboard.type("X");
+        expect(await target.textContent()).toBe(`${before}X`);
+        await requireFrozenTextFocus(handle, id, { atEnd: true });
+        expect(await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.held.length)).toBeGreaterThan(0);
+        if (releaseBeforeBlur) {
+          await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.release());
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        }
+        await target.evaluate(element => element.blur());
+        await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.release());
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        // The same original element must retain focus and the latest caret;
+        // waiting must not legitimize an earlier bookmark before the final X.
+        await requireFrozenTextFocus(handle, id, { atEnd: true });
+        await page.keyboard.press("Backspace");
+        expect(await target.textContent()).toBe(before);
+        await page.keyboard.press(keyShortcut("s"));
+        await expect.poll(async () => (await readPublishedWorkingCopy(working, null)).toString())
+          .toContain(" PRCORE_H02");
+        expect((await readPublishedWorkingCopy(working, null)).toString()).not.toContain(" PRCORE_H02X");
+      } finally {
+        await page.evaluate(() => {
+          window.__STEMMIO_TEST_NATIVE_CARET_RAF__?.release();
+          delete window.__STEMMIO_TEST_NATIVE_CARET_RAF__;
+        });
+        await handle.dispose();
+      }
+    });
+  });
+}
 
 test("a real Space key edits a nested summary instead of toggling its disclosure", async () => {
   const html = '<!doctype html><html><head><title>Summary space</title></head><body>'
@@ -1028,7 +1130,7 @@ test("owned composition snapshots keep formatted source nodes editable but autho
 });
 
 test("the read-only recovery notice reloads source authority even when dynamic preparation fails", async ({}, testInfo) => {
-  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => {
+  await withRuntimeProject("stemmio-static-reload-e2e-", { "runtime-report.html": DELAYED_CHART_PAGE }, async ({ page, electronApp, sourcePath }) => withRuntimeFailureEvidence(page, testInfo, async () => {
     await loadedDiskFrame(page, sourcePath, 'format-chart');
     await disableStructuralInPlace(page);
     const editor = page.getByTestId('html-canvas-editor');
@@ -1080,7 +1182,7 @@ test("the read-only recovery notice reloads source authority even when dynamic p
     await page.keyboard.press(keyShortcut('s'));
     await expect.poll(() => readPublishedWorkingCopy(working)).toContain('RECOVERED');
     await page.screenshot({ path: testInfo.outputPath('reload-editing-restored.png') });
-  }, {
+  }), {
     injectedEnv: {
       STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
       STEMMIO_E2E_STATIC_CANDIDATE_FAILURE: "1",
@@ -1502,3 +1604,175 @@ test("a completed Save does not reclaim an external comment textbox", {
     }
   });
 });
+
+for (const input of ["wheel-up", "wheel-down", "keyboard-home", "scrollbar"]) {
+  test(`same-document reload remembers reading intent from ${input}`, async ({}, testInfo) => {
+    const html = process.env.STEMMIO_READING_HTML
+      ? readFileSync(process.env.STEMMIO_READING_HTML, "utf8")
+      : `<!doctype html><html><head><title>Reading position</title>
+      <style>p { height: 120px; margin: 0; }</style></head><body>
+      ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+      </body></html>`;
+    await withRuntimeProject("stemmio-reading-position-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      if (process.env.STEMMIO_READING_HTML) {
+        await waitForProjectReady(page);
+        await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+      } else {
+        await loadedDiskFrame(page, sourcePath, "reading-0");
+      }
+      const stage = page.locator(".review-scroll-stage");
+      await stage.evaluate((element) => { element.scrollTop = 1600; });
+      await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBe(1600);
+      // Observe the scroll event before issuing the next user input.
+      await stage.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(element.scrollTop)))));
+      const bounds = await stage.boundingBox();
+      await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
+      if (input === "wheel-up" || input === "wheel-down") {
+        await page.mouse.wheel(0, input === "wheel-up" ? -900 : 600);
+      } else if (input === "keyboard-home") {
+        await page.mouse.click(bounds.x + 8, bounds.y + bounds.height / 2);
+        await page.keyboard.press("Home");
+      } else {
+        const metrics = await stage.evaluate((element) => ({
+          height: element.clientHeight, scrollHeight: element.scrollHeight, top: element.scrollTop,
+        }));
+        const thumbHeight = metrics.height * metrics.height / metrics.scrollHeight;
+        const thumbTop = metrics.top * metrics.height / metrics.scrollHeight;
+        await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbTop + thumbHeight / 2);
+        await page.mouse.down();
+        await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbHeight / 2 + 30, { steps: 1 });
+        await page.mouse.up();
+      }
+      if (input === "keyboard-home") {
+        await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBe(0);
+      } else {
+        await expect.poll(() => stage.evaluate((element) => element.scrollTop)).not.toBe(1600);
+      }
+      const before = await stage.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(element.scrollTop)))));
+      await page.screenshot({ path: testInfo.outputPath("upward-before-reload.png") });
+      const token = await documentToken(page);
+      await page.getByRole("button", { name: "更多", exact: true }).click();
+      await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+      await expect.poll(() => documentToken(page)).not.toBe(token);
+      await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+      await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeCloseTo(before, 0);
+      await page.screenshot({ path: testInfo.outputPath("upward-after-reload.png") });
+    });
+  });
+}
+
+test("comment reveal and layout alignment preserve the latest reading intent", async ({}, testInfo) => {
+  const html = `<!doctype html><html><head><title>Reading comments</title>
+    <style>p { height: 120px; margin: 0; }</style></head><body>
+    ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+    </body></html>`;
+  await withRuntimeProject("stemmio-reading-comments-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+    const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
+    const stage = page.locator(".review-scroll-stage");
+    await stage.evaluate(element => { element.scrollTop = 1500; });
+    await frame.locator('[data-native-case="reading-14"]').click();
+    await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
+    await page.getByRole("textbox", { name: "评论内容" }).fill("Reading anchor comment");
+    await page.getByRole("button", { name: "评论", exact: true }).click();
+    await expect(page.locator(".comment-card").filter({ hasText: "Reading anchor comment" })).toBeVisible();
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
+    const bounds = await stage.boundingBox();
+    await page.mouse.move(bounds.x + 8, bounds.y + bounds.height / 2);
+    await page.mouse.wheel(0, -900);
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
+    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const before = await stage.evaluate(element => element.scrollTop);
+    // Resizing the shell recomputes comment geometry; this is not a request to reveal a comment.
+    await page.setViewportSize({ width: 1100, height: 760 });
+    await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+    const token = await documentToken(page);
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+    await expect.poll(() => documentToken(page)).not.toBe(token);
+    await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+    await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+    await page.screenshot({ path: testInfo.outputPath("reading-after-comment-and-resize.png") });
+  });
+});
+
+for (const input of ["outer-wheel", "iframe-wheel", "keyboard-home", "scrollbar"]) {
+  test(`reading intent cancels a comment reveal waiting for its frame: ${input}`, async () => {
+    const html = `<!doctype html><html><head><title>Delayed comment</title>
+      <style>p { height: 120px; margin: 0; }</style></head><body>
+      ${Array.from({ length: 40 }, (_, i) => `<p data-native-case="reading-${i}">Reading paragraph ${i}</p>`).join("")}
+      </body></html>`;
+    await withRuntimeProject("stemmio-reading-pending-e2e-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const { frame } = await loadedDiskFrame(page, sourcePath, "reading-0");
+      const stage = page.locator(".review-scroll-stage");
+      await stage.evaluate(element => { element.scrollTop = 1500; });
+      await frame.locator('[data-native-case="reading-14"]').click();
+      await page.getByRole("toolbar", { name: /编辑/u }).getByRole("button", { name: /留评论/u }).click();
+      await page.getByRole("textbox", { name: "评论内容" }).fill("Delayed reading comment");
+      await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeGreaterThan(1400);
+      await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.evaluate(() => {
+        const request = window.requestAnimationFrame.bind(window);
+        const cancel = window.cancelAnimationFrame.bind(window);
+        let sequence = 0;
+        const pending = new Map();
+        window.requestAnimationFrame = callback => {
+          const id = --sequence;
+          pending.set(id, callback);
+          return id;
+        };
+        window.cancelAnimationFrame = id => {
+          if (id < 0) pending.delete(id);
+          else cancel(id);
+        };
+        window.__releaseReadingFrames = () => {
+          window.requestAnimationFrame = request;
+          window.cancelAnimationFrame = cancel;
+          for (const callback of pending.values()) request(callback);
+          pending.clear();
+        };
+      });
+      try {
+        await page.getByRole("button", { name: "评论", exact: true }).dispatchEvent("click");
+        await expect(page.getByRole("textbox", { name: "评论内容" })).toBeHidden();
+        const bounds = await stage.boundingBox();
+        if (input === "outer-wheel" || input === "iframe-wheel") {
+          await page.mouse.move(bounds.x + (input === "outer-wheel" ? 8 : 300), bounds.y + bounds.height / 2);
+          await page.mouse.wheel(0, -900);
+        } else if (input === "keyboard-home") {
+          await page.mouse.click(bounds.x + 8, bounds.y + bounds.height / 2);
+          await page.keyboard.press("Home");
+        } else {
+          const metrics = await stage.evaluate(element => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, top: element.scrollTop }));
+          const thumbHeight = metrics.height * metrics.height / metrics.scrollHeight;
+          const thumbTop = metrics.top * metrics.height / metrics.scrollHeight;
+          await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbTop + thumbHeight / 2);
+          await page.mouse.down();
+          await page.mouse.move(bounds.x + bounds.width - 4, bounds.y + thumbHeight / 2 + 30);
+          await page.mouse.up();
+        }
+        if (input === "keyboard-home") await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(0);
+        else await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeLessThan(1000);
+        const before = await stage.evaluate(element => element.scrollTop);
+        await page.evaluate(() => window.__releaseReadingFrames());
+        await expect(page.getByRole("textbox", { name: "评论内容" })).toBeHidden();
+        const card = page.locator(".comment-card").filter({ hasText: "Delayed reading comment" });
+        await expect(card).toHaveCount(1);
+        await stage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+        expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        const token = await documentToken(page);
+        await page.getByRole("button", { name: "更多", exact: true }).click();
+        await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+        await expect.poll(() => documentToken(page)).not.toBe(token);
+        await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
+        await card.click();
+        await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBe(1600);
+      } finally {
+        await page.evaluate(() => window.__releaseReadingFrames());
+
+      }
+    });
+  });
+}

@@ -1,5 +1,44 @@
 # Design QA
 
+## 2026-09-22 — 安全公开活动与连续分组
+
+- Truth: 运行时只投影固定活动种类、顺序与分组边界；不传递工具参数、路径、HTML、命令或私有推理。
+  文本首次序号固定，同类活动只在相邻且边界相同时合并，沿用第一条 ID，不显示文件计数或成功勾选。
+  活动最多保留 80 条，缺失时明确省略；重启不编造未保存的活动。HTTP 不投影文件工具，剪贴板模式不接入活动。
+- Evidence: 后端编辑门禁 801 项通过；界面接线后编辑门禁 471 项通过。类型检查与定向 lint 无错误。
+  `agent-activities` Electron 4/4 通过：Qoder 读写事实与无权限入口、长公开文本 DOM/锚点与 A-B-A、
+  HTTP 无公开文本的安静指示及无复制入口、DeepSeek 真实响应/生成/校验/审阅活动与运行中 IME 草稿稳定性。
+- Visual QA: 已检查 `output/design-qa/agent-setup-journeys/narrow-sidebar-generating.png` 与
+  `output/design-qa/ai-assistant-redesign/http-without-public-text.png`。活动为中性只读小字，
+  元数据保留一份，无文本时仅实际活动和三点指示，固定停止与草稿可达。
+- Failure provenance: 首轮后端检查暴露新增字段后的旧期望值；已调整精确形状，未放宽脱敏断言。
+  ACP 夹具在进程退出前排空 completion，避免丢失自己刚写出的协议帧。原始失败与后续结果保留在本地 output。
+- Boundary: 这是合成 Agent 的真实 Electron UI 验收；不声称真实外部服务、完整跨重启活动日志或视觉正确性校验。
+  最终任务门禁另有版本绑定报告；未打包、发布或合并。
+
+## 2026-09-22 — AI 公开过程折叠与阅读稳定性
+
+- Truth: 公开过程默认折叠为最新非空公开段落的一行预览；typed `result-summary` 与 Stemmio
+  校验、失败、采用事实保持可见。展开、历史过程和阅读锚点只属于打开标签的临时展示状态。
+- Evidence: `tests/ai-conversation-sidebar.test.mjs` 47 项纯函数检查通过；新增 Electron 场景
+  `Qoder long public narration preserves reading state across updates and A-B-A tabs` 使用 18 段合成公开增量，
+  验证同一消息 DOM、上滚/选区、键盘折叠、reduced-motion、结果就绪保留展开和固定行动区、
+  切回文档后恢复同一消息锚点。已就绪预览中的展开/收起/复制保持物理 iframe/document 身份；
+  Request 只由提交新增一次，阅读前后原文件与当前稿字节相同。
+- Visual QA: 检查 `output/playwright/agent-reading-seventh/results/` 的折叠、展开与回访截图；
+  预览已载入真实合成内容，决策区保持独立，单行预览无横向跑动。
+- First failures retained: 初次场景的 recent 列表漏了当前文件；后续实测发现 grid 覆盖 hidden 的真实缺陷，
+  已修复。其余夹具修正区分只读等待、合法导航与纯阅读的 iframe 身份，并等待稳定回访页面。
+  完整门禁还发现历史展开后焦点仍在 summary，旧测试错误地仅移开鼠标就要求时间戳隐藏；
+  已分开检查 focus-within 可见与焦点移出后隐藏。历次结果保留于本地 `output/agent-interaction/`，不将失败尝试改写成通过。
+- Hosted CI: 首轮 #599 的 Linux 通过，Electron 75/77；两个既有 history 测试把交互前累计 Runtime 执行数
+  写死为 1。改为同文件 reorder oracle 已采用的 settled frame 基线：history cancel 每次严格 +1，
+  原位 undo/redo 次数严格不变，并继续核对 document、generation 与无 Candidate；初始次数写入测试注解。
+  原测试精确提交本地 2/2 通过，修正后定向 2/2 通过。隐藏/可见窗口探针各观察到一个 Candidate；
+  hosted 初始替换的具体原因仍未复现，不将其归为环境或确定产品缺陷。独立复核确认操作约束未放宽。
+- Review: 只读源码审查未发现 P0/P1；历史公开文本保留真实截断提示。显式新 Request 带活动选区时仍可能
+  保留原阅读位置，此低风险细节不扩展本次范围。完整任务门禁由 `task:finish` 记录；未做发布或打包。
+
 ## 2026-09-12 — 一份当前稿与不可变历史
 
 - Truth: 用户确认的当前稿模型及 `docs/VERSION_AND_PROJECT_FILES_PRD.md`、ADR 0073。
@@ -3714,3 +3753,8 @@ final result: passed for the scoped physical-handoff continuity contract; final 
 - Mode: DESIGN CHANGE. About no longer presents the private source repository as a public destination. Its existing GitHub entry now opens the public Stemmio Releases channel and describes the available user outcomes: downloads, release notes and product support. Settings remains the sole surface for update controls.
 - Interaction evidence: rebuilt-source Electron execution passed 1/1 for `automatic update actions keep the sidebar product geometry and split About from Settings`. It opens the About path from the normal workbench, verifies the public-distribution link and that Agent/update controls are absent there, then verifies that update controls remain in Settings without changing sidebar geometry.
 - Evidence boundary: this validates the migrated in-app path and copy in an isolated Electron run. It does not claim that a source-repository visibility switch, a signed transition release, anonymous distribution access, or an installed-app update has completed.
+
+
+## 2026-09-22 Native caret after transient iframe blur
+
+DESIGN CHANGE / interaction continuity. Synthetic Electron reproduction at27f2c8fb: typing the final X while frame state notification is held, then transient blur, restores the old caret before X; releasing the notification first passes. Source-only hypothesis became a controlled old-fail/new-pass result. The minimal fix reads the still-owned live selection before focus recovery; identity/lease and explicit external-focus fences remain. Diagnostic fixed run: original frozen element case plus both ordering controls3/3 passed. Permanent regression retains the same target, exact caret, Backspace landing and source persistence. Final permanent controls fail on old code only before RAF release; the after-release control passes. Fixed targeted Electron acceptance6/6 passed in27.3s, including Save/Document continuity, non-collapsed autosave selection and external comment focus. Full gate is recorded separately in PR evidence. No visual layout changed. Historical hosted trace lacks blur events, so its exact trigger is not uniquely established; private-corpus full qualification remains incomplete.

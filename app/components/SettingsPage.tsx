@@ -822,7 +822,6 @@ function UpdatesSettings({
   const canCheck = (
     updatesAvailable
     && !checking
-    && !available
     && !downloaded
     && !installing
     && !downloading
@@ -888,6 +887,16 @@ function UpdatesSettings({
           </button>
         </SettingRow>
         <div className="settings-update-footer">
+          {available ? (
+            <button
+              className="settings-release-notes"
+              type="button"
+              disabled={!canCheck}
+              onClick={onCheckForUpdates}
+            >
+              再次检查
+            </button>
+          ) : null}
           <button
             className="settings-release-notes"
             type="button"

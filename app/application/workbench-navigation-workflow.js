@@ -191,7 +191,7 @@ export class WorkbenchNavigationWorkflow {
 
   async createProjectRules(requestedProject) {
     return this.#admit({ kind: "create-project-rules" }, async (active) => {
-      if (!requestedProject?.projectId || !requestedProject.documentId || !requestedProject.title) {
+      if (!requestedProject?.projectId || !requestedProject.documentId) {
         return { outcome: rejected(
           "PROJECT_RULES_CONTEXT_REQUIRED",
           "缺少项目标识，暂时不能打开长期规则。",
@@ -219,7 +219,6 @@ export class WorkbenchNavigationWorkflow {
       if (
         !requestedProject?.projectId
         || !requestedProject.documentId
-        || !requestedProject.title
         || !versionId
         || !Number.isInteger(versionOrdinal)
         || versionOrdinal < 1

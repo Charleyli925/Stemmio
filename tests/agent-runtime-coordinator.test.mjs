@@ -4,6 +4,7 @@ import test from "node:test";
 import { createAgentEventReducer } from "../bridge/agent/agent-events.mjs";
 import {
   executionPhaseForEvent,
+  publicExecutionSession,
   createPublicAgentTextAccumulator,
   safePublicAgentText,
 } from "../bridge/agent/agent-session-projector.mjs";
@@ -510,9 +511,9 @@ test("public Agent text keeps message boundaries without exposing non-text event
     { eventId: "four", sequence: 5, kind: "visible-text", text: "正在检查布局。" },
   ]);
   assert.deepEqual(updates, [
-    { id: "message:message-a:0", sequence: 2, text: "正在读取页面。" },
-    { id: "three:0", sequence: 4, text: "正在修改标题。" },
-    { id: "four:0", sequence: 5, text: "正在检查布局。" },
+    { id: "message:message-a:0", sequence: 2, firstSequence: 1, text: "正在读取页面。" },
+    { id: "three:0", sequence: 4, firstSequence: 4, text: "正在修改标题。" },
+    { id: "four:0", sequence: 5, firstSequence: 5, text: "正在检查布局。" },
   ]);
   assert.equal(updates.some((update) => update.text.includes("隐藏推理")), false);
 });
@@ -526,8 +527,8 @@ test("explicit public paragraphs remain separate without terminal punctuation", 
       text: "第一段标题\n\n第二段内容",
     },
   ]), [
-    { id: "visible-paragraphs:0", sequence: 1, text: "第一段标题" },
-    { id: "visible-paragraphs:1", sequence: 1, text: "第二段内容" },
+    { id: "visible-paragraphs:0", sequence: 1, firstSequence: 1, text: "第一段标题" },
+    { id: "visible-paragraphs:1", sequence: 1, firstSequence: 1, text: "第二段内容" },
   ]);
 });
 
@@ -627,15 +628,18 @@ test("execution status projects only public Agent text with frozen provider iden
   await coordinator.shutdown();
 });
 
-test("cancellation keeps late Agent narration out of the public session", async () => {
+test("cancellation records local stop and rejects late narration and terminal activities", async () => {
+  let emit;
   const coordinator = new AgentRuntimeCoordinator({
     providerRegistry: registry({
       run: async (_ticket, { cancellationSignal, onEvent }) => {
+        emit = onEvent;
         onEvent({ kind: "initialized", agentName: "Synthetic Agent" });
         onEvent({ kind: "visible-text", text: "正在修改候选。" });
         await new Promise((resolve) => {
           cancellationSignal.addEventListener("abort", () => {
             onEvent({ kind: "visible-text", text: "这段取消后的文本不能显示。" });
+            onEvent({ kind: "file-written", path: "/tmp/late-private" });
             resolve();
           }, { once: true });
         });
@@ -659,6 +663,11 @@ test("cancellation keeps late Agent narration out of the public session", async 
   await coordinator.cancelExecution(IDENTITY);
   const cancelled = coordinator.executionStatus(IDENTITY);
   assert.equal(cancelled.state, "cancelled");
+  assert.equal(cancelled.publicActivities.filter(activity => activity.kind === "cancel-requested").length, 1);
+  emit({ kind: "host-cancelling" });
+  emit({ kind: "cancel-requested" });
+  assert.deepEqual(coordinator.executionStatus(IDENTITY), cancelled);
+  assert.equal(cancelled.publicActivities.some(activity => activity.kind === "file-written"), false);
   assert.equal(narrationText(cancelled.visibleTextUpdates), "正在修改候选。");
   assert.equal(narrationText(cancelled.visibleTextUpdates).includes("取消后的文本"), false);
   await coordinator.shutdown();
@@ -938,4 +947,70 @@ test("ungrouped provider chunks keep their existing whitespace separators", () =
     assert.equal(narrationText(value.visibleTextUpdates), chunks.join(""));
     assert.equal(value.textTruncated, false);
   }
+});
+
+
+test("public activities carry only known facts and preserve text first appearance", () => {
+  const reducer = createAgentEventReducer();
+  const accept = (sequence, event) => reducer.accept({ turnId: "public_activity", sequence, timestamp: sequence,
+    eventId: `event_${sequence}`, ...event }).projection;
+  accept(1, { kind: "file-read", path: "/tmp/private-input.html", text: "sk-private", command: "secret-command" });
+  accept(2, { kind: "file-read", path: "/tmp/private-input.html" });
+  accept(3, { kind: "visible-text", messageId: "a", text: "第一段 api_key=synthetic-" });
+  accept(4, { kind: "file-written", content: "<html>secret</html>" });
+  accept(5, { kind: "tool-call", path: "/tmp/private", arguments: "private" });
+  const projection = accept(6, { kind: "visible-text", messageId: "a", text: "secret" });
+  assert.equal(projection.visibleTextUpdates[0].firstSequence, 3);
+  assert.equal(projection.visibleTextUpdates[0].sequence, 6);
+  assert.equal(projection.visibleTextUpdates[0].text, "第一段 api_key=[已隐藏]");
+  const projected = publicExecutionSession({ ...projection, runtimeId: "acp" });
+  assert.deepEqual(projected.publicActivities, [
+    { id: "activity:1", kind: "file-read", sequence: 1, boundary: 0 },
+    { id: "activity:2", kind: "file-read", sequence: 2, boundary: 0 },
+    { id: "activity:4", kind: "file-written", sequence: 4, boundary: 3 },
+  ]);
+  assert.doesNotMatch(JSON.stringify(projected), /private-input|secret-command|synthetic-secret|<html>/);
+  assert.deepEqual(publicExecutionSession({ ...projection, runtimeId: "http" }).publicActivities, []);
+});
+
+test("activity retention is bounded independently and stopping rejects late activity", () => {
+  const reducer = createAgentEventReducer({ maxEvents: 2 });
+  const accept = (sequence, kind) => reducer.accept({ turnId: "bounded_activity", sequence,
+    timestamp: sequence, eventId: `event_${sequence}`, kind }).projection;
+  for (let sequence = 0; sequence < 100; sequence += 1) accept(sequence, "file-read");
+  const stopped = accept(100, "cancel-requested");
+  assert.equal(stopped.publicActivities.length, 80);
+  assert.equal(stopped.activitiesTruncated, true);
+  assert.equal(stopped.publicActivities.at(-1).kind, "cancel-requested");
+  assert.deepEqual(accept(101, "file-written").publicActivities, stopped.publicActivities);
+  assert.deepEqual(reducer.projection("another_attempt"), null);
+  reducer.clear("bounded_activity");
+  assert.equal(reducer.projection("bounded_activity"), null);
+  assert.deepEqual(publicExecutionSession({ runtimeId: "acp" }).publicActivities, []);
+});
+
+
+test("compacted narration omits only activities whose ordering it cannot represent", () => {
+  const reducer = createAgentEventReducer();
+  let sequence = 0;
+  let projection;
+  const accept = (event) => {
+    sequence += 1;
+    projection = reducer.accept({ turnId: "compacted_activity", sequence, timestamp: sequence,
+      eventId: `event_${sequence}`, ...event }).projection;
+  };
+  accept({ kind: "visible-text", messageId: "first", text: "第一段。" });
+  accept({ kind: "file-read" });
+  accept({ kind: "visible-text", messageId: "second", text: "第二段。" });
+  accept({ kind: "file-written" });
+  for (let index = 0; index < 79; index += 1) {
+    accept({ kind: "visible-text", messageId: `remaining_${index}`, text: `后续段落 ${index}。` });
+  }
+  const session = publicExecutionSession({ ...projection, runtimeId: "acp" });
+  assert.equal(session.visibleTextUpdates.length, 80);
+  assert.equal(session.visibleTextUpdates[0].text, "第一段。\n\n第二段。");
+  assert.deepEqual(session.publicActivities.map(activity => activity.sequence), [4]);
+  assert.equal(session.activitiesTruncated, true);
+  assert.equal(session.textTruncated, false);
+  assert.equal(narrationText(session.visibleTextUpdates).includes("后续段落 78。"), true);
 });
