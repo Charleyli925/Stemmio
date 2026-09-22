@@ -2503,7 +2503,7 @@ test("a broad but related AI return is accepted without a target-scope error", {
   }
 });
 
-test("a committed version with unreadable current bytes stays blocked and retries without a duplicate", async () => {
+test("a committed version with unreadable current bytes reconciles and remains editable without a duplicate", async () => {
   const fixture = createSourceFixture();
   const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
   try {
@@ -2537,9 +2537,9 @@ test("a committed version with unreadable current bytes stays blocked and retrie
     await launched.page.route("**/ready-version/activate", withoutInlineHtml);
     await launched.page.route("**/source?*", unreadableCurrent);
     await adoptReadyResult(launched.page);
-    await expect(launched.page.getByRole("alert").filter({
-      hasText: /新版本文件暂时无法打开|最新版暂时无法打开|源文件在磁盘上被其他程序修改了/u,
-    }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(launched.page.getByTestId("ai-conversation-action-bar"))
+      .toContainText("采用结果待确认", { timeout: 30_000 });
+    await expect(launched.page.getByRole("button", { name: "采用修改", exact: true })).toHaveCount(0);
     expect(failedReads).toBeGreaterThan(0);
     const active = await launched.page.evaluate(() => window.stemmioProjects?.getActiveProject());
     expect(active.sourcePath).toBe(beforeAdoption.sourcePath);
@@ -2551,23 +2551,23 @@ test("a committed version with unreadable current bytes stays blocked and retrie
 
     await launched.page.unroute("**/source?*", unreadableCurrent);
     await launched.page.unroute("**/ready-version/activate", withoutInlineHtml);
-    // A failed read may briefly enter the durable adoption-unknown state while
-    // the controller reconciles the same decision. Wait for either automatic
-    // settlement or a visible decision action before attempting a retry.
-    await expect.poll(async () => {
-      const reviewVisible = await launched.page.getByTestId("ai-review-workspace").isVisible();
-      const adoptCount = await launched.page.getByRole("button", { name: "采用修改", exact: true }).count();
-      const reviewCount = await launched.page.getByRole("button", { name: "查看修改", exact: true }).count();
-      return !reviewVisible || adoptCount > 0 || reviewCount > 0;
-    }, { timeout: 30_000 }).toBe(true);
-    if (
-      await launched.page.getByRole("button", { name: "采用修改", exact: true }).count() > 0
-      || await launched.page.getByRole("button", { name: "查看修改", exact: true }).count() > 0
-    ) {
-      await adoptReadyResult(launched.page);
-    }
-    await assertReviewAcceptPersistence({ page: launched.page, beforeAdoption, expectedText: UPDATED_TEXT });
+    // Restore reads only: the original decision must finish automatically.
+    const restored = await assertReviewAcceptPersistence({ page: launched.page, beforeAdoption, expectedText: UPDATED_TEXT });
+    const editMode = launched.page.getByRole("button", { name: "编辑", exact: true });
+    await expect(editMode).toBeEnabled();
+    await editMode.click();
+    const restoredFrame = await loadedDiskFrame(launched.page, restored.sourcePath);
+    await expect(restoredFrame.locator(caseSelector("list-item"))).toHaveText(UPDATED_TEXT);
+    const beforeContinuation = readFileSync(restored.sourcePath, "utf8");
+    const continuation = " AFTER_READ_RECOVERY";
+    await activateNativeEdit(restoredFrame, "list-item");
+    await setTextSelection(restoredFrame, "list-item", UPDATED_TEXT.length);
+    await launched.page.keyboard.insertText(continuation);
+    await launched.page.keyboard.press(keyShortcut("s"));
+    await expect.poll(() => readPublishedWorkingCopy(restored.sourcePath, "utf8"))
+      .toBe(beforeContinuation.replace(UPDATED_TEXT, UPDATED_TEXT + continuation));
     expect((await beforeAdoption.repository.listRegisteredProjectVersionSummaries({ projectId: committed.target.projectId })).versions).toHaveLength(2);
+    expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);
