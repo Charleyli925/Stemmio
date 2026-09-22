@@ -830,9 +830,13 @@ export const CommentRailContainer = memo(function CommentRailContainer({
         }
         const item = [...rail.querySelectorAll<HTMLElement>("[data-comment-measure]")]
           .find((node) => node.dataset.commentMeasure === request.itemKey);
+        // Consume live geometry: the header can shrink when a comment is
+        // saved before its ResizeObserver state update reaches this callback.
+        const revealMinimumTop = Math.max(78,
+          Math.ceil(commentsHeaderRef.current?.getBoundingClientRect().height ?? 0) + 16);
         const sourceTarget = request.target.commentAnchor ?? request.target;
         const targetTop = isExplicitGlobalCommentTarget(request.target)
-          ? commentRailMinimumTop
+          ? revealMinimumTop
           : commentTargetTops[sourceTarget.id]
             ?? (targetLayouts[sourceTarget.id]?.status === "visible"
               && Number.isFinite(targetLayouts[sourceTarget.id]?.top)
@@ -842,11 +846,11 @@ export const CommentRailContainer = memo(function CommentRailContainer({
           ? commentRailLayout.composerTop
           : item?.offsetTop;
         if (!Number.isFinite(targetTop) || !Number.isFinite(cardTop)) return;
-        const safeTargetTop = Math.max(commentRailMinimumTop, targetTop as number);
+        const safeTargetTop = Math.max(revealMinimumTop, targetTop as number);
         const nextRailOffset = computeAlignedRailOffset({
           targetTop: safeTargetTop,
           cardTop: cardTop as number,
-          minimumTop: commentRailMinimumTop,
+          minimumTop: revealMinimumTop,
         });
         const composerHeight = commentRailLayout.heights.__composer || 276;
         const composerBottomOffset = request.itemKey === "__composer"
@@ -864,7 +868,7 @@ export const CommentRailContainer = memo(function CommentRailContainer({
         commentRailOffsetRef.current = boundedRailOffset;
         setCommentRailFollowsFocus(true);
         setCommentRailOffset(boundedRailOffset);
-        const desiredTop = Math.max(0, safeTargetTop - commentRailMinimumTop - 10);
+        const desiredTop = Math.max(0, safeTargetTop - revealMinimumTop - 10);
         const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
         const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         stage.scrollTo({
