@@ -574,9 +574,10 @@ function directCopyDecision(sourceIndex, target) {
   const rootTag = normalizedTag(target);
   if (rootTag === "div") {
     const children = childNodes(sourceIndex, target);
-    if (!children || !children.length || children.some(child => child.type !== "text")
-      || !target.textContent.trim()) return unsupported("copy-root-tag-unsupported");
-    // This first container category is deliberately static and text-only.
+    if (!children || !children.length || !target.textContent.trim()) {
+      return unsupported("copy-root-tag-unsupported");
+    }
+    // Static text containers share the existing safe inline subtree proof.
     // Do not infer author-program dependencies from the current Runtime DOM.
     if (hasAuthorProgram(sourceIndex)) {
       return unsupported("copy-div-author-program");
