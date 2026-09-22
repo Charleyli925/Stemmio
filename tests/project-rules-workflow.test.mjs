@@ -223,17 +223,14 @@ test("restore retires the composition inside ProjectRulesSession", async () => {
   assert.equal(harness.workflow.getSnapshot().compositionActive, false);
 });
 
-test("a locked run blocks PROJECT.md saving and a disposed timer cannot write", async () => {
+test("a frozen submission blocks PROJECT.md saving and a disposed timer cannot write", async () => {
   const harness = createHarness();
   await harness.workflow.open({ context: harness.context });
   harness.workflow.updateContent({ content: "# Pending" });
   const [timer] = harness.scheduler.pending;
-  harness.runSession.trackRun({
-    sourcePath: SOURCE_PATH,
-    requestId: "request_rules",
-    attemptId: "attempt_001",
-    status: "processing",
-  }, { activate: "always" });
+  const submission = harness.runSession.beginSubmission({ sourcePath: SOURCE_PATH });
+  assert.ok(submission);
+  assert.equal(harness.runSession.freezeSubmission(submission), true);
 
   assert.equal(harness.workflow.inspect().state, "blocked");
   assert.equal(await harness.workflow.drain(), false);
@@ -241,6 +238,62 @@ test("a locked run blocks PROJECT.md saving and a disposed timer cannot write", 
   timer.callback();
   await settle();
   assert.equal(harness.calls.writes.length, 0);
+});
+
+test("an uncertain submission keeps PROJECT.md locked until reconciliation releases it", async () => {
+  const harness = createHarness();
+  await harness.workflow.open({ context: harness.context });
+  const submission = harness.runSession.beginSubmission({ sourcePath: SOURCE_PATH });
+  assert.ok(submission);
+  assert.equal(harness.runSession.freezeSubmission(submission), true);
+  assert.equal(harness.runSession.markSubmissionUncertain(submission), true);
+
+  assert.equal(
+    harness.workflow.updateContent({ content: "# Uncertain" }).code,
+    "PROJECT_RULES_RUN_LOCKED",
+  );
+  assert.equal(
+    (await harness.workflow.save()).code,
+    "PROJECT_RULES_RUN_LOCKED",
+  );
+
+  assert.equal(harness.runSession.releaseSubmission(submission), true);
+  assert.equal(
+    harness.workflow.updateContent({ content: "# Recovered" }).status,
+    "succeeded",
+  );
+  assert.equal((await harness.workflow.save()).status, "succeeded");
+  assert.equal(harness.persisted, "# Recovered");
+});
+
+test("published and recovered processing runs allow the next PROJECT.md rules", async () => {
+  for (const recovered of [false, true]) {
+    const harness = createHarness();
+    await harness.workflow.open({ context: harness.context });
+    if (!recovered) {
+      const submission = harness.runSession.beginSubmission({ sourcePath: SOURCE_PATH });
+      assert.ok(submission);
+      assert.equal(harness.runSession.freezeSubmission(submission), true);
+      assert.equal(harness.runSession.releaseSubmission(submission), true);
+    }
+    harness.runSession.trackRun({
+      projectId: harness.context.projectId,
+      documentId: harness.context.documentId,
+      sourcePath: SOURCE_PATH,
+      requestId: recovered ? "request_recovered" : "request_published",
+      attemptId: "attempt_001",
+      status: "processing",
+    }, { activate: "always" });
+
+    assert.equal(harness.runSession.activeSubmission, null);
+    assert.equal(harness.runSession.activeLocked, true);
+    assert.equal(
+      harness.workflow.updateContent({ content: recovered ? "# Recovered" : "# Next" }).status,
+      "succeeded",
+    );
+    assert.equal((await harness.workflow.save()).status, "succeeded");
+    assert.equal(harness.persisted, recovered ? "# Recovered" : "# Next");
+  }
 });
 
 test("close drains an edit that arrives while the prior PROJECT.md save is in flight", async () => {

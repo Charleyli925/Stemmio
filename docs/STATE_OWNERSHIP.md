@@ -256,6 +256,12 @@ Rules:
   observers or source serialization. Warm entries retain only allowlisted
   presentation context and scroll. Evicted tabs become cold identities without
   being closed, and every activation still enters canonical project open.
+  The display cover also retires when same-byte hydration publishes a newer
+  authority receipt within that exact navigation and document activation, once
+  the current Canvas generation and source hash are verified. This presentation
+  comparison permits existing local-path aliases only; session incarnation,
+  activation context and monotonic receipt sequence/generation remain fenced.
+  It does not relax exact source receipts used by Document or Canvas ACK owners.
   Start activation calls the same canonical `prepareSwitch`; only then
   does it unmount the document outlet while retaining `runtimeOwnerTabId`, so
   close/quit obligations remain owned by the same Controller. Close and activate
@@ -836,6 +842,31 @@ Reconciliation backs off to 30 seconds, pauses publication away from the origina
 Run, and stops on disposal. Review cannot override this projection and RunWorkflow
 refuses an opposite cancellation while the decision remains unresolved. Restart
 reconstructs the outcome from the persisted current Version transaction, never a new AI run.
+When promotion has published the accepted source but Canvas verification fails,
+the verification failure fence uses the active navigation plus the newly published
+Project context, never the pre-adoption source context.
+VersionWorkflow settles adoption once and records `pageRecoveryRequired` on the
+existing Run projection. DocumentWorkflow owns failed Canvas authority and repair.
+A repair reuses a concurrent confirmation only for the exact current SourceReceipt,
+generation, rendered hash and HTML bytes; it never publishes confirmation twice.
+RunWorkflow releases the recovery lock only for the same current Request/Attempt
+and a verified Canvas matching the current SourceReceipt, context, generation and
+source hash. Both UI recovery entries use that one repair path. This transient
+presentation state adds no durable adoption transaction or Conversation schema.
+External disk observations also retain their starting SourceReceipt and context;
+a result arriving after source publication cannot mark the new authority conflicted.
+WorkspaceController first asks VersionWorkflow to verify the exact Candidate
+Hash, persisted Working Copy Hash, known Working Copy identity, Canvas receipt,
+generation and context while
+that existing one-shot Run gate remains flagged and locked. Only after those
+checks and the same post-Canvas cleanup used by normal adoption succeed does it
+ask RunWorkflow to clear the gate and unlock. That cleanup clears the old edit
+audit, queues the current comment draft, clears recovery and refreshes
+project/version metadata.
+The refresh carries the current authority receipt continuation; a blocked check
+leaves the flag, lock and recovery action intact, and no second promotion or
+recovery-state owner is created.
+
 Before accepting a submission, Conversation Repository reserves 128 messages, two contexts, one turn and 2 MiB for the bounded execution history, public summary and adoption decision. Near message/context/turn/byte limits it rotates only a settled Conversation, preserving both links and all prior records; interrupted rotation repairs the current index from the archived link. Submission requirements are losslessly split into bounded messages; more than 1 MiB of JSON-encoded requirements is rejected before acceptance or provider contact. Progress is capped before projection, while Request/Promotion terminal facts remain authoritative and replayable.
 Every RunWorkflow submit exit before a known Request settles the original submission identity in finally, including stale navigation after receipt or ticket arrival. A dispatched unknown Request is excluded and stays with existing reconciliation. The in-memory pending run is removed only after this pre-Request settlement path; navigation never changes its target.
 

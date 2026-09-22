@@ -192,6 +192,8 @@ export type ActiveRun = {
   recoveryHint?: string;
   errorPreview?: string;
   completionObserved?: boolean;
+  pageRecoveryRequired?: boolean;
+  pageRecoveryReason?: string;
   conflictId?: string;
   externalSourceSha256?: string;
   candidateOutputSha256?: string;

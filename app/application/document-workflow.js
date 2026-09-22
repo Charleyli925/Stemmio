@@ -707,6 +707,24 @@ export class DocumentWorkflow {
     this.#persistRecovery(null, context);
   }
 
+  /**
+   * Record a projection failure after another workflow has already committed
+   * the source authority. The DocumentWorkflow remains the only owner allowed
+   * to move Canvas authority to `failed`; callers must use repairCurrentCanvas
+   * to restore the accepted bytes.
+   */
+  markCanvasRecoveryRequired({ context, error } = {}) {
+    const activeContext = copyContext(context) || this.#projectSession.context;
+    if (!activeContext || !this.#isCurrent(activeContext)) return false;
+    const reason = typeof error === "string" && error.trim()
+      ? error.trim()
+      : this.#codecs.errorMessage(
+        error,
+        "新版本已经采用，但当前页面尚未完成恢复。",
+      );
+    return this.#failCurrentCanvas(reason);
+  }
+
   async rebaseRecoveryJournal({ previousContext, context } = {}) {
     const previous = copyContext(previousContext);
     const next = copyContext(context);
@@ -1380,6 +1398,7 @@ export class DocumentWorkflow {
     ) {
       return succeeded({ deferred: true });
     }
+    const observedReceipt = this.#documentSession.sourceReceipt;
     try {
       let diskSha256 = "";
       let lastModifiedAt = "";
@@ -1417,8 +1436,11 @@ export class DocumentWorkflow {
       const current = copyContext(this.#projectSession.context);
       if (
         !current
-        || !this.#codecs.sameSourcePath(current.sourcePath, liveContext.sourcePath)
+        || !this.#isCurrent(liveContext)
+        || !sameSourceReceipt(observedReceipt, this.#documentSession.sourceReceipt)
       ) {
+        // A same-path adoption/save may publish a new authority while this disk
+        // read is pending. Its old observation cannot conflict that new source.
         return stale(liveContext);
       }
       if (diskSha256 === this.#documentSession.persistedSourceSha256) {

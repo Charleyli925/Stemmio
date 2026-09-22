@@ -573,7 +573,11 @@ export class ProjectRulesWorkflow {
   }
 
   #runLockedForContext(context = this.#projectRulesSession.context) {
-    if (!this.#runSession.activeLocked) return false;
+    const activeSubmission = this.#runSession.activeSubmission;
+    if (
+      !activeSubmission
+      || !["frozen", "uncertain"].includes(activeSubmission.phase)
+    ) return false;
     const activeRun = this.#runSession.activeRun;
     if (!context || !activeRun) return true;
     return activeRun.projectId && activeRun.documentId
