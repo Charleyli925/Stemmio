@@ -43,8 +43,10 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
 }, async () => {
   test.setTimeout(180_000);
   const fixture = createSourceFixture("qoder-acp-agent-bridge.html");
+  const visibleTextStartGateFile = path.join(fixture.sourceDirectory, "public-text.release");
   const qoderCommand = createQoderAcpE2ECommand(fixture.sourceDirectory, {
     visibleText: true,
+    visibleTextStartGateFile,
     // Keep the first public chunk live long enough for the renderer to prove
     // its in-progress state before the synthetic Agent reaches finalization.
     visibleTextGateMs: 5_000,
@@ -98,6 +100,8 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     // before proving the separately rendered public chunks below.
     const thinking = launched.page.getByTestId("ai-conversation-thinking");
     await expect(thinking).toBeVisible({ timeout: 60_000 });
+    // Release the first chunk only after observing the transient no-text phase.
+    writeFileSync(visibleTextStartGateFile, "release", "utf8");
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
     await expect(narration).toHaveCount(1);
@@ -334,6 +338,7 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       "data-stemmio-qoder-acp",
     );
   } finally {
+    writeFileSync(visibleTextStartGateFile, "release", "utf8");
     try {
       // Finish intercepted history reads before shutting down their Bridge.
       await launched.page.unrouteAll({ behavior: "wait" });

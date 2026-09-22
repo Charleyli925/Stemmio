@@ -844,11 +844,16 @@ source hash. Both UI recovery entries use that one repair path. This transient
 presentation state adds no durable adoption transaction or Conversation schema.
 External disk observations also retain their starting SourceReceipt and context;
 a result arriving after source publication cannot mark the new authority conflicted.
-After RunWorkflow resolves that existing one-shot gate, WorkspaceController asks
-VersionWorkflow to finish the same post-Canvas cleanup used by normal adoption:
-clear the old edit audit, queue the current comment draft, clear recovery and
-refresh project/version metadata. The refresh carries the current authority
-receipt continuation; no second promotion or recovery-state owner is created.
+WorkspaceController first asks VersionWorkflow to verify the exact Candidate
+Hash, persisted Working Copy Hash, Canvas receipt, generation and context while
+that existing one-shot Run gate remains flagged and locked. Only after those
+checks and the same post-Canvas cleanup used by normal adoption succeed does it
+ask RunWorkflow to clear the gate and unlock. That cleanup clears the old edit
+audit, queues the current comment draft, clears recovery and refreshes
+project/version metadata.
+The refresh carries the current authority receipt continuation; a blocked check
+leaves the flag, lock and recovery action intact, and no second promotion or
+recovery-state owner is created.
 
 Before accepting a submission, Conversation Repository reserves 128 messages, two contexts, one turn and 2 MiB for the bounded execution history, public summary and adoption decision. Near message/context/turn/byte limits it rotates only a settled Conversation, preserving both links and all prior records; interrupted rotation repairs the current index from the archived link. Submission requirements are losslessly split into bounded messages; more than 1 MiB of JSON-encoded requirements is rejected before acceptance or provider contact. Progress is capped before projection, while Request/Promotion terminal facts remain authoritative and replayable.
 Every RunWorkflow submit exit before a known Request settles the original submission identity in finally, including stale navigation after receipt or ticket arrival. A dispatched unknown Request is excluded and stays with existing reconciliation. The in-memory pending run is removed only after this pre-Request settlement path; navigation never changes its target.

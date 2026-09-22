@@ -902,7 +902,7 @@ for (const advanceSourceIdentity of [false, true]) test(`activation keeps the Ca
   assert.equal(harness.calls.activate, 1);
 });
 
-test("verified page recovery completes the committed adoption cleanup after Run resolution", async () => {
+test("verified page recovery completes cleanup before Run resolution", async () => {
   const harness = createHarness({
     verifyRendered: async (html) => {
       if (html === CANDIDATE_HTML) throw new Error("canvas did not acknowledge candidate");
@@ -933,11 +933,12 @@ test("verified page recovery completes the committed adoption cleanup after Run 
     renderedSha256: sha256(CANDIDATE_HTML),
     generation: harness.documentSession.canvasGeneration,
   }), true);
-  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), true);
 
   const recovered = harness.workflow.completePageRecovery({ run: recoveryRun });
   assert.equal(recovered.status, "succeeded", JSON.stringify(recovered));
   assert.equal(recovered.value.current, true);
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  assert.equal(harness.runSession.resolvePageRecovery(recoveryRun), true);
   assert.equal(harness.calls.clearAudit, 1);
   assert.equal(harness.calls.queueDraft, 1);
   assert.equal(harness.calls.clearRecovery, clearRecoveryBefore + 1);

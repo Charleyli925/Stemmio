@@ -296,6 +296,291 @@ async function settleAsyncRuntime() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+function recoveryOperationKey(run) {
+  return [run?.sourcePath, run?.requestId, run?.attemptId].join(":");
+}
+
+const recoveryRunCodecs = {
+  ...codecs,
+  activeRunFromRecord: (value) => value,
+  canonicalLifecycleState: (value) => String(value?.status || value || ""),
+  commentHasContent: () => true,
+  commentEditSessionHasChanges: () => false,
+  canLocateTarget: () => true,
+  persistedComment: (value) => value,
+  persistedChangeEvent: (value) => value,
+  persistedTargetRef: (value) => value,
+  uniqueTargets: (value) => value,
+  fileStem: (value) => String(value || "").split(/[\\/]/u).at(-1) || "source",
+  operationKey: recoveryOperationKey,
+  errorMessage: (cause, fallback) => String(cause?.message || fallback),
+};
+
+const recoveryProjectCodecs = {
+  ...codecs,
+  activeRunFromRecord: (value) => value,
+  isLockedLifecycleState: () => false,
+  commentEditSessionHasChanges: () => false,
+  errorMessage: (cause, fallback) => String(cause?.message || fallback),
+};
+
+const recoveryVersionCodecs = {
+  ...codecs,
+  operationKey: recoveryOperationKey,
+  errorMessage: (cause, fallback) => String(cause?.message || fallback),
+};
+
+function createRecoveryControllerHarness() {
+  const sourcePath = "/tmp/controller-page-recovery.html";
+  const initialHtml = "<main>verified-before-candidate</main>";
+  const candidateHtml = "<main>committed-candidate</main>";
+  const projectSession = new ProjectSession();
+  projectSession.openLocator(sourcePath);
+  const context = projectSession.register({
+    epoch: projectSession.epoch,
+    sourcePath,
+    projectId: "project_page_recovery",
+    documentId: "document_page_recovery",
+  });
+  const documentSession = new DocumentSession({
+    html: initialHtml,
+    persistedSourceSha256: sha256(initialHtml),
+  });
+  const commentSession = new CommentSession();
+  const runSession = new RunSession({ sourcePath });
+  const draftSession = new DraftSession({
+    bridgeClient: { saveDraft: async () => ({}) },
+  });
+  const versionSession = new VersionSession();
+  const sourceHistorySession = new SourceHistorySession();
+  const scheduler = {
+    setTimeout: () => 1,
+    clearTimeout() {},
+  };
+  const canvasCalls = {
+    unlock: 0,
+    invalidateRenderAcks: 0,
+  };
+  const canvas = {
+    checkpointNativeTextIntent: () => ({ ok: true }),
+    freeze: () => ({ ok: true }),
+    freezeWorkingSource: () => ({ ok: true }),
+    verifyRendered: async () => {},
+    invalidateRenderAcks: () => {
+      canvasCalls.invalidateRenderAcks += 1;
+    },
+    unlock: () => {
+      canvasCalls.unlock += 1;
+    },
+    deferCommand: () => false,
+    requestFrame: (callback) => callback(),
+    onNavigationChange: () => {},
+  };
+  const bridgeClient = {
+    async ensureProject() {
+      return registrationPayload({ sourcePath, projectId: context.projectId, documentId: context.documentId });
+    },
+    async workspace() {
+      throw new Error("page-recovery test does not hydrate metadata");
+    },
+    async source() {
+      throw new Error("page-recovery test does not read source");
+    },
+    async autosave() {
+      return {};
+    },
+    async saveDraft() {
+      return {};
+    },
+    async resolveConflict() {
+      return {};
+    },
+    async attachment() {
+      return new Blob([]);
+    },
+    async saveAttachment() {
+      return {};
+    },
+    async deleteAttachment() {
+      return {};
+    },
+    async projectFile() {
+      return { content: "" };
+    },
+    async updateProjectFile() {
+      return {};
+    },
+    async createRequest() {
+      return {};
+    },
+    async status() {
+      return {};
+    },
+    async agentAvailability() {
+      return {};
+    },
+    async preflightAgent() {
+      return {};
+    },
+    async startAgent() {
+      return {};
+    },
+    async cancelActiveRun() {
+      return {};
+    },
+    async versionFile() {
+      return {};
+    },
+    async activateReadyVersion() {
+      return {};
+    },
+  };
+  const policies = {
+    canCloseDuringHydration: () => true,
+    shouldRecoverAfterCloseAbort: () => false,
+  };
+  const controller = new WorkspaceController({
+    bridgeClient,
+    projectSession,
+    documentSession,
+    commentSession,
+    draftSession,
+    versionSession,
+    sourceHistorySession,
+    codecs,
+    ports: {
+      hash: { sha256: async (value) => sha256(value) },
+      recovery: { replace: () => {} },
+      canvas,
+    },
+    documentWorkflow: {
+      codecs: documentWorkflowCodecs,
+      canvas,
+      scheduler,
+    },
+    commentWorkflow: {
+      runSession,
+      recoveryStore: commentRecoveryStore,
+      attachmentBinary: { prepare: async () => ({}) },
+      codecs: commentWorkflowCodecs,
+    },
+    projectRulesWorkflow: {
+      runSession,
+      scheduler,
+    },
+    projectWorkflow: {
+      runSession,
+      codecs: recoveryProjectCodecs,
+      ports: {
+        hash: { sha256: async (value) => sha256(value) },
+        canvas,
+        projectOpen: {},
+        viewState: { isTransitioning: () => false },
+        recentRuns: { hydrate: async () => {} },
+      },
+      policies,
+      scheduler,
+    },
+    runWorkflow: {
+      runSession,
+      codecs: recoveryRunCodecs,
+      canvas,
+      handoff: { copy: async () => ({ status: "copied", copied: true }) },
+      scheduler,
+    },
+    versionWorkflow: {
+      runSession,
+      codecs: recoveryVersionCodecs,
+      canvas,
+    },
+    clock: { now: () => 1_726_000_000_000 },
+  });
+  documentSession.publishAuthority({
+    html: initialHtml,
+    persistedSourceSha256: sha256(initialHtml),
+    pendingWrite: null,
+    context,
+    operationId: "page-recovery-initial-authority",
+  });
+  assert.equal(documentSession.confirmCanvas({
+    receipt: documentSession.sourceReceipt,
+    renderedHtml: initialHtml,
+    renderedSha256: sha256(initialHtml),
+    generation: documentSession.canvasGeneration,
+  }), true);
+  const run = {
+    projectId: context.projectId,
+    documentId: context.documentId,
+    sourcePath,
+    requestId: "request_page_recovery",
+    attemptId: "attempt_page_recovery",
+    status: "complete",
+    pageRecoveryRequired: true,
+    candidateVersionId: "ver_0002",
+    candidateVersionLabel: "Committed candidate",
+    readyPayload: {
+      contentSha256: sha256(candidateHtml),
+      version: { contentSha256: sha256(candidateHtml) },
+    },
+  };
+  runSession.trackRun(run, { activate: "always" });
+  const confirmCanvas = (html) => {
+    const receipt = documentSession.sourceReceipt;
+    return documentSession.confirmCanvas({
+      receipt,
+      renderedHtml: html,
+      renderedSha256: sha256(html),
+      generation: documentSession.canvasGeneration,
+    });
+  };
+  return {
+    controller,
+    context,
+    run,
+    runSession,
+    documentSession,
+    canvasCalls,
+    candidateHtml,
+    confirmCanvas,
+    publishCandidate() {
+      documentSession.publishAuthority({
+        html: candidateHtml,
+        persistedSourceSha256: sha256(candidateHtml),
+        pendingWrite: null,
+        context,
+        operationId: "page-recovery-candidate-authority",
+      });
+      assert.equal(confirmCanvas(candidateHtml), true);
+    },
+  };
+}
+
+test("page recovery keeps the Run gate locked until strict Version cleanup can pass", async (t) => {
+  const harness = createRecoveryControllerHarness();
+  t.after(() => harness.controller.dispose());
+
+  const before = harness.documentSession.snapshot;
+  const blocked = harness.controller.runs.commands.resolvePageRecovery({ run: harness.run });
+  assert.equal(blocked.status, "blocked", JSON.stringify(blocked));
+  assert.equal(blocked.code, "VERSION_PAGE_RECOVERY_NOT_VERIFIED");
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, true);
+  assert.equal(harness.runSession.activeLocked, true);
+  assert.equal(harness.canvasCalls.unlock, 0);
+  assert.deepEqual(harness.documentSession.snapshot, before);
+
+  harness.publishCandidate();
+  const recovered = harness.controller.runs.commands.resolvePageRecovery({ run: harness.run });
+  assert.equal(recovered.status, "succeeded", JSON.stringify(recovered));
+  assert.equal(harness.runSession.activeRun?.pageRecoveryRequired, undefined);
+  assert.equal(harness.runSession.activeLocked, false);
+  assert.equal(harness.canvasCalls.unlock, 1);
+
+  const repeated = harness.controller.runs.commands.resolvePageRecovery({ run: harness.run });
+  assert.equal(repeated.status, "blocked");
+  assert.equal(repeated.code, "VERSION_PAGE_RECOVERY_NOT_PENDING");
+  assert.equal(harness.canvasCalls.unlock, 1);
+});
+
 function editEffectTarget(id, elementId = "sm1_11111111111141118111111111111111") {
   return {
     id,

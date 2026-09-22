@@ -736,9 +736,9 @@ export class VersionWorkflow {
 
   /**
    * Finish the post-Canvas part of an adoption whose Version and Working Copy
-   * were already committed.  The RunWorkflow recovery command is the one-shot
-   * gate: callers pass the pre-resolution Run so a second call cannot pass once
-   * that Run has lost `pageRecoveryRequired`.
+   * were already committed.  WorkspaceController calls this before the
+   * RunWorkflow one-shot gate clears `pageRecoveryRequired`; callers pass the
+   * flagged Run so a second call cannot pass after that gate settles.
    */
   completePageRecovery({ run } = {}) {
     if (this.#disposed) {
@@ -754,10 +754,10 @@ export class VersionWorkflow {
     if (!active || !this.#runMatches(active, run)) {
       return stale(this.#runIdentity(run));
     }
-    if (active.pageRecoveryRequired === true) {
+    if (active.pageRecoveryRequired !== true) {
       return blocked(
-        "VERSION_PAGE_RECOVERY_NOT_SETTLED",
-        "页面恢复锁尚未由运行工作流确认。",
+        "VERSION_PAGE_RECOVERY_NOT_PENDING",
+        "当前运行已经完成页面恢复收尾。",
       );
     }
     const context = copyContext(this.#projectSession.context);
