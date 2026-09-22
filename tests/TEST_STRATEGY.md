@@ -251,6 +251,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   测试必须证明水合仍 pending 时下一标签可以进入、旧水合按 epoch 退休、后台失败只标记标签并锁住
   编辑。已登记项目的 exact open envelope 必须证明 Renderer 水合不再重复 `/source`，干净且 generation/
   Hash 完全一致的 verified Canvas 必须证明不会重复 render fence。
+  Electron 通过暂停 B 的真实规则文件读取后点击 C/D，证明相邻待执行激活只执行 B/D、被替代的 C 及其余命令都到达终态；插入创建或关闭操作时必须仍执行 C。最终活动页、挂载文档和 Runtime owner 要与可见规则页一致，未保存和 IME 围栏沿用原导航场景。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
   20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
   标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。缓存交接的受控暂停必须阻断新 Canvas 文档的可用性，
@@ -640,7 +641,9 @@ generation、提升身份、Runtime ready 和源码一致性后重新定位同�
 只查该见证，不搜索失败节点。Canvas 原始命中父容器与最终选中 Canvas 分别核验，不能
 把两者强制视为同一 ID，也不能据现场结果重新推断映射。缺失见证、错落点、空属性或
 源码证据不符须失败并输出全部条件；没有适用拒绝样本必须保留具体不适用依据。
-`core-structure-leaf` 仅接收已核对的纯文字 span 或 p 结构样本，冻结父级、后续兄弟和源码插入字节位置。
+`core-structure-leaf` 接收已核对的纯文字 `span`、`p`，以及无脚本静态文档中的
+纯文字 leaf `div` 结构样本，冻结父级、后续兄弟和源码插入字节位置；作者 Script、事件属性、
+按 WHATWG URL 解析为 `javascript:`/`vbscript:` 的导航/载入 URL 属性（如 `href`、`xlink:href`、`src`、`action`、`formaction`、`object[data]`）、身份/引用/资源属性和特殊祖先仍必须拒绝。
 独立 `core-structure-path-race` 在同一会话先复制混合内容子节点（Candidate），再复制普通叶节点（原地），
 结算后源码与画布都必须各有两份身份，且不得留下过期 Candidate 覆盖。复制顺序冻结为「后插入点先执行」，
 避免第一份复制移动第二份的 byte offset。
@@ -648,10 +651,11 @@ generation、提升身份、Runtime ready 和源码一致性后重新定位同�
 复制、选中副本、激活、输入、保存、重新选中副本、确认删除逐项记账；静态重建与动态 Candidate
 采用分别判断，文字修改不得重建。保存只允许副本区域变化，删除后原始种子字节必须恢复，
 重开核验原件身份和副本不存在。这是 B 的可复制部分证据。
-独立 `core-structure-closed-loop` 在同一冻结叶节点上追加改样式、同父相邻移动（并注入一次
-接受后的局部投影失败）、删除后 Undo、
+独立 `core-structure-closed-loop` 在同一冻结叶节点上追加改样式、同父相邻移动、删除后 Undo、
 编辑恢复对象、恢复基线再 Redo 回已保存恢复态，以及保存后重开。移动目标父级必须预先冻结且
-不得离开复制插入父级；任意跨父移动或 HTML 插入只作为拒绝负例走 Editor 命令端口。`expectedProjection` 为默认独立预期，
+不得离开复制插入父级；静态纯文字 leaf `div` 的复制和移动冻结为 `in-place`，不注入 Runtime
+故障；仍保留 Runtime 目标在接受后注入一次局部投影失败并冻结为 `recovered` 的正例。
+任意跨父移动或 HTML 插入只作为拒绝负例走 Editor 命令端口。`expectedProjection` 为默认独立预期，
 `projectionByOperation` 可按操作覆盖，产品改标不能降低该组门槛。
 结构 Harness 预先冻结 `expectedProjection`：`in-place`、`candidate`、`recovered` 或 `refuse`。
 必须原地的普通源码操作不得因为产品改标 Candidate 而放宽；必须重建、必须拒绝和接受后恢复
