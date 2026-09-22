@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { preserveCandidateSourceIdsForFixture } from "../../helpers/preserve-candidate-source-ids.mjs";
 import {
   ORIGINAL_TEXT,
   UPDATED_TEXT,
   addComment,
   addCommentAndSubmit,
+  activateNativeEdit,
   caseSelector,
   chooseClipboardDelivery,
   chooseModifyIntent,
@@ -22,6 +24,7 @@ import {
   removeSourceFixture,
   requestDirectoryCount,
   runOfficialFinalizer,
+  setTextSelection,
   stopStemmio,
   waitForProjectReady,
   workingHtmlFiles,
@@ -421,6 +424,185 @@ test("an unknown Request outcome stays fail-closed and reconciles automatically"
     }).getByRole("button", { name: "结束本轮并继续编辑" })).toBeEnabled();
     expect(requestDirectoryCount(launched.workspace)).toBe(1);
     expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("accepted source survives a display verification failure and repairs without adopting twice", {
+  tag: ["@smoke-review"],
+}, async ({}, testInfo) => {
+  const fixture = createSourceFixture("accepted-page-recovery.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const decisions = [];
+  try {
+    const request = await addCommentAndSubmit(launched.page, launched.electronApp, fixture.sourcePath);
+    writeAiOutput(request.requestRoot, (base) => preserveCandidateSourceIdsForFixture(base, base.replace(ORIGINAL_TEXT, UPDATED_TEXT)));
+    runOfficialFinalizer(request.requestRoot, request.changeRequest);
+    await launched.page.getByRole("button", { name: "查看修改", exact: true }).click();
+    await expect(launched.page.getByTestId("ai-review-workspace")).toBeVisible();
+    launched.page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/ready-version/activate") {
+        decisions.push(request.postDataJSON());
+      }
+    });
+    const adoptionResponses = [];
+    launched.page.on("response", async (response) => {
+      if (new URL(response.url()).pathname !== "/ready-version/activate") return;
+      const body = await response.json().catch(() => ({}));
+      adoptionResponses.push({ status: response.status(), error: body.error?.code || body.code || null });
+    });
+    await launched.page.evaluate(() => {
+      const originalMark = performance.mark.bind(performance);
+      const fault = { enabled: true, committed: false, failures: 0 };
+      window.__acceptedPageVerificationFault = fault;
+      performance.mark = function(name, ...args) {
+        if (name === "stemmio:accept:commit-end") fault.committed = true;
+        if (name === "stemmio:canvas:verify-ack" && fault.enabled && fault.committed) {
+          fault.failures += 1;
+          throw new Error("Synthetic accepted-page verification failure");
+        }
+        return originalMark(name, ...args);
+      };
+    });
+    await launched.page.getByRole("button", { name: "采用修改", exact: true }).click();
+    await launched.page.getByRole("button", { name: "确认并采纳" }).click();
+    const sidebar = launched.page.getByTestId("ai-conversation-sidebar");
+    const actions = sidebar.getByTestId("ai-conversation-action-bar");
+    await expect(actions).toContainText("已采用，但页面需要恢复");
+    await expect(actions).toBeInViewport({ ratio: 1 });
+    await expect(actions.getByRole("button", { name: "重试恢复页面", exact: true })).toBeInViewport({ ratio: 1 });
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
+    expect(await launched.page.evaluate(() => window.__acceptedPageVerificationFault.failures)).toBeGreaterThan(0);
+    const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
+    const accepted = readFileSync(active.sourcePath, "utf8");
+    expect(accepted).toContain(UPDATED_TEXT);
+    expect(accepted).not.toContain(ORIGINAL_TEXT);
+    await expect(sidebar.getByRole("button", { name: "采用修改", exact: true })).toHaveCount(0);
+    await expect(actions.getByRole("button")).toHaveCount(1);
+    await launched.page.screenshot({ path: testInfo.outputPath("accepted-page-needs-recovery.png"), animations: "disabled" });
+    await launched.page.evaluate(() => { window.__acceptedPageVerificationFault.enabled = false; });
+    await actions.getByRole("button", { name: "重试恢复页面", exact: true }).click();
+    await expect(sidebar.getByRole("button", { name: "重试恢复页面", exact: true })).toHaveCount(0, { timeout: 45_000 });
+    await expect(launched.page.getByRole("button", { name: "编辑", exact: true })).toBeEnabled({ timeout: 45_000 });
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
+    expect(readFileSync(active.sourcePath, "utf8")).toBe(accepted);
+    expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
+
+    // Recovery settles the existing project identity. The version tree must
+    // be usable immediately from the current tab, and leaving that history
+    // view must return to the same editable Working Copy without a second
+    // activation/promotion.
+    const aiSidebar = launched.page.getByTestId("ai-conversation-sidebar");
+    if (await aiSidebar.isVisible()) {
+      await launched.page.getByRole("button", { name: "AI 助手", exact: true }).click();
+      await expect(aiSidebar).toHaveCount(0);
+    }
+    const globalSidebar = launched.page.locator(".workbench-global-sidebar");
+    if (await globalSidebar.getAttribute("data-open") !== "true") {
+      await launched.page.getByRole("button", { name: "展开左侧边栏", exact: true }).click();
+    }
+    const projectName = path.basename(active.sourcePath, path.extname(active.sourcePath));
+    const projectRow = globalSidebar.getByRole("button", { name: projectName, exact: true });
+    await expect(projectRow).toBeVisible({ timeout: 30_000 });
+    const projectItem = projectRow.locator("xpath=..");
+    if (await projectRow.getAttribute("aria-expanded") !== "true") await projectRow.click();
+    await expect(projectItem.locator(".sidebar-project-current-row")).toBeVisible();
+    await projectItem.locator(".sidebar-project-history-toggle").click();
+    await expect(projectItem.locator(".sidebar-version-file")).toHaveCount(2, { timeout: 30_000 });
+    const adoptedVersion = projectItem.getByRole("button", { name: "V2，历史版本", exact: true });
+    await expect(adoptedVersion).toBeVisible();
+    await adoptedVersion.click();
+    const historyTab = launched.page.locator('.workbench-tab[data-kind="history"]')
+      .filter({ hasText: projectName }).getByRole("tab");
+    await expect(historyTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    const mode = launched.page.getByRole("group", { name: "工作模式", exact: true });
+    await expect(mode).toHaveAttribute("data-view-label", "历史");
+    await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+    await projectItem.locator(".sidebar-project-current-row").click();
+    const currentTab = launched.page.locator('.workbench-tab[data-kind="document"]')
+      .filter({ hasText: projectName }).getByRole("tab");
+    await expect(currentTab).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+    await expect(mode).toHaveAttribute("data-view-label", "当前");
+    await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
+    expect(workingHtmlFiles(launched.workspace, request.changeRequest.projectId)).toHaveLength(1);
+
+    // A native edit after recovery must save into the same managed source;
+    // the external fixture remains protected.
+    const recoveredFrame = await loadedDiskFrame(launched.page, active.sourcePath);
+    await activateNativeEdit(recoveredFrame, "list-item");
+    await setTextSelection(recoveredFrame, "list-item", 0, UPDATED_TEXT.length);
+    await launched.page.keyboard.insertText("恢复后本地保存");
+    await launched.page.keyboard.press("Escape");
+    await expect.poll(() => {
+      try { return readFileSync(active.sourcePath, "utf8"); }
+      catch (cause) {
+        // Protected publication parks the previous inode before linking the
+        // new one; the source name can be absent until that save settles.
+        if (cause.code === "ENOENT") return "";
+        throw cause;
+      }
+    }, { timeout: 30_000 }).toContain("恢复后本地保存");
+    expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
+
+    // A subsequent request is allowed from the repaired, edited document;
+    // it must create one new request while retaining the single adoption.
+    const nextRequest = await addCommentAndSubmit(
+      launched.page,
+      launched.electronApp,
+      active.sourcePath,
+      "恢复后下一轮",
+    );
+    await expect.poll(() => requestDirectoryCount(launched.workspace), { timeout: 20_000 })
+      .toBe(2);
+    expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
+    expect(workingHtmlFiles(launched.workspace, request.changeRequest.projectId)).toHaveLength(1);
+    const nextRequestRecord = JSON.parse(readFileSync(
+      path.join(nextRequest.requestRoot, "request.json"),
+      "utf8",
+    ));
+    const nextManifest = JSON.parse(readFileSync(
+      path.join(nextRequest.requestRoot, "input-manifest.json"),
+      "utf8",
+    ));
+    const nextAnnotations = JSON.parse(readFileSync(
+      path.join(nextRequest.requestRoot, "input", "annotations", "records.json"),
+      "utf8",
+    ));
+    expect(nextRequestRecord.request.taskSpec.instructions).toHaveLength(1);
+    expect(nextRequestRecord.request.taskSpec.instructions[0].text)
+      .toContain("恢复后下一轮");
+    // The intentional edit after recovery is the only audit context carried
+    // forward; it is based on the adopted V2, never the previous round.
+    expect(nextRequestRecord.request.changeEvents).toHaveLength(1);
+    expect(nextRequestRecord.request.changeEvents[0]).toMatchObject({
+      basedOnVersionId: "ver_0002",
+      before: { text: UPDATED_TEXT },
+      after: { text: "恢复后本地保存" },
+    });
+    expect(nextAnnotations.changeEvents).toEqual(nextRequestRecord.request.changeEvents);
+    expect(nextAnnotations.comments).toHaveLength(1);
+    expect(nextAnnotations.comments[0].text).toContain("恢复后下一轮");
+    const latestSavedBytes = readFileSync(active.sourcePath);
+    expect(readFileSync(path.join(
+      nextRequest.requestRoot,
+      "input",
+      "base",
+      "index.html",
+    ))).toEqual(latestSavedBytes);
+    expect(nextManifest.readOrder).toContain("input/annotations/records.json");
+    expect(nextManifest.files).toContainEqual(expect.objectContaining({
+      path: "input/base/index.html",
+      role: "base-html",
+      byteLength: latestSavedBytes.byteLength,
+      sha256: nextRequest.changeRequest.expectedSourceSha256,
+    }));
+    await expect(launched.page.getByTestId("ai-review-workspace")).toHaveCount(0);
+    await expect(launched.page.getByRole("button", { name: "采用修改", exact: true })).toHaveCount(0);
+    expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
+    await launched.page.screenshot({ path: testInfo.outputPath("accepted-page-recovered.png"), animations: "disabled" });
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);

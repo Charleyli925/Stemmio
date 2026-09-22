@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Readable, Writable } from "node:stream";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 import * as acp from "@agentclientprotocol/sdk";
 
@@ -42,6 +42,10 @@ const visibleTextGateMs = Math.max(
   Math.min(5_000, Number.parseInt(visibleTextGateArgument?.slice("--visible-text-gate-ms=".length) || "0", 10) || 0),
 );
 
+const visibleTextStartGateFile = process.argv
+  .find((argument) => argument.startsWith("--visible-text-start-gate="))
+  ?.slice("--visible-text-start-gate=".length);
+
 const sessionId = "session_stemmio_e2e_qoder";
 let requestRoot = "";
 
@@ -81,6 +85,13 @@ const app = acp.agent({ name: "stemmio-e2e-qoder" })
       throw new Error("Synthetic ACP runtime connection interrupted.");
     }
     if (visibleText) {
+      if (visibleTextStartGateFile) {
+        const deadline = Date.now() + 60_000;
+        while (!existsSync(visibleTextStartGateFile)) {
+          if (Date.now() >= deadline) throw new Error("Synthetic public text start was not released");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }
       const publicTexts = visibleTextLong
         ? Array.from({ length: 18 }, (_, index) => {
           const marker = `长公开说明 ${index + 1}/18`;

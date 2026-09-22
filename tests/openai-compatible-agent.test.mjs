@@ -1123,15 +1123,23 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
   await writeFile(sourcePath, source, "utf8");
   const repository = new ProjectFileRepository({ projectsRoot: path.join(root, "projects") });
   const imported = await repository.importExternal({ sourcePath, expectedSourceSha256: sha256(Buffer.from(source)) });
+  const rulesA = "# Frozen HTTP rules A";
+  const rulesB = "# Next HTTP rules B";
+  await repository.updateProjectNotes({ target: imported.target, content: rulesA });
   const managedBefore = await readFile(imported.target.exactSourcePath, "utf8");
   assert.equal(inspectSourceElementIdentity(managedBefore).complete, true);
   const candidateHtml = managedBefore.replaceAll("Before", "After");
-  let callCount = 0;
+  let generationCount = 0;
   const requestBodies = [];
   const fetchImpl = async (_url, init) => {
-    callCount += 1;
-    requestBodies.push(JSON.parse(String(init?.body || "{}")));
-    return jsonResponse(200, { choices: [{ finish_reason: "stop", message: { content: callCount === 1 ? HTML : callCount === 2 ? candidateHtml.replace(/sm1_[a-f0-9]+/u, `sm1_${"f".repeat(12)}4fff8${"f".repeat(15)}`) : candidateHtml } }] });
+    const body = JSON.parse(String(init?.body || "{}"));
+    requestBodies.push(body);
+    const generation = JSON.stringify(body.messages).includes(rulesA);
+    if (generation) generationCount += 1;
+    const content = !generation ? HTML : generationCount === 1
+      ? candidateHtml.replace(/sm1_[a-f0-9]+/u, `sm1_${"f".repeat(12)}4fff8${"f".repeat(15)}`)
+      : candidateHtml;
+    return jsonResponse(200, { choices: [{ finish_reason: "stop", message: { content } }] });
   };
   const registry = providerRegistry(
     createOpenAiCompatibleProvider({ fetchImpl }),
@@ -1180,6 +1188,8 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
     prompt: "Write one complete Candidate page.",
   });
   const requestRoot = path.join(imported.target.projectRootPath, ".stemmio", "requests", request.requestId);
+  await repository.updateProjectNotes({ target: imported.target, content: rulesB });
+  assert.equal(await readFile(path.join(requestRoot, "input", "PROJECT.md"), "utf8"), rulesA);
   authority = {
     run: {
       projectId: imported.target.projectId,
@@ -1234,6 +1244,25 @@ test("Coordinator → adapter → HTTP runtime → finalizer seals Candidate wit
   assert.equal(await readFile(imported.target.exactSourcePath, "utf8"), managedBefore);
   assert.ok(requestBodies.length >= 3);
   assert.equal(requestBodies.every((body) => body.max_tokens === 393_216), true);
+  const generationBodies = requestBodies.filter(body => JSON.stringify(body.messages).includes(rulesA));
+  assert.ok(generationBodies.length >= 2, "initial generation and identity-correction retry use frozen A");
+  assert.ok(requestBodies.every(body => !JSON.stringify(body.messages).includes(rulesB)));
+  const promoted = await repository.promoteCandidate({
+    target: imported.target, candidateId: status.candidate.candidateId,
+    decisionOperationId: `promote_${status.candidate.candidateId}`,
+    expectedSourceSha256: imported.target.sourceSha256,
+  });
+  assert.equal((await repository.readProjectNotes({ target: promoted.target })).content, rulesB);
+  const next = await repository.prepareRequest({
+    target: promoted.target, requestId: "req_http_next_rules", attemptId: "attempt_001",
+    expectedSourceSha256: promoted.target.sourceSha256,
+    request: { freezeCutoffRevision: 0, summary: "Next rules", comments, changeEvents: [], targets,
+      taskSpec: compileTaskSpec({ comments, targets }) }, prompt: "Use next rules.",
+  });
+  assert.equal(await readFile(path.join(promoted.target.projectRootPath, ".stemmio", "requests", next.requestId, "input", "PROJECT.md"), "utf8"), rulesB);
+  await repository.cancelRequest({ target: promoted.target, requestId: next.requestId, attemptId: next.attemptId });
+  assert.equal((await repository.readProjectNotes({ target: promoted.target })).content, rulesB);
+
   await coordinator.shutdown();
 });
 
