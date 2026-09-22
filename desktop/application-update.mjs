@@ -67,11 +67,15 @@ export function createApplicationUpdateController({
     publishedAt: null,
   });
   let checkPromise = null;
+  let activeCheck = null;
   let downloadPromise = null;
+  let downloadTargetVersion = null;
   let automaticCheckTimer = null;
   let automaticCheckGeneration = 0;
+  let disposed = false;
 
   const publish = (nextStatus, patch = {}) => {
+    if (disposed) return status;
     status = Object.freeze({
       ...status,
       ...patch,
@@ -81,50 +85,108 @@ export function createApplicationUpdateController({
     return status;
   };
 
-  const updateInfoPatch = (info) => ({
-    latestVersion: publicVersion(info?.version),
-    publishedAt: publicPublishedAt(info?.releaseDate),
-  });
+  const updateInfoPatch = (info, { preserve = false } = {}) => {
+    const version = publicVersion(info?.version);
+    const publishedAt = publicPublishedAt(info?.releaseDate);
+    return {
+      latestVersion: version || (preserve ? status.latestVersion : null),
+      publishedAt: publishedAt || (preserve ? status.publishedAt : null),
+    };
+  };
+
+  const isDownloadLocked = () => (
+    status.status === "downloading"
+    || status.status === "downloaded"
+    || status.status === "installing"
+  );
+
+  const beginCheck = () => {
+    const round = {
+      outcome: "pending",
+    };
+    activeCheck = round;
+    return round;
+  };
+
+  const markCheckOutcome = (outcome) => {
+    if (!activeCheck) return;
+    activeCheck.outcome = outcome;
+  };
+
+  const canDownloadCandidate = () => (
+    status.status === "available"
+    && Boolean(publicVersion(status.latestVersion))
+  );
 
   const listeners = new Map([
     ["checking-for-update", () => {
+      if (disposed || isDownloadLocked()) return;
+      if (!activeCheck || !checkPromise) beginCheck();
+      if (status.status === "checking") return;
       publish("checking", {
-        latestVersion: null,
         downloadPercent: null,
-        publishedAt: null,
       });
     }],
     ["update-available", (info) => {
+      if (disposed || isDownloadLocked()) return;
+      const version = publicVersion(info?.version);
+      if (!version) {
+        markCheckOutcome("unavailable");
+        publish("unavailable", { downloadPercent: null });
+        return;
+      }
+      markCheckOutcome("available");
       publish("available", {
         ...updateInfoPatch(info),
         downloadPercent: null,
       });
     }],
     ["download-progress", (progress) => {
+      if (
+        disposed
+        || !["available", "downloading"].includes(status.status)
+      ) return;
       publish("downloading", {
         downloadPercent: publicProgress(progress),
       });
     }],
     ["update-downloaded", (info) => {
+      if (disposed || status.status === "checking" || status.status === "installing") return;
+      const version = publicVersion(info?.version);
+      if (
+        downloadTargetVersion
+        && version
+        && version !== downloadTargetVersion
+      ) return;
+      downloadTargetVersion = version || downloadTargetVersion || status.latestVersion;
       publish("downloaded", {
-        ...updateInfoPatch(info),
+        ...updateInfoPatch(info, { preserve: true }),
         downloadPercent: 100,
       });
     }],
-    ["update-not-available", (info) => {
+    ["update-not-available", () => {
+      if (disposed || isDownloadLocked()) return;
+      markCheckOutcome("current");
       publish("current", {
-        ...updateInfoPatch(info),
+        latestVersion: null,
+        publishedAt: null,
         downloadPercent: null,
       });
     }],
     ["update-cancelled", () => {
+      if (disposed || status.status === "downloaded" || status.status === "installing") return;
+      markCheckOutcome("unavailable");
+      downloadTargetVersion = null;
       publish("unavailable", { downloadPercent: null });
     }],
     ["error", (error) => {
+      if (disposed || status.status === "downloaded") return;
       logger.warn(
         "[application-update:unavailable]",
         error instanceof Error ? error.message : String(error),
       );
+      markCheckOutcome("unavailable");
+      downloadTargetVersion = null;
       publish("unavailable", { downloadPercent: null });
     }],
   ]);
@@ -134,43 +196,87 @@ export function createApplicationUpdateController({
   }
 
   async function checkForUpdates() {
-    if (!enabled) return status;
-    if (
-      status.status === "available"
-      || status.status === "downloading"
-      || status.status === "downloaded"
-      || status.status === "installing"
-    ) {
-      return status;
-    }
+    if (!enabled || disposed) return status;
+    if (isDownloadLocked()) return status;
     if (checkPromise) return checkPromise;
-    checkPromise = Promise.resolve()
-      .then(() => updater.checkForUpdates())
-      .then(() => status)
+    const round = beginCheck();
+    const request = Promise.resolve()
+      .then(() => {
+        if (disposed) return null;
+        return updater.checkForUpdates();
+      })
+      .then((result) => {
+        if (disposed || activeCheck !== round || round.outcome !== "pending") {
+          return status;
+        }
+        const updateInfo = result?.updateInfo;
+        if (result?.isUpdateAvailable === false) {
+          listeners.get("update-not-available")(updateInfo);
+        } else if (publicVersion(updateInfo?.version)) {
+          listeners.get("update-available")(updateInfo);
+        } else {
+          listeners.get("error")(
+            new Error("The updater returned no usable update result."),
+          );
+        }
+        return status;
+      })
       .catch((error) => {
-        listeners.get("error")(error);
+        if (
+          !disposed
+          && activeCheck === round
+          && round.outcome !== "unavailable"
+        ) {
+          listeners.get("error")(error);
+        }
         return status;
       })
       .finally(() => {
-        checkPromise = null;
+        if (checkPromise === request) checkPromise = null;
+        if (activeCheck === round) activeCheck = null;
       });
-    return checkPromise;
+    checkPromise = request;
+    if (status.status !== "checking") {
+      publish("checking", { downloadPercent: null });
+    }
+    return request;
   }
 
   async function downloadAvailableUpdate() {
-    if (!enabled) return status;
+    if (!enabled || disposed) return status;
     if (downloadPromise) return downloadPromise;
-    if (status.status !== "available") return status;
-    publish("downloading", { downloadPercent: 0 });
+    const pendingCheck = checkPromise;
+    const pendingRound = activeCheck;
+    if (!pendingCheck && !canDownloadCandidate()) return status;
+    if (!pendingCheck) {
+      downloadTargetVersion = status.latestVersion;
+      publish("downloading", { downloadPercent: 0 });
+    }
     downloadPromise = Promise.resolve()
-      .then(() => updater.downloadUpdate())
-      .then(() => status)
+      .then(async () => {
+        if (pendingCheck) {
+          await pendingCheck;
+          if (
+            disposed
+            || pendingRound?.outcome !== "available"
+          ) return status;
+          if (disposed || !canDownloadCandidate()) return status;
+          downloadTargetVersion = status.latestVersion;
+          publish("downloading", { downloadPercent: 0 });
+        } else if (disposed || status.status !== "downloading") {
+          return status;
+        }
+        await updater.downloadUpdate();
+        return status;
+      })
       .catch((error) => {
-        listeners.get("error")(error);
+        if (!disposed && status.status !== "unavailable") {
+          listeners.get("error")(error);
+        }
         return status;
       })
       .finally(() => {
-        downloadPromise = null;
+        if (downloadPromise) downloadPromise = null;
       });
     return downloadPromise;
   }
@@ -196,7 +302,7 @@ export function createApplicationUpdateController({
       throw new TypeError("Automatic update delays must be safe positive integers.");
     }
     stopAutomaticChecks();
-    if (!enabled) return false;
+    if (!enabled || disposed) return false;
     const generation = automaticCheckGeneration;
     const scheduleNext = (delayMs) => {
       automaticCheckTimer = scheduleTimer(async () => {
@@ -212,13 +318,14 @@ export function createApplicationUpdateController({
   }
 
   function installDownloadedUpdate() {
-    if (status.status !== "downloaded") return false;
+    if (disposed || status.status !== "downloaded") return false;
     const downloadedStatus = status;
     publish("installing", { downloadPercent: 100 });
     try {
       updater.quitAndInstall();
       return true;
     } catch (error) {
+      if (disposed) return false;
       status = downloadedStatus;
       onStatus(status);
       throw error;
@@ -226,6 +333,8 @@ export function createApplicationUpdateController({
   }
 
   function dispose() {
+    if (disposed) return;
+    disposed = true;
     stopAutomaticChecks();
     for (const [eventName, listener] of listeners) {
       updater.removeListener(eventName, listener);
