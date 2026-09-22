@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -266,7 +267,9 @@ test("GitHub workflows keep one CI file, informational Codex review, and exact-t
   );
   assert.match(electronNative, /needs:[\s\S]*- baseline-policy[\s\S]*- macos-deps/u);
   assert.match(electronAi, /needs:[\s\S]*- baseline-policy[\s\S]*- macos-deps/u);
-  assert.match(ci, /name: release-gate/u);
+  assert.match(releaseGate, /name:.*draft == false.*'release-gate'.*'release-gate-inactive'/u);
+  assert.match(releaseGate, /\$\{\{ always\(\)/u);
+  assert.doesNotMatch(releaseGate, /!cancelled\(\)/u);
   assert.doesNotMatch(releaseGate, /review-policy|codex-review/u);
   assert.match(releaseGate, /needs:[\s\S]*- candidate-context[\s\S]*- release-dry-run/u);
   assert.match(releaseGate, /BASELINE_RESULT: \$\{\{ needs\.baseline-policy\.result \}\}/u);
@@ -401,4 +404,69 @@ test("retired review-governance workflows are gone", async () => {
     "release-dry-run.yml",
     "release.yml",
   ]);
+});
+
+function releaseGateScript(job, stepName) {
+  const step = job.slice(job.indexOf(`      - name: ${stepName}\n`));
+  assert.ok(step.startsWith(`      - name: ${stepName}\n`));
+  const body = step.slice(step.indexOf("        run: |\n") + "        run: |\n".length);
+  return body.split("\n").filter((line, index, lines) => {
+    const end = lines.findIndex((candidate) => candidate.startsWith("      - "));
+    return end === -1 || index < end;
+  }).map((line) => line.replace(/^          /u, "")).join("\n");
+}
+
+test("the actual release-gate shell refuses failed, cancelled, skipped and missing required lanes", async () => {
+  const ci = await readFile(path.join(productRoot, ".github/workflows/ci.yml"), "utf8");
+  const script = releaseGateScript(workflowJob(ci, "release-gate"), "Require every source lane");
+  const lanes = ["BASELINE_RESULT", "POLICY_RESULT", "CANDIDATE_CONTEXT_RESULT", "BUILD_RESULT",
+    "NODE_RESULT", "BROWSER_RESULT", "ELECTRON_NATIVE_RESULT", "ELECTRON_AI_RESULT"];
+  const passing = Object.fromEntries(lanes.map((lane) => [lane, "success"]));
+  const run = (changes = {}) => spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+    encoding: "utf8", env: { ...process.env, ...passing, GITHUB_STEP_SUMMARY: "/dev/null",
+      PACKAGING_REQUIRED: "false", DRY_RUN_RESULT: "skipped", ...changes },
+  });
+  assert.equal(run().status, 0);
+  assert.equal(run({ PACKAGING_REQUIRED: "true", DRY_RUN_RESULT: "success" }).status, 0);
+  for (const lane of lanes) {
+    for (const result of ["failure", "cancelled", "skipped", ""]) {
+      assert.notEqual(run({ [lane]: result }).status, 0, `${lane}: ${result}`);
+    }
+  }
+  for (const result of ["failure", "cancelled", "skipped", ""]) {
+    assert.notEqual(run({ PACKAGING_REQUIRED: "true", DRY_RUN_RESULT: result }).status, 0);
+  }
+  assert.notEqual(run({ PACKAGING_REQUIRED: "" }).status, 0);
+});
+
+test("the attestation entry rejects Draft, stale head, stale base and a different tested merge", async () => {
+  const ci = await readFile(path.join(productRoot, ".github/workflows/ci.yml"), "utf8");
+  const script = releaseGateScript(workflowJob(ci, "release-gate"), "Create exact-tree source gate attestation")
+    .split("node scripts/source-gate-provenance.mjs create")[0];
+  const current = { state: "open", draft: false, head: { sha: "head" },
+    base: { ref: "main", sha: "base" }, merge_commit_sha: "merge" };
+  const doubles = `
+    gh() { printf '%s' "$LIVE_PR"; }
+    git() {
+      case "$2" in
+        HEAD) printf '%s' "$TESTED_MERGE" ;;
+        HEAD^1) printf '%s' "$TESTED_BASE" ;;
+        HEAD^2) printf '%s' "$TESTED_HEAD" ;;
+        *) return 1 ;;
+      esac
+    }
+  `;
+  const run = (pr = current, changes = {}) => spawnSync("bash", ["-e", "-o", "pipefail", "-c", doubles + script], {
+    encoding: "utf8", env: { ...process.env, LIVE_PR: JSON.stringify(pr),
+      GITHUB_SHA: "merge", PR_BASE_SHA: "base", PR_HEAD_SHA: "head", PR_NUMBER: "1",
+      GITHUB_REPOSITORY: "synthetic/repo", TESTED_MERGE: "merge", TESTED_BASE: "base", TESTED_HEAD: "head", ...changes },
+  });
+  assert.equal(run().status, 0);
+  for (const changes of [{ draft: true }, { state: "closed" }, { head: { sha: "new-head" } },
+    { base: { ref: "main", sha: "new-base" } }, { merge_commit_sha: "new-merge" }]) {
+    assert.notEqual(run({ ...current, ...changes }).status, 0, JSON.stringify(changes));
+  }
+  for (const field of ["TESTED_MERGE", "TESTED_BASE", "TESTED_HEAD"]) {
+    assert.notEqual(run(current, { [field]: "different" }).status, 0, field);
+  }
 });
