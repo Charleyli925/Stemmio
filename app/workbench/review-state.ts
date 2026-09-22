@@ -1,6 +1,5 @@
 import type {
   ReviewDocuments,
-  ReviewFilter,
   ReviewPresentation,
   ReviewSide,
 } from "./review-document";
@@ -10,7 +9,6 @@ import {
 } from "../lib/review-focus-state.js";
 
 export type ReviewPageView = "split" | ReviewSide;
-export type ReviewChangeFilter = ReviewFilter;
 export type ReviewScrollMode = "linked" | "independent";
 export type ReviewZoomMode = "fit" | "actual";
 export type ReviewFocusRegionSelection = Record<ReviewSide, string | null>;
@@ -22,7 +20,6 @@ export type ReviewReadingPosition = Record<ReviewSide, Readonly<{
 
 export type ReviewState = {
   pageView: ReviewPageView;
-  changeFilter: ReviewChangeFilter;
   contextVisibility: number;
   navigationTarget: string;
   activeFocusGroupId: string | null;
@@ -40,7 +37,6 @@ export type ReviewPresentationSnapshot = Readonly<{
 
 export type ReviewStateAction =
   | { type: "set-page-view"; value: ReviewPageView }
-  | { type: "set-change-filter"; value: ReviewChangeFilter }
   | { type: "set-context-visibility"; value: number }
   | { type: "set-navigation-target"; value: string }
   | { type: "set-active-focus-group"; value: string | null }
@@ -57,14 +53,13 @@ export type ReviewStateAction =
 
 export const DEFAULT_REVIEW_STATE: ReviewState = {
   pageView: "split",
-  changeFilter: "all",
   contextVisibility: 25,
   navigationTarget: "all",
   activeFocusGroupId: DEFAULT_ACTIVE_REVIEW_FOCUS_GROUP_ID,
   activeFocusRegionIds: { before: null, after: null },
   pagePresentation: { before: [], after: [] },
   scrollMode: "linked",
-  zoomMode: "actual",
+  zoomMode: "fit",
 };
 
 export const EMPTY_REVIEW_READING_POSITIONS: ReviewReadingPosition = Object.freeze({
@@ -97,19 +92,14 @@ export function restoreReviewPresentation({
   const pageView = (["split", "before", "after"] as string[]).includes(candidate.pageView)
     ? candidate.pageView
     : "split";
-  const changeFilter = (["all", "text", "structure"] as string[]).includes(candidate.changeFilter)
-    ? candidate.changeFilter
-    : "all";
   const scrollMode = candidate.scrollMode === "independent" ? "independent" : "linked";
-  const zoomMode = candidate.zoomMode === "fit" ? "fit" : "actual";
+  const zoomMode = candidate.zoomMode === "actual" ? "actual" : "fit";
   const navigationTarget = candidate.navigationTarget === "all"
     || documents.changes.some((change) => change.id === candidate.navigationTarget)
     ? candidate.navigationTarget
     : "all";
   const focusGroup = documents.focusGroups.find((group) => (
     group.id === candidate.activeFocusGroupId
-    && (changeFilter === "all"
-      || (changeFilter === "text" ? group.kind === "text" : group.kind !== "text"))
   )) || null;
   const regionId = (side: ReviewSide) => {
     const requested = candidate.activeFocusRegionIds?.[side];
@@ -131,7 +121,6 @@ export function restoreReviewPresentation({
   return {
     state: {
       pageView: pageView as ReviewPageView,
-      changeFilter: changeFilter as ReviewChangeFilter,
       contextVisibility,
       navigationTarget,
       activeFocusGroupId: focusGroup?.id || null,
@@ -155,10 +144,6 @@ export function reduceReviewState(
   switch (action.type) {
     case "set-page-view":
       return state.pageView === action.value ? state : { ...state, pageView: action.value };
-    case "set-change-filter":
-      return state.changeFilter === action.value
-        ? state
-        : { ...state, changeFilter: action.value };
     case "set-context-visibility": {
       const nextVisibility = Math.round(Math.max(0, Math.min(100, action.value)));
       return state.contextVisibility === nextVisibility

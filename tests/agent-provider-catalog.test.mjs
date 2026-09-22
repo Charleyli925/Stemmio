@@ -237,7 +237,7 @@ test("Settings cards include every installable provider without provider-id bran
     },
   });
   assert.deepEqual(cards.map((card) => card.selection.providerId), ["qoder", "codex"]);
-  assert.equal(cards[1].presentation.actions.install.label, "安装 Codex");
+  assert.equal(cards[1].presentation.actions.install.label, "安装 Codex 连接组件");
 });
 
 test("provider cards use the resolved current selection only for the selected provider", () => {

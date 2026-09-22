@@ -146,8 +146,10 @@ export async function projectSubmissionReceipt(loaded, receipt) {
         text: "部分早期过程已省略；修改要求与最终结果仍保留。",
       } }, { now });
     }
+    let successfulTerminalSeen = false;
     for (const input of receipt.events || []) {
       const event = submissionExecutionFact(input);
+      if (successfulTerminalSeen && event.kind === "execution-ended") continue;
       const messageId = `message_${event.eventId}`;
       const messageKind = event.kind === "public-summary" ? "process-summary"
         : ["promoted", "rejected"].includes(event.kind) ? "decision-outcome"
@@ -164,6 +166,7 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       } }, { now: () => event.timestamp });
       const currentTurn = next.turns.find((value) => value.turnId === receipt.turnId);
       const terminal = { "candidate-ready": "completed", "no-change": "completed", cancelled: "cancelled", error: "failed", interrupted: "interrupted" }[event.kind];
+      if (["candidate-ready", "no-change"].includes(event.kind)) successfulTerminalSeen = true;
       if (terminal && ["queued", "running"].includes(currentTurn.status)) {
         next = sealConversationTurn(next, { turnId: receipt.turnId, status: terminal,
           requestId: receipt.requestId, attemptId: receipt.attemptId, candidateId: event.candidateId,
@@ -192,7 +195,7 @@ const EXECUTION_FACTS = Object.freeze({
   failed: "执行未能完成，修改要求已保留。",
   "execution-ended": "执行已结束，结果仍需校验。",
   interrupted: "执行连接已中断，结果需要核对；部分过程可能未保存。",
-  "candidate-ready": "修改已准备好，尚未采用。",
+  "candidate-ready": "AI 已修改完成，已生成可审阅的新 HTML。",
   "no-change": "本轮没有产生修改，修改要求已保留。",
   cancelled: "本轮已停止，修改要求已保留。",
   error: "修改结果未通过校验，页面尚未修改。",

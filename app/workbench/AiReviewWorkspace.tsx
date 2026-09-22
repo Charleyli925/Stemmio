@@ -26,12 +26,9 @@ import { FileHtmlIcon } from "@phosphor-icons/react/dist/csr/FileHtml";
 import { GitDiffIcon } from "@phosphor-icons/react/dist/csr/GitDiff";
 import { LinkBreakIcon } from "@phosphor-icons/react/dist/csr/LinkBreak";
 import { LinkIcon } from "@phosphor-icons/react/dist/csr/Link";
-import { TextTIcon } from "@phosphor-icons/react/dist/csr/TextT";
-import { TreeStructureIcon } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
 
 import {
-  REVIEW_STRUCTURE_TONE_COLOR,
   type ReviewCommentGroup,
   type ReviewDocuments,
   type ReviewPresentation,
@@ -45,10 +42,6 @@ import {
 } from "./review/review-visual-model.js";
 import ReadOnlyCommentMarker from "../components/ReadOnlyCommentMarker";
 import {
-  REVIEW_TEXT_EVIDENCE_ADDED_COLOR,
-  REVIEW_TEXT_EVIDENCE_REMOVED_COLOR,
-} from "../lib/review-text-evidence-marks.js";
-import {
   ReviewScrollCoordinator,
   followerReviewScrollLeft,
   relayedReviewScrollLeft,
@@ -56,7 +49,6 @@ import {
 import {
   restoreReviewPresentation,
   reduceReviewState,
-  type ReviewChangeFilter,
   type ReviewPageView,
   type ReviewPresentationSnapshot,
   type ReviewZoomMode,
@@ -90,6 +82,10 @@ type ReviewCommentLayout = {
   top: number;
   viewportLeft: number;
   viewportTop: number;
+  targetLeft: number;
+  targetRight: number;
+  viewportTargetLeft: number;
+  viewportTargetRight: number;
   global: boolean;
 };
 type ReviewVisualResolution = {
@@ -111,20 +107,6 @@ function initialVisualResolution(
     verdicts: {},
   };
 }
-
-const FILTER_LABELS: Record<ReviewChangeFilter, string> = {
-  all: "全部",
-  text: "文字",
-  structure: "元素",
-};
-
-// Legend dots reuse the canvas diff tones so the toolbar explains the marks
-// users already see on the pages: removed/added text and element changes.
-const FILTER_TONE_COLORS: Record<ReviewChangeFilter, string[]> = {
-  all: [],
-  text: [REVIEW_TEXT_EVIDENCE_REMOVED_COLOR, REVIEW_TEXT_EVIDENCE_ADDED_COLOR],
-  structure: [REVIEW_STRUCTURE_TONE_COLOR],
-};
 
 const PAGE_VIEW_LABELS: Record<ReviewPageView, string> = {
   split: "双页",
@@ -189,6 +171,10 @@ function safeReviewCommentLayouts(
       top,
       viewportLeft,
       viewportTop,
+      targetLeft,
+      targetRight,
+      viewportTargetLeft,
+      viewportTargetRight,
       global,
     } = candidate as Record<string, unknown>;
     if (
@@ -199,14 +185,28 @@ function safeReviewCommentLayouts(
       || typeof top !== "number"
       || typeof viewportLeft !== "number"
       || typeof viewportTop !== "number"
+      || typeof targetLeft !== "number"
+      || typeof targetRight !== "number"
+      || typeof viewportTargetLeft !== "number"
+      || typeof viewportTargetRight !== "number"
       || !Number.isFinite(left)
       || !Number.isFinite(top)
       || !Number.isFinite(viewportLeft)
       || !Number.isFinite(viewportTop)
+      || !Number.isFinite(targetLeft)
+      || !Number.isFinite(targetRight)
+      || !Number.isFinite(viewportTargetLeft)
+      || !Number.isFinite(viewportTargetRight)
       || Math.abs(left) > MAX_REVIEW_COMMENT_COORDINATE
       || Math.abs(top) > MAX_REVIEW_COMMENT_COORDINATE
       || Math.abs(viewportLeft) > MAX_REVIEW_COMMENT_COORDINATE
       || Math.abs(viewportTop) > MAX_REVIEW_COMMENT_COORDINATE
+      || Math.abs(targetLeft) > MAX_REVIEW_COMMENT_COORDINATE
+      || Math.abs(targetRight) > MAX_REVIEW_COMMENT_COORDINATE
+      || Math.abs(viewportTargetLeft) > MAX_REVIEW_COMMENT_COORDINATE
+      || Math.abs(viewportTargetRight) > MAX_REVIEW_COMMENT_COORDINATE
+      || targetRight < targetLeft
+      || viewportTargetRight < viewportTargetLeft
     ) return [];
     seen.add(key);
     return [{
@@ -215,6 +215,10 @@ function safeReviewCommentLayouts(
       top,
       viewportLeft,
       viewportTop,
+      targetLeft,
+      targetRight,
+      viewportTargetLeft,
+      viewportTargetRight,
       global: global === true,
     }];
   });
@@ -316,7 +320,12 @@ function ReviewDocumentPane({
     key: string;
     keys: string[];
     items: ReviewCommentGroup["items"];
+    left: number;
     top: number;
+    targetLeft: number;
+    targetRight: number;
+    viewportTargetLeft: number;
+    viewportTargetRight: number;
     viewportTop: number;
     global: boolean;
   }> = [];
@@ -329,13 +338,29 @@ function ReviewDocumentPane({
         previous.key += `-${group.key}`;
         previous.keys.push(group.key);
         previous.items.push(...group.items);
+        previous.left = Math.max(previous.left, layout.left);
+        previous.targetLeft = Math.min(previous.targetLeft, layout.targetLeft);
+        previous.targetRight = Math.max(previous.targetRight, layout.targetRight);
+        previous.viewportTargetLeft = Math.min(
+          previous.viewportTargetLeft,
+          layout.viewportTargetLeft,
+        );
+        previous.viewportTargetRight = Math.max(
+          previous.viewportTargetRight,
+          layout.viewportTargetRight,
+        );
         return;
       }
       nearbyCommentClusters.push({
         key: group.key,
         keys: [group.key],
         items: [...group.items],
+        left: layout.left,
         top: layout.top,
+        targetLeft: layout.targetLeft,
+        targetRight: layout.targetRight,
+        viewportTargetLeft: layout.viewportTargetLeft,
+        viewportTargetRight: layout.viewportTargetRight,
         viewportTop: layout.viewportTop,
         global: false,
       });
@@ -346,7 +371,12 @@ function ReviewDocumentPane({
       key: globalEntries.map(({ group }) => group.key).join("-"),
       keys: globalEntries.map(({ group }) => group.key),
       items: globalEntries.flatMap(({ group }) => group.items),
+      left: 20 / scale,
       top: 20 / scale,
+      targetLeft: 20 / scale,
+      targetRight: 20 / scale,
+      viewportTargetLeft: 20 / scale,
+      viewportTargetRight: 20 / scale,
       viewportTop: 20 / scale,
       global: true,
     });
@@ -362,7 +392,23 @@ function ReviewDocumentPane({
   }, [onFrame, onViewport, side]);
 
   const renderCommentMarker = (cluster: (typeof nearbyCommentClusters)[number]) => {
-    const left = Math.max(18, viewportSize.width - 18);
+    const preferredPlacement = cluster.global
+      ? "right" as const
+      : (() => {
+        const leftSpace = Math.max(0, cluster.viewportTargetLeft * scale);
+        const rightSpace = Math.max(
+          0,
+          viewportSize.width - cluster.viewportTargetRight * scale,
+        );
+        return rightSpace >= leftSpace ? "right" as const : "left" as const;
+      })();
+    const left = cluster.global
+      ? 20
+      : Math.max(
+        18,
+        (preferredPlacement === "right" ? cluster.targetRight + 10 : cluster.targetLeft - 10)
+          * scale,
+      );
     const top = Math.max(18, cluster.top * scale);
     const visibleTop = cluster.viewportTop * scale;
     return (
@@ -372,7 +418,7 @@ function ReviewDocumentPane({
         left={left}
         top={top}
         viewportRef={viewportRef}
-        initialPlacement="left"
+        initialPlacement={preferredPlacement}
         initialVertical={
           visibleTop < 96
             ? "below"
@@ -531,7 +577,6 @@ export default function AiReviewWorkspace({
   );
   const {
     pageView: canvasView,
-    changeFilter: filter,
     contextVisibility: transparency,
     navigationTarget: focus,
     activeFocusGroupId,
@@ -546,6 +591,10 @@ export default function AiReviewWorkspace({
   const [toolbarPinned, setToolbarPinned] = useState(true);
   const reviewDirectoryRef = useRef<HTMLDetailsElement>(null);
   const reviewDirectorySummaryRef = useRef<HTMLElement>(null);
+  const [reviewDirectoryMenuPosition, setReviewDirectoryMenuPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const [commentDismissRevision, setCommentDismissRevision] = useState(0);
   const initialNavigationSessionRef = useRef<string | null>(
     initialReview.restored ? sessionId : null,
@@ -665,7 +714,6 @@ export default function AiReviewWorkspace({
   } | null>(null);
   const reviewStateRef = useRef({
     pageView: canvasView,
-    filter,
     focus,
     activeFocusGroupId,
     activeFocusRegionIds,
@@ -679,7 +727,6 @@ export default function AiReviewWorkspace({
   useLayoutEffect(() => {
     reviewStateRef.current = {
       pageView: canvasView,
-      filter,
       focus,
       activeFocusGroupId,
       activeFocusRegionIds,
@@ -693,7 +740,6 @@ export default function AiReviewWorkspace({
     activeFocusGroupId,
     activeFocusRegionIds,
     canvasView,
-    filter,
     focus,
     pagePresentation,
     reviewPaintPlan,
@@ -712,7 +758,6 @@ export default function AiReviewWorkspace({
       reviewIdentity: sessionId,
       state: {
         pageView: state.pageView,
-        changeFilter: state.filter,
         navigationTarget: state.focus,
         activeFocusGroupId: state.activeFocusGroupId,
         activeFocusRegionIds: state.activeFocusRegionIds,
@@ -732,7 +777,6 @@ export default function AiReviewWorkspace({
     activeFocusGroupId,
     activeFocusRegionIds,
     canvasView,
-    filter,
     focus,
     pagePresentation,
     publishReviewPresentation,
@@ -777,7 +821,7 @@ export default function AiReviewWorkspace({
   const reviewDirectoryItems = useMemo(() => reviewOutline.flatMap((item) => {
     if (!item.changeId) return [];
     const change = reviewChanges.find((candidate) => candidate.id === item.changeId);
-    if (!change || (filter !== "all" && !change.types.includes(filter))) return [];
+    if (!change) return [];
     const locations = documents.focusGroups.flatMap((group) => {
       if (!group.changeIds.includes(change.id)) return [];
       const locationSide: ReviewSide = group.regions.after.length ? "after" : "before";
@@ -792,7 +836,7 @@ export default function AiReviewWorkspace({
         }));
     });
     return [{ item, change, locations }];
-  }), [documents.focusGroups, filter, reviewChanges, reviewOutline]);
+  }), [documents.focusGroups, reviewChanges, reviewOutline]);
   const activeChange = focus === "all"
     ? null
     : reviewChanges.find((change) => change.id === focus) || null;
@@ -897,6 +941,10 @@ export default function AiReviewWorkspace({
     const scale = scalesRef.current[side];
     viewport.style.setProperty("--review-comment-scroll-x", `${safeLeft * scale}px`);
     viewport.style.setProperty("--review-comment-scroll-y", `${safeTop * scale}px`);
+    viewport.parentElement?.style.setProperty(
+      "--review-comment-scroll-x",
+      `${safeLeft * scale}px`,
+    );
     viewport.parentElement?.style.setProperty(
       "--review-comment-scroll-y",
       `${safeTop * scale}px`,
@@ -1047,7 +1095,6 @@ export default function AiReviewWorkspace({
       postToFrame(framesRef.current[targetSide], sessionId, {
         type: "state",
         state: {
-          filter: state.filter,
           focus: state.focus,
           activeFocusGroupId: state.activeFocusGroupId,
           activeFocusRegionId: state.activeFocusRegionIds[targetSide],
@@ -1340,7 +1387,6 @@ export default function AiReviewWorkspace({
   }, [
     activeFocusGroupId,
     activeFocusRegionIds,
-    filter,
     focus,
     reviewPaintPlan,
     sendState,
@@ -1481,7 +1527,6 @@ export default function AiReviewWorkspace({
         postToFrame(framesRef.current[side], sessionId, {
           type: "state",
           state: {
-            filter: state.filter,
             focus: state.focus,
             activeFocusGroupId: state.activeFocusGroupId,
             activeFocusRegionId: state.activeFocusRegionIds[side],
@@ -1989,7 +2034,6 @@ export default function AiReviewWorkspace({
     postToFrame(framesRef.current[side], sessionId, {
       type: "state",
       state: {
-        filter: state.filter,
         focus: state.focus,
         activeFocusGroupId: state.activeFocusGroupId,
         activeFocusRegionId: state.activeFocusRegionIds[side],
@@ -2048,8 +2092,12 @@ export default function AiReviewWorkspace({
 
   const handleHorizontalScroll = useCallback((side: ReviewSide) => {
     publishReviewPresentation();
-    if (scrollModeRef.current !== "linked" || horizontalFocusSidesRef.current.has(side)) return;
     const source = viewportsRef.current[side];
+    source?.parentElement?.style.setProperty(
+      "--review-comment-viewport-scroll-x",
+      `${source.scrollLeft}px`,
+    );
+    if (scrollModeRef.current !== "linked" || horizontalFocusSidesRef.current.has(side)) return;
     const followerSide: ReviewSide = side === "before" ? "after" : "before";
     const follower = viewportsRef.current[followerSide];
     if (!source || !follower) return;
@@ -2061,43 +2109,11 @@ export default function AiReviewWorkspace({
     });
     if (target === null) return;
     follower.scrollLeft = target;
+    follower.parentElement?.style.setProperty(
+      "--review-comment-viewport-scroll-x",
+      `${target}px`,
+    );
   }, [publishReviewPresentation]);
-
-  const selectReviewMode = useCallback((mode: ReviewChangeFilter) => {
-    dispatchReviewState({ type: "set-change-filter", value: mode });
-    const activeFocusGroup = documents.focusGroups.find((group) => (
-      group.id === activeFocusGroupId
-    ));
-    const groupMatches = (group: ReviewDocuments["focusGroups"][number]) => (
-      mode === "all"
-      || (mode === "text" ? group.kind === "text" : group.kind !== "text")
-    );
-    if (activeFocusGroup && !groupMatches(activeFocusGroup)) {
-      clearFocus();
-    }
-    const matching = mode === "all"
-      ? reviewChanges
-      : reviewChanges.filter((change) => change.types.includes(mode));
-    if (!matching.length || matching.some((change) => change.id === focus)) return;
-    navigateToChange(matching[0].id, "smooth", undefined, false);
-  }, [
-    activeFocusGroupId,
-    clearFocus,
-    documents.focusGroups,
-    focus,
-    navigateToChange,
-    reviewChanges,
-  ]);
-
-  useEffect(() => {
-    if (!activeFocusGroupId) return;
-    const activeGroup = documents.focusGroups.find((group) => group.id === activeFocusGroupId);
-    const matchesFilter = activeGroup && (
-      filter === "all"
-      || (filter === "text" ? activeGroup.kind === "text" : activeGroup.kind !== "text")
-    );
-    if (!matchesFilter) clearFocus();
-  }, [activeFocusGroupId, clearFocus, documents.focusGroups, filter]);
 
   useEffect(() => {
     const leaveFocus = (event: KeyboardEvent) => {
@@ -2117,6 +2133,7 @@ export default function AiReviewWorkspace({
       if (reviewDirectoryRef.current?.open) {
         event.preventDefault();
         reviewDirectoryRef.current.open = false;
+        setReviewDirectoryMenuPosition(null);
         window.requestAnimationFrame(() => reviewDirectorySummaryRef.current?.focus());
         return;
       }
@@ -2214,6 +2231,97 @@ export default function AiReviewWorkspace({
     }
   }, [closeConfirmation]);
 
+  const reviewDirectoryControl = reviewDirectoryItems.length ? (
+    <details
+      ref={reviewDirectoryRef}
+      className={styles.reviewDirectory}
+      onToggle={(event) => {
+        if (!event.currentTarget.open) {
+          setReviewDirectoryMenuPosition(null);
+          return;
+        }
+        const bounds = reviewDirectorySummaryRef.current?.getBoundingClientRect();
+        if (!bounds) return;
+        setReviewDirectoryMenuPosition({
+          top: bounds.bottom + 4,
+          left: Math.max(8, Math.min(bounds.left, window.innerWidth - 338)),
+        });
+      }}
+    >
+      <summary
+        ref={reviewDirectorySummaryRef}
+        aria-label={`变化目录，共 ${reviewDirectoryItems.length} 处`}
+      >
+        <GitDiffIcon aria-hidden="true" size={14} weight="duotone" />
+        <span>变化 {reviewDirectoryItems.length} 处</span>
+        <CaretDownIcon aria-hidden="true" size={11} weight="bold" />
+      </summary>
+      <div
+        className={styles.reviewDirectoryMenu}
+        aria-label="变化目录"
+        style={reviewDirectoryMenuPosition || undefined}
+      >
+        {reviewDirectoryItems.map(({ item, change, locations }) => {
+          const navigate = (location?: typeof locations[number]) => {
+            navigateToChange(
+              change.id,
+              "smooth",
+              location?.focusGroupId,
+              true,
+              location?.regionId,
+              location?.side,
+            );
+            if (reviewDirectoryRef.current) reviewDirectoryRef.current.open = false;
+            setReviewDirectoryMenuPosition(null);
+            window.requestAnimationFrame(() => reviewDirectorySummaryRef.current?.focus());
+          };
+          if (locations.length <= 1) {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={styles.reviewDirectoryItem}
+                aria-current={focus === change.id ? "location" : undefined}
+                onClick={() => navigate(locations[0])}
+              >
+                <span>{item.group}</span>
+                <strong>{item.label}</strong>
+                <small>{item.helper}</small>
+              </button>
+            );
+          }
+          return (
+            <div className={styles.reviewDirectoryItem} key={item.id}>
+              <span>{item.group}</span>
+              <strong>{item.label}</strong>
+              <small>{item.helper}</small>
+              <div className={styles.reviewDirectoryLocations}>
+                {locations.map((location, index) => (
+                  <button
+                    key={`${location.focusGroupId}-${location.regionId}`}
+                    type="button"
+                    aria-current={activeFocusGroupId === location.focusGroupId
+                      && activeFocusRegionIds[location.side] === location.regionId
+                      ? "location"
+                      : undefined}
+                    title={location.contentCue || undefined}
+                    onClick={() => navigate(location)}
+                  >
+                    {location.side === "after" ? "修改后" : "修改前"}
+                    {" · "}
+                    {location.contentCue || (location.kind === "style"
+                      ? "样式位置"
+                      : location.kind === "text" ? "文字位置" : `元素位置 ${index + 1}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  ) : null;
+
   return (
     <div
       className={styles.reviewRoot}
@@ -2272,14 +2380,12 @@ export default function AiReviewWorkspace({
 
       {embedded && toolbarHost ? createPortal((
         <>
+          {reviewDirectoryControl}
           <ReviewToolbarControls
-            hasChanges={reviewChanges.length > 0}
             pageView={canvasView}
-            changeFilter={filter}
             scrollMode={scrollMode}
             zoomMode={zoom}
             onPageViewChange={selectPreviewMode}
-            onChangeFilter={selectReviewMode}
             onScrollModeChange={(value) => dispatchReviewState({
               type: "set-scroll-mode",
               value,
@@ -2316,6 +2422,8 @@ export default function AiReviewWorkspace({
                   <small>前后版本对比</small>
                 </span>
               </div>
+
+              {reviewDirectoryControl}
 
               <div className={`${styles.reviewModeControl} ${styles.pagePreviewControl}`}>
                 <span className={styles.toolbarFieldLabel}>页面预览</span>
@@ -2359,39 +2467,6 @@ export default function AiReviewWorkspace({
                 </div>
               </div>
 
-              <div className={styles.reviewModeControl}>
-                <span className={styles.toolbarFieldLabel}>变化审阅</span>
-                <div
-                  className={styles.segmented}
-                  data-items="3"
-                  role="group"
-                  aria-label="变化审阅"
-                >
-                  {(["all", "text", "structure"] as ReviewChangeFilter[]).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      aria-label={mode === "all" ? "查看全部变化" : `${FILTER_LABELS[mode]}变化`}
-                      aria-pressed={filter === mode}
-                      onClick={() => selectReviewMode(mode)}
-                      onKeyDown={handleSegmentedKeyDown}
-                    >
-                      {mode === "all" ? <GitDiffIcon aria-hidden="true" size={14} weight="duotone" /> : null}
-                      {mode === "text" ? <TextTIcon aria-hidden="true" size={14} weight="bold" /> : null}
-                      {mode === "structure" ? <TreeStructureIcon aria-hidden="true" size={14} weight="duotone" /> : null}
-                      <span>{FILTER_LABELS[mode]}</span>
-                      {FILTER_TONE_COLORS[mode].length ? (
-                        <span className={styles.filterTones} aria-hidden="true">
-                          {FILTER_TONE_COLORS[mode].map((color) => (
-                            <span key={color} style={{ background: color }} />
-                          ))}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <div className={styles.canvasToolGroup}>
                 <div className={styles.toolbarField}>
                   <span className={styles.toolbarFieldLabel}>滚动方式</span>
@@ -2429,87 +2504,19 @@ export default function AiReviewWorkspace({
             </button>
           </div> : null}
 
-          <div className={styles.canvasReviewBody}>
-            <header className={styles.reviewDirectoryHeader}>
-              {reviewDirectoryItems.length ? <details ref={reviewDirectoryRef} className={styles.reviewDirectory}>
-                <summary
-                  ref={reviewDirectorySummaryRef}
-                  aria-label={`变化目录，共 ${reviewDirectoryItems.length} 处`}
-                >
-                  <GitDiffIcon aria-hidden="true" size={14} weight="duotone" />
-                  <span>变化 {reviewDirectoryItems.length} 处</span>
-                  <CaretDownIcon aria-hidden="true" size={11} weight="bold" />
-                </summary>
-                <div className={styles.reviewDirectoryMenu} aria-label="变化目录">
-                  {reviewDirectoryItems.map(({ item, change, locations }) => {
-                    const navigate = (location?: typeof locations[number]) => {
-                      navigateToChange(
-                        change.id,
-                        "smooth",
-                        location?.focusGroupId,
-                        true,
-                        location?.regionId,
-                        location?.side,
-                      );
-                      if (reviewDirectoryRef.current) reviewDirectoryRef.current.open = false;
-                      window.requestAnimationFrame(() => reviewDirectorySummaryRef.current?.focus());
-                    };
-                    if (locations.length <= 1) {
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={styles.reviewDirectoryItem}
-                          aria-current={focus === change.id ? "location" : undefined}
-                          onClick={() => navigate(locations[0])}
-                        >
-                          <span>{item.group}</span>
-                          <strong>{item.label}</strong>
-                          <small>{item.helper}</small>
-                        </button>
-                      );
-                    }
-                    return (
-                      <div className={styles.reviewDirectoryItem} key={item.id}>
-                        <span>{item.group}</span>
-                        <strong>{item.label}</strong>
-                        <small>{item.helper}</small>
-                        <div className={styles.reviewDirectoryLocations}>
-                          {locations.map((location, index) => (
-                            <button
-                              key={`${location.focusGroupId}-${location.regionId}`}
-                              type="button"
-                              aria-current={activeFocusGroupId === location.focusGroupId
-                                && activeFocusRegionIds[location.side] === location.regionId
-                                ? "location"
-                                : undefined}
-                              title={location.contentCue || undefined}
-                              onClick={() => navigate(location)}
-                            >
-                              {location.side === "after" ? "修改后" : "修改前"}
-                              {" · "}
-                              {location.contentCue || (location.kind === "style"
-                                ? "样式位置"
-                                : location.kind === "text" ? "文字位置" : `元素位置 ${index + 1}`)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </details> : (
-                <span className={styles.reviewEmpty} data-testid="review-empty-changes">
-                  {documents.annotationAvailability === "unavailable"
-                    ? "变化标注暂不可用，可直接查看前后页面。"
-                    : sourceContentEqual
-                    ? "前后 HTML 内容相同。"
-                    : filter !== "all" && reviewChanges.length
-                      ? "此筛选下没有可定位的变化。"
-                      : "未定位到可标注的变化，可直接查看前后页面。"}
-                </span>
-              )}
-            </header>
+          <div
+            className={styles.canvasReviewBody}
+            data-empty={!reviewDirectoryItems.length ? "true" : undefined}
+          >
+            {!reviewDirectoryItems.length ? <header className={styles.reviewDirectoryHeader}>
+              <span className={styles.reviewEmpty} data-testid="review-empty-changes">
+                {documents.annotationAvailability === "unavailable"
+                  ? "变化标注暂不可用，可直接查看前后页面。"
+                  : sourceContentEqual
+                  ? "前后 HTML 内容相同。"
+                  : "未定位到可标注的变化，可直接查看前后页面。"}
+              </span>
+            </header> : null}
             <div className={styles.canvasGrid} data-view={canvasView}>
               <ReviewDocumentPane
                 side="before"
@@ -2564,8 +2571,8 @@ export default function AiReviewWorkspace({
 
       <span className={styles.srAnnouncement} aria-live="polite">
         {focus === "all"
-          ? `${PAGE_VIEW_LABELS[canvasView]}，${FILTER_LABELS[filter]}`
-          : `${PAGE_VIEW_LABELS[canvasView]}，${FILTER_LABELS[filter]}，已定位${activeChange?.label || "页面区域"}`}
+          ? PAGE_VIEW_LABELS[canvasView]
+          : `${PAGE_VIEW_LABELS[canvasView]}，已定位${activeChange?.label || "页面区域"}`}
       </span>
 
       {confirmationAction ? (

@@ -69,10 +69,6 @@ export function appendTrustedReviewProjectionFact(
 ): ReviewProjectionFact[];
 export function serializeReviewProjectionFacts(facts: readonly unknown[]): string;
 export function parseReviewProjectionFacts(value: unknown): ReviewProjectionFact[];
-export function reviewProjectionFactsForFilter(
-  facts: readonly unknown[],
-  filter: "all" | ReviewProjectionFactType,
-): ReviewProjectionFact[];
 export function normalizeReviewFocusGroupPlans(value: unknown): unknown[];
 export function normalizeReviewExactAtomOccurrences(value: unknown): Array<{
   atomKey: string;

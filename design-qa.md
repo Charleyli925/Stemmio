@@ -1,5 +1,15 @@
 # Design QA
 
+## 2026-09-22 — Developer Preview 恢复与审阅收口
+
+- Truth: 审阅默认进入适应画布；“变化 N 处”与审阅模式相邻，展开目录浮在画布之上；全部／文字／元素筛选及其状态能力已删除。成功任务只保留一次“AI 已修改完成，已生成可审阅的新 HTML”，评论优先选择目标附近空间更充足的一侧，空间确实不足时允许原位覆盖。
+- Settings: Qoder 首次“检查”会执行真实诊断；Codex 安装显示结构化失败原因并说明安装的是连接组件。API Key 已连接但保存失败时只提供“重试保存”，清空刚输入的 Key，保留本次连接的真实状态。
+- Runtime and history: 已发布的空历史激活占位、旧密文凭证和脚本中性 Candidate 评估通过三个精确只读适配器恢复；不改写磁盘。非空旧回执、明文／混合凭证及无关评估漂移继续失败关闭。作者脚本发生变化时保留候选但要求先审阅图表和动态内容。
+- Visual evidence: 已人工检查 `output/design-qa/review-focus-overview.png`、`review-focus-inline-isolated.png` 与 `review-annotation-all.png`。顶部目录位置、移除筛选后的工具密度、双页上下文层级和文字／结构标注保持清晰；评论位置由 Electron 几何断言验证视口内就近放置、可避让时不覆盖目标，并在横向滚动后保持相对关系。
+- Automated evidence: 原生 DOM 审阅视觉 20/20、密集报告 Electron 标注 1/1、AI 审阅采用主流程 1/1 通过。像素隔离最初在默认分数缩放下受抗锯齿影响，现明确在 100% 下比较；默认适应画布仍由进入态断言覆盖。编辑期门禁最终通过：typecheck、Node targeted 1387/1387、Node core 2665 通过且 1 个既有 skip。
+- First failures retained: 变化目录菜单最初被 pane header 拦截，已修正层级；适应画布下 Playwright 自动滚动会重建区域条，几何测试改为直接触发 owned action 后继续严格验证焦点和遮罩。门禁还暴露旧脚本评估兼容差异与隔离工作树未安装精确 ECharts 依赖；前者增加封闭适配及负例，后者按锁文件执行 `npm ci` 后原三项 23/23 通过。
+- Boundary: 这是源码工作树与合成 HTML 的真实 Electron／Chromium 证据；不声明已安装 Developer Preview、真实外部 Agent、私人 HTML 语料、打包、发布或合并已经完成。
+
 ## 2026-09-22 — 凭据恢复动作与编辑恢复连续性
 
 - 凭据动作由 operationKind / status 决定，启动恢复失败显示重新连接，保存失败保留本次连接并提供重试保存；错误字段沿用共享 code 映射。

@@ -316,7 +316,7 @@ export default function AgentProviderCard({
       try {
         const outcome = await onInstall();
         if (!outcome || !["succeeded", "stale"].includes(outcome.status)) {
-          setActionError("安装没有完成，请重试。");
+          setActionError(outcome?.reason || "安装没有完成，请重试。");
         }
       } catch {
         setActionError("安装没有完成，请重试。");
@@ -396,9 +396,17 @@ export default function AgentProviderCard({
         setActionError(message);
         return;
       }
-      if (outcome?.persistFailed || outcome?.reason) {
+      if (outcome?.persistFailed) {
+        setApiKey("");
+        setModelId("");
+        setRememberKey(false);
         setFieldError("form");
         setActionError(outcome.reason || "已连接，但新的 API Key 未保存。");
+        return;
+      }
+      if (outcome?.reason) {
+        setFieldError("form");
+        setActionError(outcome.reason);
         return;
       }
       setApiKey("");
@@ -790,13 +798,13 @@ export default function AgentProviderCard({
             在此 Mac 上记住 API Key
           </label>
           <p className="qoder-card-apikey-note">连接验证可能产生少量 API 费用。</p>
-          <button
+          {credentialRecovery !== "retry-persist" ? <button
             type="submit"
             className="agent-control-button"
             disabled={Boolean(pendingAction) || disabled || !apiKey.trim()}
           >
             {pendingAction === "api-key" ? "正在连接…" : credentialRestoreFailed ? "重新连接" : "连接"}
-          </button>
+          </button> : null}
           {pendingAction === "api-key" && onCancelInstall ? (
             <button
               type="button"
@@ -825,6 +833,10 @@ export default function AgentProviderCard({
                     if (!outcome || !["succeeded", "stale"].includes(outcome.status) || outcome.persistFailed) {
                       setFieldError("form");
                       setActionError(outcome?.reason || "已连接，但新的 API Key 未保存。");
+                    } else {
+                      setFieldError("");
+                      setActionError("");
+                      setApiKeyOpen(false);
                     }
                   } finally {
                     setPendingAction(null);
@@ -836,7 +848,11 @@ export default function AgentProviderCard({
             </button>
           ) : null}
           {connection ? (
-            <span className="qoder-card-apikey-note">新配置验证成功后才会替换当前连接。</span>
+            <span className="qoder-card-apikey-note">
+              {credentialRecovery === "retry-persist"
+                ? "当前连接本次仍可使用；保存成功后才会在下次启动恢复。"
+                : "新配置验证成功后才会替换当前连接。"}
+            </span>
           ) : null}
         </form>
       ) : null}

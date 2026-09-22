@@ -35,6 +35,7 @@ const {
 
 test("Review enters in overview without an active focus group", () => {
   assert.equal(DEFAULT_ACTIVE_REVIEW_FOCUS_GROUP_ID, null);
+  assert.equal(DEFAULT_REVIEW_STATE.zoomMode, "fit");
 });
 
 test("navigation identity and visual focus identity remain independent", () => {
@@ -94,7 +95,6 @@ function presentation(suffix, overrides = {}) {
     reviewIdentity: `review-${suffix}`,
     state: {
       pageView: suffix === "a" ? "split" : "after",
-      changeFilter: "all",
       navigationTarget: `change-${suffix}`,
       activeFocusGroupId: `focus-${suffix}`,
       activeFocusRegionIds: {

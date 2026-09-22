@@ -1115,8 +1115,8 @@ test("adoption uncertainty takes precedence over Review and exposes no opposite 
   assert.deepEqual(staleConflict.actions, []);
 });
 
-test("turn presentation preserves Conversation sequence across Agent and Stemmio facts", async () => {
-  const requirements = factMessage({ actor: "user", text: "调整标题" });
+test("turn presentation keeps process before its settled result and later decision", async () => {
+  const requirements = factMessage({ actor: "user", kind: "text", text: "调整标题" });
   const progress = factMessage({ kind: "progress", text: "正在生成修改。" });
   const summary = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
   const result = factMessage({ kind: "result-summary", text: "修改已准备好，尚未采用。" });
@@ -1126,7 +1126,7 @@ test("turn presentation preserves Conversation sequence across Agent and Stemmio
   assert.deepEqual(presentation.primary, [requirements, summary, result, decision]);
   assert.deepEqual(presentation.process, [progress, ended]);
   assert.deepEqual(presentation.timeline.map((block) => block.messages), [
-    [requirements], [progress], [summary], [result], [ended], [decision],
+    [requirements], [progress], [ended], [summary], [result], [decision],
   ]);
 });
 

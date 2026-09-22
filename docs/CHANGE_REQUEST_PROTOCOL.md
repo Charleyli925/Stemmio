@@ -600,9 +600,10 @@ Completion 必须在 output 完全关闭后最后写入。完成后 output 封�
 - `ready | attention | blocked` 与稳定 issue code。
 
 `blocked` 只用于候选无法作为正常 HTML 使用。协议、身份、Hash、路径、受管 metadata
-和 completion 封存仍在 assessment 之前硬阻断。脚本、inline handler、可执行 URL 和
-refresh 指令属于普通候选内容，不检测、不分级、不产生用户提示。`attention` 表示 HTML
-可以打开，但系统无法充分证明它继承了上一版；Bridge 仍创建不可变候选 Version，界面必须
+和 completion 封存仍在 assessment 之前硬阻断。作者 `<script>` 源码、属性、数量或顺序发生变化时，
+写入 `AUTHORED_SCRIPT_CHANGED` 并进入 `attention`；脚本仍是用户 HTML 的合法内容，因此不阻断或自动回滚。
+inline handler、可执行 URL 和 refresh 指令暂不单独检测。`attention` 表示 HTML
+可以打开，但系统需要用户核对版本连续性或图表等动态内容；Bridge 仍创建不可变候选 Version，界面必须
 移除“直接打开”并要求先进入隔离对比审阅。`ready` 允许审阅或直接打开。
 
 当前 assessment 还记录 Stable-ID impact 的 bounded Review 投影：线性计算的
@@ -621,7 +622,7 @@ Version。当前 Attempt 不生成 `scope-report.json` 或 `validation-review.js
 退役记录时直接拒绝。`scope-validator.mjs` 已从源码删除：它不再服务直接 source patch
 合同，也不得重新接入 AI Version 的接受门禁。直接编辑的岛外字节校验由
 `source-patch-engine` 在提交点执行。Bridge 身份检查从 `html-source-parser.mjs`
-读取 `rawStartTagAttributes`。现行候选政策（脚本改动不阻断、弱连续性只进审阅、
+读取 `rawStartTagAttributes`。现行候选政策（脚本改动不阻断但必须先审阅、弱连续性只进审阅、
 空 body 才阻断）由 `tests/candidate-assessment.test.mjs` 锁住；`createCandidate`
 在 `tests/project-candidate-promotion.test.mjs` 证明同一政策进入持久化边界。
 
@@ -641,6 +642,7 @@ Version。当前 Attempt 不生成 `scope-report.json` 或 `validation-review.js
 | output 完整性 | `invalid-html` |
 | output body 无可显示内容 | `HTML_BODY_EMPTY`，阻断 |
 | 与上一版共同特征不足 | `PAGE_CONTINUITY_UNCERTAIN`，保留候选并强制先审阅 |
+| 作者 `<script>` 发生变化 | `AUTHORED_SCRIPT_CHANGED`，保留候选并强制先审阅 |
 | completion 后 output 改变 | `sealed-output-modified` |
 | active run 已取消/替代 | `stale-completion` |
 

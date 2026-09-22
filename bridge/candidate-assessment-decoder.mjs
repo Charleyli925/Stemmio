@@ -416,11 +416,27 @@ export function decodeHistoricalCandidateAssessment(
       truncated: normalized.truncated,
     });
   }
-  if (!isDeepStrictEqual(normalized, current)) {
+  if (isDeepStrictEqual(normalized, current)) return normalized;
+  // Shipped Developer Preview builds treated authored <script> changes as an
+  // ordinary ready Candidate. The current policy uses the same sealed HTML
+  // evidence to require Review. Accept only that exact policy delta in memory;
+  // unrelated status or issue-code drift still fails closed and disk stays
+  // untouched.
+  const currentIssueCodesWithoutScript = current.issueCodes.filter(
+    (code) => code !== "AUTHORED_SCRIPT_CHANGED",
+  );
+  const preScriptAttentionPolicy = current.issueCodes.includes("AUTHORED_SCRIPT_CHANGED")
+    ? {
+      ...current,
+      status: currentIssueCodesWithoutScript.length ? "attention" : "ready",
+      issueCodes: currentIssueCodesWithoutScript,
+    }
+    : null;
+  if (!preScriptAttentionPolicy || !isDeepStrictEqual(normalized, preScriptAttentionPolicy)) {
     throw decodeError(
       "CANDIDATE_ASSESSMENT_INVALID",
       `${label} does not match its sealed HTML evidence.`,
     );
   }
-  return normalized;
+  return current;
 }

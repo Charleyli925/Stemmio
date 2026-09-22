@@ -398,7 +398,7 @@ export const DEFAULT_PROJECT_HTML = `<!doctype html>
           <h2>AI 改了什么，先看清，再决定。</h2>
           <p>结果不会自动替换当前页面。审阅从第一处变化开始，把真正需要你判断的地方从整张页面里提出来。</p>
           <div class="review-points">
-            <span><b>01</b>文案、结构、视觉变化分开查看</span>
+            <span><b>01</b>文案、结构、视觉变化集中标出</span>
             <span><b>02</b>双页同步滚动，原评论原位可见</span>
             <span><b>03</b>查看修改后，选择采用或不用这次</span>
           </div>
@@ -406,7 +406,7 @@ export const DEFAULT_PROJECT_HTML = `<!doctype html>
         <div class="review-demo" aria-label="修改前与 AI 修改后的双页审阅示意">
           <div class="review-toolbar">
             <div><span class="mode-active">双页</span><span>左页</span><span>右页</span></div>
-            <div><span class="mode-active">全部变化</span><span>文案</span><span>结构</span><span>视觉</span></div>
+            <div><span class="mode-active">变化 7 处</span><span>同步滚动</span><span>适应画布</span></div>
           </div>
           <div class="review-pages">
             <article class="review-page review-before">

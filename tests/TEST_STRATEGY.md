@@ -231,9 +231,9 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   navigation 的完整 Document + Version rollback 与 byte oracle。Candidate impact Node
   oracle 必须覆盖目标后代、目标内增删、兄弟前插、整页评论、重叠根和接近 HTML 上限的
   O(N) 计算；持久化样例最多 100 个且 `truncated` 与计数一致。Electron AI Review
-  场景还必须看到评论目标数、实际修改元素数、目标外修改数和进入全部变化的入口；
+  场景还必须看到评论目标数、实际修改元素数、目标外修改数和进入完整审阅的入口；
   该警告不得阻止 Candidate 继续审阅或采纳。
-  Workbench 只保留 review filters/layout/lease、动画和 Outcome 映射；architecture
+  Workbench 只保留 review layout/lease、动画和 Outcome 映射；architecture
   gate 将其直接 Bridge 调用锁定为 0。
 - `WorkspaceController`：runtime factory 是生产组合的唯一入口；它构造唯一的 Bridge
   client、共享 RunSession、`EditAuthorRuntimeSession` 与各业务 Session，并作为唯一
@@ -455,9 +455,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   立即截取，不能混入后续 switch、close、监控停止或 byte oracle 的耗时。
   任务级跑正常闭环和一个硬失败代表场景；
   发布级覆盖复制失败、缺失 finalizer、非法 HTML、版本激活失败与终态
-  返回/重开。正式 Electron 审阅用例必须证明默认“双页 + 全部变化”总览有精确证据与页边导航，
+  返回/重开。正式 Electron 审阅用例必须证明默认“双页 + 适应画布”总览展示完整变化集、精确证据与页边导航，
   但无边框、无 dim；变化聚焦与评论聚焦的全局偏好默认分别为 25% / 15%，工具栏不再有滑杆。
-  `全部 / 文字 / 元素`、页面、导航、聚焦、页内运行态、滚动和缩放彼此独立，左右单页和
+  审阅不再出现 `全部 / 文字 / 元素` 筛选；页面、导航、聚焦、页内运行态、滚动和缩放彼此独立，左右单页和
   双页均铺满 Canvas，并覆盖采纳和返回修改前的持久化边界。
   Node 直接覆盖精确字符范围、纯插入/删除镜像、完全重写 singleton 的兼容配对、
   重复多解不猜、超预算有界退化，以及 projection 只接受 `text/structure`，其
@@ -478,8 +478,8 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   篡改失败关闭；长 `tbody`、列表和 multi-screen section 必须保留完整 mask 与导航但无巨型 outline，也不能裁成视口框。
   Electron 必须覆盖首次自动定位收到可定位回执后才提交、不聚焦、失败顺延及用户输入取消；短目标居中、长目标展示开头；
   目录选择原子写入 group 与两侧 region、关闭后焦点回到 summary、目录先消费 Escape、再次点击保持激活、
-  Escape/手动滚出/手动换 Tab 返回总览、筛选不激活、单侧新增/删除另一侧无 mask/scroll、评论态优先并
-  在点击、移出或 Escape 后恢复变化 focus，marker 到自适应气泡可连续 hover，以及每个文档标签分别恢复页面、筛选、focus、Tab/折叠、双页滚动、横向位置
+  Escape/手动滚出/手动换 Tab 返回总览、单侧新增/删除另一侧无 mask/scroll、评论态优先并
+  在点击、移出或 Escape 后恢复变化 focus，marker 和自适应气泡优先避开目标、可连续 hover 且跟随横纵滚动，以及每个文档标签分别恢复页面、focus、Tab/折叠、双页滚动、横向位置
   与缩放。顶栏“刷新本页面”必须在同一 Review 身份下恢复这些状态；“从磁盘重新载入 HTML”在待决定
   Review 中可见但禁用。50%–200% 缩放、resize 与字体变化后，前后页保持同一 group/region；mask 与
   可选 outline 各自遵守每侧一个的预算，outline 存在时才与 mask 复用 canonical path。

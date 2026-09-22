@@ -39,10 +39,14 @@ test("the generic Agent card owns provider presentation", async () => {
   assert.match(card, /断开连接/u);
   assert.match(card, /在此 Mac 上记住 API Key/u);
   assert.match(card, /验证成功后才会替换当前连接/u);
-  assert.match(card, /persistFailed \|\| outcome\?\.reason/u);
+  assert.match(card, /if \(outcome\?\.persistFailed\)/u);
+  assert.match(card, /if \(outcome\?\.reason\)/u);
+  assert.doesNotMatch(card, /persistFailed \|\| outcome\?\.reason/u);
   assert.match(card, /已连接，但新的 API Key 未保存/u);
   assert.match(card, /移除状态未确认/u);
   assert.match(card, /重试保存/u);
+  assert.match(card, /credentialRecovery !== "retry-persist"/u);
+  assert.match(card, /当前连接本次仍可使用/u);
   assert.match(card, /kind: "api-key", label: "连接"/u);
   assert.doesNotMatch(card, /kind: "api-key", label: "登录"/u);
   assert.match(card, /tokenFormOpen/u);
@@ -92,6 +96,7 @@ test("About is product information while Settings owns Agent checks and update c
   assert.match(settings, /停止并退出/u);
   assert.match(settings, /providerAccessImpact/u);
   assert.match(settings, /credentialRestoreFailed/u);
+  assert.match(settings, /primaryLabel === "检查"\) void onCheckSelection/u);
   assert.match(settings, /settings-preference-error/u);
   assert.match(settings, /设置暂未保存/u);
   assert.match(settings, /onRetryWorkspacePreferences/u);

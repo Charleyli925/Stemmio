@@ -238,7 +238,7 @@ test("blocked Candidate validation never reserves a Version", async (t) => {
   assert.deepEqual(manifest.versions.map((version) => version.versionId), ["ver_0001"]);
 });
 
-test("createCandidate ignores authored script changes and keeps weak continuity as review", async (t) => {
+test("createCandidate flags authored script changes and keeps weak continuity as review", async (t) => {
   const value = await fixture(t);
   const base = `<!doctype html>
 <html lang="zh-CN">
@@ -263,8 +263,8 @@ test("createCandidate ignores authored script changes and keeps weak continuity 
     expectedSourceSha256: imported.target.sourceSha256,
   });
   assert.equal(scriptOnly.candidate.status, "pending-review");
-  assert.equal(scriptOnly.candidate.assessment.status, "ready");
-  assert.deepEqual(scriptOnly.candidate.assessment.issueCodes, []);
+  assert.equal(scriptOnly.candidate.assessment.status, "attention");
+  assert.deepEqual(scriptOnly.candidate.assessment.issueCodes, ["AUTHORED_SCRIPT_CHANGED"]);
   assert.equal("executable" in scriptOnly.candidate.assessment, false);
   assert.equal(
     "executableSurfaceUnchanged" in scriptOnly.candidate.assessment.health,

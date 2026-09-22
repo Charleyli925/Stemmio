@@ -507,13 +507,17 @@ test(`Qoder long public narration preserves reading state across updates and A-B
       const remainingDown = stream.scrollHeight - stream.clientHeight - stream.scrollTop;
       return Math.abs(delta > 0 ? Math.min(delta, remainingDown) : Math.max(delta, -stream.scrollTop));
     }, sealProcessTop)).toBeLessThanOrEqual(2);
-    // Sealing and the following execution-ended fact are separate writes.
-    // Observe the latter arriving before asserting its stored ordering.
-    // Candidate readiness may precede sealing and keeps its stored sequence.
+    // A successful run goes directly from sealed Agent narration to the
+    // reviewable Candidate result. The old generic execution-ended reminder
+    // is intentionally absent because it made a completed run look interrupted.
     await expect.poll(() => narration.evaluate((element) => {
-      const later = [...document.querySelectorAll('[data-testid="ai-turn-process"]')].find((node) => node.textContent.includes("本轮执行已结束。"));
+      const later = [...document.querySelectorAll('[data-testid="ai-conversation-message"]')].find((node) => (
+        node.textContent.includes("AI 已修改完成，已生成可审阅的新 HTML。")
+      ));
       return Boolean(later && (element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING));
     })).toBe(true);
+    await expect(launched.page.getByTestId("ai-turn-process").filter({ hasText: "本轮执行已结束。" }))
+      .toHaveCount(0);
     if (!expandedAtSeal) await toggle.click();
     await expect(toggle).toContainText("最终公开段落：结果仍需 Stemmio 校验。");
     await expect(toggle.locator("span").last()).toHaveCSS("text-overflow", "ellipsis");

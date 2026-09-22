@@ -1094,8 +1094,8 @@ async function exerciseReviewAndAccept() {
       afterRendered.fullContentReadyMs,
     ) : null;
   await waitUntil(async () => Promise.all([
-    before.locator("html").getAttribute("data-stemmio-review-filter"),
-    after.locator("html").getAttribute("data-stemmio-review-filter"),
+    before.locator("html").getAttribute("data-stemmio-review-overlays"),
+    after.locator("html").getAttribute("data-stemmio-review-overlays"),
   ]).then((values) => values.every(Boolean)), {
     timeout: 45_000,
     label: "review annotations ready",

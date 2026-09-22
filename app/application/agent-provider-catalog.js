@@ -180,7 +180,7 @@ const CODEX_PRESENTATION = Object.freeze({
   cardClassName: "codex-availability-card",
   primaryActionDataAttribute: "data-codex-primary",
   guidancePurposePrefix: "codex",
-  installLabel: "安装 Codex",
+  installLabel: "安装 Codex 连接组件",
   readyDetail: "已接通，可直接交给 Codex 修改",
   notInstalledDetail: "安装后即可从侧栏直接发送。",
   authRequiredDetail: "登录 ChatGPT 后即可从侧栏直接发送。",

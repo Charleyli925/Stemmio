@@ -31,7 +31,7 @@ function documentHtml() {
 </html>`;
 }
 
-test("candidate assessment ignores script changes while checking document health and continuity", () => {
+test("candidate assessment flags authored script changes for review while checking document health and continuity", () => {
   const baseHtml = documentHtml();
   const related = assessHtmlCandidate({
     baseHtml,
@@ -63,8 +63,8 @@ test("candidate assessment ignores script changes while checking document health
       "window.scopeFixture = 2",
     ),
   });
-  assert.equal(scriptChange.status, "ready");
-  assert.deepEqual(scriptChange.issueCodes, []);
+  assert.equal(scriptChange.status, "attention");
+  assert.deepEqual(scriptChange.issueCodes, ["AUTHORED_SCRIPT_CHANGED"]);
   assert.equal("executable" in scriptChange, false);
   assert.equal("executableSurfaceUnchanged" in scriptChange.health, false);
 });

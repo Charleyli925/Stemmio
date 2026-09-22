@@ -138,6 +138,23 @@ test("run progress keeps completion, validation, and result facts separate", () 
     "页面变化较大，请先对比审阅再决定是否采用",
   );
 
+  const scriptAttention = deriveRunProgressSteps({
+    requestId: "req_0001",
+    status: "ready-to-open",
+    candidateAssessment: {
+      status: "attention",
+      issueCodes: ["AUTHORED_SCRIPT_CHANGED"],
+    },
+  });
+  assert.equal(
+    scriptAttention[2].detail,
+    "HTML 可以打开，但页面脚本有变化，需要确认",
+  );
+  assert.equal(
+    scriptAttention[3].detail,
+    "页面包含脚本变化，请先核对图表等动态内容再决定是否采用",
+  );
+
   const noChange = deriveRunProgressSteps({
     requestId: "req_0001",
     status: "no-change",
@@ -274,6 +291,17 @@ test("run presentation copy follows the four stages and keeps exception actions 
       summaryTitle: "审阅后决定是否采用",
       summaryDetail: "HTML 可以打开，但与上一版的共同特征较少，不会直接替换当前页面",
     },
+  );
+  assert.equal(
+    copyOf({
+      requestId: "req_0001",
+      status: "ready-to-open",
+      candidateAssessment: {
+        status: "attention",
+        issueCodes: ["AUTHORED_SCRIPT_CHANGED"],
+      },
+    }).summaryDetail,
+    "HTML 可以打开，但页面脚本有变化，需要确认",
   );
   assert.deepEqual(
     copyOf({

@@ -927,7 +927,6 @@ export const REVIEW_PROJECTION_CASES = Object.freeze([
   {
     id: "added-table-row",
     sourceFixture: "generated-ai-loop.html",
-    filter: "all",
     pageMode: "split",
     contextPercent: "25",
     changeType: "structure",
@@ -948,9 +947,8 @@ export async function assertReviewControlDefaults(
   beforeReviewFrame,
   expectedNavigationTarget,
 ) {
-  await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-    "data-stemmio-review-filter",
-  ), { timeout: 30_000 }).toBe("all");
+  await expect(beforeReviewFrame.locator("html"))
+    .not.toHaveAttribute("data-stemmio-review-filter");
   await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
     "data-stemmio-review-focus",
   )).toBe(expectedNavigationTarget);
@@ -964,9 +962,9 @@ export async function assertReviewControlDefaults(
   await expect(page.getByRole("button", {
     name: "双页对比",
   })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: "全部变化" }))
-    .toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: "原始大小", exact: true }))
+  await expect(page.getByRole("button", { name: /全部变化|文字变化|元素变化/u }))
+    .toHaveCount(0);
+  await expect(page.getByRole("button", { name: "适应画布", exact: true }))
     .toHaveAttribute("aria-pressed", "true");
   await expect(beforeReviewFrame.locator("[data-stemmio-review-overlay-box]")).toHaveCount(0);
   await expect(beforeReviewFrame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(0);
@@ -1022,7 +1020,12 @@ export async function assertProjectionGeometryCase(frame, geometryCase) {
   const root = frame.locator("html");
   await expect(root).not.toHaveAttribute("data-stemmio-review-transitioning", /./);
   if (await root.getAttribute("data-stemmio-review-focus-group") !== focusGroupId) {
-    await regionBar.click({ timeout: 8_000 });
+    // At fit-to-canvas scale this target can be outside the current viewport.
+    // A Playwright pointer click auto-scrolls first; that scroll legitimately
+    // rebuilds the projection layer and can detach the original bar between
+    // pointerdown and click. Invoke the owned bar action directly, then keep
+    // the product-state and geometry assertions below as the acceptance proof.
+    await regionBar.evaluate((bar) => bar.click());
   }
   await expect(root).toHaveAttribute("data-stemmio-review-focus-group", focusGroupId);
   await expect(root).not.toHaveAttribute("data-stemmio-review-transitioning", /./);

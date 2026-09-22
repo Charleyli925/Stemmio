@@ -907,6 +907,7 @@
 .turnProcess ol { list-style: none; margin: 4px 0 0; padding: 0; }
 .turnProcess li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: baseline; padding: 4px 0; }
 .turnProcess li > svg { align-self: start; margin-top: 3px; color: var(--faint); }
+.turnProcess li > span { grid-column: 2; min-width: 0; }
 .turnProcess time { color: var(--faint); font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .actorDetail { margin-left: 6px; color: var(--faint); font-weight: 400; }
 .actor { color: var(--muted); font-size: 11px; }

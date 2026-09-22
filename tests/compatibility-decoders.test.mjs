@@ -122,10 +122,20 @@ test("retired Developer Preview candidate-assessment shapes fail closed", async 
     fixtureBuffer("candidate-assessment-compat/output.html"),
   ]);
   const canonicalCurrent = decodeCandidateAssessmentRecord(current);
+  const historical = decodeHistoricalCandidateAssessment(current, {
+    baseBuffer,
+    outputBuffer,
+  });
   assert.deepEqual(
-    decodeHistoricalCandidateAssessment(current, { baseBuffer, outputBuffer }),
-    canonicalCurrent,
+    historical,
+    {
+      ...canonicalCurrent,
+      status: "attention",
+      issueCodes: ["AUTHORED_SCRIPT_CHANGED"],
+    },
   );
+  assert.equal(current.status, "ready");
+  assert.deepEqual(current.issueCodes, []);
   assert.throws(
     () => decodeCandidateAssessmentRecord(retired),
     (error) => error.code === "CANDIDATE_ASSESSMENT_INVALID",
@@ -151,6 +161,14 @@ test("retired Developer Preview candidate-assessment shapes fail closed", async 
   halfRetired.health.executableSurfaceUnchanged = true;
   assert.throws(
     () => decodeCandidateAssessmentRecord(halfRetired),
+    (error) => error.code === "CANDIDATE_ASSESSMENT_INVALID",
+  );
+  assert.throws(
+    () => decodeHistoricalCandidateAssessment({
+      ...current,
+      status: "attention",
+      issueCodes: ["PAGE_CONTINUITY_UNCERTAIN"],
+    }, { baseBuffer, outputBuffer }),
     (error) => error.code === "CANDIDATE_ASSESSMENT_INVALID",
   );
 });

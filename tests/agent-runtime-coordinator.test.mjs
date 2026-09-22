@@ -561,9 +561,10 @@ test("repeated tool activity persists phase transitions and keeps a return to an
   finish.resolve();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(coordinator.executionStatus(IDENTITY).state, "completed");
-  for (const kind of ["started", "public-summary", "execution-ended"]) {
+  for (const kind of ["started", "public-summary"]) {
     assert.equal(facts.filter((event) => event.kind === kind).length, 1, kind);
   }
+  assert.equal(facts.some((event) => event.kind === "execution-ended"), false);
 });
 
 test("execution status projects only public Agent text with frozen provider identity", async () => {

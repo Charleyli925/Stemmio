@@ -143,7 +143,7 @@ test("crash after authoritative outcome write replays history without repeating 
   await restarted.initialize();
   const conversation = await ensureCurrentConversation({ projectRoot: path.join(value.target.projectRootPath, ".stemmio"), projectId: value.target.projectId, documentId: value.target.documentId });
   assert.equal(conversation.turns[0].status, "completed");
-  assert.equal(conversation.messages.filter((message) => message.text === "修改已准备好，尚未采用。").length, 1);
+  assert.equal(conversation.messages.filter((message) => message.text === "AI 已修改完成，已生成可审阅的新 HTML。").length, 1);
   const workspace = await restarted.workspace({ sourcePath: value.target.exactSourcePath });
   assert.equal(workspace.activeCandidate.requestId, receipt.requestId);
   assert.equal(workspace.manifest.versions.length, 1);
