@@ -2452,3 +2452,87 @@ for (const barrier of ["none", "create", "close"]) {
     }
   });
 }
+
+test("Electron retires the cache after same-source hydration advances Canvas authority", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("cache-authority-a.html");
+  const projectB = createSourceFixture("cache-authority-b.html");
+  const original = readFileSync(projectA.sourcePath, "utf8");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    const initial = await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    const priorText = await initial.frame.locator(caseSelector("list-item")).textContent();
+    await activateNativeEdit(initial.frame, "list-item");
+    await setTextSelection(initial.frame, "list-item", 0, priorText.length);
+    await launched.page.keyboard.insertText("快速切换仍然安全写回");
+    await expect(initial.frame.locator(caseSelector("list-item"))).toHaveText("快速切换仍然安全写回");
+    const workingPath = await managedWorkingCopyPath(launched.page, projectA.sourcePath);
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await holdCacheAndCanvasLoads(launched.page);
+    const openPromise = openRecentProject(
+      launched.page, workingPath, "list-item", path.basename(projectA.sourcePath),
+    );
+    // Preserve the navigation error while the controlled Canvas load is held.
+    openPromise.catch(() => {});
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    // Wait for the real hydration publication, not a timer or a fabricated ACK.
+    await expect.poll(() => launched.page.evaluate(() => {
+      const main = document.querySelector("main.workbench");
+      let fiber = main[Object.keys(main).find((key) => key.startsWith("__reactFiber$"))];
+      let controller;
+      while (fiber && !controller) {
+        let hook = fiber.memoizedState;
+        while (hook && !controller) {
+          const value = hook.memoizedState;
+          if (value && typeof value.activateWorkbenchTab === "function") controller = value;
+          hook = hook.next;
+        }
+        fiber = fiber.return;
+      }
+      if (!controller) throw new Error("Controller unavailable");
+      const snapshot = controller.getSnapshot();
+      const navigation = snapshot.workbenchNavigation;
+      const initial = navigation.lastReceipt?.sourceReceipt;
+      const current = snapshot.document.sourceReceipt;
+      return Boolean(initial && current
+        && navigation.phase === "idle" && !snapshot.workbenchTabs.pendingTabId
+        && current.sequence > initial.sequence
+        && current.canvasGeneration > initial.canvasGeneration
+        && current.sourceSha256 === initial.sourceSha256
+        && current.context.epoch === initial.context.epoch
+        && snapshot.document.canvasAuthority.status === "pending"
+        && typeof window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__ === "function");
+    })).toBe(true);
+    await expect(surfaceCache).toHaveAttribute("data-visible", "true");
+    await launched.page.evaluate(() => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      if (typeof onLoad !== "function" || !(frame instanceof HTMLIFrameElement)) {
+        throw new Error("Delayed Canvas ready callback unavailable");
+      }
+      window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
+      onLoad({ currentTarget: frame });
+    });
+    const { frame } = await openPromise;
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    await expect(frame.locator(caseSelector("list-item"))).toHaveText("快速切换仍然安全写回");
+    const beforeRevision = Number(await launched.page.locator("[data-persist-state]")
+      .first().getAttribute("data-edit-revision"));
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 3);
+    await launched.page.keyboard.insertText("HANDOFF_EDIT_SAVED");
+    await launched.page.keyboard.press(keyShortcut("S"));
+    await expectCheckpointPersisted(launched.page, beforeRevision);
+    expect(await readPublishedWorkingCopy(workingPath)).toContain("HANDOFF_EDIT_SAVED");
+    expect(readFileSync(projectA.sourcePath, "utf8")).toBe(original);
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
