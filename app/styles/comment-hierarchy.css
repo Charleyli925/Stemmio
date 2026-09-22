@@ -5,18 +5,18 @@
 .comment-rail-content > .comment-card,
 .comment-rail-content > .comment-card:hover,
 .comment-rail-content > .comment-card[data-selected="true"] {
-  border: 1px solid #e3e4e8;
+  border: 1px solid var(--line);
   background: #fff;
-  box-shadow: none;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 4%);
 }
 
 .comment-rail-content > .comment-card:hover {
-  border-color: #d6d7dd;
+  border-color: rgb(13 13 13 / 18%);
 }
 
 .comment-rail-content > .comment-card[data-selected="true"] {
-  border-color: #dddde5;
-  background: #fdfdff;
+  border-color: rgb(13 13 13 / 18%);
+  background: var(--paper);
 }
 
 .comment-rail-content > .comment-card[data-focused="true"],
@@ -26,24 +26,24 @@
 .comment-rail-content > .comment-card[data-editing="true"]:hover,
 .comment-rail-content > .comment-card[data-editing="true"]:focus-within {
   z-index: 4;
-  border-color: #dedee8;
+  border-color: var(--line);
   outline: 0;
-  background: #f9f8ff;
+  background: var(--paper);
   box-shadow: inset 2px 0 0 var(--indigo);
   animation: none;
 }
 
 .comment-rail-content > .comment-card:focus-visible {
-  border-color: #dedee8;
-  outline: 2px solid rgb(90 85 223 / 24%);
+  border-color: var(--line);
+  outline: 2px solid var(--indigo);
   outline-offset: 1px;
-  background: #f9f8ff;
+  background: var(--paper);
   box-shadow: inset 2px 0 0 var(--indigo);
 }
 
 .comment-rail-content > .comment-card[data-focused="true"] > p,
 .comment-rail-content > .comment-card[data-editing="true"] > p {
-  color: #30323a;
+  color: var(--ink);
 }
 
 .comment-rail-content > .comment-card::before,
@@ -51,7 +51,7 @@
 .rail-comment-composer::before,
 .rail-comment-composer[data-focused="true"]::before {
   width: 15px;
-  background: #dddceb;
+  background: rgb(90 85 223 / 25%);
 }
 
 .rail-comment-composer,
@@ -59,11 +59,9 @@
 .rail-comment-composer:focus-within,
 .rail-comment-composer[data-focused="true"] {
   z-index: 5;
-  border: 1px solid #d9d9e4;
-  background: rgb(255 255 255 / 98%);
-  box-shadow:
-    0 18px 42px rgb(42 40 84 / 12%),
-    0 2px 8px rgb(42 44 55 / 5%);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: var(--shadow);
   animation: none;
 }
 
@@ -75,8 +73,8 @@
   border: 0;
   border-radius: 10px;
   outline: 0;
-  background: #f5f6f8;
-  color: #393c46;
+  background: var(--paper);
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.62;
   box-shadow: inset 0 -2px 0 transparent;
@@ -84,8 +82,8 @@
 
 .rail-comment-composer textarea:focus,
 .rail-comment-composer textarea:focus-visible {
-  background: #f7f7fa;
-  box-shadow: inset 0 -2px 0 #746ee3;
+  background: var(--paper);
+  box-shadow: inset 0 -2px 0 var(--indigo);
 }
 
 .comment-card-footer {

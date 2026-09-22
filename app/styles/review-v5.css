@@ -2,29 +2,6 @@
    Stemmio V5 — document-like review workbench
    -------------------------------------------------------------------------- */
 
-:root {
-  --shell: #f5f6f8;
-  --panel: #f7f8fa;
-  --paper: #fff;
-  --ink: #202128;
-  --muted: #777985;
-  --faint: #a3a5ae;
-  --line: #e4e6eb;
-  --line-soft: #eef0f3;
-  --indigo: #5a55df;
-  --indigo-deep: #4843c9;
-  --indigo-soft: #efeeff;
-  --green: #2f7c5c;
-  --red: #a34a48;
-  --shadow: 0 22px 60px rgb(28 30 38 / 11%), 0 2px 8px rgb(28 30 38 / 4%);
-}
-
-body {
-  background-color: var(--shell);
-  background-image: var(--grain);
-  background-size: 180px 180px;
-}
-
 .workbench-header {
   z-index: 40;
   min-height: 0;
@@ -273,9 +250,9 @@ body {
   min-height: 62px;
   padding: 0 18px;
   border: 0;
-  border-bottom: 1px solid #e1e3e7;
-  border-radius: 10px 10px 0 0;
-  background: var(--panel);
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: var(--paper);
   box-shadow: none;
   backdrop-filter: none;
 }
@@ -366,7 +343,7 @@ body {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #7772b8;
+  color: var(--indigo);
   box-shadow: none;
   font-size: 10px;
   font-weight: 650;
@@ -740,13 +717,13 @@ body {
 .comment-card-header time {
   flex: none;
   margin-top: 2px;
-  color: #a0a2aa;
+  color: var(--faint);
   font-size: 9px;
 }
 
 .comment-card > p {
   margin: 9px 0 0;
-  color: #44464f;
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.65;
   overflow-wrap: anywhere;

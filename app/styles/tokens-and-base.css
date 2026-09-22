@@ -1,20 +1,19 @@
 :root {
-  --shell: #f2f0eb;
-  --panel: #fbfaf7;
-  --paper: #fffefa;
-  --ink: #202127;
-  --muted: #74757d;
-  --faint: #9a9aa1;
-  --line: #dedbd3;
-  --line-soft: #ebe8e1;
-  --indigo: #5147dc;
-  --indigo-deep: #3f36c6;
-  --indigo-soft: #eeecff;
-  --green: #2f7758;
-  --red: #a54943;
-  --shadow: 0 18px 50px rgb(37 34 27 / 10%), 0 2px 8px rgb(37 34 27 / 5%);
+  --shell: #fff;
+  --panel: #fafafa;
+  --paper: #fff;
+  --ink: #0d0d0d;
+  --muted: #626262;
+  --faint: #767676;
+  --line: rgb(13 13 13 / 10%);
+  --line-soft: rgb(13 13 13 / 6%);
+  --indigo: #5a55df;
+  --indigo-deep: #4843c9;
+  --indigo-soft: #f3f2ff;
+  --green: #2f7c5c;
+  --red: #a34a48;
+  --shadow: 0 8px 24px rgb(0 0 0 / 6%);
   --ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)'/%3E%3C/svg%3E");
 }
 
 * {

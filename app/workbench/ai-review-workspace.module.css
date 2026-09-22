@@ -9,9 +9,9 @@
   display: grid;
   grid-template-rows: var(--notice-header-height) minmax(0, 1fr);
   overflow: hidden;
-  background: #f1f2f5;
-  color: #25252d;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--ui);
 }
 
 .reviewRoot[data-embedded="true"] {
@@ -33,12 +33,12 @@
   gap: 8px;
   padding: 6px 14px;
   border-bottom: 1px solid rgb(43 40 53 / 9%);
-  background: rgb(253 252 249 / 94%);
+  background: var(--paper);
 }
 
 .embeddedReviewActions > span:first-child {
   margin-right: auto;
-  color: #77737f;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 650;
 }
@@ -183,10 +183,7 @@
   border: 1px solid #e3e3e9;
   border-radius: 15px;
   background: rgb(254 254 255 / 76%);
-  box-shadow:
-    0 2px 5px rgb(20 20 36 / 4%),
-    0 9px 24px rgb(20 20 36 / 9%),
-    inset 0 1px 0 rgb(255 255 255 / 65%);
+  box-shadow: var(--shadow);
   pointer-events: auto;
   backdrop-filter: blur(20px) saturate(180%);
 }
@@ -250,13 +247,13 @@
 }
 
 .canvasReviewTitle strong {
-  color: #1f1f26;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 680;
 }
 
 .canvasReviewTitle small {
-  color: #7d7d8c;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -270,7 +267,7 @@
 }
 
 .toolbarFieldLabel {
-  color: #666675;
+  color: var(--muted);
   font-size: 10px;
   font-weight: 620;
   line-height: 13px;
@@ -288,7 +285,7 @@
   padding: 3px;
   overflow: hidden;
   border-radius: 10px;
-  background: #f1f1f5;
+  background: var(--chrome-hover);
 }
 
 .segmented[data-items="3"] {
@@ -326,7 +323,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #666675;
+  color: var(--muted);
   font-size: 10px;
   font-weight: 560;
   white-space: nowrap;
@@ -336,7 +333,7 @@
 .scrollSwitch button[aria-pressed="true"],
 .zoomSwitch button[aria-pressed="true"] {
   background: #fff;
-  color: #4f47b8;
+  color: var(--ink);
   font-weight: 650;
   box-shadow: 0 1px 4px rgb(20 20 36 / 10%);
 }
@@ -367,7 +364,7 @@
 }
 
 .previewButtonLabel small {
-  color: #9a9aa4;
+  color: var(--muted);
   font-size: 9px;
   font-style: italic;
   font-weight: 500;
@@ -419,14 +416,14 @@
   display: flex;
   align-items: center;
   padding: 0 7px;
-  border-bottom: 1px solid #e6e6eb;
-  background: rgb(250 250 252 / 94%);
-  backdrop-filter: blur(12px) saturate(140%);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
+  backdrop-filter: none;
 }
 
 .reviewEmpty {
   padding: 5px 9px;
-  color: #55525f;
+  color: var(--muted);
   font-size: 11px;
   line-height: 18px;
 }
@@ -444,7 +441,7 @@
   list-style: none;
   border: 1px solid transparent;
   border-radius: 7px;
-  color: #55525f;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 620;
   cursor: pointer;
@@ -459,7 +456,7 @@
 .reviewDirectory[open] > summary {
   border-color: #dedde6;
   background: #fff;
-  color: #47415f;
+  color: var(--muted);
 }
 
 .reviewDirectory[open] > summary svg:last-child {
@@ -498,7 +495,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #383641;
+  color: var(--ink);
   font: inherit;
   text-align: left;
 }
@@ -509,14 +506,14 @@ button.reviewDirectoryItem {
 
 button.reviewDirectoryItem:hover,
 button.reviewDirectoryItem[aria-current="location"] {
-  background: #f5f3fb;
+  background: var(--chrome-hover);
 }
 
 .reviewDirectoryItem > span {
   grid-row: 1 / span 2;
   align-self: start;
   padding-top: 1px;
-  color: #8b8794;
+  color: var(--muted);
   font-size: 9px;
   font-weight: 650;
   letter-spacing: .02em;
@@ -537,7 +534,7 @@ button.reviewDirectoryItem[aria-current="location"] {
 }
 
 .reviewDirectoryItem > small {
-  color: #85818d;
+  color: var(--muted);
   font-size: 9px;
 }
 
@@ -556,7 +553,7 @@ button.reviewDirectoryItem[aria-current="location"] {
   border: 1px solid #e1dfe8;
   border-radius: 6px;
   background: #fff;
-  color: #625c78;
+  color: var(--muted);
   font-size: 9px;
   cursor: pointer;
   overflow: hidden;
@@ -567,7 +564,7 @@ button.reviewDirectoryItem[aria-current="location"] {
 .reviewDirectoryLocations button:hover,
 .reviewDirectoryLocations button[aria-current="location"] {
   border-color: #cfcbe0;
-  background: #f7f5fb;
+  background: var(--chrome-hover);
 }
 
 .canvasGrid {
@@ -596,10 +593,10 @@ button.reviewDirectoryItem[aria-current="location"] {
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid #d9dade;
+  border: 1px solid var(--line);
   border-radius: 7px;
   background: #fff;
-  box-shadow: 0 2px 7px rgb(28 29 37 / 7%);
+  box-shadow: none;
 }
 
 .documentPaneHeader {
@@ -608,8 +605,8 @@ button.reviewDirectoryItem[aria-current="location"] {
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border-bottom: 1px solid #ececf0;
-  background: #fafafd;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
 }
 
 .documentPaneHeader > span {
@@ -618,17 +615,17 @@ button.reviewDirectoryItem[aria-current="location"] {
   flex: none;
   border-radius: 50%;
   background: #9698a2;
-  box-shadow: 0 0 0 4px rgb(150 152 162 / 9%);
+  box-shadow: none;
 }
 
 .documentPane[data-side="after"] .documentPaneHeader {
-  background: #faf9ff;
+  background: var(--paper);
   box-shadow: inset 0 2px 0 #6258d6;
 }
 
 .documentPane[data-side="after"] .documentPaneHeader > span {
   background: #6258d6;
-  box-shadow: 0 0 0 4px rgb(98 88 214 / 10%);
+  box-shadow: none;
 }
 
 .documentPaneHeader > div {
@@ -646,13 +643,13 @@ button.reviewDirectoryItem[aria-current="location"] {
 }
 
 .documentPaneHeader strong {
-  color: #393a43;
+  color: var(--ink);
   font-size: 10px;
   font-weight: 700;
 }
 
 .documentPaneHeader small {
-  color: #8b8d97;
+  color: var(--muted);
   font-size: 9px;
 }
 
@@ -739,7 +736,7 @@ button.reviewDirectoryItem[aria-current="location"] {
 .confirmDialog {
   width: min(440px, 100%);
   padding: 26px 28px 24px;
-  border: 1px solid #e2e1e8;
+  border: 1px solid var(--line);
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 24px 70px rgb(28 30 38 / 25%);
@@ -766,7 +763,7 @@ button.reviewDirectoryItem[aria-current="location"] {
 
 .confirmDescription {
   margin: 10px 0 22px;
-  color: #6f707a;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.65;
 }
@@ -809,8 +806,8 @@ button.reviewDirectoryItem[aria-current="location"] {
 
 .dialogSecondary {
   border: 1px solid #dedee5;
-  background: #f5f5f7;
-  color: #565761;
+  background: var(--chrome-hover);
+  color: var(--muted);
 }
 
 .dialogPrimary {
