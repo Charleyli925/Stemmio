@@ -98,6 +98,8 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
       failureRecoveryKind={currentHandoff?.recoveryKind || null}
       agentUpdates={currentHandoff?.visibleTextUpdates || []}
       agentTextTruncated={currentHandoff?.textTruncated === true}
+      agentActivities={currentHandoff?.mode === "managed-agent" ? currentHandoff.publicActivities || [] : []}
+      agentActivitiesTruncated={currentHandoff?.mode === "managed-agent" && currentHandoff.activitiesTruncated === true}
       agentWorking={currentHandoff?.mode === "managed-agent"
         && ["starting", "running", "cancelling"].includes(currentHandoff.status)}
       agentStartedAt={currentHandoff?.startedAt || null}
