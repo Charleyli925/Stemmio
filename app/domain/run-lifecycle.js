@@ -195,7 +195,7 @@ function deriveRunProgressCopy({
       continuityNeedsReview ? "请先审阅" : "等待决定",
       "审阅后决定是否采用",
       continuityNeedsReview
-        ? candidateAttentionDetail(run, true)
+        ? "HTML 可以打开，但与上一版的共同特征较少，不会直接替换当前页面"
         : "不会直接替换当前页面。",
     );
   }
@@ -401,14 +401,14 @@ function deriveRunProgressStepsFromContext({
   } else if (status === "ready-to-open") {
     const continuityNeedsReview = run.candidateAssessment?.status === "attention";
     validationStep.detail = continuityNeedsReview
-      ? candidateAttentionDetail(run, true)
+      ? "HTML 可以打开，但与上一版的连续性需要确认"
       : "HTML 健康检查与版本连续性检查完成";
     validationStep.state = continuityNeedsReview ? "attention" : "done";
     resultStep.label = continuityNeedsReview
       ? "AI 修改已保留，请先审阅"
       : "AI 修改已完成，可以审阅";
     resultStep.detail = continuityNeedsReview
-      ? candidateAttentionDetail(run)
+      ? "页面变化较大，请先对比审阅再决定是否采用"
       : "审阅后决定是否采用";
     resultStep.state = "current";
   } else if (run.pageRecoveryRequired === true) {
@@ -582,25 +582,6 @@ function displayVersionLabel(ordinal) {
 function safeVersionLabel(versionId) {
   const match = String(versionId || "").match(/(\d+)$/);
   return match ? `版本 ${Number(match[1])}` : String(versionId || "");
-}
-
-function candidateAttentionDetail(run, short = false) {
-  const issueCodes = run.candidateAssessment?.issueCodes || [];
-  const scriptChanged = issueCodes.includes("AUTHORED_SCRIPT_CHANGED");
-  const continuityUncertain = issueCodes.includes("PAGE_CONTINUITY_UNCERTAIN");
-  if (scriptChanged && continuityUncertain) {
-    return short
-      ? "HTML 可以打开，但页面脚本和版本连续性都需要确认"
-      : "页面变化较大且包含脚本变化，请先核对图表等动态内容再决定是否采用";
-  }
-  if (scriptChanged) {
-    return short
-      ? "HTML 可以打开，但页面脚本有变化，需要确认"
-      : "页面包含脚本变化，请先核对图表等动态内容再决定是否采用";
-  }
-  return short
-    ? "HTML 可以打开，但与上一版的共同特征较少，不会直接替换当前页面"
-    : "页面变化较大，请先对比审阅再决定是否采用";
 }
 
 const ERROR_COPY_BY_CODE = new Map([

@@ -1022,8 +1022,8 @@ finalizer 最后原子写入 `completion.json`，新的成功完成统一为 `st
 评论 TargetRef 继续随 Request 冻结，供 AI 理解要求、对比审阅和历史追溯，但不再作为
 候选 Version 的 subtree 精确验收边界。正文、属性、标签或普通样式超出评论位置，不单独
 导致失败。候选与上一版共同特征不足时写入 `candidate-assessment.json` 的 `attention` 状态，
-仍保留不可变 Version，但必须先审阅，不能“直接打开”。作者 `<script>` 变化同样进入 `attention`，
-不阻断候选，但界面要求先核对图表等动态内容。inline handler、可执行 URL 和 refresh 指令暂不单独检测。文档不完整、body 无内容或
+仍保留不可变 Version，但必须先审阅，不能“直接打开”。脚本、inline handler、可执行 URL
+和 refresh 指令属于普通候选内容，不检测、不分级、不产生用户提示。文档不完整、body 无内容或
 身份/Hash/路径/协议不一致时才阻断，并保留 Request、Attempt、output、assessment 与失败 outcome。
 
 对话侧栏不逐条暴露内部检查，生命周期仍固定合并成四个用户阶段：启动或复制交接、等待 AI 完成、校验并保存、结果。每轮只允许一个当前阶段；启动/复制失败、完成记录缺失、校验失败/外部冲突和成功/无变化/最终选择分别落在对应阶段。对话侧栏只显示当前阶段的一行状态，完成记录出现前不得把等待阶段显示为完成。

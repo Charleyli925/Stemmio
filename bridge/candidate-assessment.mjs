@@ -277,28 +277,6 @@ function continuityAssessment(baseHtml, outputHtml) {
   };
 }
 
-function authoredScriptSequence(html) {
-  const source = String(html || "");
-  const parsed = parseHtmlSource(source);
-  return parsed.elements.flatMap((token) => {
-    if (token?.node?.tagName !== "script") return [];
-    const location = token.node.sourceCodeLocation;
-    if (
-      !Number.isInteger(location?.startOffset)
-      || !Number.isInteger(location?.endOffset)
-      || location.startOffset < 0
-      || location.endOffset <= location.startOffset
-      || location.endOffset > source.length
-    ) return [];
-    return [source.slice(location.startOffset, location.endOffset)];
-  });
-}
-
-function authoredScriptsChanged(baseHtml, outputHtml) {
-  return JSON.stringify(authoredScriptSequence(baseHtml))
-    !== JSON.stringify(authoredScriptSequence(outputHtml));
-}
-
 function authoredChildren(element) {
   return element?.nodeName === "template" && element.content
     ? element.content.childNodes ?? []
@@ -558,7 +536,6 @@ export function candidateAssessmentDecision({
   completeDocument,
   bodyHasContent,
   continuityStatus,
-  authoredScriptChanged = false,
 }) {
   if (!completeDocument) {
     return {
@@ -572,17 +549,10 @@ export function candidateAssessmentDecision({
       issueCodes: ["HTML_BODY_EMPTY"],
     };
   }
-  const issueCodes = [];
   if (continuityStatus === "uncertain") {
-    issueCodes.push("PAGE_CONTINUITY_UNCERTAIN");
-  }
-  if (authoredScriptChanged) {
-    issueCodes.push("AUTHORED_SCRIPT_CHANGED");
-  }
-  if (issueCodes.length) {
     return {
       status: "attention",
-      issueCodes,
+      issueCodes: ["PAGE_CONTINUITY_UNCERTAIN"],
     };
   }
   return { status: "ready", issueCodes: [] };
@@ -606,7 +576,6 @@ export function assessHtmlCandidate({
     completeDocument,
     bodyHasContent,
     continuityStatus: continuity.status,
-    authoredScriptChanged: authoredScriptsChanged(baseHtml, outputHtml),
   });
 
   const assessment = {

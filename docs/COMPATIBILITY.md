@@ -1,7 +1,7 @@
 # Current-format compatibility policy
 
 Stemmio supports the records, interfaces and release artifacts produced by the
-current formal workflow. Three narrowly bounded ingress adapters cover bytes
+current formal workflow. Two narrowly bounded ingress adapters cover bytes
 written by shipped Developer Preview builds; neither adapter restores a retired
 product model. There is no migration pass, general compatibility window,
 old-data recovery entry point, or old-client distribution path.
@@ -30,11 +30,6 @@ old-data recovery entry point, or old-client distribution path.
   journal intact.
 - Candidate impact is stored and read only as bounded counts and samples.
   Records containing the retired full-array impact members are rejected.
-- A shipped Candidate assessment that exactly matches its sealed HTML under the
-  former script-neutral policy remains readable. When those bytes prove an
-  authored `<script>` change, the reader projects the current
-  `AUTHORED_SCRIPT_CHANGED` attention result in memory without rewriting the
-  record; any unrelated status or issue-code drift remains invalid.
 - Preferences use the current schema and validation rules. An unsupported or
   damaged file falls back to safe defaults without an upgrade write.
 - The shipped schema-1 Stemmio credential ciphertext remains readable through
@@ -66,9 +61,6 @@ The focused tests retain only small negative examples for retired shapes:
 - `tests/agent-session-credential-store.test.mjs` verifies the shipped
   ciphertext-only credential remains readable and canonicalizes only on an
   explicit mutation.
-- `tests/compatibility-decoders.test.mjs` verifies the shipped script-neutral
-  Candidate assessment is reclassified only from its sealed HTML evidence and
-  that unrelated policy drift remains rejected.
 - `tests/agent-delivery-codec.test.mjs` rejects the removed Qoder delivery
   record without conversion.
 - `tests/run-lifecycle.test.mjs` and
@@ -77,7 +69,7 @@ The focused tests retain only small negative examples for retired shapes:
   schema versions without projecting them into current records.
 
 These tests do not attempt to repair, replay or inventory old data beyond the
-three explicit shipped-current ingress adapters above.
+two explicit shipped-current ingress adapters above.
 Current recovery scenarios are constructed by the current writers and remain
 covered by the save, Version, Request and adoption recovery suites.
 
