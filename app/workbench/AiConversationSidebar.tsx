@@ -34,6 +34,7 @@ import {
   sidebarTimestampLabel,
   type SidebarCatalogStatus,
   type SidebarHistoryGroup,
+  type SidebarMessage,
 } from "./ai-conversation-model.js";
 import type { AgentSelection } from "../domain/agent-provider-state.js";
 import { type BoundAgentSetupPanelProps } from "../components/AgentSetupPanel";
@@ -360,6 +361,7 @@ export default function AiConversationSidebar({
     ? storedReadingState
     : null;
   const [hasUnseenContent, setHasUnseenContent] = useState(false);
+  const [readingHistory, setReadingHistory] = useState(initialReadingState?.following === false);
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(null);
   const [processExpanded, setProcessExpanded] = useState(
     () => initialReadingState?.processExpanded === true,
@@ -369,6 +371,7 @@ export default function AiConversationSidebar({
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
   const liveMessageRef = useRef<HTMLElement | null>(null);
   const followingRef = useRef(initialReadingState?.following !== false);
+  const disclosureReadingRef = useRef(false);
   const readingAnchorRef = useRef<SidebarReadingAnchor | null>(initialReadingState?.anchor || null);
   const pendingReadingAnchorRef = useRef<SidebarReadingAnchor | null>(null);
   const [expandedHistoryKeys, setExpandedHistoryKeys] = useState(
@@ -389,9 +392,6 @@ export default function AiConversationSidebar({
     || "Agent";
   const resolvedAgentSettingsName = agentSettingsName || resolvedAgentActionName;
   const stream = useMemo(() => sidebarMessageStream(messages), [messages]);
-  const displayedGroups = useMemo(() => (historyGroups.length ? historyGroups : [{
-    key: "messages", label: "", kind: "history", messageIndices: stream.map((_message, index) => index),
-  }]).map((group) => ({ ...group, ...sidebarTurnPresentation(stream.filter((_message, index) => group.messageIndices.includes(index))) })), [historyGroups, stream]);
   const activeIntent = sidebarResolvedIntent(state);
   // Product state alone determines the one available action and mode copy.
   const mode = sidebarModePresentation(state);
@@ -517,19 +517,44 @@ export default function AiConversationSidebar({
     : null;
   const contentKey = [
     runKey || "",
-    state,
-    loading ? "loading" : "ready",
     runProgress?.liveLabel || runProgress?.headline || "",
     runProgress?.narrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
-    agentWorking ? "working" : "idle",
     runProgress?.narrationTruncated ? "truncated" : "",
-    actionBar?.kind || "",
-    actionBar?.title || "",
-    historyGroups.map((group) => `${group.key}:${group.label}`).join(","),
     stream.map((message) => `${message.messageId}:${message.sequence}:${message.text.length}`).join(","),
   ].join("|");
   const liveNarrationUpdates = runProgress?.narrationUpdates || null;
-  const liveNarrationPreview = sidebarNarrationPreview(liveNarrationUpdates || []);
+  const displayedGroups = useMemo(() => {
+    const groups = historyGroups.length ? [...historyGroups] : [{
+      key: "messages", label: "", kind: "current", messageIndices: stream.map((_message, index) => index),
+    }];
+    // Conversation reads can lag the Run. Keep its receipt-keyed row outside
+    // historical groups until the stored turn identity arrives.
+    if (runKey && (liveNarrationUpdates || executionStatusActive)
+      && !groups.some((group) => group.kind === "current")
+      && !stream.some((message) => message.kind === "process-summary"
+        && `${message.requestId}:${message.attemptId}` === runKey)) {
+      groups.push({ key: "active-process", label: "", kind: "current", messageIndices: [], messageIds: [] });
+    }
+    return groups.map((group) => {
+      const messages = stream.filter((_message, index) => group.messageIndices.includes(index));
+      if (group.kind === "current" && runKey && (liveNarrationUpdates || executionStatusActive)
+        && !messages.some((message) => message.kind === "process-summary"
+          && `${message.requestId}:${message.attemptId}` === runKey)) {
+        const [requestId, attemptId] = runKey.split(":");
+        const narration: SidebarMessage = {
+          messageId: `narration:${runKey}`, actor: "agent", actorLabel: executionProviderName,
+          kind: "process-summary", status: "completed", text: "", truncated: false,
+          sequence: 0, createdAt: "", modelDisplayName: null, turnId: null,
+          requestId, attemptId,
+        };
+        const terminal = messages.findIndex((message) => message.requestId === requestId
+          && message.attemptId === attemptId
+          && ["result-summary", "decision-outcome", "error"].includes(message.kind));
+        messages.splice(terminal < 0 ? messages.length : terminal, 0, narration);
+      }
+      return { ...group, ...sidebarTurnPresentation(messages) };
+    });
+  }, [historyGroups, stream, runKey, liveNarrationUpdates, executionStatusActive, executionProviderName]);
 
   const persistReadingState = useCallback(() => {
     if (!readingStateStore) return;
@@ -621,7 +646,7 @@ export default function AiConversationSidebar({
         followingRef.current = false;
         const anchor = findVisibleAnchor();
         if (anchor) readingAnchorRef.current = anchor;
-        setHasUnseenContent(true);
+        setReadingHistory(true);
         persistReadingState();
         return;
       }
@@ -631,43 +656,47 @@ export default function AiConversationSidebar({
 
   const onStreamScroll = useCallback(() => {
     const streamElement = streamRef.current;
-    if (!streamElement) return;
+    if (!streamElement || disclosureReadingRef.current) return;
     const distanceFromBottom = Math.max(
       0,
       streamElement.scrollHeight - streamElement.clientHeight - streamElement.scrollTop,
     );
     followingRef.current = distanceFromBottom <= FOLLOW_THRESHOLD_PX;
+    setReadingHistory(!followingRef.current);
     if (followingRef.current) {
       readingAnchorRef.current = null;
       setHasUnseenContent(false);
     } else {
       captureReadingAnchor();
-      setHasUnseenContent(true);
     }
     persistReadingState();
   }, [captureReadingAnchor, persistReadingState]);
 
   const revealLatest = useCallback(() => {
+    disclosureReadingRef.current = false;
     followingRef.current = true;
+    setReadingHistory(false);
     readingAnchorRef.current = null;
     setHasUnseenContent(false);
     persistReadingState();
     scheduleFollow("smooth", true);
   }, [persistReadingState, scheduleFollow]);
 
-  const toggleProcess = useCallback(() => {
-    captureReadingAnchor();
-    const next = !processExpandedRef.current;
-    processExpandedRef.current = next;
-    setProcessExpanded(next);
+  const prepareDisclosure = useCallback((element: HTMLElement) => {
+    // Layout-induced scroll events must not cancel explicit disclosure intent.
+    disclosureReadingRef.current = true;
+    followingRef.current = false;
+    setReadingHistory(true);
+    const article = element.closest<HTMLElement>("[data-reading-anchor-id]");
+    const streamElement = streamRef.current;
+    if (article?.dataset.readingAnchorId && streamElement) {
+      readingAnchorRef.current = {
+        messageId: article.dataset.readingAnchorId,
+        offset: article.getBoundingClientRect().top - streamElement.getBoundingClientRect().top,
+      };
+    } else readingAnchorRef.current = findVisibleAnchor();
     persistReadingState();
-    if (followingRef.current) scheduleFollow("auto");
-    else queueRestoreAnchor(readingAnchorRef.current);
-  }, [captureReadingAnchor, persistReadingState, queueRestoreAnchor, scheduleFollow]);
-
-  const prepareDisclosure = useCallback(() => {
-    captureReadingAnchor();
-  }, [captureReadingAnchor]);
+  }, [findVisibleAnchor, persistReadingState]);
 
   const settleDisclosure = useCallback((key: string, open: boolean) => {
     const next = new Set(expandedHistoryKeysRef.current);
@@ -676,9 +705,18 @@ export default function AiConversationSidebar({
     expandedHistoryKeysRef.current = next;
     setExpandedHistoryKeys(next);
     persistReadingState();
-    if (followingRef.current) scheduleFollow("auto");
-    else queueRestoreAnchor(readingAnchorRef.current);
-  }, [persistReadingState, queueRestoreAnchor, scheduleFollow]);
+    queueRestoreAnchor(readingAnchorRef.current);
+  }, [persistReadingState, queueRestoreAnchor]);
+
+  const toggleProcess = useCallback((key: string, current: boolean, element: HTMLElement) => {
+    prepareDisclosure(element);
+    const next = current ? !processExpandedRef.current : !expandedHistoryKeysRef.current.has(key);
+    if (current) {
+      processExpandedRef.current = next;
+      setProcessExpanded(next);
+    }
+    settleDisclosure(key, next);
+  }, [prepareDisclosure, settleDisclosure]);
 
   const copyMessage = useCallback((key: string, value: string) => {
     if (!value) return;
@@ -699,9 +737,11 @@ export default function AiConversationSidebar({
   useEffect(() => {
     if (roundKey && roundKey !== roundKeyRef.current) {
       roundKeyRef.current = roundKey;
+      disclosureReadingRef.current = false;
       processExpandedRef.current = false;
       setProcessExpanded(false);
       followingRef.current = true;
+      setReadingHistory(false);
       readingAnchorRef.current = null;
       pendingReadingAnchorRef.current = null;
       setHasUnseenContent(false);
@@ -761,6 +801,104 @@ export default function AiConversationSidebar({
 
 
 
+  const renderNarration = (message: SidebarMessage) => {
+    const processKey = message.requestId && message.attemptId
+      ? `narration:${message.requestId}:${message.attemptId}` : `narration:${message.messageId}`;
+    const current = Boolean(runKey && `${message.requestId}:${message.attemptId}` === runKey);
+    const updates = current && liveNarrationUpdates?.length ? liveNarrationUpdates
+      : message.text ? [{ id: message.messageId, text: message.text }] : null;
+    const body = updates?.map((update) => update.text).join("\n\n") || "";
+    const preview = sidebarNarrationPreview(updates || []);
+    const expanded = current ? processExpanded : expandedHistoryKeys.has(processKey);
+    const panelId = `${narrationPanelId}-${message.messageId}`;
+    return (
+          <article
+            key={processKey}
+            ref={current ? bindLiveMessageRef : undefined}
+            className={styles.message}
+            data-actor="agent"
+            data-reading-anchor-id={processKey}
+            data-testid="ai-conversation-narration-message"
+            data-process-state={message.text ? "sealed" : "live"}
+            aria-label={`${resolvedAgentActionName} 的说明`}
+            aria-live="off"
+          >
+            <AgentAvatar presentation={current ? agentPresentation : null} />
+            <span className={`${styles.actor} ${styles.liveActor}`}>
+              <span>{current ? executionProviderName : message.actorLabel}</span>
+              {current && executionStatusActive ? (
+                <ExecutionStatusLeaf
+                  state={state}
+                  providerName={current ? executionProviderName : message.actorLabel}
+                  startedAt={agentStartedAt}
+                  receivedBytes={agentReceivedBytes}
+                  runKey={runKey}
+                />
+              ) : null}
+            </span>
+            {updates && preview ? (
+              <div
+                className={styles.processDisclosure}
+                data-testid="ai-conversation-narration"
+              >
+                <button
+                  type="button"
+                  className={styles.narrationPreview}
+                  aria-expanded={expanded}
+                  aria-controls={panelId}
+                  aria-label={expanded ? "收起处理过程" : "展开处理过程"}
+                  data-testid="ai-conversation-narration-toggle"
+                  onClick={(event) => toggleProcess(processKey, current, event.currentTarget)}
+                >
+                  <span className={styles.narrationDisclosureIcon} aria-hidden="true">
+                    {expanded ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
+                  </span>
+                  <span>{preview}</span>
+                </button>
+                <div
+                  id={panelId}
+                  className={styles.narrationText}
+                  hidden={!expanded}
+                >
+                  {updates.map((update) => (
+                    <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
+                  ))}
+                  {body ? (
+                    <div className={styles.messageMeta}>
+                      <button
+                        type="button"
+                        onClick={() => copyMessage(processKey, body)}
+                      >
+                        {copyFeedback?.key === processKey ? copyFeedback.label : "复制"}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {current && agentWorking && !updates ? (
+              <span
+                className={styles.thinking}
+                role="status"
+                aria-live="polite"
+                aria-label="AI 正在处理"
+                data-testid="ai-conversation-thinking"
+              >
+                <span className={styles.thinkingDots} aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </span>
+            ) : null}
+            {(current ? runProgress?.narrationTruncated : message.truncated) ? (
+              <small className={styles.truncated}>部分输出已省略</small>
+            ) : null}
+          </article>
+    );
+  };
+
+
   return (
     <aside
       id="ai-assistant-sidebar"
@@ -797,6 +935,13 @@ export default function AiConversationSidebar({
         aria-label="对话记录"
         data-testid="ai-conversation-stream"
         onScroll={onStreamScroll}
+        onWheel={() => { disclosureReadingRef.current = false; }}
+        onPointerDown={() => { disclosureReadingRef.current = false; }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+            disclosureReadingRef.current = false;
+          }
+        }}
       >
         {loading ? (
           <p className={styles.placeholder}>正在读取这份文档的对话…</p>
@@ -805,10 +950,10 @@ export default function AiConversationSidebar({
             还没有修改记录。先在页面上写评论，再交给 AI 修改。
           </p>
         ) : (
-          displayedGroups.map((group) => (
-            <section key={group.key} className={styles.turnGroup} data-turn-id={group.key} aria-label={group.label || "一轮修改"}>
-              {group.label ? <div className={styles.historyGroup} data-kind={group.kind} data-testid="ai-conversation-history-group">{group.label}</div> : null}
-              {group.timeline.map((block) => {
+          displayedGroups.flatMap((group) => [
+            group.label ? <div key={`heading:${group.key}`} className={styles.historyGroup} data-turn-id={group.key} data-kind={group.kind} data-testid="ai-conversation-history-group">{group.label}</div> : null,
+            ...group.timeline.map((block) => {
+            if (block.messages[0].kind === "process-summary") return renderNarration(block.messages[0]);
             if (block.process) return (
               <article key={block.messages[0].messageId} className={`${styles.message} ${styles.turnProcess}`} data-actor={block.messages[0].actor} data-testid="ai-turn-process" data-reading-anchor-id={`process:${block.messages[0].messageId}`} aria-label={`${block.messages[0].actorLabel} 处理记录`}>
                 <>{block.messages[0].actor === "agent" ? <AgentAvatar presentation={null} /> : <StemmioAvatar />}</>
@@ -821,7 +966,7 @@ export default function AiConversationSidebar({
                       open={expandedHistoryKeys.has(disclosureKey)}
                       onToggle={(event) => settleDisclosure(disclosureKey, event.currentTarget.open)}
                     >
-                    <summary onClick={prepareDisclosure} data-testid="ai-conversation-history-process-toggle">
+                    <summary onClick={(event) => prepareDisclosure(event.currentTarget)} data-testid="ai-conversation-history-process-toggle">
                     <span className={styles.processDisclosureLabel}>查看处理过程</span>
                     <span className={styles.processDisclosurePreview}>
                       {sidebarNarrationPreview(block.messages) || `${block.messages.length} 条记录`}
@@ -894,9 +1039,8 @@ export default function AiConversationSidebar({
                 </article>
               </Fragment>
             );
-              })}
-            </section>
-          ))
+              }),
+          ])
         )}
 
         {runSummary && deliveryMode !== "managed-agent" ? (
@@ -913,92 +1057,7 @@ export default function AiConversationSidebar({
           </section>
         ) : null}
 
-        {/* Public Agent narration and its compact execution metadata share one
-            stable article. Later Stemmio verification facts can then follow it
-            in chronological order. */}
-        {(liveNarrationUpdates || executionStatusActive) ? (
-          <article
-            ref={bindLiveMessageRef}
-            className={styles.message}
-            data-actor="agent"
-            data-reading-anchor-id="live-agent"
-            data-testid="ai-conversation-narration-message"
-            aria-label={`${resolvedAgentActionName} 的说明`}
-            aria-live="off"
-          >
-            <AgentAvatar presentation={agentPresentation} />
-            <span className={`${styles.actor} ${styles.liveActor}`}>
-              <span>{executionProviderName}</span>
-              {executionStatusActive ? (
-                <ExecutionStatusLeaf
-                  state={state}
-                  providerName={executionProviderName}
-                  startedAt={agentStartedAt}
-                  receivedBytes={agentReceivedBytes}
-                  runKey={runKey}
-                />
-              ) : null}
-            </span>
-            {liveNarrationUpdates && liveNarrationPreview ? (
-              <div
-                className={styles.processDisclosure}
-                data-testid="ai-conversation-narration"
-              >
-                <button
-                  type="button"
-                  className={styles.narrationPreview}
-                  aria-expanded={processExpanded}
-                  aria-controls={narrationPanelId}
-                  aria-label={processExpanded ? "收起处理过程" : "展开处理过程"}
-                  data-testid="ai-conversation-narration-toggle"
-                  onClick={toggleProcess}
-                >
-                  <span className={styles.narrationDisclosureIcon} aria-hidden="true">
-                    {processExpanded ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
-                  </span>
-                  <span>{liveNarrationPreview}</span>
-                </button>
-                <div
-                  id={narrationPanelId}
-                  className={styles.narrationText}
-                  hidden={!processExpanded}
-                >
-                  {liveNarrationUpdates.map((update) => (
-                    <div key={update.id}>{sidebarNarrationParagraphs(update.text).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
-                  ))}
-                  {runProgress?.narration ? (
-                    <div className={styles.messageMeta}>
-                      <button
-                        type="button"
-                        onClick={() => copyMessage("live-agent", runProgress.narration || "")}
-                      >
-                        {copyFeedback?.key === "live-agent" ? copyFeedback.label : "复制"}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            {agentWorking && !liveNarrationUpdates ? (
-              <span
-                className={styles.thinking}
-                role="status"
-                aria-live="polite"
-                aria-label="AI 正在处理"
-                data-testid="ai-conversation-thinking"
-              >
-                <span className={styles.thinkingDots} aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </span>
-            ) : null}
-            {runProgress?.narrationTruncated ? (
-              <small className={styles.truncated}>部分输出已省略</small>
-            ) : null}
-          </article>
-        ) : null}
+
 
         {/*
           * A round in flight, told inside the thread rather than a
@@ -1036,14 +1095,14 @@ export default function AiConversationSidebar({
           * three separate regions, so a single round was read in three places with
           * an empty gap between them.
           */}
-        {hasUnseenContent ? (
+        {readingHistory ? (
           <button
             className={styles.unseenContent}
             type="button"
             data-testid="ai-conversation-unseen-content"
             onClick={revealLatest}
           >
-            有新进展
+            {hasUnseenContent ? "有新进展" : "回到最新"}
           </button>
         ) : null}
         <div ref={bottomSentinelRef} className={styles.bottomSentinel} aria-hidden="true" />

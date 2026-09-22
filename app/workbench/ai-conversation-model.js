@@ -342,7 +342,9 @@ export function sidebarTurnPresentation(messages = []) {
   for (const message of messages) {
     const isProcess = process.includes(message);
     const previous = timeline.at(-1);
-    if (isProcess && previous?.process && previous.messages[0].actor === message.actor
+    if (isProcess && message.kind !== "process-summary"
+      && previous?.process && previous.messages[0].kind !== "process-summary"
+      && previous.messages[0].actor === message.actor
       && previous.messages[0].actorLabel === message.actorLabel) previous.messages.push(message);
     else timeline.push({ process: isProcess, messages: [message] });
   }

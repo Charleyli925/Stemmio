@@ -80,7 +80,38 @@ async function resolvedMarkerRegion(marker) {
 }
 
 async function activateReviewMarkerGroup(frame, marker) {
-  await expect.poll(() => resolvedMarkerRegion(marker), { timeout: 30_000 }).toBeTruthy();
+  try {
+    await expect.poll(() => resolvedMarkerRegion(marker), { timeout: 30_000 }).toBeTruthy();
+  } catch (cause) {
+    const diagnostic = await marker.evaluate((element) => {
+      const rects = (node) => [...node.getClientRects()].map(({ x, y, width, height }) => ({ x, y, width, height }));
+      const attrs = (node) => Object.fromEntries([...node.attributes].filter((attribute) => attribute.name.startsWith("data-stemmio-review-")).map(({ name, value }) => [name, value]));
+      const owners = [];
+      for (let owner = element; owner; owner = owner.parentElement) {
+        owners.push({ tag: owner.tagName, attributes: attrs(owner), rects: rects(owner) });
+      }
+      const markers = [
+        ...(element.matches("[data-stemmio-review-marker]") ? [element] : []),
+        ...element.querySelectorAll("[data-stemmio-review-marker]"),
+      ].map((marker) => {
+        const changeId = marker.getAttribute("data-stemmio-review-marker") || "";
+        const projectionFacts = JSON.parse(marker.getAttribute("data-stemmio-review-projection-facts") || "[]");
+        return { changeId, projectionFacts, rects: rects(marker), expectedGroups: projectionFacts.map((fact) => {
+          const displayGroupId = fact.displayGroupId || `display-fact-${fact.id || ""}`;
+          return fact.structureChange === "style" ? `focus-${displayGroupId}` : `focus-${changeId}-${displayGroupId}`;
+        }) };
+      });
+      return {
+        marker: attrs(element), rects: rects(element), owners, markers,
+        displayOwners: [...document.querySelectorAll("[data-stemmio-review-display-owner]")].slice(0, 200)
+          .map((owner) => ({ attributes: attrs(owner), rects: rects(owner) })),
+        root: attrs(document.documentElement),
+        bars: [...document.querySelectorAll("[data-stemmio-review-region-bar]")].map((bar) => ({ attributes: attrs(bar), rects: rects(bar) })),
+      };
+    }).catch((error) => ({ captureError: String(error) }));
+    await test.info().attach("unresolved-review-marker.json", { body: JSON.stringify(diagnostic, null, 2), contentType: "application/json" });
+    throw cause;
+  }
   const focusGroupId = await resolvedMarkerRegion(marker);
   expect(focusGroupId).toBeTruthy();
   if (await frame.locator("html").getAttribute("data-stemmio-review-focus-group") === focusGroupId) {

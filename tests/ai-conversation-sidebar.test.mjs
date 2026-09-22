@@ -1146,3 +1146,13 @@ test("sidebar local facts reject the previous Document before a new load and pre
   assert.equal(sidebarConversationPresentation(snapshot, context).draftAvailable, true);
   assert.equal(sidebarConversationPresentation({ ...snapshot, status: "failed" }, context).draftAvailable, false);
 });
+
+
+test("sealed process stays distinct from true results and fixed stage groups", () => {
+  const stage = factMessage({ actor: "agent", kind: "progress" });
+  const sealed = factMessage({ actor: "agent", kind: "process-summary", text: "处理过程。" });
+  const result = factMessage({ actor: "agent", kind: "result-summary", text: "最终结果。" });
+  const timeline = sidebarTurnPresentation([stage, sealed, result]);
+  assert.deepEqual(timeline.timeline.map((block) => block.messages), [[stage], [sealed], [result]]);
+  assert.deepEqual(timeline.primary, [result]);
+});
