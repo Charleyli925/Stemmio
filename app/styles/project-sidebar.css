@@ -15,7 +15,7 @@
 
 .sidebar-project-section > h2 {
   margin: 0 0 5px;
-  color: #9b98a2;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 680;
   letter-spacing: .035em;
@@ -34,7 +34,7 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #514f59;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 400;
   text-align: left;
@@ -42,8 +42,8 @@
 
 .sidebar-project-row:hover:not(:disabled),
 .sidebar-project-row:focus-visible {
-  background: rgb(83 76 112 / 7%);
-  color: #34323a;
+  background: var(--chrome-hover);
+  color: var(--ink);
 }
 
 .sidebar-project-row:disabled {
@@ -53,14 +53,14 @@
 
 .sidebar-project-row > svg {
   flex: none;
-  color: #777388;
+  color: var(--muted);
 }
 
 .sidebar-project-row > .sidebar-project-icon {
   width: 16px;
   height: 16px;
   justify-self: center;
-  color: #777388;
+  color: var(--muted);
 }
 
 .sidebar-project-rules-row {
@@ -75,19 +75,19 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #625f6d;
+  color: var(--ink);
   text-align: left;
 }
 
 .sidebar-project-rules-row:hover:not(:disabled),
 .sidebar-project-rules-row:focus-visible {
-  background: rgb(83 76 112 / 7%);
-  color: #34323a;
+  background: var(--chrome-hover);
+  color: var(--ink);
 }
 
 .sidebar-project-rules-row[data-selected="true"] {
-  background: rgb(238 236 255 / 78%);
-  color: #4f47b8;
+  background: var(--chrome-active);
+  color: var(--ink);
 }
 
 .sidebar-project-rules-row:disabled {
@@ -97,7 +97,7 @@
 
 .sidebar-project-rules-row > svg {
   justify-self: center;
-  color: #777388;
+  color: var(--muted);
 }
 
 .sidebar-project-rules-name {
@@ -119,7 +119,7 @@
 .sidebar-project-empty {
   display: block;
   margin: 3px 0 2px;
-  color: #aaa7af;
+  color: var(--muted);
   font-size: 11.5px;
   line-height: 18px;
 }
@@ -177,7 +177,7 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #625f6d;
+  color: var(--ink);
   text-align: left;
   font-size: 12px;
   font-weight: 400;
@@ -186,18 +186,18 @@
 .sidebar-project-current-row > svg,
 .sidebar-project-history-toggle > svg {
   justify-self: center;
-  color: #777388;
+  color: var(--muted);
 }
 
 .sidebar-project-current-row:hover:not(:disabled),
 .sidebar-project-history-toggle:hover {
-  background: rgb(83 76 112 / 7%);
-  color: #34323a;
+  background: var(--chrome-hover);
+  color: var(--ink);
 }
 
 .sidebar-project-current-row[data-selected="true"] {
-  background: rgb(238 236 255 / 78%);
-  color: #4f47b8;
+  background: var(--chrome-active);
+  color: var(--ink);
 }
 
 .sidebar-project-current-row:disabled {
@@ -249,20 +249,20 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #4b475d;
+  color: var(--ink);
   text-align: left;
   font-size: 12px;
   font-weight: 400;
 }
 
 .sidebar-version-file:hover {
-  background: rgb(83 76 112 / 7%);
-  color: #34323a;
+  background: var(--chrome-hover);
+  color: var(--ink);
 }
 
 .sidebar-version-row[data-selected="true"] .sidebar-version-file {
-  background: rgb(238 236 255 / 78%);
-  color: #4f47b8;
+  background: var(--chrome-active);
+  color: var(--ink);
 }
 
 .sidebar-version-index {
@@ -271,7 +271,7 @@
 }
 
 .sidebar-version-time {
-  color: #9995a3;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
@@ -279,12 +279,12 @@
 }
 
 .sidebar-version-row[data-selected="true"] .sidebar-version-time {
-  color: #7770bf;
+  color: var(--muted);
 }
 
 .sidebar-version-empty {
   margin: 2px 0 4px;
-  color: #aaa7af;
+  color: var(--muted);
   font-size: 11.5px;
   line-height: 18px;
 }

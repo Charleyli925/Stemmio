@@ -46,17 +46,12 @@ test("top toolbar keeps one compact cross-mode visual contract", async () => {
   const header = lastCssRule(css, ".workbench > .workbench-header");
   assert.match(header, /grid-template-columns:\s*minmax\(0, 1fr\)/u);
   assert.match(header, /background:\s*var\(--chrome-toolbar-surface\)/u);
-  assert.match(
-    css,
-    /\.workbench > \.workbench-tabbar,\n\.workbench > \.workbench-header \{[\s\S]*?backdrop-filter:\s*blur\(22px\)/u,
-  );
 
   const modeFrame = lastCssRule(css, ".canvas-mode-switch");
   assert.match(modeFrame, /width:\s*180px/u);
   assert.match(modeFrame, /height:\s*34px/u);
   assert.match(modeFrame, /grid-template-columns:\s*repeat\(3, 1fr\)/u);
   assert.match(modeFrame, /padding:\s*2px/u);
-  assert.match(modeFrame, /border:\s*1px solid var\(--chrome-divider\)/u);
 
   const sendButton = css.match(
     /\.header-actions \.header-send-button,\n\.workbench-review-tools-slot > \.header-send-button \{[\s\S]*?\}/u,
@@ -64,7 +59,6 @@ test("top toolbar keeps one compact cross-mode visual contract", async () => {
   assert.ok(sendButton, "missing shared send/review decision button rule");
   assert.match(sendButton[0], /height:\s*32px/u);
   assert.match(sendButton[0], /margin:\s*0/u);
-  assert.match(sendButton[0], /box-shadow:\s*0 2px 5px rgb\(65 57 166 \/ 13%\)/u);
 });
 
 test("global sidebar owns the full shell column and start page has no card surface", async () => {
@@ -74,7 +68,6 @@ test("global sidebar owns the full shell column and start page has no card surfa
     css,
     /\.workbench\[data-left-sidebar="open"\] \{\s*--workbench-sidebar-width:\s*clamp\(200px, var\(--workbench-sidebar-width-saved\), 420px\)/u,
   );
-  assert.match(css, /--chrome-sidebar-surface:\s*rgb\(239 239 243 \/ 72%\)/u);
   assert.match(css, /\.workbench-toolbar-primary,\n\.workbench-toolbar-center,\n\.workbench-toolbar-actions \{/u);
   assert.match(css, /grid-template-columns:\s*180px minmax\(0, 1fr\) auto/u);
   assert.match(css, /\.workbench-resizer\s*\{[\s\S]*?-webkit-app-region:\s*no-drag/u);

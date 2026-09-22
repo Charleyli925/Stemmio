@@ -6,25 +6,28 @@
    centre while tabs, toolbar, sidebar, and inspectors share one temperature.
    -------------------------------------------------------------------------- */
 
-.workbench {
-  --chrome-page-surface: #f4f4f5;
-  --chrome-sidebar-surface: rgb(239 239 243 / 72%);
-  --chrome-tabbar-surface: rgb(237 237 241 / 84%);
-  --chrome-toolbar-surface: rgb(247 247 249 / 90%);
-  --chrome-inspector-surface: rgb(243 243 247 / 92%);
+:root {
+  --chrome-page-surface: var(--paper);
+  --chrome-sidebar-surface: #faf9f8;
+  --chrome-tabbar-surface: var(--paper);
+  --chrome-toolbar-surface: var(--paper);
+  --chrome-inspector-surface: var(--paper);
   --chrome-canvas-surface: #fff;
-  --chrome-divider: rgb(42 42 49 / 9%);
-  --chrome-text: #414148;
-  --chrome-muted: #73737c;
-  --chrome-accent: #706c99;
-  --chrome-hover: rgb(78 78 91 / 6%);
-  --chrome-active: rgb(78 78 91 / 10%);
-  --chrome-focus: rgb(91 82 157 / 58%);
+  --chrome-divider: var(--line-soft);
+  --chrome-text: var(--ink);
+  --chrome-muted: var(--muted);
+  --chrome-accent: var(--indigo);
+  --chrome-hover: rgb(13 13 13 / 4%);
+  --chrome-active: rgb(13 13 13 / 7%);
+  --chrome-focus: var(--indigo);
+}
+
+.workbench {
   background: var(--chrome-page-surface);
 }
 
 body {
-  background-color: #f4f4f5;
+  background-color: var(--paper);
   background-image: none;
 }
 
@@ -32,8 +35,8 @@ body {
 .workbench > .workbench-header {
   border-color: var(--chrome-divider);
   background: var(--chrome-tabbar-surface);
-  -webkit-backdrop-filter: blur(22px) saturate(112%);
-  backdrop-filter: blur(22px) saturate(112%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .workbench > .workbench-header > .header-actions {
@@ -61,8 +64,8 @@ body {
 .workbench-global-sidebar,
 .workbench-sidebar-titlebar {
   background: var(--chrome-sidebar-surface);
-  -webkit-backdrop-filter: blur(22px) saturate(112%);
-  backdrop-filter: blur(22px) saturate(112%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .workbench-global-sidebar {
@@ -81,8 +84,8 @@ body {
 .workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside {
   border-color: var(--chrome-divider);
   background: var(--chrome-inspector-surface);
-  -webkit-backdrop-filter: blur(22px) saturate(112%);
-  backdrop-filter: blur(22px) saturate(112%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside > :not(.workbench-resizer) {
@@ -142,7 +145,7 @@ body {
   border-color: var(--chrome-divider);
   background: var(--chrome-toolbar-surface);
   color: var(--chrome-text);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 36%);
+  box-shadow: none;
 }
 
 .workbench-tab:not([data-selected="true"]):hover {
@@ -303,7 +306,7 @@ body {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #55565f;
+  color: var(--muted);
 }
 
 .workbench-refresh-button > svg,
@@ -361,11 +364,6 @@ body {
 }
 
 .workbench-more-menu {
-  --chrome-divider: rgb(42 42 49 / 9%);
-  --chrome-text: #414148;
-  --chrome-hover: rgb(78 78 91 / 6%);
-  --chrome-active: rgb(78 78 91 / 10%);
-  --chrome-accent: #706c99;
   position: fixed;
   z-index: 1000;
   width: 220px;
@@ -377,10 +375,10 @@ body {
   padding: 6px;
   border: 1px solid var(--chrome-divider);
   border-radius: 10px;
-  background: rgb(250 250 252 / 98%);
-  box-shadow: 0 10px 26px rgb(42 42 49 / 12%), 0 2px 6px rgb(42 42 49 / 6%);
-  -webkit-backdrop-filter: blur(20px) saturate(118%);
-  backdrop-filter: blur(20px) saturate(118%);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .workbench-more-menu-entry {

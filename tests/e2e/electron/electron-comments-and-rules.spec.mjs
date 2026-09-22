@@ -1125,7 +1125,7 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
         : 0;
       return Math.abs(element.getBoundingClientRect().width - targetWidth);
     })).toBeLessThanOrEqual(0.5);
-    await launched.page.waitForTimeout(220);
+    await expect.poll(async () => (await readGeometry()).sidebarWidth).toBe(240);
     const narrowAiGeometry = await readGeometry();
     assertShellGeometry(narrowAiGeometry);
     expect(narrowAiGeometry.sidebarWidth).toBe(240);
