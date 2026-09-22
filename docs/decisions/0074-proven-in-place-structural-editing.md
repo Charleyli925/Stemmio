@@ -78,7 +78,7 @@ Frozen support matrix for this round:
 | Host / parent | Direct copy / insert / move | Direct delete |
 | --- | --- | --- |
 | Safe `p` / heading / simple `li` / inline `blockquote` under a plain parent | In-place | n/a |
-| Static, script-free text-only leaf `div` under a plain parent | In-place | n/a |
+| Static, script-free text `div` with only safe inline descendants under a plain parent | In-place | n/a |
 | Ordinary source subtree with a provable delete/undo boundary | n/a | In-place; selection may clear when no legal landing remains |
 | `body` as destination parent | Same-parent move of ordinary children only; no direct insert entry | n/a for `body` itself |
 | Mixed text/comment parent | Reject | Reject |
@@ -122,7 +122,7 @@ Those mechanisms stay retired.
 
 The direct Canvas/command scope is intentionally narrower than the shared
 semantic kernel: safe authored text-block duplicate, including static,
-script-free text-only leaf `div` elements, deletions with a provable source
+script-free text `div` elements with non-empty text and safe inline descendants, deletions with a provable source
 delete/undo boundary (with an optional selection landing), supported same-parent
 adjacent reorder, and the matching Undo/Redo. The `div` extension retains all
 identity, reference, resource, event-handler, ancestor and mixed-content guards;
