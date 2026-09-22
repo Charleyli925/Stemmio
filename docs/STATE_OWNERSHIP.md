@@ -160,6 +160,10 @@ Rules:
 - External `importSourceKey` is a lookup, not a write credential. Equal HTML
   bytes at another path remain a new project. Multiple claims for one source
   key fail closed and do not present a chooser.
+- Registry-catalog refresh may activate the persisted startup selection only
+  before the first navigation admission. Once navigation has begun, its pending
+  tab belongs to that transaction; catalog refresh only reconciles presentation
+  and may not append startup restoration or close an ordinary pending tab.
 - Recent and Registry-catalog lists are deferrable projections. Automatic
   refreshes run only after the authoritative transition has settled
   (hydration, Working Copy confirmation or synchronous cross-Session
