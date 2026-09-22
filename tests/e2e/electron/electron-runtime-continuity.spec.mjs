@@ -216,6 +216,71 @@ test("frozen element entry rejects wrong text bindings and edits heading paragra
   });
 });
 
+for (const releaseBeforeBlur of [false, true]) {
+  test(`transient native blur preserves the latest caret before Backspace: state RAF released=${releaseBeforeBlur}`, async () => {
+    const html = '<!doctype html><html><head><title>Native caret</title></head><body>'
+      + '<p data-native-case="entry-paragraph">  Paragraph <i>tail</i>.</p></body></html>';
+    await withRuntimeProject("stemmio-native-blur-caret-", { "runtime-report.html": html }, async ({ page, sourcePath }) => {
+      const { frame } = await loadedDiskFrame(page, sourcePath, "entry-paragraph");
+      const target = frame.locator('[data-native-case="entry-paragraph"]');
+      const working = await managedWorkingCopyPath(page, sourcePath);
+      const id = await target.getAttribute("data-stemmio-id");
+      const handle = await target.elementHandle();
+      await doubleClickRenderedText(target);
+      await expect(target).toHaveAttribute("contenteditable", /^(?:true|plaintext-only)$/u);
+      await page.keyboard.press(keyShortcut("ArrowDown"));
+      await page.keyboard.type(" PRCORE_H02");
+      // Use the host realm: the static document intentionally forbids author
+      // scripts, so callbacks created inside that realm cannot drive waits.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const before = await target.textContent();
+      await page.evaluate(() => {
+        const frameWindow = document.querySelector('iframe[data-runtime-slot-role="active"]').contentWindow;
+        const request = frameWindow.requestAnimationFrame.bind(frameWindow);
+        const held = [];
+        // Freeze this exact frame's notifications for one keystroke. No input,
+        // focus or Selection is replaced; releasing runs the original callbacks.
+        frameWindow.requestAnimationFrame = callback => { held.push(callback); return -1000-held.length; };
+        window.__STEMMIO_TEST_NATIVE_CARET_RAF__ = {
+          held,
+          release() {
+            frameWindow.requestAnimationFrame = request;
+            for (const callback of held.splice(0)) request(callback);
+          },
+        };
+      });
+      try {
+        await page.keyboard.type("X");
+        expect(await target.textContent()).toBe(`${before}X`);
+        await requireFrozenTextFocus(handle, id, { atEnd: true });
+        expect(await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.held.length)).toBeGreaterThan(0);
+        if (releaseBeforeBlur) {
+          await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.release());
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        }
+        await target.evaluate(element => element.blur());
+        await page.evaluate(() => window.__STEMMIO_TEST_NATIVE_CARET_RAF__.release());
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        // The same original element must retain focus and the latest caret;
+        // waiting must not legitimize an earlier bookmark before the final X.
+        await requireFrozenTextFocus(handle, id, { atEnd: true });
+        await page.keyboard.press("Backspace");
+        expect(await target.textContent()).toBe(before);
+        await page.keyboard.press(keyShortcut("s"));
+        await expect.poll(async () => (await readPublishedWorkingCopy(working, null)).toString())
+          .toContain(" PRCORE_H02");
+        expect((await readPublishedWorkingCopy(working, null)).toString()).not.toContain(" PRCORE_H02X");
+      } finally {
+        await page.evaluate(() => {
+          window.__STEMMIO_TEST_NATIVE_CARET_RAF__?.release();
+          delete window.__STEMMIO_TEST_NATIVE_CARET_RAF__;
+        });
+        await handle.dispose();
+      }
+    });
+  });
+}
+
 test("a real Space key edits a nested summary instead of toggling its disclosure", async () => {
   const html = '<!doctype html><html><head><title>Summary space</title></head><body>'
     + '<details open data-native-case="summary-details">'

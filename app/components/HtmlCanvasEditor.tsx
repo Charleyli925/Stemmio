@@ -5136,8 +5136,20 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       && outerActive !== iframeRef.current,
     );
     if (explicitExternalFocus) return false;
-    // Restore the last owned caret, not the session's initial baseline. This
-    // is used after host-owned async work such as Save.
+    // State notifications run on RAF. A transient iframe blur can precede
+    // that notification after the latest keystroke, so preserve the still
+    // owned live selection before focus() can reset it to an older bookmark.
+    const liveSelection = active.rootElement.ownerDocument.getSelection();
+    if (
+      liveSelection?.rangeCount === 1
+      && liveSelection.anchorNode
+      && liveSelection.focusNode
+      && active.rootElement.contains(liveSelection.anchorNode)
+      && active.rootElement.contains(liveSelection.focusNode)
+    ) {
+      active.selection = active.session.getSelection();
+    }
+    // If selection left this host, retain only the last owned bookmark.
     active.rootElement.focus({ preventScroll: true });
     active.session.restoreSelection(active.selection);
     if (!nativeEditFocusIsCurrent(active)) {
