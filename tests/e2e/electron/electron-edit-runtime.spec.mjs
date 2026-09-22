@@ -1322,14 +1322,20 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
     });
     await page.setViewportSize({ width: 1279, height: 720 });
     await expect(marker).toBeVisible();
-    const fallbackHostBox = await reopenedFrameAfterDraft.locator("#runtime-output").boundingBox();
-    const fallbackMarkerBox = await marker.boundingBox();
-    expect(fallbackHostBox).not.toBeNull();
-    expect(fallbackMarkerBox).not.toBeNull();
-    expect(fallbackMarkerBox?.x || 0).toBeGreaterThanOrEqual((fallbackHostBox?.x || 0) - 24);
-    // The marker rail can round the fallback host edge differently across
-    // hosted macOS font metrics; keep the assertion bounded to one 32 px rail.
-    expect(fallbackMarkerBox?.x || 0).toBeLessThanOrEqual((fallbackHostBox?.x || 0) + (fallbackHostBox?.width || 0) + 32);
+    // The marker is already visible before the runtime target disappears.
+    // Wait for the resize/overlay publication, not that stale visibility fact.
+    const fallbackPositions = [];
+    await expect(async () => {
+      const fallbackHostBox = await reopenedFrameAfterDraft.locator("#runtime-output").boundingBox();
+      const fallbackMarkerBox = await marker.boundingBox();
+      fallbackPositions.push({ host: fallbackHostBox, marker: fallbackMarkerBox });
+      expect(fallbackHostBox).not.toBeNull();
+      expect(fallbackMarkerBox).not.toBeNull();
+      expect(fallbackMarkerBox.x).toBeGreaterThanOrEqual(fallbackHostBox.x - 24);
+      expect(fallbackMarkerBox.x).toBeLessThanOrEqual(fallbackHostBox.x + fallbackHostBox.width + 24);
+    }).toPass({ timeout: 10_000 }).finally(() => test.info().attach("fallback-marker-positions", {
+      contentType: "application/json", body: JSON.stringify(fallbackPositions),
+    }));
     await marker.click();
     await expect(reopenedFrameAfterDraft.locator("#runtime-output"))
       .toHaveAttribute("data-html-canvas-selected", "part");
