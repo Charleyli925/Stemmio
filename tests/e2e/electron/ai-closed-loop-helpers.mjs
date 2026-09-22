@@ -476,6 +476,7 @@ export async function addCommentAndSubmit(
   sourcePath,
   updatedText = UPDATED_TEXT,
   additionalComments = [],
+  beforeSubmit = null,
 ) {
   await electronApp.evaluate(({ clipboard }) => clipboard.clear());
   let activeSourcePath = await addComment(
@@ -492,6 +493,7 @@ export async function addCommentAndSubmit(
       comment.targetSelector,
     );
   }
+  if (beforeSubmit) await beforeSubmit(activeSourcePath);
   const isolatedUserData = await electronApp.evaluate(({ app }) => app.getPath("userData"));
   const workspace = path.join(isolatedUserData, "workspace");
   const existingPromptPaths = new Set(requestPromptPaths(workspace));
