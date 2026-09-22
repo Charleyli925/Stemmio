@@ -536,8 +536,15 @@ test("accepted source survives a display verification failure and repairs withou
     await setTextSelection(recoveredFrame, "list-item", 0, UPDATED_TEXT.length);
     await launched.page.keyboard.insertText("恢复后本地保存");
     await launched.page.keyboard.press("Escape");
-    await expect.poll(() => readFileSync(active.sourcePath, "utf8"), { timeout: 30_000 })
-      .toContain("恢复后本地保存");
+    await expect.poll(() => {
+      try { return readFileSync(active.sourcePath, "utf8"); }
+      catch (cause) {
+        // Protected publication parks the previous inode before linking the
+        // new one; the source name can be absent until that save settles.
+        if (cause.code === "ENOENT") return "";
+        throw cause;
+      }
+    }, { timeout: 30_000 }).toContain("恢复后本地保存");
     expect(readFileSync(fixture.sourcePath)).toEqual(fixture.original);
 
     // A subsequent request is allowed from the repaired, edited document;
@@ -567,8 +574,15 @@ test("accepted source survives a display verification failure and repairs withou
     expect(nextRequestRecord.request.taskSpec.instructions).toHaveLength(1);
     expect(nextRequestRecord.request.taskSpec.instructions[0].text)
       .toContain("恢复后下一轮");
-    expect(nextRequestRecord.request.changeEvents).toEqual([]);
-    expect(nextAnnotations.changeEvents).toEqual([]);
+    // The intentional edit after recovery is the only audit context carried
+    // forward; it is based on the adopted V2, never the previous round.
+    expect(nextRequestRecord.request.changeEvents).toHaveLength(1);
+    expect(nextRequestRecord.request.changeEvents[0]).toMatchObject({
+      basedOnVersionId: "ver_0002",
+      before: { text: UPDATED_TEXT },
+      after: { text: "恢复后本地保存" },
+    });
+    expect(nextAnnotations.changeEvents).toEqual(nextRequestRecord.request.changeEvents);
     expect(nextAnnotations.comments).toHaveLength(1);
     expect(nextAnnotations.comments[0].text).toContain("恢复后下一轮");
     const latestSavedBytes = readFileSync(active.sourcePath);
