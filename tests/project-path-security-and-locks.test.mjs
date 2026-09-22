@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import filesystem from "node:fs/promises";
 import {
   mkdir,
   readFile,
@@ -8,6 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { sha256 } from "../bridge/lifecycle-core.mjs";
@@ -24,6 +26,24 @@ import {
   currentRegistryWriteLockPath,
   seedCurrentRegistryWriteLock,
 } from "./project-file-repository-harness.mjs";
+
+function awaitSignal(signal, label, timeoutMs = 2_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} was not observed within ${timeoutMs}ms.`));
+    }, timeoutMs);
+    signal.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 test("nested and symlinked Working Copy mappings are rejected before a save can escape", async (t) => {
   const value = await fixture(t);
@@ -111,6 +131,91 @@ test("verified project roots are not reused across serial turns after a symlink 
     (error) => error instanceof ProjectFileRepositoryError
       && (error.code === "PATH_ESCAPES_PROJECT" || error.code === "UNSAFE_DIRECTORY"),
   );
+});
+
+test("a Registry lock released after lstat lets the waiting public acquire retry", async (t) => {
+  const value = await fixture(t);
+  await importSource(value, "交错基线.html");
+  const firstSourcePath = path.join(value.sources, "交错持锁者.html");
+  const firstBuffer = Buffer.from(html("first interleaving import"), "utf8");
+  await writeFile(firstSourcePath, firstBuffer);
+  const secondSourcePath = path.join(value.sources, "交错等待者.html");
+  const secondBuffer = Buffer.from(html("second interleaving import"), "utf8");
+  await writeFile(secondSourcePath, secondBuffer);
+
+  let firstImportReady;
+  const firstImportReadyPromise = new Promise((resolve) => {
+    firstImportReady = resolve;
+  });
+  let releaseFirstImport;
+  const releaseFirstImportPromise = new Promise((resolve) => {
+    releaseFirstImport = resolve;
+  });
+  const firstRepository = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint: async (name) => {
+      if (name === "import-intent-recorded") {
+        firstImportReady();
+        await releaseFirstImportPromise;
+      }
+      return false;
+    },
+  });
+  const firstImport = firstRepository.importExternal({
+    sourcePath: firstSourcePath,
+    expectedSourceSha256: sha256(firstBuffer),
+  });
+  let secondImport;
+  let continueLockPathRealpath = () => {};
+  let realpathPatched = false;
+  const originalRealpath = filesystem.realpath;
+  try {
+    await awaitSignal(firstImportReadyPromise, "first import lock owner");
+
+    const lockPath = currentRegistryWriteLockPath(value);
+    let lockPathRealpathObserved;
+    const lockPathRealpathObservedPromise = new Promise((resolve) => {
+      lockPathRealpathObserved = resolve;
+    });
+    const continueLockPathRealpathPromise = new Promise((resolve) => {
+      continueLockPathRealpath = resolve;
+    });
+    let paused = false;
+    filesystem.realpath = async (target, ...options) => {
+      if (!paused && String(target) === lockPath) {
+        paused = true;
+        lockPathRealpathObserved();
+        await continueLockPathRealpathPromise;
+      }
+      return originalRealpath(target, ...options);
+    };
+    syncBuiltinESMExports();
+    realpathPatched = true;
+
+    secondImport = new ProjectFileRepository({
+      projectsRoot: value.projects,
+      registryWriteLockTimeoutMs: 2_000,
+    }).importExternal({
+      sourcePath: secondSourcePath,
+      expectedSourceSha256: sha256(secondBuffer),
+    });
+    await awaitSignal(lockPathRealpathObservedPromise, "waiting lock realpath");
+    releaseFirstImport();
+    const firstResult = await firstImport;
+    assert.equal(firstResult.imported, true);
+    continueLockPathRealpath();
+    const secondResult = await secondImport;
+    assert.equal(secondResult.imported, true);
+  } finally {
+    releaseFirstImport();
+    continueLockPathRealpath();
+    await firstImport.catch(() => {});
+    await secondImport?.catch(() => {});
+    if (realpathPatched) {
+      filesystem.realpath = originalRealpath;
+      syncBuiltinESMExports();
+    }
+  }
 });
 
 test("a failed lock release never replaces a committed import result", async (t) => {
