@@ -1322,14 +1322,20 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
     });
     await page.setViewportSize({ width: 1279, height: 720 });
     await expect(marker).toBeVisible();
-    const fallbackHostBox = await reopenedFrameAfterDraft.locator("#runtime-output").boundingBox();
-    const fallbackMarkerBox = await marker.boundingBox();
-    expect(fallbackHostBox).not.toBeNull();
-    expect(fallbackMarkerBox).not.toBeNull();
-    expect(fallbackMarkerBox?.x || 0).toBeGreaterThanOrEqual((fallbackHostBox?.x || 0) - 24);
-    // The marker rail can round the fallback host edge differently across
-    // hosted macOS font metrics; keep the assertion bounded to one 32 px rail.
-    expect(fallbackMarkerBox?.x || 0).toBeLessThanOrEqual((fallbackHostBox?.x || 0) + (fallbackHostBox?.width || 0) + 32);
+    // The marker is already visible before the runtime target disappears.
+    // Wait for the resize/overlay publication, not that stale visibility fact.
+    const fallbackPositions = [];
+    await expect(async () => {
+      const fallbackHostBox = await reopenedFrameAfterDraft.locator("#runtime-output").boundingBox();
+      const fallbackMarkerBox = await marker.boundingBox();
+      fallbackPositions.push({ host: fallbackHostBox, marker: fallbackMarkerBox });
+      expect(fallbackHostBox).not.toBeNull();
+      expect(fallbackMarkerBox).not.toBeNull();
+      expect(fallbackMarkerBox.x).toBeGreaterThanOrEqual(fallbackHostBox.x - 24);
+      expect(fallbackMarkerBox.x).toBeLessThanOrEqual(fallbackHostBox.x + fallbackHostBox.width + 24);
+    }).toPass({ timeout: 10_000 }).finally(() => test.info().attach("fallback-marker-positions", {
+      contentType: "application/json", body: JSON.stringify(fallbackPositions),
+    }));
     await marker.click();
     await expect(reopenedFrameAfterDraft.locator("#runtime-output"))
       .toHaveAttribute("data-html-canvas-selected", "part");
@@ -1668,9 +1674,21 @@ test("same-source history cancellation reloads through a fixed Runtime candidate
     );
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
-    ))).toBe(1);
+    ))).toBeGreaterThan(0);
+    // As in the reorder oracle above, count from the settled pre-interaction
+    // Runtime. Startup candidates are outside the history operation contract.
+    const initialRuntimeExecutions = await page.evaluate(() => (
+      window.__STEMMIO_RUNTIME_HISTORY_CANCEL_COUNT__
+    ));
+    test.info().annotations.push({
+      type: "initial-runtime-executions",
+      description: String(initialRuntimeExecutions),
+    });
 
-    for (const expectedExecutionCount of [2, 3]) {
+    for (const expectedExecutionCount of [
+      initialRuntimeExecutions + 1,
+      initialRuntimeExecutions + 2,
+    ]) {
       await activateNativeEdit(frame, "runtime-history-cancel");
       await armRuntimeHandoffSamples(page);
       const candidateStarted = page.waitForFunction(() => Boolean(
@@ -3254,6 +3272,14 @@ test("Runtime text history ignores unrelated disposable clone drift", {
       const frame = (await loadedDiskFrame(page, sourcePath, "runtime-history-text")).frame;
       await expect(frame.locator('[data-runtime-unrelated-clone="true"]')).toHaveCount(1);
       await captureTextHistoryRuntimeEvidence(page, "loadedDiskFrame");
+      const initialRuntimeExecutions = await page.evaluate(() => (
+        window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__
+      ));
+      expect(initialRuntimeExecutions).toBeGreaterThan(0);
+      test.info().annotations.push({
+        type: "initial-runtime-executions",
+        description: String(initialRuntimeExecutions),
+      });
       const historyDocument = await documentToken(page);
       const historyGeneration = await editor.locator('iframe:not([data-frame-role])')
         .getAttribute("data-frame-generation");
@@ -3292,7 +3318,7 @@ test("Runtime text history ignores unrelated disposable clone drift", {
       await expect(editor).toHaveAttribute("data-history-adopt-path", "editable-island-in-place");
       await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
       await captureTextHistoryRuntimeEvidence(page, "redo");
-      expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__)).toBe(1);
+      expect(await page.evaluate(() => window.__STEMMIO_TEXT_HISTORY_RUNTIME_COUNT__)).toBe(initialRuntimeExecutions);
     } finally {
       const evidence = await page.evaluate(() => ({
         events: window.__STEMMIO_TEXT_HISTORY_RUNTIME_EVENTS__ || [],

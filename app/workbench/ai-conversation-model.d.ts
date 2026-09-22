@@ -250,6 +250,11 @@ export function sidebarTurnPresentation(messages?: readonly SidebarMessage[]): {
 
 export function sidebarNarrationParagraphs(text: unknown): string[];
 
+/** Pick the latest non-empty public paragraph for the compact process row. */
+export function sidebarNarrationPreview(
+  updates?: readonly (string | Readonly<{ text?: unknown }>)[],
+): string | null;
+
 export function sidebarProcessRows(messages: readonly SidebarMessage[]): { message: SidebarMessage; count: number }[];
 
 export function sidebarConversationPresentation(

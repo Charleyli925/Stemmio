@@ -298,6 +298,7 @@ export function createQoderAcpE2ECommand(directory, {
   capacityUnavailable = false,
   runtimeFailure = false,
   visibleText = false,
+  visibleTextLong = false,
   visibleTextGateMs = 0,
 } = {}) {
   const command = path.join(directory, "stemmio-qoder-acp-e2e");
@@ -309,6 +310,7 @@ export function createQoderAcpE2ECommand(directory, {
     capacityUnavailable ? "--capacity-unavailable" : null,
     runtimeFailure ? "--runtime-failure" : null,
     visibleText ? "--visible-text" : null,
+    visibleTextLong ? "--visible-text-long" : null,
     visibleTextGateMs > 0 ? `--visible-text-gate-ms=${visibleTextGateMs}` : null,
   ].filter(Boolean).map(shellQuote).join(" ");
   writeFileSync(
