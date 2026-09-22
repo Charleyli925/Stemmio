@@ -1,3 +1,4 @@
+import { withRuntimeFailureEvidence } from "./helpers/runtime-failure-evidence.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import { expect, test } from "@playwright/test";
 
@@ -5474,7 +5475,7 @@ test("unsupported Script programs enter an explicit static Edit state", async ()
   });
 });
 
-test("static fallback can reload dynamic content and dismiss itself after success", async () => {
+test("static fallback can reload dynamic content and dismiss itself after success", async ({}, testInfo) => {
   const html = `<!doctype html>
 <html><head><title>Runtime retry</title></head><body>
   <main data-native-case="runtime-retry">动态内容重试</main>
@@ -5485,16 +5486,28 @@ test("static fallback can reload dynamic content and dismiss itself after succes
   <script>
     parent.__STEMMIO_RUNTIME_RETRY_COUNT__ =
       (parent.__STEMMIO_RUNTIME_RETRY_COUNT__ || 0) + 1;
+    var executionId = window.__STEMMIO_RETRY_DOCUMENT_ID__ ||= crypto.randomUUID();
+    var record = (kind, message = '') => {
+      (parent.__STEMMIO_RUNTIME_RETRY_EVENTS__ ||= []).push({
+        kind, message, executionId, time: parent.performance.now(),
+        count: parent.__STEMMIO_RUNTIME_RETRY_COUNT__,
+        generation: frameElement?.getAttribute('data-frame-generation'),
+        candidate: frameElement?.getAttribute('data-runtime-candidate-id'),
+      });
+    };
+    record('execute');
+    window.addEventListener('error', event => record('error', event.message));
     if (parent.__STEMMIO_RUNTIME_RETRY_COUNT__ <= 2) {
       throw new Error('synthetic activation failure before drawing');
     }
     document.body.dataset.runtimeRetryReady = 'true';
+    record('body-ready');
   </script>
 </body></html>`;
 
   await withRuntimeProject("stemmio-runtime-retry-e2e-", {
     "runtime-report.html": html,
-  }, async ({ page, sourcePath }) => {
+  }, async ({ page, sourcePath }) => withRuntimeFailureEvidence(page, testInfo, async () => {
     await expect(page.getByTestId("edit-runtime-static-fallback")).toHaveCount(0);
     await expect(page.locator(".canvas-edit-surface")).toHaveAttribute(
       "data-edit-runtime-phase",
@@ -5589,7 +5602,7 @@ test("static fallback can reload dynamic content and dismiss itself after succes
       "data-runtime-last-known-good-source-revision",
       latestWorkingHash,
     );
-  });
+  }));
 });
 
 test("Edit frame navigation blocks location.assign and location.replace", async () => {

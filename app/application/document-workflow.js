@@ -94,6 +94,17 @@ function canvasRenderObservation(value) {
   });
 }
 
+function canvasObservationMatchesDocument(observation, snapshot) {
+  return Boolean(
+    observation
+    && SHA256.test(String(snapshot.workingHtmlSha256 || ""))
+    && snapshot.workingHtmlSha256 === observation.renderedSha256
+    && sameSourceReceipt(observation.receipt, snapshot.sourceReceipt)
+    && observation.receipt.canvasGeneration === snapshot.canvasGeneration
+    && observation.renderedHtml === snapshot.html
+  );
+}
+
 function sourceErrorCode(cause, fallback) {
   if (isBridgeRequestError(cause) && cause.code) return cause.code;
   return cause && typeof cause === "object" && cause.code
@@ -1346,17 +1357,9 @@ export class DocumentWorkflow {
    */
   confirmCanvas(observation) {
     const normalized = canvasRenderObservation(observation);
-    const currentReceipt = this.#documentSession.sourceReceipt;
     const currentSnapshot = this.#documentSession.snapshot;
     if (
-      !normalized
-      || !SHA256.test(String(normalized.receipt.sourceSha256 || ""))
-      || normalized.receipt.sourceSha256 !== normalized.renderedSha256
-      || !SHA256.test(String(currentSnapshot.workingHtmlSha256 || ""))
-      || currentSnapshot.workingHtmlSha256 !== normalized.renderedSha256
-      || !sameSourceReceipt(normalized.receipt, currentReceipt)
-      || normalized.receipt.canvasGeneration !== currentSnapshot.canvasGeneration
-      || normalized.renderedHtml !== currentSnapshot.html
+      !canvasObservationMatchesDocument(normalized, currentSnapshot)
       || currentSnapshot.canvasAuthority.status === "failed"
       || currentSnapshot.canvasAuthority.status === "verified"
     ) return false;
@@ -3447,19 +3450,14 @@ export class DocumentWorkflow {
     if (context && !this.#isCurrent(context)) return false;
     const confirmed = this.confirmCanvas(observation);
     if (confirmed) return true;
-    // The initial-render observer may have confirmed this exact receipt while
-    // verification was awaiting the frame. Reuse that authority without
-    // publishing it again; a different receipt or different bytes cannot settle
-    // this operation merely because some Canvas is already verified.
+    // Another observer may have confirmed this exact receipt while verification
+    // was pending. Completion can reuse that fact without accepting a new ACK.
     const current = this.#documentSession.snapshot;
     if (
-      current.canvasAuthority.status === "verified"
-      && sameSourceReceipt(observation.receipt, current.sourceReceipt)
-      && observation.receipt.canvasGeneration === current.canvasGeneration
-      && current.canvasAuthority.generation === current.canvasGeneration
-      && observation.renderedSha256 === current.canvasAuthority.renderedSha256
-      && observation.renderedSha256 === current.workingHtmlSha256
-      && observation.renderedHtml === current.html
+      canvasObservationMatchesDocument(observation, current)
+      && current.canvasAuthority.status === "verified"
+      && current.canvasAuthority.generation === observation.receipt.canvasGeneration
+      && current.canvasAuthority.renderedSha256 === observation.renderedSha256
     ) return true;
     this.#failCurrentCanvas("当前画布尚未完成自动恢复。");
     return false;

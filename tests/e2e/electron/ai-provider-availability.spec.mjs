@@ -258,13 +258,21 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     const historicalToggle = historical.getByTestId("ai-conversation-narration-toggle");
     await expect(historicalToggle).toHaveAttribute("aria-expanded", "false");
     const readingStream = launched.page.getByTestId("ai-conversation-stream");
-    await readingStream.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    const readingFeedback = launched.page.getByTestId("ai-conversation-unseen-content");
+    if (await readingFeedback.isVisible()) await readingFeedback.click();
+    else {
+      await readingStream.hover();
+      await launched.page.mouse.wheel(0, 100_000);
+    }
+    await expect.poll(() => readingStream.evaluate((element) => (
+      element.scrollHeight - element.clientHeight - element.scrollTop
+    ))).toBeLessThanOrEqual(2);
+    await expect(readingFeedback).toHaveCount(0);
     const triggerTop = (await historicalToggle.boundingBox()).y;
     await historicalToggle.click();
     await expect(historicalToggle).toHaveAttribute("aria-expanded", "true");
     expect(await historical.evaluate((element) => element.clientHeight)).toBeGreaterThan(2 * await readingStream.evaluate((element) => element.clientHeight));
     await expect.poll(async () => Math.abs((await historicalToggle.boundingBox()).y - triggerTop)).toBeLessThanOrEqual(2);
-    const readingFeedback = launched.page.getByTestId("ai-conversation-unseen-content");
     await expect(readingFeedback).toHaveText("回到最新");
     syntheticMessages.push({ messageId: "message_after_historical_expansion", actor: "stemmio", kind: "text", status: "completed",
       text: "新增的合成公开事实", createdAt: new Date().toISOString() });

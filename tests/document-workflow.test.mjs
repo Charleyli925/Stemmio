@@ -3447,30 +3447,41 @@ test("repairCurrentCanvas tolerates an exact observation confirmed by its compos
   assert.equal(harness.workflow.confirmCanvas(observation), false);
 });
 
-for (const mismatch of ["html", "receipt"]) {
-  test(`repairCurrentCanvas rejects a ${mismatch} mismatch after concurrent confirmation`, async () => {
-    const html = "<!doctype html><html><body><p>concurrent confirmation</p></body></html>";
+for (const mismatch of ["html", "hash", "receipt", "generation"]) {
+  test(`repairCurrentCanvas rejects a ${mismatch} mismatch after another observer confirms`, async () => {
+    const html = "<!doctype html><html><body><p>confirmed</p></body></html>";
     let harness;
     harness = createHarness({
       html,
       canvasOverrides: {
         async verifyRendered(renderedHtml, renderedSha256, _context, receipt) {
           const observation = {
-            receipt, renderedHtml, renderedSha256,
+            receipt,
+            renderedHtml,
+            renderedSha256,
             frameGeneration: harness.documentSession.canvasGeneration,
           };
           assert.equal(harness.workflow.confirmCanvas(observation), true);
-          return mismatch === "html"
-            ? { ...observation, renderedHtml: renderedHtml.replace("concurrent", "wrong") }
-            : { ...observation, receipt: { ...receipt, sequence: receipt.sequence + 1 } };
+          if (mismatch === "html") return { ...observation, renderedHtml: `${html}<!--wrong-->` };
+          if (mismatch === "hash") return { ...observation, renderedSha256: sha256("wrong") };
+          return {
+            ...observation,
+            receipt: {
+              ...receipt,
+              ...(mismatch === "receipt"
+                ? { sequence: receipt.sequence - 1 }
+                : { canvasGeneration: receipt.canvasGeneration - 1 }),
+            },
+          };
         },
       },
     });
+
     const outcome = await harness.workflow.repairCurrentCanvas({ context: harness.context });
+
     assert.equal(outcome.status, "succeeded");
     assert.equal(outcome.value.page.status, "repair-required");
     assert.equal(harness.documentSession.canvasAuthority.status, "verified");
-    assert.equal(harness.documentSession.html, html);
     harness.workflow.dispose();
   });
 }
