@@ -410,3 +410,148 @@ test("tab order remains identity-deduplicated across many open documents", () =>
   assert.equal(session.snapshot.tabs.length, 40);
   assert.equal(session.snapshot.tabs.find((tab) => tab.projectId === "project_unlimited_39")?.title, "Unlimited renamed");
 });
+
+test("missing project-surface titles use the HTML display fallback without changing identity", () => {
+  for (const title of [undefined, "", "   "]) {
+    const session = new WorkbenchTabsSession();
+    session.bindDocument({ ...a, title: "Alpha", focus: true });
+    const rules = session.createProjectRules({
+      projectId: a.projectId,
+      documentId: a.documentId,
+      title,
+      focus: false,
+    });
+    const history = session.createHistory({
+      projectId: a.projectId,
+      documentId: a.documentId,
+      title,
+      versionId: "ver_0001",
+      versionOrdinal: 1,
+      focus: false,
+    });
+
+    assert.equal(rules.title, "HTML");
+    assert.equal(history.title, "HTML");
+    assert.equal(rules.tabId, `project-rules:${a.projectId}:${a.documentId}`);
+    assert.equal(history.tabId, `history:${a.projectId}:${a.documentId}`);
+    assert.equal(session.snapshot.activeTabId, `document:${a.projectId}:${a.documentId}`);
+  }
+});
+test("project-surface title fallback preserves malformed and overlong display rejection", () => {
+  const malformedTitles = [123, false, {}, []];
+  for (const title of malformedTitles) {
+    const session = new WorkbenchTabsSession();
+    assert.throws(
+      () => session.createProjectRules({ ...a, title }),
+      /valid project rules tab identity is required/u,
+    );
+  }
+
+  const session = new WorkbenchTabsSession();
+  assert.throws(
+    () => session.createHistory({
+      ...a,
+      title: "x".repeat(181),
+      versionId: "ver_0001",
+      versionOrdinal: 1,
+    }),
+    /valid project history tab identity is required/u,
+  );
+});
+test("late project title updates existing surfaces without adding or focusing a tab", () => {
+  const session = new WorkbenchTabsSession();
+  session.bindDocument({ ...a, title: "HTML" });
+  session.createProjectRules({ ...a, title: "   ", focus: false });
+  session.createHistory({
+    ...a,
+    title: "",
+    versionId: "ver_0001",
+    versionOrdinal: 1,
+    focus: false,
+  });
+  const activeTabId = session.snapshot.activeTabId;
+  const tabCount = session.snapshot.tabs.length;
+
+  session.updateTitle(a.projectId, a.documentId, "Alpha from Registry");
+
+  assert.equal(session.snapshot.tabs.length, tabCount);
+  assert.equal(session.snapshot.activeTabId, activeTabId);
+  assert.deepEqual(
+    session.snapshot.tabs
+      .filter((tab) => tab.projectId === a.projectId && tab.documentId === a.documentId)
+      .map((tab) => tab.title),
+    ["Alpha from Registry", "Alpha from Registry", "Alpha from Registry"],
+  );
+});
+test("late registry titles refresh live rules and history labels without changing focus", () => {
+  const session = new WorkbenchTabsSession();
+  session.bindDocument({ ...a, title: "Alpha", focus: true });
+  session.createProjectRules({ ...a, title: "   ", focus: false });
+  session.createHistory({
+    ...a,
+    title: "",
+    versionId: "ver_0001",
+    versionOrdinal: 1,
+    focus: false,
+  });
+  const activeTabId = session.snapshot.activeTabId;
+  const tabCount = session.snapshot.tabs.length;
+
+  const reconciled = session.reconcileRegisteredProjects([{
+    ...a,
+    projectName: "Alpha from Registry",
+    availability: "ready",
+  }]);
+
+  assert.deepEqual(reconciled.missing, []);
+  assert.equal(reconciled.snapshot.tabs.length, tabCount);
+  assert.equal(reconciled.snapshot.activeTabId, activeTabId);
+  assert.deepEqual(
+    reconciled.snapshot.tabs
+      .filter((tab) => tab.kind === "project-rules" || tab.kind === "history")
+      .map((tab) => tab.title),
+    ["Alpha from Registry", "Alpha from Registry"],
+  );
+});
+test("restored project-surface titles remain HTML until a real registry title arrives", () => {
+  const session = new WorkbenchTabsSession();
+  session.hydrate({
+    version: 1,
+    activeTabId: "project-rules:project_alpha:doc_alpha",
+    tabs: [
+      {
+        tabId: "project-rules:project_alpha:doc_alpha",
+        kind: "project-rules",
+        projectId: a.projectId,
+        documentId: a.documentId,
+      },
+      {
+        tabId: "history:project_alpha:doc_alpha",
+        kind: "history",
+        projectId: a.projectId,
+        documentId: a.documentId,
+        versionId: "ver_0001",
+        versionOrdinal: 1,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    session.snapshot.tabs
+      .filter((tab) => tab.projectId === a.projectId && tab.documentId === a.documentId)
+      .map((tab) => tab.title),
+    ["HTML", "HTML"],
+  );
+  const reconciled = session.reconcileRegisteredProjects([{
+    ...a,
+    projectName: "",
+    availability: "ready",
+  }]);
+  assert.deepEqual(reconciled.missing, []);
+  assert.deepEqual(
+    reconciled.snapshot.tabs
+      .filter((tab) => tab.projectId === a.projectId && tab.documentId === a.documentId)
+      .map((tab) => tab.title),
+    ["HTML", "HTML"],
+  );
+});

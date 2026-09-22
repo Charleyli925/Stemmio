@@ -166,7 +166,7 @@ export type SidebarRunProgress = {
   /** What the Agent is saying while it works; null when it has said nothing. */
   narration: string | null;
   /** Stable public message rows under one Agent identity. */
-  narrationUpdates: readonly Readonly<{ id: string; text: string }>[] | null;
+  narrationUpdates: readonly Readonly<{ id: string; text: string; firstSequence?: number }>[] | null;
   /** Whether an upstream public-text boundary omitted a suffix. */
   narrationTruncated: boolean;
   /** The stage actually running, for callers that need to name it. */
@@ -250,6 +250,11 @@ export function sidebarTurnPresentation(messages?: readonly SidebarMessage[]): {
 
 export function sidebarNarrationParagraphs(text: unknown): string[];
 
+/** Pick the latest non-empty public paragraph for the compact process row. */
+export function sidebarNarrationPreview(
+  updates?: readonly (string | Readonly<{ text?: unknown }>)[],
+): string | null;
+
 export function sidebarProcessRows(messages: readonly SidebarMessage[]): { message: SidebarMessage; count: number }[];
 
 export function sidebarConversationPresentation(
@@ -263,3 +268,9 @@ export function sidebarConversationPresentation(
   loading: boolean;
   turns: readonly unknown[];
 }>;
+
+
+export function sidebarActivityTimeline(
+  updates?: readonly { id: string; text: string; firstSequence?: number }[],
+  activities?: readonly import("../application/run-session.js").RunPublicActivity[],
+): readonly { id: string; kind: "narration" | "activity"; text?: string; label?: string; sequence: number }[];

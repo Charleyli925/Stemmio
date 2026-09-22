@@ -31,13 +31,13 @@ export class WorkbenchTabsSession {
   createProjectRules(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     focus?: boolean;
   }): WorkbenchTab | null;
   createHistory(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     versionId: string;
     versionOrdinal: number;
     versionLabel?: string;
@@ -47,14 +47,14 @@ export class WorkbenchTabsSession {
   bindDocument(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     status?: WorkbenchTabStatus;
     focus?: boolean;
   }): WorkbenchTabsSnapshot | null;
   stageDocument(input: {
     projectId: string;
     documentId: string;
-    title: string;
+    title?: string | null;
     status?: WorkbenchTabStatus;
   }): WorkbenchTab | null;
   resolveTab(tabId: string): WorkbenchTab | null;
@@ -69,7 +69,7 @@ export class WorkbenchTabsSession {
     versionLabel?: string;
     displayFileName?: string;
   } | null): WorkbenchTabsSnapshot | null;
-  commitDocument(input: { tabId: string; projectId: string; documentId: string; title: string }): WorkbenchTabsSnapshot | null;
+  commitDocument(input: { tabId: string; projectId: string; documentId: string; title?: string | null }): WorkbenchTabsSnapshot | null;
   cancelSwitch(tabId: string): WorkbenchTabsSnapshot;
   updateStatus(projectId: string, documentId: string, status: WorkbenchTabStatus): WorkbenchTabsSnapshot;
   updateTitle(projectId: string, documentId: string, title: string): WorkbenchTabsSnapshot;
@@ -87,11 +87,11 @@ export function projectAppliedEventToWorkbenchTabs(input: {
     project: Readonly<{
       projectId?: string;
       documentId?: string;
-      name?: string;
+      name?: string | null;
     }>;
     activeLocked?: boolean;
   }>;
-  title?: string;
+  title?: string | null;
 }): WorkbenchTabsSnapshot | null;
 export function reconcileWorkbenchTabsWhenReady(input: {
   session: WorkbenchTabsSession;

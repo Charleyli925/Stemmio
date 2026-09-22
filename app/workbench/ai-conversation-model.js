@@ -216,7 +216,8 @@ export function sidebarRunProgress({
     const text = String(update.text || "").trim();
     if (!id || !text || seenUpdateIds.has(id)) continue;
     seenUpdateIds.add(id);
-    projectedUpdates.push(Object.freeze({ id, text }));
+    projectedUpdates.push(Object.freeze({ id, text, ...(Number.isSafeInteger(update.firstSequence)
+      ? { firstSequence: update.firstSequence } : {}) }));
   }
   const narrationUpdates = projectedUpdates;
   // Copy and summary consumers derive a full sentence from ordered blocks at
@@ -324,7 +325,14 @@ export function sidebarTurnPresentation(messages = []) {
   const process = [];
   const primary = [];
   for (const message of messages) {
-    if (message.kind === "progress" || (message.actor === "stemmio" && LEGACY_EXECUTION_PROGRESS.has(message.text))) process.push(message);
+    // A typed result-summary is a settled fact and remains visible. Other Agent
+    // text has no reliable keyword contract, so it follows the process disclosure
+    // just like a typed progress fact instead of being guessed into a result.
+    if (
+      message.kind === "progress"
+      || (message.actor === "stemmio" && LEGACY_EXECUTION_PROGRESS.has(message.text))
+      || (message.actor === "agent" && message.kind !== "result-summary")
+    ) process.push(message);
     else primary.push(message);
   }
   const timeline = [];
@@ -335,7 +343,9 @@ export function sidebarTurnPresentation(messages = []) {
   for (const message of messages) {
     const isProcess = process.includes(message);
     const previous = timeline.at(-1);
-    if (isProcess && previous?.process && previous.messages[0].actor === message.actor
+    if (isProcess && message.kind !== "process-summary"
+      && previous?.process && previous.messages[0].kind !== "process-summary"
+      && previous.messages[0].actor === message.actor
       && previous.messages[0].actorLabel === message.actorLabel) previous.messages.push(message);
     else timeline.push({ process: isProcess, messages: [message] });
   }
@@ -1065,6 +1075,25 @@ export function sidebarNarrationParagraphs(text) {
   ).map((part) => part.trim()).filter(Boolean);
 }
 
+/**
+ * The compact process row is a view of the latest public paragraph, not a new
+ * model summary. Keep the complete redacted narration elsewhere for copy; this
+ * helper only normalizes whitespace and picks the final non-empty paragraph.
+ */
+export function sidebarNarrationPreview(updates = []) {
+  if (!Array.isArray(updates)) return null;
+  for (let index = updates.length - 1; index >= 0; index -= 1) {
+    const update = updates[index];
+    const text = typeof update === "string" ? update : update?.text;
+    const paragraphs = String(text || "")
+      .split(/\n\s*\n/u)
+      .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
+      .filter(Boolean);
+    if (paragraphs.length > 0) return paragraphs.at(-1);
+  }
+  return null;
+}
+
 export function sidebarProcessRows(messages = []) {
   const rows = [];
   for (const message of messages) {
@@ -1073,4 +1102,40 @@ export function sidebarProcessRows(messages = []) {
     else rows.push({ message, count: 1 });
   }
   return rows;
+}
+
+
+const PUBLIC_ACTIVITY_LABELS = Object.freeze({
+  "file-read": "读取本轮资料",
+  "file-written": "写入修改结果",
+  "response-started": "收到服务响应",
+  "generation-started": "生成修改",
+  "response-ended": "服务响应已结束",
+  "html-validation-completed": "已检查 HTML 完整性",
+  "review-preparation-started": "准备审阅",
+  "cancel-requested": "正在停止",
+  "host-cancelling": "正在停止",
+});
+
+/** Activity is read-only evidence; neither grouping nor response end is success. */
+export function sidebarActivityTimeline(updates = [], activities = []) {
+  const entries = updates.map((update, index) => ({
+    id: update.id, kind: "narration", text: update.text,
+    sequence: Number.isSafeInteger(update.firstSequence) ? update.firstSequence : index,
+  }));
+  for (const activity of activities) {
+    const label = PUBLIC_ACTIVITY_LABELS[activity.kind];
+    if (!label || !Number.isSafeInteger(activity.sequence)) continue;
+    entries.push({ id: activity.id, kind: "activity", activityKind: activity.kind,
+      label, sequence: activity.sequence, boundary: activity.boundary });
+  }
+  entries.sort((a, b) => a.sequence - b.sequence);
+  const grouped = [];
+  for (const entry of entries) {
+    const previous = grouped.at(-1);
+    if (entry.kind === "activity" && previous?.kind === "activity"
+      && previous.activityKind === entry.activityKind && previous.boundary === entry.boundary) continue;
+    grouped.push(entry);
+  }
+  return grouped;
 }

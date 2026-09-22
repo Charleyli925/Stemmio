@@ -146,3 +146,25 @@ test("comment canvas port owns cross-region rail presentation without comment fa
   assert.equal(port.getSnapshot().composerOpen, false);
   assert.equal(port.getSnapshot().focusedCommentId, null);
 });
+
+
+test("new reading or document intent retires a reveal before save returns", () => {
+  const port = createCommentCanvasPort();
+  const target = { id: "original" };
+  const beforeSave = port.captureRevealIntent();
+  port.cancelReveal();
+  port.requestReveal(target, "saved-comment", beforeSave);
+  assert.equal(port.getSnapshot().revealRequest, null);
+  port.requestReveal(target, "fresh-click");
+  assert.equal(port.getSnapshot().revealRequest.itemKey, "fresh-click");
+  const oldRequest = port.getSnapshot().revealRequest;
+  port.cancelReveal();
+  assert.equal(port.getSnapshot().revealRequest, null);
+  port.requestReveal(target, "new-click");
+  port.settleReveal(oldRequest.requestId);
+  assert.equal(port.getSnapshot().revealRequest.itemKey, "new-click");
+  const beforeSwitch = port.captureRevealIntent();
+  port.resetLayout();
+  port.requestReveal(target, "old-document-save", beforeSwitch);
+  assert.equal(port.getSnapshot().revealRequest, null);
+});
