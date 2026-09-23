@@ -158,7 +158,9 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     const copyMetadata = agentMessage.getByRole("button", { name: "复制", exact: true }).locator('..');
     await launched.page.mouse.move(0, 0);
     await expect(copyMetadata).toHaveCSS("opacity", "0");
-    await agentMessage.hover();
+    // Hover the actual affordance: a long narration row can scroll while
+    // Playwright aims at its center, leaving the pointer outside that row.
+    await agentMessage.getByRole("button", { name: "复制", exact: true }).hover();
     await expect(copyMetadata).toHaveCSS("opacity", "1");
     await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "trusted-loop-process-expanded.png"), animations: "disabled" });
     const readyGeometry = await launched.page.evaluate(() => {
