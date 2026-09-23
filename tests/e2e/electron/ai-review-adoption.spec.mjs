@@ -824,6 +824,9 @@ ${REVIEW_MASK_UNION_BEFORE}
     await launched.page.keyboard.press("Tab");
     await reviewCommentMarker.focus();
     await expect(reviewCommentBubble).toBeVisible();
+    await beforeReviewFrame.locator(".review-comment-ordinary-target[data-stemmio-id]")
+      .evaluate((target) => target.scrollIntoView({ block: "center", behavior: "instant" }));
+    await expect(ordinaryReviewCommentMarker).toBeInViewport({ ratio: 1 });
     await ordinaryReviewCommentMarker.hover();
     await expect.poll(() => beforeReviewFrame.locator(
       "[data-stemmio-review-comment-highlight]",
