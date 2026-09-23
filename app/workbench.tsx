@@ -2042,7 +2042,7 @@ export default function Workbench() {
         setInterruption({
           kind: "project-open-failed",
           detail: message,
-          recent: projectEvent.kind === "recent",
+          registered: projectEvent.kind === "registered",
           ...(typeof projectEvent.requestId === "string" && projectEvent.requestId
             ? { requestId: projectEvent.requestId }
             : {}),

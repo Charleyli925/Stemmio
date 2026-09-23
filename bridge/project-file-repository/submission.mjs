@@ -156,12 +156,34 @@ export async function projectSubmissionReceipt(loaded, receipt) {
         : ["candidate-ready", "no-change", "cancelled", "error", "failed", "interrupted", "stop-confirmed"].includes(event.kind) ? "result-summary" : "progress";
       const agentOwned = ["public-summary", "reading-task", "writing-candidate", "finalizing",
         "receiving-response", "generating-modification", "response-received", "execution-ended"].includes(event.kind);
+      const priorMessage = next.messages.find((message) => message.messageId === messageId);
+      const actor = agentOwned && receipt.snapshot.agentDelivery.selection?.providerId ? "agent" : "stemmio";
+      const providerId = actor === "agent" ? receipt.snapshot.agentDelivery.selection.providerId : null;
+      const fixedCaption = EXECUTION_FACTS[event.kind];
+      const captionChanged = priorMessage && event.kind !== "public-summary" && priorMessage.text !== fixedCaption;
+      // Static execution copy is presentation, not the Request or event fact.
+      // Keep the original wording across app upgrades, but never rebind an ID
+      // to another turn, Request, attempt, candidate or event timestamp.
+      if (captionChanged && (
+        priorMessage.turnId !== receipt.turnId
+        || priorMessage.actor !== actor
+        || (priorMessage.providerId || null) !== providerId
+        || priorMessage.kind !== messageKind
+        || priorMessage.status !== "completed"
+        || priorMessage.requestId !== receipt.requestId
+        || priorMessage.attemptId !== receipt.attemptId
+        || (priorMessage.candidateId || null) !== (event.candidateId || null)
+        || priorMessage.createdAt !== event.timestamp
+        || priorMessage.completedAt !== event.timestamp
+      )) {
+        throw new ProjectFileRepositoryError("SUBMISSION_IDENTITY_MISMATCH", "Execution message does not match its event.");
+      }
       next = appendConversationTurnMessage(next, { turnId: receipt.turnId, message: {
-        messageId, actor: agentOwned && receipt.snapshot.agentDelivery.selection?.providerId ? "agent" : "stemmio",
-        ...(agentOwned && receipt.snapshot.agentDelivery.selection?.providerId
-          ? { providerId: receipt.snapshot.agentDelivery.selection.providerId } : {}),
-        kind: next.messages.find((message) => message.messageId === messageId)?.kind || messageKind, status: "completed",
-        text: event.kind === "public-summary" ? event.publicSummary : EXECUTION_FACTS[event.kind], createdAt: event.timestamp, completedAt: event.timestamp,
+        messageId, actor,
+        ...(providerId ? { providerId } : {}),
+        kind: priorMessage?.kind || messageKind, status: "completed",
+        text: event.kind === "public-summary" ? event.publicSummary : captionChanged ? priorMessage.text : fixedCaption,
+        createdAt: event.timestamp, completedAt: event.timestamp,
         requestId: receipt.requestId, attemptId: receipt.attemptId, candidateId: event.candidateId,
       } }, { now: () => event.timestamp });
       const currentTurn = next.turns.find((value) => value.turnId === receipt.turnId);

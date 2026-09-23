@@ -51,6 +51,7 @@
 }
 
 .viewport {
+  -webkit-app-region: no-drag;
   position: fixed;
   top: 8px;
   left: 50%;

@@ -28,6 +28,8 @@ test("project-open recovery preserves only an opaque Prepared request for its ex
     requestId: "prepared_open_retry",
   });
   assert.equal(retryPrepared?.actionId, "retry-project-open");
+  assert.equal(retryPrepared?.title, "打开尚未完成");
+  assert.equal(retryPrepared?.actionLabel, "继续打开");
   assert.equal(retryPrepared?.actionRequestId, "prepared_open_retry");
 
   const reselect = globalInterruptionPresentation({
@@ -35,5 +37,15 @@ test("project-open recovery preserves only an opaque Prepared request for its ex
     detail: "file moved",
   });
   assert.equal(reselect?.actionId, "retry-project-open");
+  assert.equal(reselect?.actionLabel, "选择 HTML");
   assert.equal(reselect?.actionRequestId, undefined);
+
+  const registered = globalInterruptionPresentation({
+    kind: "project-open-failed",
+    registered: true,
+    detail: "项目目录暂时无法完成安全核对。",
+  });
+  assert.equal(registered?.title, "当前稿未打开");
+  assert.equal(registered?.message, "无法确认项目文件状态，原页面保持不变。");
+  assert.equal(registered?.actionId, null);
 });

@@ -149,6 +149,36 @@ test("crash after authoritative outcome write replays history without repeating 
   assert.equal(workspace.manifest.versions.length, 1);
 });
 
+test("an older execution caption does not prevent opening the verified current HTML", async (t) => {
+  const value = await setup(t);
+  const receipt = await prepareRecordedRequest(value);
+  const html = (await readFile(value.target.exactSourcePath, "utf8")).replaceAll(">V1<", ">V2<");
+  await value.repository.completeRequest({ target: value.target, requestId: receipt.requestId,
+    attemptId: receipt.attemptId, html });
+  const context = { projectRoot: path.join(value.target.projectRootPath, ".stemmio"),
+    projectId: value.target.projectId, documentId: value.target.documentId };
+  const conversation = await ensureCurrentConversation(context);
+  const readyMessage = conversation.messages.find((message) => message.text === "AI 已修改完成，已生成可审阅的新 HTML。");
+  assert.ok(readyMessage);
+  await writeConversation(context, { ...conversation, messages: conversation.messages.map((message) =>
+    message.messageId === readyMessage.messageId ? { ...message, text: "修改已准备好，尚未采用。" } : message) });
+
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  const opened = await restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId });
+  assert.equal(opened.html, await readFile(value.target.exactSourcePath, "utf8"));
+  const replayed = await readConversation(context, conversation.conversationId);
+  assert.equal(replayed.messages.find((message) => message.messageId === readyMessage.messageId)?.text, "修改已准备好，尚未采用。");
+
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) =>
+    message.messageId === readyMessage.messageId ? { ...message, requestId: "request_other" } : message) });
+  await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "SUBMISSION_IDENTITY_MISMATCH" });
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) =>
+    message.messageId === readyMessage.messageId ? { ...message, kind: "text" } : message) });
+  await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "SUBMISSION_IDENTITY_MISMATCH" });
+});
+
 
 test("accepted stop fences late output while confirmed cancellation remains separate", async (t) => {
   const value = await setup(t);

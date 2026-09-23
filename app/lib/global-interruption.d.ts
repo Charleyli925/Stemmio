@@ -33,7 +33,7 @@ export type GlobalInterruption =
   | {
       kind: "project-open-failed";
       detail?: string;
-      recent?: boolean;
+      registered?: boolean;
       requestId?: string;
     }
   | {
