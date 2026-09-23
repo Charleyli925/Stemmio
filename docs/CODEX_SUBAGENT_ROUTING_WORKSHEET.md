@@ -25,10 +25,10 @@
 
 | 子 Agent 角色 | 使用的模型 | 推理强度 | 什么时候调用 |
 |---|---|---|---|
-| `explorer` | `gpt-5.6-luna` | `max` | 按需调用 |
-| `worker` | `gpt-5.6-luna` | `max` | 按需调用 |
-| `reviewer` | `gpt-5.6-sol` | 最低 `high`，随主 Agent 向上对齐 | 按需调用 |
-| `tester` | `gpt-5.6-luna` | `max` | 按需调用 |
+| `explorer` | `gpt-6-luna` | `max` | 按需调用 |
+| `worker` | `gpt-6-luna` | `max` | 按需调用 |
+| `reviewer` | `gpt-6-sol` | 最低 `high`，随主 Agent 向上对齐 | 按需调用 |
+| `tester` | `gpt-6-luna` | `max` | 按需调用 |
 
 ## 3. Astra 路由表
 
@@ -36,10 +36,10 @@
 
 | 子 Agent 角色 | 使用的模型 | 推理强度 | 什么时候调用 |
 |---|---|---|---|
-| `explorer` | `gpt-5.6-luna` | `max` | 按需调用 |
-| `worker` | `gpt-5.6-luna` | `max` | 按需调用 |
+| `explorer` | `gpt-6-luna` | `max` | 按需调用 |
+| `worker` | `gpt-6-luna` | `max` | 按需调用 |
 | `reviewer` | `gpt-6-astra` | 最低 `high`，随主 Agent 向上对齐 | 按需调用 |
-| `tester` | `gpt-5.6-luna` | `max` | 按需调用 |
+| `tester` | `gpt-6-luna` | `max` | 按需调用 |
 
 ### Reviewer 对齐表
 
