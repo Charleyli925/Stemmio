@@ -583,7 +583,7 @@ test("the review projection annotates a dense report cleanly and accurately", as
       document.querySelector("#review-bare-editable")?.remove();
       document.querySelector("#review-plaintext-editable")?.remove();
     });
-    await launched.page.getByRole("button", { name: "收起会话面板" }).click();
+    await launched.page.getByRole("button", { name: "AI 助手" }).click();
     const pendingDecisionEntry = launched.page.getByRole("button", {
       name: "待决定",
       exact: true,

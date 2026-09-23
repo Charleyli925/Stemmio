@@ -5,6 +5,7 @@ import { RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
 import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 
 import { createExecutionClock } from "./execution-clock.js";
 import {
@@ -33,6 +34,7 @@ import {
   sidebarCopyTaskState,
   sidebarExecutionStatus,
   sidebarTimestampLabel,
+  sidebarReadingFeedback,
   type SidebarCatalogStatus,
   type SidebarHistoryGroup,
   type SidebarMessage,
@@ -102,7 +104,6 @@ export type AiConversationSidebarProps = {
   loading?: boolean;
   onSend?: () => void;
   onAction?: (actionId: string) => void;
-  onClose?: () => void;
   onOpenAgentSettings?: () => void;
   onSelectModel?: (modelId: string) => void;
   onSelectReasoning?: (reasoning: string) => void;
@@ -148,7 +149,6 @@ export type AiConversationSidebarProps = {
   runKey?: string | null;
   /** The Request identity used for per-round reading preferences. */
   roundKey?: string | null;
-  runCommentCount?: number | null;
   agentPresentation?: Readonly<{
     providerId: string;
     displayName: string;
@@ -168,6 +168,10 @@ type CopyFeedback = Readonly<{
   key: string;
   label: "已复制" | "复制失败";
 }> | null;
+
+type SidebarProviderMessage = SidebarMessage & Readonly<{
+  providerId?: string | null;
+}>;
 
 export type SidebarReadingAnchor = Readonly<{
   messageId: string;
@@ -199,14 +203,19 @@ function prefersReducedMotion(): boolean {
 
 function AgentAvatar({
   presentation,
+  providerId,
 }: {
   presentation: AiConversationSidebarProps["agentPresentation"];
+  providerId?: string | null;
 }) {
-  if (presentation?.logoSrc && presentation.providerId !== "stemmio") {
+  const logoSrc = providerId === "stemmio" || presentation?.providerId === "stemmio"
+    ? "./brand-logo.png"
+    : presentation?.logoSrc;
+  if (logoSrc) {
     return (
       <span className={`${styles.avatar} ${styles.agentAvatar}`} aria-hidden="true">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={presentation.logoSrc} alt="" />
+        <img src={logoSrc} alt="" />
       </span>
     );
   }
@@ -321,7 +330,6 @@ export default function AiConversationSidebar({
   catalogStatus = "ready",
   catalogReason = null,
   agentDisplayName = null,
-  executionDisplayName = null,
   agentActionName = "Agent",
   agentSettingsName = "Agent",
   agentSettingsSupported = true,
@@ -341,7 +349,6 @@ export default function AiConversationSidebar({
   loading = false,
   onSend,
   onAction,
-  onClose,
   onOpenAgentSettings,
   onCopyTask,
   agentAccess,
@@ -355,7 +362,6 @@ export default function AiConversationSidebar({
   agentReceivedBytes = 0,
   runKey = null,
   roundKey = runKey,
-  runCommentCount = null,
   agentPresentation = null,
   runSteps = [],
   sourceFileName = null,
@@ -367,7 +373,10 @@ export default function AiConversationSidebar({
     ? storedReadingState
     : null;
   const [hasUnseenContent, setHasUnseenContent] = useState(false);
-  const [readingHistory, setReadingHistory] = useState(initialReadingState?.following === false);
+  // A restored anchor preserves the reading position, but it is not itself a
+  // fresh upward gesture. The feedback control appears only after a new
+  // explicit read action or after facts arrive while away from the tail.
+  const [readingHistory, setReadingHistory] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(null);
   const [processExpanded, setProcessExpanded] = useState(
     () => initialReadingState?.processExpanded === true,
@@ -378,6 +387,8 @@ export default function AiConversationSidebar({
   const liveMessageRef = useRef<HTMLElement | null>(null);
   const followingRef = useRef(initialReadingState?.following !== false);
   const disclosureReadingRef = useRef(false);
+  const userScrollIntentRef = useRef(false);
+  const pointerScrollIntentRef = useRef(false);
   const readingAnchorRef = useRef<SidebarReadingAnchor | null>(initialReadingState?.anchor || null);
   const pendingReadingAnchorRef = useRef<SidebarReadingAnchor | null>(null);
   const [expandedHistoryKeys, setExpandedHistoryKeys] = useState(
@@ -387,6 +398,7 @@ export default function AiConversationSidebar({
   const contentKeyRef = useRef<string | null>(null);
   const roundKeyRef = useRef<string | null>(initialReadingState?.roundKey || null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followFrameRef = useRef<number | null>(null);
   const followBehaviorRef = useRef<ScrollBehavior>("auto");
   const followForceRef = useRef(false);
@@ -429,6 +441,7 @@ export default function AiConversationSidebar({
       state,
     ],
   );
+  const candidateCardEntering = state === "ready-to-open" && actionBar?.kind === "decision";
   const send = sidebarSendState({
     state,
     catalogStatus,
@@ -460,11 +473,19 @@ export default function AiConversationSidebar({
   // present only while the durable sidebar state is processing. A cancelling
   // or failed handoff must keep the existing decision/recovery surface.
   const executionStatusActive = agentWorking && state === "processing";
-  const executionProviderName = executionDisplayName
-    || agentDisplayName
-    || agentPresentation?.displayName
-    || agentPresentation?.agentName
-    || resolvedAgentActionName;
+  const executionProviderName = resolvedAgentActionName;
+  const liveStageLabel = runProgress?.liveLabel || runProgress?.headline || null;
+  const currentRunMessage = useCallback((message: SidebarMessage) => {
+    if (!runKey) return false;
+    if (runKey.startsWith("pending:")) return true;
+    return `${message.requestId}:${message.attemptId}` === runKey;
+  }, [runKey]);
+  const hasDurableLiveStage = Boolean(
+    liveStageLabel
+    && stream.some((message) => currentRunMessage(message)
+      && message.actor === "stemmio"
+      && ["progress", "process-summary", "result-summary"].includes(message.kind)),
+  );
   const cancelAction = actionBar?.actions.find((action) => action.id === "cancel") || null;
   const cancelButtonLabel = handoffStatus === "cancelling" && deliveryMode === "managed-agent"
     ? cancelAction?.label || "正在停止"
@@ -506,45 +527,40 @@ export default function AiConversationSidebar({
     && recovery.documentId !== (agentAccess?.documentId || ""),
   );
   const resolvedFileName = sourceFileName?.trim() || "当前 HTML";
-  const contextContents = `${Math.max(0, Number(runCommentCount ?? pendingCommentCount) || 0)} 条评论、当前 HTML 和项目规则`;
   const runSummary = runKey
     ? runKey.startsWith("pending:")
       ? {
           title: `正在准备“${resolvedFileName}”`,
-          detail: `正在整理${contextContents}。`,
+          detail: null,
         }
       : deliveryMode === "managed-agent" && handoffStatus
         ? {
             title: `已将“${resolvedFileName}”交给 ${resolvedAgentActionName}`,
-            detail: `发送了${contextContents}。`,
+            detail: null,
           }
         : deliveryMode === "clipboard" && handoffStatus === "copied"
           ? {
               title: `已复制“${resolvedFileName}”的修改要求`,
-              detail: `包含${contextContents}。`,
+              detail: null,
             }
           : {
               title: `已准备“${resolvedFileName}”的修改要求`,
-              detail: `包含${contextContents}。`,
+              detail: null,
             }
     : null;
-  const contentKey = [
-    runKey || "",
-    agentActivities.map((activity) => activity.id).join(","),
-    agentActivitiesTruncated ? "activities-truncated" : "",
-    runProgress?.liveLabel || runProgress?.headline || "",
-    runProgress?.narrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
-    runProgress?.narrationTruncated ? "truncated" : "",
-    stream.map((message) => `${message.messageId}:${message.sequence}:${message.text.length}`).join(","),
-  ].join("|");
   const liveNarrationUpdates = runProgress?.narrationUpdates || null;
+  const hasLiveAgentContent = Boolean(
+    liveNarrationUpdates?.length
+    || executionStatusActive
+    || (currentProviderId !== "stemmio" && agentActivities.length > 0),
+  );
   const displayedGroups = useMemo(() => {
     const groups = historyGroups.length ? [...historyGroups] : [{
       key: "messages", label: "", kind: "current", messageIndices: stream.map((_message, index) => index),
     }];
     // Conversation reads can lag the Run. Keep its receipt-keyed row outside
     // historical groups until the stored turn identity arrives.
-    if (runKey && (liveNarrationUpdates || agentActivities.length > 0 || executionStatusActive)
+    if (runKey && hasLiveAgentContent
       && !groups.some((group) => group.kind === "current")
       && !stream.some((message) => message.kind === "process-summary"
         && `${message.requestId}:${message.attemptId}` === runKey)) {
@@ -552,7 +568,7 @@ export default function AiConversationSidebar({
     }
     return groups.map((group) => {
       const messages = stream.filter((_message, index) => group.messageIndices.includes(index));
-      if (group.kind === "current" && runKey && (liveNarrationUpdates || agentActivities.length > 0 || executionStatusActive)
+      if (group.kind === "current" && runKey && hasLiveAgentContent
         && !messages.some((message) => message.kind === "process-summary"
           && `${message.requestId}:${message.attemptId}` === runKey)) {
         const [requestId, attemptId] = runKey.split(":");
@@ -562,14 +578,24 @@ export default function AiConversationSidebar({
           sequence: 0, createdAt: "", modelDisplayName: null, turnId: null,
           requestId, attemptId,
         };
-        const terminal = messages.findIndex((message) => message.requestId === requestId
-          && message.attemptId === attemptId
-          && ["result-summary", "decision-outcome", "error"].includes(message.kind));
-        messages.splice(terminal < 0 ? messages.length : terminal, 0, narration);
+        // The live row has no durable sequence yet. Keep it at the tail so a
+        // later process-summary cannot jump above an earlier result while the
+        // conversation reader is waiting for the sealed record.
+        messages.push(narration);
       }
       return { ...group, ...sidebarTurnPresentation(messages) };
     });
-  }, [historyGroups, stream, runKey, liveNarrationUpdates, agentActivities.length, executionStatusActive, executionProviderName]);
+  }, [historyGroups, stream, runKey, hasLiveAgentContent, executionProviderName]);
+  const contentKey = [
+    runKey || "",
+    currentProviderId !== "stemmio" ? agentActivities.map((activity) => activity.id).join(",") : "",
+    currentProviderId !== "stemmio" && agentActivitiesTruncated ? "activities-truncated" : "",
+    state === "processing" && !executionStatusActive && !hasDurableLiveStage ? liveStageLabel || "" : "",
+    liveNarrationUpdates?.map((update) => `${update.id}:${update.text.length}`).join(",") || "",
+    runProgress?.narrationTruncated ? "truncated" : "",
+    displayedGroups.flatMap((group) => group.timeline.flatMap((block) => block.messages
+      .map((message) => `${message.messageId}:${message.sequence}:${message.text.length}`))).join(","),
+  ].join("|");
 
   const persistReadingState = useCallback(() => {
     if (!readingStateStore) return;
@@ -661,7 +687,7 @@ export default function AiConversationSidebar({
         followingRef.current = false;
         const anchor = findVisibleAnchor();
         if (anchor) readingAnchorRef.current = anchor;
-        setReadingHistory(true);
+        setReadingHistory(false);
         persistReadingState();
         return;
       }
@@ -671,24 +697,61 @@ export default function AiConversationSidebar({
 
   const onStreamScroll = useCallback(() => {
     const streamElement = streamRef.current;
-    if (!streamElement || disclosureReadingRef.current) return;
+    if (!streamElement || disclosureReadingRef.current
+      || (!userScrollIntentRef.current && !pointerScrollIntentRef.current)) return;
     const distanceFromBottom = Math.max(
       0,
       streamElement.scrollHeight - streamElement.clientHeight - streamElement.scrollTop,
     );
     followingRef.current = distanceFromBottom <= FOLLOW_THRESHOLD_PX;
-    setReadingHistory(!followingRef.current);
+    const feedback = sidebarReadingFeedback({
+      distanceFromBottom,
+      userInitiated: true,
+      hasUnseenContent,
+    });
     if (followingRef.current) {
       readingAnchorRef.current = null;
       setHasUnseenContent(false);
+      setReadingHistory(false);
     } else {
+      setReadingHistory(feedback.readingHistory);
       captureReadingAnchor();
     }
     persistReadingState();
-  }, [captureReadingAnchor, persistReadingState]);
+  }, [captureReadingAnchor, hasUnseenContent, persistReadingState]);
+
+  const markUserScrollIntent = useCallback(() => {
+    disclosureReadingRef.current = false;
+    userScrollIntentRef.current = true;
+    if (userScrollTimerRef.current !== null) clearTimeout(userScrollTimerRef.current);
+    userScrollTimerRef.current = setTimeout(() => {
+      userScrollIntentRef.current = false;
+      userScrollTimerRef.current = null;
+    }, 250);
+  }, []);
+
+  useEffect(() => {
+    const endPointerScroll = () => {
+      if (!pointerScrollIntentRef.current) return;
+      pointerScrollIntentRef.current = false;
+      markUserScrollIntent();
+    };
+    window.addEventListener("pointerup", endPointerScroll);
+    window.addEventListener("pointercancel", endPointerScroll);
+    return () => {
+      window.removeEventListener("pointerup", endPointerScroll);
+      window.removeEventListener("pointercancel", endPointerScroll);
+    };
+  }, [markUserScrollIntent]);
 
   const revealLatest = useCallback(() => {
     disclosureReadingRef.current = false;
+    userScrollIntentRef.current = false;
+    pointerScrollIntentRef.current = false;
+    if (userScrollTimerRef.current !== null) {
+      clearTimeout(userScrollTimerRef.current);
+      userScrollTimerRef.current = null;
+    }
     followingRef.current = true;
     setReadingHistory(false);
     readingAnchorRef.current = null;
@@ -701,7 +764,6 @@ export default function AiConversationSidebar({
     // Layout-induced scroll events must not cancel explicit disclosure intent.
     disclosureReadingRef.current = true;
     followingRef.current = false;
-    setReadingHistory(true);
     const article = element.closest<HTMLElement>("[data-reading-anchor-id]");
     const streamElement = streamRef.current;
     if (article?.dataset.readingAnchorId && streamElement) {
@@ -747,12 +809,15 @@ export default function AiConversationSidebar({
 
   useEffect(() => () => {
     if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
+    if (userScrollTimerRef.current !== null) clearTimeout(userScrollTimerRef.current);
   }, []);
 
   useEffect(() => {
     if (roundKey && roundKey !== roundKeyRef.current) {
       roundKeyRef.current = roundKey;
       disclosureReadingRef.current = false;
+      userScrollIntentRef.current = false;
+      pointerScrollIntentRef.current = false;
       processExpandedRef.current = false;
       setProcessExpanded(false);
       followingRef.current = true;
@@ -776,7 +841,11 @@ export default function AiConversationSidebar({
     contentKeyRef.current = contentKey;
     if (followingRef.current) scheduleFollow("auto");
     else {
+      // Any newly projected fact while away from the tail is actionable. A
+      // small upward move alone stays quiet; the new fact changes the label to
+      // "有新进展" without requiring a long-distance threshold.
       setHasUnseenContent(true);
+      setReadingHistory(true);
       queueRestoreAnchor(readingAnchorRef.current);
     }
   }, [contentKey, queueRestoreAnchor, scheduleFollow]);
@@ -824,9 +893,18 @@ export default function AiConversationSidebar({
       : message.text ? [{ id: message.messageId, text: message.text }] : null;
     const body = updates?.map((update) => update.text).join("\n\n") || "";
     const preview = sidebarNarrationPreview(updates || []);
-    const publicTimeline = sidebarActivityTimeline(updates || [], current ? agentActivities : []);
+    // Native HTTP activities describe transport bookkeeping already captured
+    // by the durable run. Show the model's public text without a second list
+    // of response/validation milestones under the same Agent avatar.
+    const publicTimeline = sidebarActivityTimeline(
+      updates || [],
+      current && currentProviderId !== "stemmio" ? agentActivities : [],
+    );
     const expanded = current ? processExpanded : expandedHistoryKeys.has(processKey);
     const panelId = `${narrationPanelId}-${message.messageId}`;
+    const messageProviderId = (message as SidebarProviderMessage).providerId || null;
+    const messagePresentation = messageProviderId && messageProviderId === currentProviderId
+      ? agentPresentation : null;
     return (
           <article
             key={processKey}
@@ -836,10 +914,10 @@ export default function AiConversationSidebar({
             data-reading-anchor-id={processKey}
             data-testid="ai-conversation-narration-message"
             data-process-state={message.text ? "sealed" : "live"}
-            aria-label={`${resolvedAgentActionName} 的说明`}
+            aria-label={`${current ? executionProviderName : message.actorLabel} 的处理过程`}
             aria-live="off"
           >
-            <AgentAvatar presentation={current ? agentPresentation : null} />
+            <AgentAvatar presentation={current ? agentPresentation : messagePresentation} providerId={messageProviderId} />
             <span className={`${styles.actor} ${styles.liveActor}`}>
               <span>{current ? executionProviderName : message.actorLabel}</span>
               {current && executionStatusActive ? (
@@ -936,7 +1014,18 @@ export default function AiConversationSidebar({
           <span className={styles.mode} data-testid="ai-conversation-mode">
             {mode.label}
           </span>
-          {onClose ? <button className={styles.close} type="button" aria-label="收起会话面板" onClick={onClose}>×</button> : null}
+          <button
+            type="button"
+            className={styles.headerCopy}
+            data-testid="ai-conversation-copy-task"
+            data-tooltip="复制任务指令"
+            data-tooltip-side="below"
+            aria-label="复制任务指令"
+            disabled={!onCopyTask || !copyTask.canCopy}
+            onClick={() => onCopyTask?.()}
+          >
+            <CopyIcon size={16} weight="regular" aria-hidden="true" />
+          </button>
         </div>
         {sourceFileName || contextLabel ? (
           <p className={styles.context} data-testid="ai-conversation-context">
@@ -958,11 +1047,14 @@ export default function AiConversationSidebar({
         aria-label="对话记录"
         data-testid="ai-conversation-stream"
         onScroll={onStreamScroll}
-        onWheel={() => { disclosureReadingRef.current = false; }}
-        onPointerDown={() => { disclosureReadingRef.current = false; }}
+        onWheel={markUserScrollIntent}
+        onPointerDown={() => {
+          pointerScrollIntentRef.current = true;
+          markUserScrollIntent();
+        }}
         onKeyDown={(event) => {
           if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-            disclosureReadingRef.current = false;
+            markUserScrollIntent();
           }
         }}
       >
@@ -978,9 +1070,14 @@ export default function AiConversationSidebar({
             ...group.timeline.map((block) => {
             if (block.messages[0].kind === "process-summary") return renderNarration(block.messages[0]);
             if (block.process) return (
-              <article key={block.messages[0].messageId} className={`${styles.message} ${styles.turnProcess}`} data-actor={block.messages[0].actor} data-testid="ai-turn-process" data-reading-anchor-id={`process:${block.messages[0].messageId}`} aria-label={`${block.messages[0].actorLabel} 处理记录`}>
-                <>{block.messages[0].actor === "agent" ? <AgentAvatar presentation={null} /> : <StemmioAvatar />}</>
-                <span className={styles.actor}>{block.messages[0].actorLabel} <span className={styles.actorDetail}>处理记录</span></span>
+              <article key={block.messages[0].messageId} className={`${styles.message} ${styles.turnProcess}`} data-actor={block.messages[0].actor} data-testid="ai-turn-process" data-reading-anchor-id={`process:${block.messages[0].messageId}`} aria-label={`${block.messages[0].actorLabel} 处理过程`}>
+                <>{block.messages[0].actor === "agent"
+                  ? <AgentAvatar
+                    presentation={(block.messages[0] as SidebarProviderMessage).providerId === currentProviderId ? agentPresentation : null}
+                    providerId={(block.messages[0] as SidebarProviderMessage).providerId}
+                  />
+                  : <StemmioAvatar />}</>
+                <span className={styles.actor}>{block.messages[0].actorLabel}</span>
                 {(() => {
                   const disclosureKey = `process:${block.messages[0].messageId}`;
                   return (
@@ -1026,6 +1123,9 @@ export default function AiConversationSidebar({
             const message = block.messages[0];
             const timestamp = sidebarTimestampLabel(message.createdAt);
             const copyKey = `message:${message.messageId}`;
+            const messageProviderId = (message as SidebarProviderMessage).providerId || null;
+            const messagePresentation = messageProviderId && messageProviderId === currentProviderId
+              ? agentPresentation : null;
             return (
               <Fragment key={message.messageId || String(message.sequence)}>
                 <article
@@ -1040,8 +1140,8 @@ export default function AiConversationSidebar({
                     <StemmioAvatar />
                   ) : message.actor === "user" ? (
                     <span className={`${styles.avatar} ${styles.userAvatar}`} aria-hidden="true"><UserIcon size={16} weight="regular" /></span>
-                  ) : <AgentAvatar presentation={null} />}
-                  <span className={styles.actor}>{message.actor === "agent" ? message.modelDisplayName || message.actorLabel : message.actorLabel}</span>
+                  ) : <AgentAvatar presentation={messagePresentation} providerId={messageProviderId} />}
+                  <span className={styles.actor}>{message.actorLabel}</span>
                   <div className={styles.text}>{(message.actor === "agent" ? sidebarNarrationParagraphs(message.text) : [message.text]).map((text, index) => <p key={index} className={styles.narrationLine}>{text}</p>)}</div>
                   {timestamp || message.text ? (
                     <div className={styles.messageMeta}>
@@ -1066,7 +1166,8 @@ export default function AiConversationSidebar({
           ])
         )}
 
-        {runSummary && deliveryMode !== "managed-agent" ? (
+        {runSummary && deliveryMode !== "managed-agent"
+        && !stream.some((message) => currentRunMessage(message) && message.actor === "stemmio") ? (
           <section
             className={`${styles.message} ${styles.runSummary}`}
             data-actor="stemmio"
@@ -1088,7 +1189,7 @@ export default function AiConversationSidebar({
           * (ADR 0037 §4). The selected Agent's public words follow in their
           * own stable article, so the two speakers never blur together.
           */}
-        {!executionStatusActive && (runProgress?.liveLabel || runProgress?.headline) ? (
+        {state === "processing" && !executionStatusActive && liveStageLabel && !hasDurableLiveStage ? (
           <section
             className={`${styles.message} ${styles.runActivity}`}
             data-actor="stemmio"
@@ -1107,7 +1208,7 @@ export default function AiConversationSidebar({
               className={`${styles.text} ${styles.liveStatus}`}
               aria-live="off"
             >
-              {runProgress?.liveLabel || runProgress?.headline}
+              {liveStageLabel}
             </p>
           </section>
         ) : null}
@@ -1135,7 +1236,7 @@ export default function AiConversationSidebar({
       <div className={styles.currentActions} data-testid="ai-conversation-current-actions">
         {actionBar && !executionStatusActive ? (
           <section
-            className={`${styles.message} ${styles.actionBar}`}
+            className={`${styles.message} ${styles.actionBar} ${candidateCardEntering ? styles.candidateCardEnter : ""}`}
             data-actor="stemmio"
             data-kind={actionBar.kind}
             data-testid="ai-conversation-action-bar"
@@ -1188,8 +1289,6 @@ export default function AiConversationSidebar({
           id="ai-conversation-draft"
           className={styles.draftInput}
           data-testid="ai-conversation-draft"
-          aria-describedby="ai-conversation-draft-hint"
-          placeholder="记下接下来想调整的内容…"
           value={draftText}
           disabled={!draftAvailable}
           maxLength={8000}
@@ -1200,20 +1299,6 @@ export default function AiConversationSidebar({
             onDraftTextChange?.(event.target.value);
           }}
         />
-        <p id="ai-conversation-draft-hint" className={styles.draftHint}>草稿随文档保留，暂不发送给 AI。</p>
-        {/*
-          * The round's context summary belongs to the Composer, not to the fact
-          * stream: it changes as the user works and must never be persisted as
-          * a message.
-          */}
-        {(state === "preview-ready" || state === "no-change") && activeIntent === "modify" ? (
-          <p
-            className={styles.contextSummary}
-            data-testid="ai-conversation-context-summary"
-          >
-            {`${pendingCommentCount} 条修改意见`}
-          </p>
-        ) : null}
         {(state === "preview-ready" || state === "no-change") && send.reason ? (
           <p className={styles.sendReason} data-testid="ai-conversation-send-reason">
             {send.reason}
@@ -1231,17 +1316,6 @@ export default function AiConversationSidebar({
 
           {(state === "preview-ready" || state === "no-change") ? (
           <div className={styles.deliveryActions}>
-            {activeIntent === "modify" && onCopyTask ? (
-              <details className={styles.moreActions}><summary aria-label="更多发送选项">＋</summary><button
-                type="button"
-                className={styles.copyTask}
-                data-testid="ai-conversation-copy-task"
-                disabled={!copyTask.canCopy}
-                onClick={() => onCopyTask()}
-              >
-                复制给别的 AI
-              </button></details>
-            ) : null}
             {send.kind === "status" ? (
               send.label ? (
                 <span

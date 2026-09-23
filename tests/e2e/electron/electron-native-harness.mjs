@@ -156,8 +156,7 @@ export async function chooseClipboardDelivery(page) {
   await expect(sidebar).toBeVisible();
   await expect(sidebar.getByTestId("ai-conversation-intent")).toHaveCount(0);
   await expect(sidebar.getByTestId("ai-conversation-input")).toHaveCount(0);
-  await sidebar.getByLabel("更多发送选项", { exact: true }).click();
-  await sidebar.getByRole("button", { name: /复制给别的 AI/u }).click();
+  await sidebar.getByRole("button", { name: "复制任务指令" }).click();
 }
 
 export async function loadedDiskFrame(page, sourcePath, caseId, {

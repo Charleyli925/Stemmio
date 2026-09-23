@@ -96,7 +96,7 @@ test("a pre-load review navigation falls back without trusting the replacement p
       location.replace("about:blank");
     });
     await expect(launched.page.getByTestId("review-visual-status")).toHaveCount(0);
-    await launched.page.getByRole("button", { name: "收起会话面板" }).click();
+    await launched.page.getByRole("button", { name: "AI 助手" }).click();
     const pendingDecisionEntry = launched.page.getByRole("button", {
       name: "待决定",
       exact: true,

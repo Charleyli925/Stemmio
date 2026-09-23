@@ -21,6 +21,7 @@ export type SidebarMessage = {
   messageId: string;
   actor: string;
   actorLabel: string;
+  providerId?: string | null;
   kind: string;
   status: string;
   text: string;
@@ -51,7 +52,7 @@ export type SidebarAction = {
 export type SidebarActionBar = {
   kind: "decision" | "progress" | "blocked";
   title: string;
-  detail: string;
+  detail: string | null;
   actions: SidebarAction[];
 };
 
@@ -186,6 +187,16 @@ export function sidebarTimestampLabel(
   value: unknown,
   options?: { now?: number },
 ): string | null;
+
+export function sidebarReadingFeedback(options?: {
+  distanceFromBottom?: number;
+  userInitiated?: boolean;
+  hasUnseenContent?: boolean;
+}): Readonly<{
+  readingHistory: boolean;
+  label: "回到最新" | "有新进展" | null;
+  thresholdPx: number;
+}>;
 
 export function sidebarSendState(options?: {
   state?: string;

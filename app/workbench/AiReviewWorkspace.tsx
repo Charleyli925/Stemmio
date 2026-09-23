@@ -316,7 +316,7 @@ function ReviewDocumentPane({
     const layout = commentLayoutsByKey.get(group.key);
     return layout ? [{ group, layout }] : [];
   });
-  const nearbyCommentClusters: Array<{
+  const commentMarkers: Array<{
     key: string;
     keys: string[];
     items: ReviewCommentGroup["items"];
@@ -329,34 +329,38 @@ function ReviewDocumentPane({
     viewportTop: number;
     global: boolean;
   }> = [];
+  const markerStep = 36 / scale;
+  const markerEdge = 18 / scale;
   commentEntries
     .filter(({ layout }) => !layout.global)
     .sort((left, right) => left.layout.top - right.layout.top)
     .forEach(({ group, layout }) => {
-      const previous = nearbyCommentClusters.at(-1);
-      if (previous && Math.abs(layout.top - previous.top) * scale < 34) {
-        previous.key += `-${group.key}`;
-        previous.keys.push(group.key);
-        previous.items.push(...group.items);
-        previous.left = Math.max(previous.left, layout.left);
-        previous.targetLeft = Math.min(previous.targetLeft, layout.targetLeft);
-        previous.targetRight = Math.max(previous.targetRight, layout.targetRight);
-        previous.viewportTargetLeft = Math.min(
-          previous.viewportTargetLeft,
-          layout.viewportTargetLeft,
-        );
-        previous.viewportTargetRight = Math.max(
-          previous.viewportTargetRight,
-          layout.viewportTargetRight,
-        );
-        return;
-      }
-      nearbyCommentClusters.push({
+      // Binding has already grouped comments on the same source element.
+      // Separate only markers that would physically overlap in the same lane.
+      // Near the bottom of the visible document, stack upward so a marker
+      // cannot be pushed below the last scrollable row.
+      const conflicts = (top: number) => commentMarkers.some((marker) => !marker.global
+        && Math.abs(marker.left - layout.left) < 52 / scale
+        && Math.abs(marker.top - top) < markerStep);
+      const place = (direction: 1 | -1) => {
+        let top = layout.top;
+        for (let step = 0; step <= commentEntries.length; step += 1) {
+          const viewportTop = layout.viewportTop + top - layout.top;
+          if (viewportTop < markerEdge || viewportTop > viewportSize.height / scale - markerEdge) return null;
+          if (!conflicts(top)) return top;
+          top += direction * markerStep;
+        }
+        return null;
+      };
+      const direction = layout.viewportTop > viewportSize.height / scale - markerStep - markerEdge
+        ? -1 : 1;
+      const markerTop = place(direction) ?? place(direction === 1 ? -1 : 1) ?? layout.top;
+      commentMarkers.push({
         key: group.key,
         keys: [group.key],
         items: [...group.items],
         left: layout.left,
-        top: layout.top,
+        top: markerTop,
         targetLeft: layout.targetLeft,
         targetRight: layout.targetRight,
         viewportTargetLeft: layout.viewportTargetLeft,
@@ -367,7 +371,7 @@ function ReviewDocumentPane({
     });
   const globalEntries = commentEntries.filter(({ layout }) => layout.global);
   if (globalEntries.length) {
-    nearbyCommentClusters.unshift({
+    commentMarkers.unshift({
       key: globalEntries.map(({ group }) => group.key).join("-"),
       keys: globalEntries.map(({ group }) => group.key),
       items: globalEntries.flatMap(({ group }) => group.items),
@@ -391,7 +395,7 @@ function ReviewDocumentPane({
     onViewport(side, null);
   }, [onFrame, onViewport, side]);
 
-  const renderCommentMarker = (cluster: (typeof nearbyCommentClusters)[number]) => {
+  const renderCommentMarker = (cluster: (typeof commentMarkers)[number]) => {
     const preferredPlacement = cluster.global
       ? "right" as const
       : (() => {
@@ -493,12 +497,12 @@ function ReviewDocumentPane({
           />
         </div>
       </div>
-      {nearbyCommentClusters.length ? (
+      {commentMarkers.length ? (
         <div className={styles.reviewCommentLayer}>
           <div className={styles.reviewCommentContentLayer}>
-            {nearbyCommentClusters.filter((cluster) => !cluster.global).map(renderCommentMarker)}
+            {commentMarkers.filter((cluster) => !cluster.global).map(renderCommentMarker)}
           </div>
-          {nearbyCommentClusters.filter((cluster) => cluster.global).map(renderCommentMarker)}
+          {commentMarkers.filter((cluster) => cluster.global).map(renderCommentMarker)}
         </div>
       ) : null}
     </section>

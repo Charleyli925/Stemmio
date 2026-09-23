@@ -20,6 +20,7 @@ import {
   sidebarSendState,
   sidebarCopyTaskState,
   sidebarRunProgress,
+  sidebarReadingFeedback,
   sidebarStateFromRun,
   sidebarTimestampLabel,
   sidebarTurnPresentation,
@@ -45,7 +46,7 @@ test("the message stream projects immutable facts and never an action", () => {
   ]);
 
   assert.equal(stream.length, 2);
-  assert.deepEqual(stream.map((message) => message.actorLabel), ["我", "Qoder CLI"]);
+  assert.deepEqual(stream.map((message) => message.actorLabel), ["我", "Qoder"]);
   for (const message of stream) {
     for (const key of FORBIDDEN_MESSAGE_KEYS) {
       assert.ok(
@@ -83,7 +84,7 @@ test("the action bar is derived from product state, never from a message", () =>
   });
   assert.equal(pending.kind, "decision");
   assert.equal(pending.title, "修改已准备好，尚未采用");
-  assert.equal(pending.detail, "查看本次修改，再决定是否采用。");
+  assert.equal(pending.detail, null);
   assert.deepEqual(pending.actions.map((action) => action.id), ["review"]);
 
   const running = sidebarActionBar({ state: "processing" });
@@ -106,7 +107,7 @@ test("an attention candidate is not offered for blind adoption", () => {
     candidateStatus: "attention",
   });
   assert.deepEqual(unseen.actions.map((action) => action.id), ["review"]);
-  assert.match(unseen.detail, /变化较大/u);
+  assert.equal(unseen.detail, null);
 
   // While comparing, the user is looking at it, so adopting is legitimate — and
   // pointing at 「查看修改」 would point at the screen they are already on.
@@ -319,7 +320,7 @@ test("Agent connection recovery is an explicit sidebar action, not a send", () =
     agentSettingsName: "Codex",
     agentSettingsSupported: false,
   });
-  assert.equal(codexModify.label, "交给 Codex 修改");
+  assert.equal(codexModify.label, "交给 AI 修改");
 });
 
 test("Candidate decisions and in-flight delivery win over Agent setup", () => {
@@ -702,6 +703,50 @@ test("history groups use exact Request identity and leave legacy messages histor
   assert.equal(groups.some((group) => group.kind === "current" && group.messageIds.includes("message_legacy")), false);
 });
 
+test("history separators keep dates only, even when a turn has a provider", () => {
+  const groups = sidebarConversationGroups({
+    messages: [factMessage({
+      messageId: "message_http_history",
+      turnId: "turn_http_history",
+      requestId: "request_http_history",
+      attemptId: "attempt_http_history",
+      createdAt: "2026-08-25T10:31:00.000Z",
+    })],
+    turns: [{
+      turnId: "turn_http_history",
+      requestId: "request_http_history",
+      attemptId: "attempt_http_history",
+      startedAt: "2026-08-25T10:30:00.000Z",
+      providerSelection: { providerId: "stemmio" },
+    }],
+    now: Date.parse("2026-08-26T12:00:00.000Z"),
+  });
+  assert.equal(groups[0].label, "8月25日 · 历史对话");
+  assert.doesNotMatch(groups[0].label, /HTTP|DeepSeek|Qoder|Codex/u);
+});
+
+test("reading feedback waits for a long upward gesture but announces new facts nearby", () => {
+  assert.deepEqual(sidebarReadingFeedback({
+    distanceFromBottom: 119,
+    userInitiated: true,
+  }), {
+    readingHistory: false,
+    label: null,
+    thresholdPx: 120,
+  });
+  assert.equal(sidebarReadingFeedback({
+    distanceFromBottom: 120,
+    userInitiated: true,
+  }).label, "回到最新");
+  assert.equal(sidebarReadingFeedback({
+    distanceFromBottom: 64,
+    hasUnseenContent: true,
+  }).label, "有新进展");
+  assert.equal(sidebarReadingFeedback({
+    distanceFromBottom: 64,
+  }).label, null);
+});
+
 test("a pending submission error without a handoff cannot offer a dead resend", () => {
   assert.equal(sidebarFailureRetryable({ requestId: "pending" }, null), false);
   assert.equal(
@@ -756,7 +801,7 @@ test("the Composer sends only the page-comment modification", () => {
     pendingCommentCount: 2,
   });
   assert.equal(modify.canSend, true);
-  assert.equal(modify.label, "交给 Agent 修改");
+  assert.equal(modify.label, "交给 AI 修改");
   assert.equal(modify.reason, null);
 
   // With nothing written there is nothing for the Agent to act on, and the
@@ -1115,7 +1160,7 @@ test("adoption uncertainty takes precedence over Review and exposes no opposite 
   assert.deepEqual(staleConflict.actions, []);
 });
 
-test("turn presentation keeps process before its settled result and later decision", async () => {
+test("turn presentation keeps meaningful facts in Conversation order", async () => {
   const requirements = factMessage({ actor: "user", kind: "text", text: "调整标题" });
   const progress = factMessage({ kind: "progress", text: "正在生成修改。" });
   const summary = factMessage({ actor: "agent", kind: "result-summary", text: "标题已缩短。" });
@@ -1126,8 +1171,39 @@ test("turn presentation keeps process before its settled result and later decisi
   assert.deepEqual(presentation.primary, [requirements, summary, result, decision]);
   assert.deepEqual(presentation.process, [progress, ended]);
   assert.deepEqual(presentation.timeline.map((block) => block.messages), [
-    [requirements], [progress], [ended], [summary], [result], [decision],
+    [requirements], [summary], [result], [ended], [decision],
   ]);
+});
+
+test("a late process-summary stays after the earlier result in Conversation sequence", () => {
+  const messages = [
+    factMessage({ messageId: "seq-12", sequence: 12, actor: "stemmio", kind: "progress", text: "已发出本轮修改要求。" }),
+    factMessage({ messageId: "seq-13", sequence: 13, actor: "stemmio", kind: "progress", text: "已收到服务响应。" }),
+    factMessage({ messageId: "seq-14", sequence: 14, actor: "stemmio", kind: "progress", text: "正在生成修改。" }),
+    factMessage({ messageId: "seq-15", sequence: 15, actor: "agent", kind: "progress", providerId: "stemmio", text: "正在生成候选。" }),
+    factMessage({ messageId: "seq-18", sequence: 18, actor: "stemmio", kind: "progress", text: "本轮结果接收结束。" }),
+    factMessage({ messageId: "seq-19", sequence: 19, actor: "stemmio", kind: "progress", text: "正在准备审阅。" }),
+    factMessage({ messageId: "seq-20", sequence: 20, actor: "stemmio", kind: "result-summary", text: "修改已准备好。" }),
+    factMessage({ messageId: "seq-21", sequence: 21, actor: "agent", kind: "process-summary", providerId: "stemmio", text: "已完成公开过程封存。" }),
+    factMessage({ messageId: "seq-22", sequence: 22, actor: "stemmio", kind: "decision-outcome", text: "已采用本次修改。" }),
+  ];
+  // The durable receipt remains intact; only the display projection folds
+  // mechanical Stemmio progress out of the reader.
+  assert.equal(sidebarMessageStream(messages).length, messages.length);
+  const timeline = sidebarTurnPresentation(messages).timeline.flatMap((block) => block.messages);
+  assert.deepEqual(timeline.map((message) => message.sequence), [15, 20, 21, 22]);
+  assert.equal(timeline[1].kind, "result-summary");
+  assert.equal(timeline[2].kind, "process-summary");
+});
+
+test("native HTTP transport facts do not repeat beside the model's public words", () => {
+  const received = factMessage({ sequence: 15, actor: "agent", providerId: "stemmio", kind: "progress", text: "已收到服务响应。" });
+  const generated = factMessage({ sequence: 16, actor: "agent", providerId: "stemmio", kind: "progress", text: "正在生成修改。" });
+  const publicText = factMessage({ sequence: 17, actor: "agent", providerId: "stemmio", kind: "progress", text: "正在改写图表标题。" });
+  const result = factMessage({ sequence: 18, actor: "stemmio", kind: "result-summary", text: "候选已准备好。" });
+  const visible = sidebarTurnPresentation([received, generated, publicText, result])
+    .timeline.flatMap((block) => block.messages);
+  assert.deepEqual(visible, [publicText, result]);
 });
 
 test("ordinary Agent text stays in the collapsible process timeline while typed results stay visible", () => {
@@ -1153,7 +1229,7 @@ test("the compact narration preview picks the latest non-empty paragraph without
 
 
 test("stored provider identities keep their names instead of becoming a generic AI Agent", () => {
-  assert.deepEqual(sidebarMessageStream(["qoder", "codex", "stemmio"].map((providerId) => factMessage({ actor: "agent", providerId }))).map((message) => message.actorLabel), ["Qoder", "Codex", "Stemmio AI"]);
+  assert.deepEqual(sidebarMessageStream(["qoder", "codex", "stemmio"].map((providerId) => factMessage({ actor: "agent", providerId }))).map((message) => message.actorLabel), ["Qoder", "Codex", "源页"]);
 });
 
 test("process blocks preserve executor boundaries and narration sentences survive display", async () => {
@@ -1163,7 +1239,7 @@ test("process blocks preserve executor boundaries and narration sentences surviv
     { messageId: 'b', actor: 'agent', actorLabel: 'Codex', kind: 'progress', text: '读取资料' },
     { messageId: 'c', actor: 'stemmio', actorLabel: 'Stemmio', kind: 'progress', text: '准备审阅' },
   ];
-  assert.deepEqual(sidebarTurnPresentation(messages).timeline.map(block => block.messages[0].actor), ['stemmio', 'agent', 'stemmio']);
+  assert.deepEqual(sidebarTurnPresentation(messages).timeline.map(block => block.messages[0].actor), ['stemmio', 'agent']);
   assert.deepEqual(sidebarNarrationParagraphs('读取资料。生成结果。\n\n版本 1.2 保持原样。'), ['读取资料。', '生成结果。', '版本 1.2 保持原样。']);
 });
 
