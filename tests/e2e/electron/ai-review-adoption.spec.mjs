@@ -2557,6 +2557,10 @@ test("nearby Review comments stay bound to their own source targets", {
       [firstMarker, targetId(first), targetId(third)],
       [secondMarker, targetId(third), targetId(first)],
     ]) {
+      await before.locator(`[data-stemmio-id="${activeId}"]`).evaluate((target) => {
+        target.scrollIntoView({ block: "center", behavior: "instant" });
+      });
+      await expect(marker).toBeInViewport({ ratio: 1 });
       await marker.hover();
       for (const frame of [before, after]) {
         await expect(frame.locator(`[data-stemmio-review-comment-mask-hole="${activeId}"]`))
@@ -2600,7 +2604,10 @@ test("bottom-row Review comments remain individually reachable", {
     runOfficialFinalizer(request.requestRoot, request.changeRequest);
     await launched.page.getByRole("button", { name: "查看修改" }).click();
     const before = launched.page.frameLocator('iframe[title^="修改前"]');
-    await before.locator("body").evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await before.locator("body").evaluate(() => window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: "instant",
+    }));
     const pane = launched.page.locator('section[data-side="before"]');
     const viewport = pane.locator('[aria-label="修改前画布滚动区"]');
     const markers = pane.getByTestId("review-comment-marker");
@@ -2614,10 +2621,12 @@ test("bottom-row Review comments remain individually reachable", {
     for (const marker of bottomMarkers) {
       await expect(marker).toHaveCount(1);
       await expect(marker).toBeVisible();
-      const box = await marker.boundingBox();
-      expect(box).toBeTruthy();
-      expect(box.y).toBeGreaterThanOrEqual(viewportBox.y);
-      expect(box.y + box.height).toBeLessThanOrEqual(viewportBox.y + viewportBox.height);
+      await expect.poll(async () => {
+        const box = await marker.boundingBox();
+        return Boolean(box
+          && box.y >= viewportBox.y
+          && box.y + box.height <= viewportBox.y + viewportBox.height);
+      }).toBe(true);
       await marker.hover();
       await expect(before.locator("[data-stemmio-review-comment-mask-hole]")).toHaveCount(1);
     }
