@@ -11,8 +11,8 @@ listed under Progressive disclosure.
 
 | Root selection | `explorer` / `worker` / `tester` | `reviewer` |
 | --- | --- | --- |
-| Sol below Ultra | `gpt-5.6-luna` / `max` | `gpt-5.6-sol`; High floor, then match XHigh or Max |
-| Astra below Ultra | `gpt-5.6-luna` / `max` | `gpt-6-astra`; High floor, then match XHigh or Max |
+| Sol below Ultra | `gpt-6-luna` / `max` | `gpt-6-sol`; High floor, then match XHigh or Max |
+| Astra below Ultra | `gpt-6-luna` / `max` | `gpt-6-astra`; High floor, then match XHigh or Max |
 | Sol or Astra Ultra | Codex native routing | Codex native routing |
 | Any other root | Inherit root model and effort | Inherit root model and effort |
 
