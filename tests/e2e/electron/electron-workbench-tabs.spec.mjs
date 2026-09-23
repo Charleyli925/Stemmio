@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { pathToFileURL } from "node:url";
+import sharp from "sharp";
 import { loadedDiskFrame as loadedStaticDiskFrame } from "./helpers/stemmio-app-fixture.mjs";
 import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs";
 import {
@@ -226,6 +227,158 @@ test("Electron switches current drafts without a static tab-handoff iframe by de
       delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
       delete window.__STEMMIO_TEST_HANDOFF_MAX__;
     }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron leaves the outgoing draft inert until the new Canvas can be displayed", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("live-handoff-a.html");
+  const projectB = createSourceFixture("live-handoff-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const canvas = launched.page.locator(".canvas-edit-surface");
+    const captureCanvasViewport = async (path = undefined) => {
+      const box = await canvas.boundingBox();
+      if (!box) throw new Error("Canvas viewport is unavailable");
+      return launched.page.screenshot({
+        ...(path ? { path } : {}),
+        clip: { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 600) },
+      });
+    };
+    const before = await captureCanvasViewport();
+    await holdCacheAndCanvasLoads(launched.page);
+    const tabA = launched.page.getByRole("tablist", { name: "已打开的页面" })
+      .getByRole("tab").filter({ hasText: "live-handoff-a" });
+    await tabA.dispatchEvent("click");
+    const outgoing = launched.page.locator("[data-outgoing-draft]");
+    await expect(outgoing).toBeVisible();
+    await expect(outgoing).toHaveAttribute("inert", "");
+    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+    await expect(launched.page.getByRole("button", { name: "预览", exact: true }))
+      .toBeEnabled();
+    await expect.poll(() => launched.page.evaluate(() => Boolean(
+      window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__,
+    ))).toBe(true);
+    const held = await captureCanvasViewport(test.info().outputPath("outgoing-draft-held.png"));
+    const first = await sharp(before).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const second = await sharp(held).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect(second.info.width).toBe(first.info.width);
+    expect(second.info.height).toBe(first.info.height);
+    let changedPixels = 0;
+    for (let offset = 0; offset < first.data.length; offset += 3) {
+      if (Math.max(...[0, 1, 2].map((channel) => Math.abs(
+        first.data[offset + channel] - second.data[offset + channel],
+      ))) > 12) changedPixels += 1;
+    }
+    expect(changedPixels / (first.info.width * first.info.height)).toBeLessThan(0.01);
+    await launched.page.evaluate(() => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      if (typeof onLoad !== "function" || !(frame instanceof HTMLIFrameElement)) {
+        throw new Error("Destination Canvas load callback was unavailable");
+      }
+      window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
+      onLoad({ currentTarget: frame });
+    });
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(outgoing).toHaveCount(0);
+    await expect(launched.page.getByTestId("html-canvas-editor")).toHaveCount(1);
+    await expect(launched.page.getByRole("button", { name: "预览", exact: true }))
+      .toBeEnabled();
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron Preview opens the selected draft while unrelated Canvas work continues", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("preview-ready-a.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "预览目标 A")
+  ));
+  const projectB = createSourceFixture("preview-ready-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await holdCacheAndCanvasLoads(launched.page);
+    await launched.page.getByRole("tablist", { name: "已打开的页面" })
+      .getByRole("tab").filter({ hasText: "preview-ready-a" }).dispatchEvent("click");
+    await expect(launched.page.locator("[data-outgoing-draft]")).toBeVisible();
+    const previewButton = launched.page.getByRole("button", { name: "预览", exact: true });
+    await expect(previewButton).toBeEnabled();
+    await previewButton.click();
+    await expect(previewButton).toHaveAttribute("aria-pressed", "true");
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("预览目标 A")).toBeVisible();
+    await expect(launched.page.locator("[data-outgoing-draft]")).toHaveCount(0);
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron keeps a failed tab switch recoverable until the user retries", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("retry-switch-a.html");
+  const projectB = createSourceFixture("retry-switch-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    let failOpen = true;
+    let failedRequests = 0;
+    await launched.page.route("**/workspace?*", async (route) => {
+      const source = new URL(route.request().url()).searchParams.get("sourcePath");
+      if (failOpen && source && path.basename(source) === path.basename(projectA.sourcePath)) {
+        failedRequests += 1;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "TEST_OPEN_FAILED", message: "测试当前稿打开失败" } }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" });
+    await tabs.getByRole("tab").filter({ hasText: "retry-switch-a" }).click();
+    await expect.poll(() => failedRequests).toBeGreaterThan(0);
+    const failure = launched.page.getByRole("alert").filter({ hasText: /无法打开|暂时无法显示/u });
+    await expect(failure).toBeVisible();
+    await expect(failure.getByRole("button", { name: "重试打开" })).toBeVisible();
+    failOpen = false;
+    await failure.getByRole("button", { name: "重试打开" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(failure).toHaveCount(0);
+  } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
@@ -1325,9 +1478,8 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
       const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
       return typeof window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__ === "function"
         && frame?.isConnected
-        && frame === document.querySelector(
-          '[data-testid="html-canvas-editor"] iframe[data-runtime-slot-role="active"]',
-        );
+        && frame.matches('iframe[data-runtime-slot-role="active"]')
+        && !frame.closest('[data-outgoing-draft]');
     })).toBe(true);
     await launched.page.evaluate(() => {
       const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;

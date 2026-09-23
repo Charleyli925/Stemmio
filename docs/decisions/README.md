@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-<!-- adr-history-max: 0076 -->
+<!-- adr-history-max: 0077 -->
 <!-- adr-history-gaps: 0020 -->
 
 This is the default reading path for decisions that still constrain PageRoot.
@@ -10,7 +10,7 @@ Historical and superseded decisions remain available from the archive index.
 
 The repository has one historical gap, `0020`, which is intentionally never
 reused. The four collisions found in the first curation pass were assigned
-`0055` through `0058`; future ADRs must use the next number above `0076`.
+`0055` through `0058`; future ADRs must use the next number above `0077`.
 
 ## Active decisions
 
@@ -71,7 +71,8 @@ reused. The four collisions found in the first curation pass were assigned
 | 0073 | [One current draft and immutable history](0073-single-current-draft.md) | Living |
 | 0074 | [Proven in-place structural editing](0074-proven-in-place-structural-editing.md) | Accepted contract |
 | 0075 | [Stemmio identity and local-storage boundary](0075-stemmio-identity-and-storage-boundary.md) | Accepted |
-| 0076 | [Tab display pages exist only during an explicit handoff](0076-transient-tab-display-handoff.md) | Accepted |
+| 0076 | [Tab display pages exist only during an explicit handoff](0076-transient-tab-display-handoff.md) | Data and reading-state limits accepted; normal switch presentation superseded by ADR 0077 |
+| 0077 | [Current draft switches keep the outgoing canvas until the incoming canvas is verified](0077-current-draft-live-canvas-handoff.md) | Accepted |
 
 ## Reading guide
 

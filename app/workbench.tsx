@@ -117,6 +117,7 @@ import type { RunSessionSnapshot } from "./application/run-session.js";
 import type { VersionSessionSnapshot } from "./application/version-session.js";
 import {
   INITIAL_WORKBENCH_TABS_SNAPSHOT,
+  type WorkbenchTab,
   type WorkbenchTabsSnapshot,
 } from "./application/workbench-tabs-session.js";
 import {
@@ -1642,6 +1643,11 @@ export default function Workbench() {
   const [userNoticeOpenFailed, setUserNoticeOpenFailed] = useState(false);
   const [pendingExit, setPendingExit] = useState(false);
   const [fileStatusNotice, setFileStatusNotice] = useState<string | null>(null);
+  const [tabSwitchError, setTabSwitchError] = useState<{
+    tabId: string;
+    title: string;
+    reason: string;
+  } | null>(null);
   const [openHtmlError, setOpenHtmlError] = useState<string | null>(null);
   const confirmedOriginalDeletionRef = useRef<string | null>(null);
   const [interruption, setInterruption] = useState<GlobalInterruption | null>(null);
@@ -3404,10 +3410,22 @@ export default function Workbench() {
       sourcePath: recentPath || null,
     });
   }, [workspaceController]);
-  const presentWorkbenchTabOutcome = useCallback((outcome: unknown) => {
-    if (!outcome || typeof outcome !== "object" || (outcome as { status?: string }).status === "succeeded") return;
+  const presentWorkbenchTabOutcome = useCallback((outcome: unknown, target?: WorkbenchTab) => {
+    if (!outcome || typeof outcome !== "object") return;
+    if ((outcome as { status?: string }).status === "succeeded") {
+      setTabSwitchError(null);
+      return;
+    }
     const result = outcome as { reason?: string; code?: string };
-    setFileStatusNotice(result.reason || "页面没有打开，原页面仍保留。");
+    if (target?.kind === "document") {
+      setTabSwitchError({
+        tabId: target.tabId,
+        title: target.title,
+        reason: result.reason || "页面没有打开，原页面仍保留。",
+      });
+    } else {
+      setFileStatusNotice(result.reason || "页面没有打开，原页面仍保留。");
+    }
     reportInternalFailure({
       area: "navigation",
       operation: "tab-switch",
@@ -5541,13 +5559,16 @@ export default function Workbench() {
     hasReadyPayload: Boolean(activeRun?.readyPayload), hasReadyReviewSession: Boolean(presentedReadyReviewSession),
     reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
     persistState, editRevision, lastPersistedRevision, hasWorkspaceController: Boolean(workspaceController),
+    previewContentReady: Boolean(historyPreview?.content || (
+      html && (documentSnapshot.sourceReceipt || !projectId)
+    )),
     projectHydrating, projectLoadError: Boolean(projectLoadError), viewTransitioning,
     runInProgress, workspaceIssue: Boolean(workspaceIssue), externalSourcePreview: Boolean(externalSourcePreview),
     hasDocumentHistoryAction, interactionLocked,
   }), [projectId, documentId, sourcePath, historyPreview, versionSnapshot, activeWorkbenchTab, workbenchTabsSnapshot.runtimeOwnerTabId, displayedCanvasMode,
     activeRun?.status, activeRun?.readyPayload, presentedReadyReviewSession,
     reviewPreparing, canShowCurrentFileInFolder, canOpenSelectedHtmlInDefaultBrowser,
-    persistState, editRevision, lastPersistedRevision, workspaceController, projectHydrating,
+    persistState, editRevision, lastPersistedRevision, workspaceController, html, documentSnapshot.sourceReceipt, projectHydrating,
     projectLoadError, viewTransitioning, runInProgress, workspaceIssue, externalSourcePreview, interactionLocked, hasDocumentHistoryAction]);
   const { reviewAvailable, canReloadCurrentSource } = presentation;
   const pendingRunOutcome = Boolean(
@@ -5795,7 +5816,8 @@ export default function Workbench() {
   const createModeHandlers = () => createWorkbenchModeHandlers({
     externalSourcePreview: Boolean(externalSourcePreview),
     canvasMode,
-    interactionLocked,
+    previewAvailable: presentation.preview.enabled,
+    previewNeedsEditorFence: activeDocumentCanvasReady && !interactionLocked,
     previewToEditPendingRef,
     pageViewDocumentKeyRef,
     interactionPreviewRef,
@@ -5952,8 +5974,8 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  // Keep the reversible static tab-handoff path covered by E2E, but default
-  // to the single authoritative Canvas to avoid a second visible layout.
+  // The cached static tab handoff is diagnostic only. Normal switching keeps
+  // the outgoing final Canvas inert until the incoming final Canvas verifies.
   const cachedTabHandoffEnabled = typeof window !== "undefined"
     && window.stemmioRuntime?.diagnostics?.e2eCachedTabHandoff === true;
   const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ enabled: cachedTabHandoffEnabled, cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
@@ -6051,6 +6073,19 @@ export default function Workbench() {
     desktopHostReady
     && !desktopHostIssue
     && canMountUnboundCanvas
+  );
+  const activeDocumentCanvasReady = Boolean(
+    activeWorkbenchTab?.kind === "document"
+    && activeWorkbenchTab.projectId === projectId
+    && activeWorkbenchTab.documentId === documentId
+    && canvasAuthority?.status === "verified"
+    && canvasAuthority.generation === canvasGeneration
+    && canvasAuthority.renderedSha256 === sourceSha256
+  );
+  const activeDocumentCanvasFailed = Boolean(
+    projectLoadError
+    || (canvasAuthority?.status === "failed"
+      && canvasAuthority.generation === canvasGeneration)
   );
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
   const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
@@ -6205,6 +6240,28 @@ export default function Workbench() {
           onRetry={() => { void workspaceController?.retryCurrentVersion(); }}
           onShowFile={(path) => { void showProjectInFolder(path); }} />
       </> : null}
+
+      {tabSwitchError ? <section className="workbench-tab-switch-error" role="alert">
+        <strong>无法打开「{tabSwitchError.title}」</strong>
+        <span>{tabSwitchError.reason}</span>
+        <button type="button" onClick={() => {
+          const target = navigationCapability?.getSnapshot().tabs?.tabs.find(
+            (tab) => tab.tabId === tabSwitchError.tabId,
+          );
+          if (!target || !navigationCapability) {
+            setTabSwitchError(null);
+            return;
+          }
+          rememberWorkbenchTabPresentation(
+            navigationCapability.getSnapshot().tabs ?? INITIAL_WORKBENCH_TABS_SNAPSHOT,
+          );
+          setTabSwitchError(null);
+          void navigationCapability.commands.activateTab(target.tabId).then((outcome) => {
+            presentWorkbenchTabOutcome(outcome, target);
+          });
+        }}>重试打开</button>
+        <button type="button" onClick={() => setTabSwitchError(null)}>关闭</button>
+      </section> : null}
 
       {pendingExit || fileStatusNotice ? (
         <section
@@ -6562,6 +6619,16 @@ export default function Workbench() {
                 <WorkbenchActiveDocumentCanvas
                   activeTabId={documentRuntimeTabId}
                   activeSourceSha256={sourceSha256}
+                  activeReady={activeDocumentCanvasReady}
+                  activeFailed={activeDocumentCanvasFailed}
+                  presentationVisible={displayedCanvasMode === "edit"}
+                  failureMessage={projectLoadError || (activeDocumentCanvasFailed
+                    ? "画布核对失败，请重试打开当前稿。"
+                    : null)}
+                  onRetry={() => {
+                    if (projectLoadError) retryProjectHydrationFromCommentRail();
+                    else void reloadFailedCanvas();
+                  }}
                   activeElement={activeRuntimeCanvasMounted ? (
                     <HtmlCanvasEditor
                   key={`editor-authority-${documentRuntimeTabId || "none"}`}

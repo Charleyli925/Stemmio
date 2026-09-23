@@ -5,6 +5,38 @@
   width: 100%;
 }
 
+.host {
+  position: relative;
+}
+
+.entry[data-handoff-candidate="true"] {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.failure {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  z-index: 3;
+  display: grid;
+  gap: 10px;
+  max-width: min(440px, calc(100% - 32px));
+  padding: 20px;
+  border: 1px solid #d8dce4;
+  border-radius: 12px;
+  background: #fff;
+  color: #202127;
+  box-shadow: 0 12px 32px #151a2426;
+  transform: translateX(-50%);
+}
+
+.failure button {
+  justify-self: start;
+}
+
 .entry[hidden] {
   display: none;
 }

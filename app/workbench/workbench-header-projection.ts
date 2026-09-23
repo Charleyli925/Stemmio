@@ -30,6 +30,7 @@ type PresentationInput = {
   editRevision: number;
   lastPersistedRevision: number;
   hasWorkspaceController: boolean;
+  previewContentReady: boolean;
   projectHydrating: boolean;
   projectLoadError: boolean;
   viewTransitioning: boolean;
@@ -41,7 +42,7 @@ type PresentationInput = {
 };
 
 export function deriveWorkbenchPresentation(input: PresentationInput) {
-  const { project, version, activeTab, runInProgress, interactionLocked } = input;
+  const { project, version, activeTab, runInProgress } = input;
   const sameDocument = Boolean(project.projectId && project.documentId
     && (activeTab?.kind === "document" || activeTab?.kind === "history")
     && activeTab.projectId === project.projectId && activeTab.documentId === project.documentId);
@@ -64,8 +65,7 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
       : input.viewTransitioning || input.projectHydrating || input.projectLoadError ? "当前版本暂时不可操作"
         : !hasDocumentTarget ? "请先打开当前文档" : undefined;
   const previewReason = !hasDocumentTarget ? "请先打开当前文档" : reviewActive ? "完成审阅后可继续预览"
-    : isHistory ? undefined
-    : interactionLocked ? "当前状态只能使用编辑画布" : undefined;
+    : !input.previewContentReady ? "当前文档内容尚未就绪" : undefined;
   const reviewReason = !sameDocument ? "请先打开当前文档" : reviewActive ? "正在审阅 AI 修改"
     : input.reviewPreparing ? "正在准备审阅…"
       : !reviewAvailable ? "有待审阅修改时自动可用" : undefined;
@@ -140,7 +140,7 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     isHistory,
     mode: reviewActive ? "review" : isHistory ? "preview" : input.canvasMode,
     edit: { enabled: !editReason, selected: !isHistory && !reviewActive && input.canvasMode === "edit", reason: editReason },
-    preview: { enabled: hasDocumentTarget && !reviewActive && (isHistory || !interactionLocked), selected: isHistory || (!reviewActive && input.canvasMode === "preview"), reason: previewReason },
+    preview: { enabled: hasDocumentTarget && !reviewActive && input.previewContentReady, selected: isHistory || (!reviewActive && input.canvasMode === "preview"), reason: previewReason },
     review: { enabled: !reviewActive && !input.reviewPreparing && reviewAvailable, selected: reviewActive, reason: reviewReason },
     reviewAvailable,
     canShowInFinder: !isHistory && sameDocument && input.canShowCurrentFileInFolder,
