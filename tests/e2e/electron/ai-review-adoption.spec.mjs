@@ -1146,11 +1146,24 @@ ${REVIEW_MASK_UNION_BEFORE}
           && maximumDelta < .25;
       })),
     ).then((results) => results.every(Boolean))).toBe(true);
+    const filteredFocusGroupId = await filteredFocusBar.getAttribute(
+      "data-stemmio-review-focus-group",
+    );
+    expect(filteredFocusGroupId).toBeTruthy();
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect(frame.locator(
         '[data-stemmio-review-overlay-box][data-tone^="text-"]',
       )).toHaveCount(0);
-      await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(1);
+      await expect(frame.locator("html")).toHaveAttribute(
+        "data-stemmio-review-focus-group",
+        filteredFocusGroupId,
+      );
+      const activeRegionId = await frame.locator("html")
+        .getAttribute("data-stemmio-review-focus-region");
+      // A selected locality can have no corresponding region on one side.
+      // Such a side must not invent a mask (INTERACTION_FLOW Review contract).
+      await expect(frame.locator("[data-stemmio-review-mask-hole]"))
+        .toHaveCount(activeRegionId ? 1 : 0);
     }
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect.poll(() => frame.locator("[data-stemmio-review-text-mark]").count())
