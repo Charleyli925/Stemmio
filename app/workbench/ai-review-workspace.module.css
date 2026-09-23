@@ -422,6 +422,7 @@
 .reviewDirectory {
   position: relative;
   flex: none;
+  -webkit-app-region: no-drag;
 }
 
 .reviewDirectory > summary {
@@ -438,6 +439,7 @@
   font-weight: 620;
   cursor: pointer;
   user-select: none;
+  -webkit-app-region: no-drag;
 }
 
 .reviewDirectory > summary::-webkit-details-marker {
@@ -463,6 +465,7 @@
 
 .reviewDirectoryMenu {
   position: fixed;
+  -webkit-app-region: no-drag;
   z-index: 1000;
   width: min(330px, calc(100vw - 28px));
   max-height: min(480px, calc(100vh - 150px));

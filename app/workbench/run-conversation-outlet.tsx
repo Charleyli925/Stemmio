@@ -118,7 +118,6 @@ export const RunConversationOutlet = memo(function RunConversationOutlet({
           : null}
       roundKey={activeRun?.requestId
         || (runSession?.activeSubmission ? `submission:${runSession.activeSubmission.token}` : null)}
-      runCommentCount={activeRun?.commentCount ?? sidebarProps.pendingCommentCount}
       runSteps={progress.steps}
       deliveryMode={deliveryMode}
     />

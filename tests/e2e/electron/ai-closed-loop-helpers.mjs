@@ -462,8 +462,7 @@ export async function chooseModifyIntent(page) {
 
 export async function chooseClipboardDelivery(page) {
   const sidebar = await chooseModifyIntent(page);
-  await sidebar.getByLabel("更多发送选项", { exact: true }).click();
-  await sidebar.getByRole("button", { name: /复制给别的 AI/u }).click();
+  await sidebar.getByRole("button", { name: "复制任务指令" }).click();
 }
 
 

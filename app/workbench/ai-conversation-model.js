@@ -45,8 +45,14 @@ const FORBIDDEN_MESSAGE_KEYS = [
 const ACTOR_LABELS = Object.freeze({
   user: "我",
   agent: "AI Agent",
-  qoder: "Qoder CLI",
+  qoder: "Qoder",
   stemmio: "Stemmio",
+});
+
+const AGENT_PROVIDER_LABELS = Object.freeze({
+  qoder: "Qoder",
+  codex: "Codex",
+  stemmio: "源页",
 });
 
 const MODE_PRESENTATION = Object.freeze({
@@ -283,6 +289,30 @@ export function sidebarTimestampLabel(value, { now = Date.now() } = {}) {
 }
 
 /**
+ * Reading feedback only becomes actionable after an explicit, substantial
+ * upward move. Layout changes from a disclosure must not manufacture a
+ * "回到最新" control while the user is still at the tail of the thread.
+ */
+const READING_HISTORY_THRESHOLD_PX = 120;
+
+export function sidebarReadingFeedback({
+  distanceFromBottom = 0,
+  userInitiated = false,
+  hasUnseenContent = false,
+} = {}) {
+  const distance = Number(distanceFromBottom);
+  const readingHistory = Number.isFinite(distance) && (
+    (userInitiated && distance >= READING_HISTORY_THRESHOLD_PX)
+    || (hasUnseenContent && distance > 48)
+  );
+  return Object.freeze({
+    readingHistory,
+    label: readingHistory ? (hasUnseenContent ? "有新进展" : "回到最新") : null,
+    thresholdPx: READING_HISTORY_THRESHOLD_PX,
+  });
+}
+
+/**
  * Projects stored messages for display. A message that carries an interface
  * member is dropped: the fact stream is immutable by contract, and silently
  * rendering such a record would reintroduce the stale-button problem the
@@ -299,8 +329,11 @@ export function sidebarMessageStream(messages) {
     .map((message) => ({
       messageId: String(message.messageId || ""),
       actor: String(message.actor || "stemmio"),
+      providerId: message.actor === "agent"
+        ? String(message.providerId || "") || null
+        : null,
       actorLabel: message.actor === "agent"
-        ? ({ qoder: "Qoder", codex: "Codex", stemmio: "Stemmio AI" }[message.providerId] || sidebarActorLabel(message.actor))
+        ? (AGENT_PROVIDER_LABELS[message.providerId] || sidebarActorLabel(message.actor))
         : sidebarActorLabel(message.actor),
       kind: String(message.kind || "text"),
       status: String(message.status || "completed"),
@@ -326,6 +359,27 @@ const LEGACY_EXECUTION_PROGRESS = new Set([
   "执行已结束，结果仍需校验。",
 ]);
 
+function normalizeProgressText(value) {
+  return String(value || "").trim().replace(/[。.!！?？]+$/gu, "");
+}
+
+// These are durable audit facts, but they only describe the transport and
+// validation machinery. Keep them in the stored stream while suppressing
+// their separate visual rows; a result, failure, decision, or Agent narration
+// gives the reader the fact that matters.
+const MECHANICAL_STEMMIO_PROGRESS = new Set([
+  ...LEGACY_EXECUTION_PROGRESS,
+  "准备本轮修改。", "发出请求。", "请求已发出。", "已发出修改请求。",
+  "收到服务响应。", "接收完成。", "结果接收完成。", "准备审阅。",
+  "正在校验结果。",
+].map(normalizeProgressText));
+
+function isMechanicalStemmioProgress(message) {
+  return (message?.actor === "stemmio"
+    || (message?.actor === "agent" && message.providerId === "stemmio" && message.kind === "progress"))
+    && MECHANICAL_STEMMIO_PROGRESS.has(normalizeProgressText(message.text));
+}
+
 export function sidebarTurnPresentation(messages = []) {
   const process = [];
   const primary = [];
@@ -341,18 +395,12 @@ export function sidebarTurnPresentation(messages = []) {
     else primary.push(message);
   }
   const timeline = [];
-  // Preserve repository order inside each semantic phase, but present every
-  // process fact before the settled result and every decision after it. Agent
-  // teardown can persist its final public narration after Candidate creation;
-  // rendering that late write below "AI 已修改完成" makes the result look as if
-  // it happened before validation. This stable phase ordering matches the
-  // user-visible lifecycle without regrouping by speaker.
-  const timelineMessages = [
-    ...messages.filter((message) => !["result-summary", "decision-outcome"].includes(message.kind)),
-    ...messages.filter((message) => message.kind === "result-summary"),
-    ...messages.filter((message) => message.kind === "decision-outcome"),
-  ];
-  for (const message of timelineMessages) {
+  // Conversation sequence is the only ordering authority for the visible
+  // projection. Mechanical Stemmio progress is omitted above, but the
+  // remaining facts are never regrouped by phase or speaker: a late durable
+  // process-summary stays where its sequence places it.
+  for (const message of messages) {
+    if (isMechanicalStemmioProgress(message)) continue;
     const isProcess = process.includes(message);
     const previous = timeline.at(-1);
     if (isProcess && message.kind !== "process-summary"
@@ -460,7 +508,7 @@ export function sidebarConversationGroups({
     const messageId = historyIdentity(message.messageId);
     groups.push({
       key,
-      label: `${current ? currentTurnLabel(timestamp, now) : historyDateLabel(timestamp)}${turn?.providerSelection?.providerId ? ` · ${{ qoder: "Qoder", codex: "Codex", stemmio: "HTTP 服务" }[turn.providerSelection.providerId] || "AI"}` : ""}`,
+      label: current ? currentTurnLabel(timestamp, now) : historyDateLabel(timestamp),
       kind: current ? "current" : "history",
       messageIndices: [messageIndex],
       messageIds: messageId ? [messageId] : [],
@@ -711,8 +759,12 @@ export function sidebarActionBar({
       };
     }
     const title = "修改已准备好，尚未采用";
-    const detail = failureMessage || (candidateStatus === "attention"
-      ? "这次变化较大，核对后再决定。" : "查看本次修改，再决定是否采用。");
+    // The Candidate card is already anchored to the decision buttons. Keep a
+    // real failure reason when one exists, but remove the explanatory sentence
+    // that repeated the same next step beneath every ready Candidate.
+    const detail = failureMessage
+      || (state === "review-view" && candidateStatus === "attention"
+        ? "这次变化较大，核对后再决定。" : null);
     return {
       kind: "decision", title, detail,
       actions: state === "review-view"
@@ -964,7 +1016,7 @@ export function sidebarSendState({
       return {
         kind: "send",
         canSend: false,
-        label: `交给 ${boundedAgentName} 修改`,
+        label: "交给 AI 修改",
         reason: "正在等待上一个任务完成",
       };
     }
@@ -972,14 +1024,14 @@ export function sidebarSendState({
       return {
         kind: "send",
         canSend: false,
-        label: `交给 ${boundedAgentName} 修改`,
+        label: "交给 AI 修改",
         reason: "先在编辑模式写下评论，AI 会按评论改",
       };
     }
     return {
       kind: "send",
       canSend: true,
-      label: `交给 ${boundedAgentName} 修改`,
+      label: "交给 AI 修改",
       reason: null,
     };
   }

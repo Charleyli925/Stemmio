@@ -138,16 +138,13 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await expect(narration).not.toContainText("fixture-hidden");
     await expect(narration).not.toContainText("<!DOCTYPE");
     const processToggle = narration.getByTestId("ai-conversation-narration-toggle");
+    await expect(processToggle).toBeVisible();
     if (await processToggle.getAttribute("aria-expanded") !== "true") await processToggle.click();
-    await expect(narration.getByTestId("ai-conversation-public-activity")).toContainText([
-      "收到服务响应", "生成修改",
-    ]);
+    await expect(narration).toContainText("我会先检查页面结构");
+    await expect(narration.getByTestId("ai-conversation-public-activity")).toHaveCount(0);
     await expect(narration).not.toContainText(/读取本轮资料|写入修改结果/u);
 
-    const process = sidebar.getByTestId("ai-turn-process").first();
-    await expect(process.locator("summary")).toHaveCount(1);
-    await process.locator("summary").click();
-    await expect(process.locator("li").first()).toBeVisible();
+    await expect(sidebar.getByTestId("ai-turn-process")).toHaveCount(0);
     await expect(sidebar.getByTestId("ai-conversation-run-summary")).toHaveCount(0);
     await expect(sidebar.getByText("Thinking", { exact: true })).toHaveCount(0);
     const separator = await launched.page.evaluate(() => {
@@ -174,9 +171,8 @@ test("non-default DeepSeek saves high through restart and sends high, with compa
     await launched.page.screenshot({ path: path.join(screenshots, "narrow-sidebar-generating.png"), animations: "disabled" });
     finish();
     await expect(sidebar.getByTestId("ai-conversation-action-bar")).toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
-    await expect(narration.getByTestId("ai-conversation-public-activity")).toContainText([
-      "收到服务响应", "生成修改", "服务响应已结束", "已检查 HTML 完整性", "准备审阅",
-    ]);
+    await expect(narration).toContainText("标题与配色已调整");
+    await expect(narration.getByTestId("ai-conversation-public-activity")).toHaveCount(0);
     await expect(sidebar.getByTestId("ai-conversation-run-summary")).toHaveCount(0);
     const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
     const candidates = candidateHtmlFiles(launched.workspace, active.projectId);
@@ -323,7 +319,7 @@ test("Codex authenticated component failure repairs in Settings, then reviews an
     await expect(panel).toContainText("已连接");
     expect(installs).toBe(0);
     await launched.page.getByRole("button", { name: "返回工作台" }).click();
-    await sidebar.getByRole("button", { name: /交给 Codex 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
     await expect(sidebar.getByTestId("ai-conversation-action-bar")).toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
     expect(readFileSync(workingPath, "utf8")).not.toContain('data-stemmio-codex-acp="e2e"');
     await sidebar.getByRole("button", { name: "查看修改" }).click();
@@ -334,7 +330,7 @@ test("Codex authenticated component failure repairs in Settings, then reviews an
     await loadedDiskFrame(launched.page, first.sourcePath);
     await addComment(launched.page, first.sourcePath, "继续调整标题。");
     if (!await sidebar.isVisible()) await launched.page.getByRole("button", { name: /AI 助手/u }).click();
-    await sidebar.getByRole("button", { name: /交给 Codex 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
     await expect(sidebar.getByTestId("ai-conversation-action-bar")).toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
     expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
     await launched.page.screenshot({ path: path.join(screenshots, "codex-second-round.png"), animations: "disabled" });

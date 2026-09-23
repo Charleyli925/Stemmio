@@ -39,6 +39,10 @@ body {
   backdrop-filter: none;
 }
 
+.workbench > .workbench-tabbar {
+  -webkit-app-region: no-drag;
+}
+
 .workbench > .workbench-header > .header-actions {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -92,8 +96,18 @@ body {
   background: var(--chrome-inspector-surface);
 }
 
-/* The collapsed and expanded buttons are one visual component. Only their
-   containing shell decides where the same 28px control is anchored. */
+/* Keep the fixed toggle outside the tab strip's native drag area while both
+   shell columns move beneath it. */
+.workbench > .workbench-sidebar-toggle-titlebar {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  z-index: 85;
+  top: 0;
+  left: 0;
+  width: 128px;
+  height: var(--workbench-tabbar-height);
+}
+
 .workbench-sidebar-toggle {
   -webkit-app-region: no-drag;
   width: 28px;
@@ -109,15 +123,10 @@ body {
   transition: background-color 140ms ease, color 140ms ease;
 }
 
-.workbench > .workbench-tabbar > .workbench-sidebar-toggle {
+.workbench-sidebar-toggle-titlebar > .workbench-sidebar-toggle {
   position: absolute;
-  z-index: 2;
   top: 6px;
   left: 86px;
-}
-
-.workbench-sidebar-titlebar > .workbench-sidebar-toggle {
-  margin-left: 86px;
 }
 
 .workbench-sidebar-toggle:hover:not(:disabled),
@@ -501,7 +510,8 @@ body {
    layer. Keep the old pseudo-tooltip for non-workbench surfaces only. */
 .workbench-header [data-tooltip]::after,
 .workbench-tabbar [data-tooltip]::after,
-.workbench-sidebar-titlebar [data-tooltip]::after {
+.workbench-sidebar-titlebar [data-tooltip]::after,
+.workbench-sidebar-toggle-titlebar .workbench-sidebar-toggle[data-tooltip]::after {
   display: none !important;
   content: none !important;
 }
