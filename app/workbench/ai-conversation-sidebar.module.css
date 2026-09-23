@@ -36,7 +36,7 @@
 
 .headerTitle {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
@@ -59,6 +59,47 @@
   color: var(--indigo);
   font-size: 10px;
   font-weight: 680;
+}
+
+.headerCopy {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.headerCopy[data-tooltip]::after {
+  right: 0;
+  left: auto;
+  transform: translateY(-3px);
+}
+
+.headerCopy[data-tooltip]:is(:hover, :focus-visible)::after {
+  transform: translateY(0);
+}
+
+.headerCopy:hover:not(:disabled) {
+  background: var(--chrome-hover);
+  color: var(--ink);
+}
+
+.headerCopy:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.headerCopy:focus-visible {
+  outline: 2px solid rgb(90 85 223 / 45%);
+  outline-offset: 2px;
 }
 
 .context {
@@ -524,18 +565,6 @@
   white-space: nowrap;
 }
 
-/*
- * Plain text, not a tinted card. It sits inside the Composer inside the sidebar, so
- * a fill here is a third frame — and a purple fill spends the accent on a sentence
- * that is only telling the user what the round contains.
- */
-.contextSummary {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
 .composerActions {
   min-height: 30px;
   display: flex;
@@ -581,32 +610,6 @@
   color: #fff;
   font-size: 11px;
   font-weight: 700;
-}
-
-.copyTask {
-  min-height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 680;
-  white-space: nowrap;
-}
-
-.copyTask:hover:not(:disabled) {
-  background: var(--chrome-hover);
-  color: var(--ink);
-}
-
-.copyTask:disabled {
-  color: var(--muted);
-}
-
-.copyTask:focus-visible {
-  outline: 3px solid rgb(90 85 223 / 32%);
-  outline-offset: 1px;
 }
 
 .send:hover:not(:disabled) {
@@ -884,13 +887,12 @@
 .currentActions:has(.actionBar) { border-top: 1px solid var(--border, rgb(32 29 49 / 10%)); padding-top: 12px; padding-bottom: 12px; }
 .currentActions .actionBar { display: block; margin: 0; }
 .currentActions .avatar, .currentActions .actor { display: none; }
-.currentActions .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.currentActions .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .currentActions .action { min-height: 32px; white-space: normal; overflow-wrap: anywhere; }
-.currentActions .actionBar > strong { font-size: 14px; }
+.currentActions .actionBar > strong { font-size: 12px; }
 .currentActions .actionBar > p { font-size: 12px; margin: 4px 0 0; }
 .sidebar button:focus-visible { outline: 2px solid var(--indigo, #6254d9); outline-offset: 2px; }
 .composerActions { flex-wrap: wrap; }
-.contextSummary { font-size: 13px; }
 @media (max-width: 700px) {
   .deliveryActions { flex-wrap: wrap; }
   .send { white-space: normal; }
@@ -899,9 +901,6 @@
 .stream .message[data-actor="stemmio"] .messageMeta { display: none; }
 .stream .message[data-actor="stemmio"] { font-weight: 400; }
 
-.close { margin-left: auto; width: 28px; height: 28px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 20px; cursor: pointer; }
-.close:hover { background: var(--chrome-hover); }
-.close:focus-visible { outline: 2px solid #7868b9; outline-offset: 2px; }
 /* Persistent progress reads in chronological order, with a signed sender. */
 .turnProcess { color: var(--muted); font-size: 11px; line-height: 1.7; }
 .turnProcess ol { list-style: none; margin: 4px 0 0; padding: 0; }
@@ -923,16 +922,14 @@
 .draftInput::placeholder { color: var(--faint); }
 .draftInput:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
 .draftInput:disabled { opacity: .6; }
-.draftHint { margin: 0; font-size: 10px; color: var(--muted); }
 
 /* One quiet bottom dock: decisions attach to the input, never to the log. */
 .sidebar { grid-template-rows: auto minmax(0, 1fr) auto; }
 .inputDock { min-width: 0; padding: 0 12px 12px; }
 .currentActions { padding: 0; max-height: 30vh; }
 .currentActions:has(.actionBar) {
-  margin: 0 16px; padding: 12px 14px; border: 1px solid rgb(104 96 140 / 10%);
-  border-bottom: 0; border-radius: 14px 14px 0 0; background: var(--paper);
-  animation: decision-enter 140ms ease-out;
+  margin: 0 20px; padding: 8px 10px; border: 1px solid rgb(104 96 140 / 10%);
+  border-bottom: 0; border-radius: 12px 12px 0 0; background: var(--paper);
 }
 .composer { position: relative; min-height: 0; gap: 6px; padding: 10px 12px 8px;
   border: 1px solid var(--line, #dedce5); border-radius: 16px; background: #fff;
@@ -941,16 +938,12 @@
 .draftLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .draftInput { min-height: 48px; padding: 2px 0; border: 0; border-radius: 0; resize: none; background: transparent; box-shadow: none; }
 .draftInput:focus-visible { outline: none; }
-.draftHint { font-size: 10px; color: var(--faint); }
 .composerActions { align-items: center; justify-content: space-between; gap: 8px; }
 .agentStatic { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-.moreActions { position: relative; }
-.moreActions summary { cursor: pointer; list-style: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; font-size: 20px; color: var(--muted); }
-.moreActions summary::-webkit-details-marker { display: none; }
-.moreActions[open] .copyTask { position: absolute; bottom: 36px; right: 0; z-index: 3; white-space: nowrap; background: white; box-shadow: 0 6px 24px rgb(32 29 49 / 12%); }
 .turnProcess time { opacity: 0; transition: opacity 120ms ease; }
 .turnProcess li:hover time, .turnProcess:focus-within time { opacity: 1; }
 .narrationLine { margin: 0; }
 .narrationLine + .narrationLine, .narrationText > div + div { margin-top: 8px; }
-@keyframes decision-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .currentActions:has(.actionBar) { animation: none; } }
+.candidateCardEnter { animation: candidate-card-enter 180ms cubic-bezier(.22, .8, .28, 1); }
+@keyframes candidate-card-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .candidateCardEnter { animation: none; } }

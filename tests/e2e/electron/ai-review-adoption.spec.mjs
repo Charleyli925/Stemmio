@@ -558,16 +558,23 @@ ${REVIEW_MASK_UNION_BEFORE}
       return summaryBox.x >= reviewModeBox.x + reviewModeBox.width - 2;
     }).toBe(true);
     const reviewDirectoryMenu = launched.page.getByLabel("变化目录", { exact: true });
+    await expect.poll(() => reviewDirectorySummary.evaluate((element) => (
+      getComputedStyle(element).getPropertyValue("-webkit-app-region")
+    ))).toBe("no-drag");
     await reviewDirectorySummary.click();
+    await expect(reviewDirectorySummary.locator("xpath=..")).toHaveJSProperty("open", true);
     await expect(reviewDirectoryMenu).toBeVisible();
     await launched.page.keyboard.press("Escape");
     await expect(reviewDirectoryMenu).toBeHidden();
     await expect(reviewDirectorySummary).toBeFocused();
     await reviewDirectorySummary.click();
-    const firstDirectoryTarget = reviewDirectoryMenu.getByRole("button").first();
-    await firstDirectoryTarget.click();
+    const lastDirectoryTarget = reviewDirectoryMenu.getByRole("button").last();
+    await lastDirectoryTarget.click();
     await expect(reviewDirectoryMenu).toBeHidden();
     await expect(reviewDirectorySummary).toBeFocused();
+    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
+      "data-stemmio-review-focus",
+    )).not.toBe(initialNavigationTarget);
     // The second Escape leaves the explicit Review focus, after the directory
     // itself has already consumed the first one.
     await launched.page.keyboard.press("Escape");
@@ -817,6 +824,9 @@ ${REVIEW_MASK_UNION_BEFORE}
     await launched.page.keyboard.press("Tab");
     await reviewCommentMarker.focus();
     await expect(reviewCommentBubble).toBeVisible();
+    await beforeReviewFrame.locator(".review-comment-ordinary-target[data-stemmio-id]")
+      .evaluate((target) => target.scrollIntoView({ block: "center", behavior: "instant" }));
+    await expect(ordinaryReviewCommentMarker).toBeInViewport({ ratio: 1 });
     await ordinaryReviewCommentMarker.hover();
     await expect.poll(() => beforeReviewFrame.locator(
       "[data-stemmio-review-comment-highlight]",
@@ -837,6 +847,12 @@ ${REVIEW_MASK_UNION_BEFORE}
       .toHaveCount(0);
     // 接下来继续操作始终固定在工作台顶栏中的审阅控件。
     await expect(liveReviewTools).toBeVisible();
+    // The directory navigation above may have revealed the second authored
+    // tab. Restore this fixture's initial tab before its separate tab test.
+    for (const frame of [beforeReviewFrame, afterReviewFrame]) {
+      await frame.getByRole("button", { name: "审阅标签一" })
+        .evaluate((button) => button.click());
+    }
     await expect(beforeReviewFrame.locator('[data-review-tab-panel="two"]'))
       .toBeHidden();
     await beforeReviewFrame.getByRole("button", { name: "审阅标签二" })
@@ -2147,7 +2163,7 @@ ${REVIEW_MASK_UNION_BEFORE}
         animations: "disabled",
       });
     }
-    await launched.page.getByRole("button", { name: "收起会话面板" }).click();
+    await launched.page.getByRole("button", { name: "AI 助手" }).click();
     const pendingDecisionEntry = launched.page.getByRole("button", {
       name: "待决定",
       exact: true,
@@ -2384,7 +2400,7 @@ test("returning from review restores the editable pre-AI version and preserves t
     await launched.page.getByRole("button", { name: "查看修改" }).click();
     await expect(launched.page.getByTestId("ai-review-workspace"))
       .toBeVisible({ timeout: 30_000 });
-    await launched.page.getByRole("button", { name: "收起会话面板" }).click();
+    await launched.page.getByRole("button", { name: "AI 助手" }).click();
     const pendingDecisionEntry = launched.page.getByRole("button", {
       name: "待决定",
       exact: true,
@@ -2466,6 +2482,164 @@ test("returning from review restores the editable pre-AI version and preserves t
     expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
     expect(existsSync(candidateFiles[0])).toBe(true);
     expect(readFileSync(candidateFiles[0], "utf8")).toContain(UPDATED_TEXT);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("nearby Review comments stay bound to their own source targets", {
+  tag: ["@smoke-review"],
+}, async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("review-nearby-comments.html", (source) => source.replace(
+    "  </main>",
+    `    <section style="display:flex;gap:24px;align-items:flex-start">
+      <p class="review-near-a" style="margin:0;width:240px">第一张文字卡片。</p>
+      <p class="review-near-b" style="margin:0;width:240px">第二张文字卡片。</p>
+    </section>
+  </main>`,
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const first = "把第一张卡片的标题改短。";
+  const second = "第一张卡片的颜色也改一下。";
+  const third = "第二张卡片的颜色保持不变。";
+  try {
+    const request = await addCommentAndSubmit(
+      launched.page,
+      launched.electronApp,
+      fixture.sourcePath,
+      UPDATED_TEXT,
+      [
+        { text: first, targetSelector: ".review-near-a[data-stemmio-id]" },
+        { text: second, targetSelector: ".review-near-a[data-stemmio-id]" },
+        { text: third, targetSelector: ".review-near-b[data-stemmio-id]" },
+      ],
+    );
+    const frozen = JSON.parse(readFileSync(
+      path.join(request.requestRoot, "input", "annotations", "records.json"),
+      "utf8",
+    ));
+    const targetId = (text) => frozen.comments.find((comment) => comment.text === text)?.sourceAnchor?.elementId;
+    expect(targetId(first)).toBeTruthy();
+    expect(targetId(first)).toBe(targetId(second));
+    expect(targetId(first)).not.toBe(targetId(third));
+
+    writeAiOutput(request.requestRoot, (base) => base.replace(ORIGINAL_TEXT, UPDATED_TEXT));
+    runOfficialFinalizer(request.requestRoot, request.changeRequest);
+    await expect(launched.page.getByTestId("ai-conversation-action-bar"))
+      .toContainText("修改已准备好，尚未采用", { timeout: 30_000 });
+    await launched.page.getByRole("button", { name: "查看修改" }).click();
+    await expect(launched.page.getByTestId("ai-review-workspace"))
+      .toBeVisible({ timeout: 30_000 });
+    const before = launched.page.frameLocator('iframe[title^="修改前"]');
+    const after = launched.page.frameLocator('iframe[title^="修改后"]');
+    const markers = launched.page.locator(
+      'section[data-side="before"] [data-testid="review-comment-marker"]',
+    );
+    await expect(markers).toHaveCount(3);
+    const firstMarker = markers.filter({ hasText: first });
+    const secondMarker = markers.filter({ hasText: third });
+    await expect(firstMarker).toHaveCount(1);
+    await expect(secondMarker).toHaveCount(1);
+    await expect(firstMarker).toContainText(second);
+    await expect(firstMarker).toHaveAttribute("data-comment-count", "2");
+    await expect(secondMarker).toHaveAttribute("data-comment-count", "1");
+    const [firstBox, secondBox] = await Promise.all([
+      firstMarker.boundingBox(), secondMarker.boundingBox(),
+    ]);
+    expect(firstBox && secondBox).toBeTruthy();
+    expect(
+      firstBox.x + firstBox.width <= secondBox.x
+      || secondBox.x + secondBox.width <= firstBox.x
+      || firstBox.y + firstBox.height <= secondBox.y
+      || secondBox.y + secondBox.height <= firstBox.y,
+    ).toBe(true);
+
+    for (const [marker, activeId, otherId] of [
+      [firstMarker, targetId(first), targetId(third)],
+      [secondMarker, targetId(third), targetId(first)],
+    ]) {
+      await before.locator(`[data-stemmio-id="${activeId}"]`).evaluate((target) => {
+        target.scrollIntoView({ block: "center", behavior: "instant" });
+      });
+      await expect(marker).toBeInViewport({ ratio: 1 });
+      await marker.hover();
+      for (const frame of [before, after]) {
+        await expect(frame.locator(`[data-stemmio-review-comment-mask-hole="${activeId}"]`))
+          .toHaveCount(1);
+        await expect(frame.locator(`[data-stemmio-review-comment-mask-hole="${otherId}"]`))
+          .toHaveCount(0);
+      }
+    }
+    await launched.page.screenshot({
+      path: testInfo.outputPath("independent-review-comments.png"),
+      animations: "disabled",
+    });
+    expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("bottom-row Review comments remain individually reachable", {
+  tag: ["@smoke-review"],
+}, async () => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("review-bottom-comments.html", (source) => source.replace(
+    "  </main>",
+    `    <div style="height:800px"></div>
+    <p class="review-bottom-a" style="margin:0;width:240px">倒数第二张卡片。</p>
+    <p class="review-bottom-b" style="margin:0;width:240px">最后一张卡片。</p>
+  </main>`,
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const request = await addCommentAndSubmit(
+      launched.page, launched.electronApp, fixture.sourcePath, UPDATED_TEXT,
+      [
+        { text: "修改倒数第二张卡片。", targetSelector: ".review-bottom-a[data-stemmio-id]" },
+        { text: "修改最后一张卡片。", targetSelector: ".review-bottom-b[data-stemmio-id]" },
+      ],
+    );
+    writeAiOutput(request.requestRoot, (base) => base.replace(ORIGINAL_TEXT, UPDATED_TEXT));
+    runOfficialFinalizer(request.requestRoot, request.changeRequest);
+    await launched.page.getByRole("button", { name: "查看修改" }).click();
+    const before = launched.page.frameLocator('iframe[title^="修改前"]');
+    await before.locator("body").evaluate(() => window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: "instant",
+    }));
+    const pane = launched.page.locator('section[data-side="before"]');
+    const viewport = pane.locator('[aria-label="修改前画布滚动区"]');
+    const markers = pane.getByTestId("review-comment-marker");
+    await expect(markers).toHaveCount(3);
+    const bottomMarkers = [
+      markers.filter({ hasText: "修改倒数第二张卡片。" }),
+      markers.filter({ hasText: "修改最后一张卡片。" }),
+    ];
+    const viewportBox = await viewport.boundingBox();
+    expect(viewportBox).toBeTruthy();
+    await expect.poll(async () => {
+      const boxes = await Promise.all(bottomMarkers.map((marker) => marker.boundingBox()));
+      return boxes.every((box) => box
+        && box.y >= viewportBox.y
+        && box.y + box.height <= viewportBox.y + viewportBox.height);
+    }).toBe(true);
+    const [firstBox, lastBox] = await Promise.all(bottomMarkers.map((marker) => marker.boundingBox()));
+    expect(firstBox && lastBox).toBeTruthy();
+    expect(firstBox.x + firstBox.width <= lastBox.x
+      || lastBox.x + lastBox.width <= firstBox.x
+      || firstBox.y + firstBox.height <= lastBox.y
+      || lastBox.y + lastBox.height <= firstBox.y).toBe(true);
+    for (const marker of bottomMarkers) {
+      await expect(marker).toHaveCount(1);
+      await expect(marker).toBeVisible();
+      await marker.hover();
+      await expect(before.locator("[data-stemmio-review-comment-mask-hole]")).toHaveCount(1);
+    }
+    expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);
@@ -3131,7 +3305,7 @@ function emptyReviewScenario(scenario) {
       await launched.page.getByRole("button", { name: "双页对比", exact: true }).click();
       await launched.page.screenshot({ path: testInfo.outputPath("empty-review-returned-to-split.png"), animations: "disabled" });
       // Closing/reopening the existing decision owner preserves the empty Review.
-      const closeConversation = launched.page.getByRole("button", { name: "收起会话面板" });
+      const closeConversation = launched.page.getByRole("button", { name: "AI 助手" });
       if (scenario.narrow) {
         const hitTest = await closeConversation.evaluate((button) => {
           const box = button.getBoundingClientRect();

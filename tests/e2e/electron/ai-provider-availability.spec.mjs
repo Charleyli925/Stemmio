@@ -89,11 +89,11 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await expect(deliveryDialog.getByTestId("ai-conversation-agent"))
       .toContainText("Qoder");
     await expect(deliveryDialog.getByTestId("ai-conversation-context-summary"))
-      .toContainText("1 条修改意见");
+      .toHaveCount(0);
     await expect(deliveryDialog.getByText("AGENT BRIDGE", { exact: true })).toHaveCount(0);
     await expect(deliveryDialog.getByText("可信本机 Agent 提示", { exact: true }))
       .toHaveCount(0);
-    await deliveryDialog.getByRole("button", { name: /交给 Qoder 修改/u }).click();
+    await deliveryDialog.getByRole("button", { name: /交给 AI 修改/u }).click();
 
     // The compact thinking marker intentionally yields to public narration as
     // soon as the first Agent chunk arrives. Observe that pre-narration phase
@@ -158,15 +158,17 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     const copyMetadata = agentMessage.getByRole("button", { name: "复制", exact: true }).locator('..');
     await launched.page.mouse.move(0, 0);
     await expect(copyMetadata).toHaveCSS("opacity", "0");
-    await agentMessage.hover();
+    // Hover the actual affordance: a long narration row can scroll while
+    // Playwright aims at its center, leaving the pointer outside that row.
+    await agentMessage.getByRole("button", { name: "复制", exact: true }).hover();
     await expect(copyMetadata).toHaveCSS("opacity", "1");
     await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "trusted-loop-process-expanded.png"), animations: "disabled" });
     const readyGeometry = await launched.page.evaluate(() => {
       const sidebar = document.querySelector('[data-testid="ai-conversation-sidebar"]');
       const composer = document.querySelector('[data-testid="ai-conversation-composer"]');
       const selector = document.querySelector('[data-testid="ai-conversation-agent"]');
-      const actions = document.querySelector('[data-testid="ai-conversation-copy-task"]')
-        ?.parentElement;
+      const title = document.querySelector('[data-testid="ai-conversation-title"]');
+      const copy = document.querySelector('[data-testid="ai-conversation-copy-task"]');
       const bounds = (element) => element?.getBoundingClientRect() || null;
       return {
         viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -175,17 +177,20 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
         sidebar: bounds(sidebar),
         composer: bounds(composer),
         selector: bounds(selector),
-        actions: bounds(actions),
+        title: bounds(title),
+        copy: bounds(copy),
       };
     });
     expect(readyGeometry.documentOverflowX).toBe(false);
     expect(readyGeometry.sidebar.right).toBeLessThanOrEqual(readyGeometry.viewport.width);
     expect(readyGeometry.composer.bottom).toBeLessThanOrEqual(readyGeometry.viewport.height);
-    if (readyGeometry.actions) {
-      const selectorCenter = readyGeometry.selector.top + readyGeometry.selector.height / 2;
-      const actionsCenter = readyGeometry.actions.top + readyGeometry.actions.height / 2;
-      expect(Math.abs(selectorCenter - actionsCenter)).toBeLessThanOrEqual(1);
-    }
+    expect(readyGeometry.copy).toBeTruthy();
+    expect(readyGeometry.selector.top).toBeGreaterThan(readyGeometry.title.top);
+    expect(readyGeometry.copy.right).toBeLessThanOrEqual(readyGeometry.sidebar.right);
+    expect(Math.abs(
+      readyGeometry.title.top + readyGeometry.title.height / 2
+      - readyGeometry.copy.top - readyGeometry.copy.height / 2,
+    )).toBeLessThanOrEqual(5);
     // The current decision must remain outside history at every supported width.
     for (const width of [340, 400, 480]) {
       const sidebar = launched.page.getByTestId("ai-conversation-sidebar");
@@ -226,8 +231,8 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
       const stage = element.closest(".review-scroll-stage").getBoundingClientRect();
       return bounds.left >= stage.left - 1 && bounds.right <= innerWidth + 1 && bounds.bottom <= innerHeight + 1 && element.scrollWidth <= element.clientWidth + 1;
     })).toBe(true);
-    await expect(launched.page.getByRole("button", { name: "收起会话面板", exact: true })).toBeInViewport();
-    await launched.page.getByRole("button", { name: "收起会话面板", exact: true }).focus();
+    await expect(launched.page.getByRole("button", { name: "AI 助手", exact: true })).toBeInViewport();
+    await launched.page.getByRole("button", { name: "AI 助手", exact: true }).focus();
     await expect.poll(() => launched.page.locator(".workbench").evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ")[0])).toBe("0px");
     const zoomCapture = await launched.electronApp.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString("base64"));
     writeFileSync(path.join(AI_ASSISTANT_VISUAL_OUTPUT, "trusted-loop-pr8-zoom-200.png"), zoomCapture, "base64");
@@ -277,7 +282,7 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await expect(historicalToggle).toHaveAttribute("aria-expanded", "true");
     expect(await historical.evaluate((element) => element.clientHeight)).toBeGreaterThan(2 * await readingStream.evaluate((element) => element.clientHeight));
     await expect.poll(async () => Math.abs((await historicalToggle.boundingBox()).y - triggerTop)).toBeLessThanOrEqual(2);
-    await expect(readingFeedback).toHaveText("回到最新");
+    await expect(readingFeedback).toHaveCount(0);
     syntheticMessages.push({ messageId: "message_after_historical_expansion", actor: "stemmio", kind: "text", status: "completed",
       text: "新增的合成公开事实", createdAt: new Date().toISOString() });
     await expect(readingStream).toContainText("新增的合成公开事实");
@@ -288,7 +293,9 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await appendSyntheticHistory(20, "long_history_fixture");
     const stream = launched.page.getByTestId("ai-conversation-stream");
     await expect(stream).toContainText("长历史验收 long_history_fixture 19");
-    await stream.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll", { bubbles: true })); });
+    await stream.hover();
+    await launched.page.mouse.wheel(0, -100_000);
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop)).toBeLessThan(2);
     await appendSyntheticHistory(1, "new_tail_fixture");
     await expect(stream).toContainText("长历史验收 new_tail_fixture 0");
     expect(await stream.evaluate((element) => element.scrollTop)).toBeLessThan(2);
@@ -297,6 +304,15 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await launched.page.screenshot({ path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "trusted-loop-pr8-long-history.png"), animations: "disabled" });
     await launched.page.getByTestId("ai-conversation-unseen-content").click();
     await expect.poll(() => stream.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(2);
+    // A native scrollbar can remain held longer than the short wheel-event
+    // grace period. The later scroll still belongs to the same pointer gesture.
+    await stream.dispatchEvent("pointerdown", { pointerType: "mouse", button: 0 });
+    await launched.page.waitForTimeout(320);
+    await stream.evaluate((element) => { element.scrollTop = 0; });
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop)).toBeLessThan(2);
+    await expect(launched.page.getByTestId("ai-conversation-unseen-content")).toHaveText("回到最新");
+    await stream.dispatchEvent("pointerup", { pointerType: "mouse", button: 0 });
+    await launched.page.getByTestId("ai-conversation-unseen-content").click();
     await launched.page.screenshot({
       path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "qoder-result-ready.png"),
       fullPage: false,
@@ -416,7 +432,7 @@ test(`Qoder long public narration preserves reading state across updates and A-B
     await closeQoderAvailability(launched.page);
     const sidebar = await chooseModifyIntent(launched.page);
     const requestCountBefore = requestDirectoryCount(launched.workspace);
-    await sidebar.getByRole("button", { name: /交给 Qoder 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
 
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
@@ -440,13 +456,14 @@ test(`Qoder long public narration preserves reading state across updates and A-B
     await narration.evaluate((element) => {
       window.__stemmioLongNarrationArticle = element;
     });
-    const beforeScroll = await stream.evaluate((element) => {
-      element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
-      const top = Math.min(80, Math.max(0, element.scrollHeight - element.clientHeight - 20));
-      element.scrollTop = top;
-      element.dispatchEvent(new Event("scroll", { bubbles: true }));
-      return { top, scrollHeight: element.scrollHeight };
-    });
+    await stream.hover();
+    await launched.page.mouse.wheel(0, -10_000);
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(80);
+    const beforeScroll = await stream.evaluate((element) => ({
+      top: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+    }));
     await expect(launched.page.getByTestId("ai-conversation-unseen-content")).toBeVisible();
     await expect.poll(() => narration.textContent()).toContain("长公开说明 12/18");
     await expect(narration).toHaveCount(1);
@@ -507,14 +524,13 @@ test(`Qoder long public narration preserves reading state across updates and A-B
       const remainingDown = stream.scrollHeight - stream.clientHeight - stream.scrollTop;
       return Math.abs(delta > 0 ? Math.min(delta, remainingDown) : Math.max(delta, -stream.scrollTop));
     }, sealProcessTop)).toBeLessThanOrEqual(2);
-    // A successful run goes directly from sealed Agent narration to the
-    // reviewable Candidate result. The old generic execution-ended reminder
-    // is intentionally absent because it made a completed run look interrupted.
+    // The reviewable result keeps its durable position before the later sealed
+    // narration. The old generic execution-ended reminder remains absent.
     await expect.poll(() => narration.evaluate((element) => {
       const later = [...document.querySelectorAll('[data-testid="ai-conversation-message"]')].find((node) => (
         node.textContent.includes("AI 已修改完成，已生成可审阅的新 HTML。")
       ));
-      return Boolean(later && (element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING));
+      return Boolean(later && (element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_PRECEDING));
     })).toBe(true);
     await expect(launched.page.getByTestId("ai-turn-process").filter({ hasText: "本轮执行已结束。" }))
       .toHaveCount(0);
@@ -647,9 +663,9 @@ test("Codex ACP shares the public execution stream and retains its frozen identi
     await launched.page.getByRole("button", { name: "返回工作台" }).click();
     await expect(sidebar.getByTestId("ai-conversation-agent"))
       .toContainText("Codex", { timeout: 60_000 });
-    await expect(sidebar.getByRole("button", { name: /交给 Codex 修改/u }))
+    await expect(sidebar.getByRole("button", { name: /交给 AI 修改/u }))
       .toBeEnabled({ timeout: 60_000 });
-    await sidebar.getByRole("button", { name: /交给 Codex 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
 
     const narration = launched.page.getByTestId("ai-conversation-narration-message");
     await expect(narration).toBeVisible({ timeout: 60_000 });
@@ -829,9 +845,9 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
       fullPage: false,
       animations: "disabled",
     });
-    await expect(sidebar.getByRole("button", { name: /交给 源页 修改/u }))
+    await expect(sidebar.getByRole("button", { name: /交给 AI 修改/u }))
       .toBeEnabled();
-    await sidebar.getByRole("button", { name: /交给 源页 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
     const streamingProgress = launched.page.getByTestId("ai-conversation-execution-status");
     await expect(streamingProgress).toHaveText(/\d{2}:\d{2} · \d+ KB/u, { timeout: 30_000 });
     await expect(streamingProgress.locator("details")).toHaveCount(0);
@@ -841,9 +857,8 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
     await expect(streamingProgress).not.toContainText("fixture-hidden");
     await expect(launched.page.getByTestId("ai-conversation-run-progress")).toHaveCount(0);
     const quietProcess = sidebar.getByTestId("ai-conversation-narration-message");
-    await expect(quietProcess.getByTestId("ai-conversation-narration-toggle")).toHaveText("查看过程");
-    await quietProcess.getByTestId("ai-conversation-narration-toggle").click();
-    await expect(quietProcess.getByTestId("ai-conversation-public-activity")).toContainText(["收到服务响应", "生成修改"]);
+    await expect(quietProcess.getByTestId("ai-conversation-narration-toggle")).toHaveCount(0);
+    await expect(quietProcess.getByTestId("ai-conversation-public-activity")).toHaveCount(0);
     await expect(quietProcess.locator("p")).toHaveCount(0);
     await expect(quietProcess.getByRole("button", { name: "复制消息" })).toHaveCount(0);
     await expect(quietProcess).not.toContainText(/fixture-hidden|<!DOCTYPE|读取本轮资料|写入修改结果/u);
@@ -852,12 +867,14 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
     await expect(launched.page.locator(".toast.show")).toHaveCount(0);
     await expect(launched.page.getByTestId("ai-conversation-action-bar"))
       .toContainText("修改已准备好，尚未采用", { timeout: 60_000 });
+    await expect(sidebar.getByTestId("ai-conversation-narration-message"))
+      .toHaveCount(0);
     const readyGeometry = await launched.page.evaluate(() => {
       const sidebarNode = document.querySelector('[data-testid="ai-conversation-sidebar"]');
       const composer = document.querySelector('[data-testid="ai-conversation-composer"]');
       const selector = document.querySelector('[data-testid="ai-conversation-agent"]');
-      const actions = document.querySelector('[data-testid="ai-conversation-copy-task"]')
-        ?.parentElement;
+      const title = document.querySelector('[data-testid="ai-conversation-title"]');
+      const copy = document.querySelector('[data-testid="ai-conversation-copy-task"]');
       const bounds = (element) => element?.getBoundingClientRect() || null;
       return {
         viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -866,17 +883,20 @@ test("源页 Agent connects to one verified fixed model and reviews a Candidate"
         sidebar: bounds(sidebarNode),
         composer: bounds(composer),
         selector: bounds(selector),
-        actions: bounds(actions),
+        title: bounds(title),
+        copy: bounds(copy),
       };
     });
     expect(readyGeometry.documentOverflowX).toBe(false);
     expect(readyGeometry.sidebar.right).toBeLessThanOrEqual(readyGeometry.viewport.width);
     expect(readyGeometry.composer.bottom).toBeLessThanOrEqual(readyGeometry.viewport.height);
-    if (readyGeometry.actions) {
-      const selectorCenter = readyGeometry.selector.top + readyGeometry.selector.height / 2;
-      const actionsCenter = readyGeometry.actions.top + readyGeometry.actions.height / 2;
-      expect(Math.abs(selectorCenter - actionsCenter)).toBeLessThanOrEqual(1);
-    }
+    expect(readyGeometry.copy).toBeTruthy();
+    expect(readyGeometry.selector.top).toBeGreaterThan(readyGeometry.title.top);
+    expect(readyGeometry.copy.right).toBeLessThanOrEqual(readyGeometry.sidebar.right);
+    expect(Math.abs(
+      readyGeometry.title.top + readyGeometry.title.height / 2
+      - readyGeometry.copy.top - readyGeometry.copy.height / 2,
+    )).toBeLessThanOrEqual(5);
     await launched.page.screenshot({
       path: path.join(AI_ASSISTANT_VISUAL_OUTPUT, "stemmio-result-ready.png"),
       fullPage: false,
@@ -946,7 +966,7 @@ test("源页运行时余额失败 offers only provider recovery without a false 
     await setDefaultSettingsAgent(settingsPage, "stemmio");
     await launched.page.getByRole("button", { name: "返回工作台" }).click();
     const sidebar = await chooseModifyIntent(launched.page);
-    await sidebar.getByRole("button", { name: /交给 源页 修改/u }).click();
+    await sidebar.getByRole("button", { name: /交给 AI 修改/u }).click();
 
     const actionBar = launched.page.getByTestId("ai-conversation-action-bar");
     await expect(actionBar).toContainText("生成失败", { timeout: 60_000 });
@@ -1139,7 +1159,7 @@ test("Qoder installed while Stemmio is open refreshes in place and continues onc
 
     await closeQoderAvailability(launched.page);
     await chooseModifyIntent(launched.page);
-    await launched.page.getByRole("button", { name: "交给 Qoder 修改" }).click();
+    await launched.page.getByRole("button", { name: "交给 AI 修改" }).click();
     await expect.poll(() => requestPosts).toBe(1);
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
@@ -1287,7 +1307,7 @@ test("Qoder ACP polling waits for start and a managed stop kills the Agent", {
     expect(existsSync(pidFile), "Settings diagnosis must not publish the task PID").toBe(false);
     await closeQoderAvailability(launched.page);
     await chooseModifyIntent(launched.page);
-    await launched.page.getByRole("button", { name: "交给 Qoder 修改" }).click();
+    await launched.page.getByRole("button", { name: "交给 AI 修改" }).click();
 
     const stopButton = launched.page.getByRole("button", { name: "停止", exact: true });
     await expect(stopButton).toBeVisible({ timeout: 60_000 });

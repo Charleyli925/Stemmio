@@ -60,7 +60,7 @@ test("a managed Agent failure immediately replaces processing with retry or end"
       .toBeVisible({ timeout: 60_000 });
     await closeQoderAvailability(launched.page);
     await chooseModifyIntent(launched.page);
-    await launched.page.getByRole("button", { name: "交给 Qoder 修改" }).click();
+    await launched.page.getByRole("button", { name: "交给 AI 修改" }).click();
 
     const actionBar = launched.page.getByTestId("ai-conversation-action-bar");
     await expect(actionBar).toContainText("生成中断", { timeout: 60_000 });
@@ -231,7 +231,6 @@ test("a rapid double click creates exactly one durable Request", {
       await launched.page.getByRole("button", { name: /AI 助手/u }).click();
     }
     const sidebar = await chooseModifyIntent(launched.page);
-    await sidebar.getByLabel("更多发送选项", { exact: true }).click();
     await sidebar.getByTestId("ai-conversation-copy-task").dblclick({ delay: 0 });
     await expect(launched.page.getByTestId("ai-conversation-action-bar")
       .getByText("任务已复制，等你的 AI 改完", { exact: true })).toBeVisible();
@@ -399,10 +398,10 @@ test("an unknown Request outcome stays fail-closed and reconciles automatically"
      * chip) has no sidebar counterpart; the fail-closed contract is held by the
      * request-directory and reconcile assertions below, not by that sentence.
      */
-    const pendingRunProgress = launched.page
-      .getByTestId("ai-conversation-run-progress");
-    await expect(pendingRunProgress).toBeVisible({ timeout: 30_000 });
-    await expect(pendingRunProgress.locator("li")).toHaveCount(0);
+    await expect(launched.page.getByTestId("ai-conversation-action-bar"))
+      .toContainText("本轮任务状态暂时无法确认", { timeout: 30_000 });
+    await expect(launched.page.getByTestId("ai-conversation-run-progress"))
+      .toHaveCount(0);
     await expect(launched.page.getByRole("button", { name: "立即重新核对" }))
       .toHaveCount(0);
     await expect(launched.page.getByRole("button", { name: "重新打开源页" }).first())

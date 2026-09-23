@@ -185,7 +185,6 @@ export function useAiConversation({
     onSend,
     onCopyTask,
     onAction: onDecision,
-    onClose: hide,
     onOpenAgentSettings,
   }), [
     agentAvailability,
@@ -208,7 +207,6 @@ export function useAiConversation({
     onDraftTextChange,
     onCopyTask,
     onDecision,
-    hide,
     onOpenAgentSettings,
   ]);
 

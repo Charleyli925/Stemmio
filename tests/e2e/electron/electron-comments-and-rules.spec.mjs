@@ -540,7 +540,7 @@ test("Electron preview mounts the modification-only AI sidebar across reopen", a
     await expect(sidebar.getByTestId("ai-conversation-input")).toHaveCount(0);
     await expect(sidebar.getByTestId("ai-conversation-intent")).toHaveCount(0);
     await expect(sidebar.getByTestId("ai-conversation-context-summary"))
-      .toContainText("1 条修改意见");
+      .toHaveCount(0);
 
     // Collapsing and reopening keeps the same single-purpose product surface.
     await openToggle.click();

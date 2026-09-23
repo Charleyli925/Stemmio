@@ -3877,3 +3877,16 @@ The toggle now stays in one fixed workbench position. The shell and tab strip us
 The inspected screenshots are also retained as `output/design-qa/sidebar-toggle-motion/open.png` and `collapsed.png` (ignored QA output, not source assets).
 
 2026-09-24 correction: the first source-build check used DOM and automation clicks, so it missed a native hit-area failure. In the foreground Electron test window, a real coordinate click on the visible toggle did nothing, although an accessibility action opened the sidebar. The fixed-position button was covered by the tabbar/sidebar titlebar drag regions. A wrapper around the button alone did not fix the hit area. The tabbar now leaves the toggle area non-draggable, with dragging on the tab list; the sidebar titlebar's drag region starts to the right of the toggle. A fresh foreground Electron window then opened and closed the sidebar with two coordinate clicks at the same visible button position. The Electron regression also checks that no native drag region covers the button center during either transition. This corrects the earlier source-build acceptance claim; the user's hands-on judgment of motion remains the final experiential check.
+
+## 2026-09-24 — AI 会话与审阅定位修复
+
+DESIGN CHANGE. 输入区仅移除重复提示，草稿保存与发送边界保持现状；任务指令复制移到标题右侧，工具栏“AI 助手”可再次点击关闭。历史日期不附模型或服务名，源页消息统一名称与头像；机械进度保存在记录中但不逐条插入可见对话，其他消息依原始 sequence 显示。候选卡片缩小并以 180ms 轻微升起落定，减少动态效果设置下关闭动画。回到底部提示仅在明确较长上滚或阅读期间收到新可见事实时出现。
+
+- 实际锚点核对：只读检查用户当轮冻结评论和修改前后 HTML，两条问题评论分别指向不同 Stable ID，每个目标在两份页面中均只有一个匹配元素。浏览器实际排版中两目标横向、纵向均不同；缩放后原 34px 近邻合并规则把它们误并为“评2”。展示层已去掉跨目标合并，只保留绑定层的同目标分组；没有修改用户 HTML 或评论数据。
+- 实际会话核对：只读投影同一轮持久记录，证实旧展示曾将晚到的 Stemmio 过程移到较早的 Agent 结果前。新投影保留 sequence，并只呈现有意义的结果、公开说明和决定；机械事实仍在原始记录中。
+- 重建源码的真实 Electron 交互：相邻不同目标与同目标多评论场景分别得到独立标记和单个“评2”，逐一 hover 可高亮正确的前后 Stable ID；顶栏“变化 N 处”可点击打开、键盘关闭、选择目录项并改变焦点；复制入口、源页任务结果、Qoder 长说明的阅读锚点和历史新消息均通过定向测试。保存的截图位于忽略的 `output/design-qa/ai-assistant-redesign/` 和 Playwright 测试输出。
+- 独立审查发现长按原生滚动条和页面末尾密集评论两个边界。阅读意图现在延续到 pointerup；滚动 320ms 后才触发的回到最新状态通过 Electron 场景。评论只在同一横向轨道物理相撞时错开，底部向上排布；两条末行评论的入口均保持在画布可见范围并能分别 hover。
+- 首次回归失败：长说明测试原先要求把晚到说明提前到结果之前，与修正后的 sequence 合同冲突；改为断言持久顺序后两种展开状态均通过。另有既有目录测试选择最后一项后未返回原标签，导致后续旧断言失败；恢复原标签后完整场景通过。首次完整门禁的 lint 拒绝在 render 中读取动画 ref；入口动画改用候选卡片的稳定 CSS 类，定向 lint 已通过，完整门禁以修复后结果为准。
+- 第二次完整门禁通过了 305/305 Node、80/80 Browser、89/89 Electron，但 AI 50/52：两条测试仍要求展示本次刻意移除的机械进度和非处理态进度条。改为断言公开模型文字保留、机械活动不显示、未知 Request 仍 fail-closed 并自动核对后，两条定向 Electron 测试通过。新增底部用例首跑把帮助函数自动添加的基准评论漏算为 2 条，校正为 3 条且只对目标两条检查可达性后通过；该失败是测试计数错误。
+
+Result: passed for the scoped rebuilt-source Electron interactions and read-only private-source anchor diagnosis. 这不代表已安装 Developer Preview、真实外部模型生成质量或正式发布已更新；任务门禁结果由本次交付流程单独记录。
