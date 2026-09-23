@@ -19,7 +19,7 @@ function targetForEvent(value: EventTarget | null): HTMLElement | null {
   if (
     !target
     || !target.closest(".workbench")
-    || !target.closest(".workbench-header, .workbench-tabbar, .workbench-sidebar-titlebar, .workbench > .workbench-sidebar-toggle")
+    || !target.closest(".workbench-header, .workbench-tabbar, .workbench-sidebar-titlebar, .workbench-sidebar-toggle-titlebar")
     || (
       target.getAttribute("aria-expanded") === "true"
       && !target.hasAttribute("data-sidebar-toggle")

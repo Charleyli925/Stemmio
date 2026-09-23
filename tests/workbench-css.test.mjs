@@ -115,7 +115,8 @@ test("sidebar controls share inset and tab chrome is vertically centered without
   const tabs = css.match(/\.workbench-tablist\s*\{[\s\S]*?\}/u)?.[0];
   assert.ok(tabs, "missing base tablist rule");
   assert.match(tabs, /align-items:\s*center/u);
-  assert.match(tabs, /padding:\s*0 8px 0 140px/u);
+  assert.match(tabs, /margin-left:\s*140px/u);
+  assert.match(tabs, /padding:\s*0 8px 0 0/u);
 
   for (const selector of [
     ".workbench-sidebar-product",

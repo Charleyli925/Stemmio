@@ -6127,17 +6127,19 @@ export default function Workbench() {
         }
         aria-label="Stemmio 可视化编辑工作台"
       >
-      {navigationCapability ? <SidebarToggle
-        expanded={globalSidebarOpen}
-        onClick={() => {
-          const nextOpen = !globalSidebarOpen;
-          setGlobalSidebarOpen(nextOpen);
-          if (nextOpen) {
-            void projectCatalogCapability?.commands.refreshRecents();
-            void projectCatalogCapability?.commands.refreshRegistered();
-          }
-        }}
-      /> : null}
+      {navigationCapability ? <div className="workbench-sidebar-toggle-titlebar">
+        <SidebarToggle
+          expanded={globalSidebarOpen}
+          onClick={() => {
+            const nextOpen = !globalSidebarOpen;
+            setGlobalSidebarOpen(nextOpen);
+            if (nextOpen) {
+              void projectCatalogCapability?.commands.refreshRecents();
+              void projectCatalogCapability?.commands.refreshRegistered();
+            }
+          }}
+        />
+      </div> : null}
       <WorkbenchTooltipHost />
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}

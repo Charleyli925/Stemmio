@@ -25,18 +25,20 @@
 }
 
 .workbench-tablist {
+  -webkit-app-region: drag;
   height: 100%;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 8px 0 140px;
+  margin-left: 140px;
+  padding: 0 8px 0 0;
   overflow-x: auto;
   scrollbar-width: none;
-  transition: padding-left var(--workbench-sidebar-toggle-duration) var(--workbench-sidebar-toggle-easing);
+  transition: margin-left var(--workbench-sidebar-toggle-duration) var(--workbench-sidebar-toggle-easing);
 }
 
 .workbench[data-left-sidebar="open"] .workbench-tablist {
-  padding-left: 8px;
+  margin-left: 8px;
 }
 
 .workbench-tablist::-webkit-scrollbar {
@@ -199,6 +201,7 @@
 
 .workbench-sidebar-titlebar {
   -webkit-app-region: drag;
+  margin-left: 128px;
   min-width: 0;
   display: flex;
   align-items: center;

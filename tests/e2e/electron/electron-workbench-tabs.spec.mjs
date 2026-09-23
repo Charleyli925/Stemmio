@@ -64,11 +64,25 @@ test("sidebar toggle moves the Start tab without flashing it against the left ed
       const tabLeft = () => startTab()?.getBoundingClientRect().left ?? null;
       const positions = [tabLeft()];
       const togglePositions = [toggle.getBoundingClientRect().left];
+      const dragRegionsOverToggle = () => {
+        const rect = toggle.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        return [...document.querySelectorAll(
+          ".workbench-tabbar, .workbench-tablist, .workbench-sidebar-titlebar, .workbench-sidebar-toggle-titlebar",
+        )].filter((element) => {
+          if (getComputedStyle(element).getPropertyValue("-webkit-app-region") !== "drag") return false;
+          const region = element.getBoundingClientRect();
+          return region.left <= x && x < region.right && region.top <= y && y < region.bottom;
+        }).map((element) => element.className);
+      };
+      const dragOverlaps = [dragRegionsOverToggle()];
       let collecting = true;
       const sample = () => {
         if (!collecting) return;
         positions.push(tabLeft());
         togglePositions.push(document.querySelector(".workbench-sidebar-toggle")?.getBoundingClientRect().left ?? null);
+        dragOverlaps.push(dragRegionsOverToggle());
         requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -80,9 +94,13 @@ test("sidebar toggle moves the Start tab without flashing it against the left ed
       collecting = false;
       positions.push(tabLeft());
       togglePositions.push(document.querySelector(".workbench-sidebar-toggle")?.getBoundingClientRect().left ?? null);
+      dragOverlaps.push(dragRegionsOverToggle());
       return {
         positions,
         togglePositions,
+        dragOverlaps,
+        dragRegionCount: [...document.querySelectorAll(".workbench-tablist, .workbench-sidebar-titlebar")]
+          .filter((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag").length,
         state: workbench.getAttribute("data-left-sidebar"),
         durations: [
           getComputedStyle(workbench).transitionDuration,
@@ -101,6 +119,8 @@ test("sidebar toggle moves the Start tab without flashing it against the left ed
     expect(opening.durations).toEqual(["0.12s", "0.12s"]);
     expect(Math.max(...opening.togglePositions) - Math.min(...opening.togglePositions))
       .toBeLessThanOrEqual(1);
+    expect(opening.dragRegionCount).toBeGreaterThan(0);
+    expect(opening.dragOverlaps).toEqual(opening.dragOverlaps.map(() => []));
     await launched.page.screenshot({
       path: test.info().outputPath("sidebar-open.png"),
       animations: "disabled",
@@ -115,6 +135,8 @@ test("sidebar toggle moves the Start tab without flashing it against the left ed
     expect(closing.durations).toEqual(["0.12s", "0.12s"]);
     expect(Math.max(...closing.togglePositions) - Math.min(...closing.togglePositions))
       .toBeLessThanOrEqual(1);
+    expect(closing.dragRegionCount).toBeGreaterThan(0);
+    expect(closing.dragOverlaps).toEqual(closing.dragOverlaps.map(() => []));
     await launched.page.screenshot({
       path: test.info().outputPath("sidebar-collapsed.png"),
       animations: "disabled",
