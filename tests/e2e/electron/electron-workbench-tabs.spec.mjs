@@ -42,6 +42,64 @@ function currentProjectTabName(filePath) {
   return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
 }
 
+const cachedTabHandoffEnv = { STEMMIO_E2E_CACHED_TAB_HANDOFF: "1" };
+
+test("Electron switches current drafts without a static tab-handoff iframe by default", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("direct-canvas-a.html");
+  const projectB = createSourceFixture("direct-canvas-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    await expect(surfaceCache).toHaveAttribute("data-cache-entry-count", "2");
+    await launched.page.evaluate(() => {
+      const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      window.__STEMMIO_TEST_HANDOFF_MAX__ = root?.querySelectorAll("iframe").length || 0;
+      const sample = () => {
+        window.__STEMMIO_TEST_HANDOFF_MAX__ = Math.max(
+          window.__STEMMIO_TEST_HANDOFF_MAX__ || 0,
+          root?.querySelectorAll("iframe").length || 0,
+        );
+      };
+      const observer = new MutationObserver(sample);
+      if (root) observer.observe(root, { childList: true, subtree: true });
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__ = observer;
+    });
+    await tabs.filter({ hasText: "direct-canvas-a" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await tabs.filter({ hasText: "direct-canvas-b" }).click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    expect(await launched.page.evaluate(() => window.__STEMMIO_TEST_HANDOFF_MAX__ || 0)).toBe(0);
+    await expect(surfaceCache).toHaveAttribute("data-mounted-count", "0");
+    expect(await surfaceCache.getAttribute("data-visible")).toBeNull();
+    await expect(surfaceCache.locator("iframe")).toHaveCount(0);
+    const geometry = await launched.page.evaluate(() => ({
+      canvas: document.querySelector(".review-scroll-stage .canvas-column")?.getBoundingClientRect().width || 0,
+      rail: document.querySelector(".review-scroll-stage .comments-panel.comment-rail")?.getBoundingClientRect().width || 0,
+    }));
+    expect(geometry.canvas).toBeGreaterThan(0);
+    expect(geometry.rail).toBeGreaterThan(0);
+  } finally {
+    await launched.page.evaluate(() => {
+      window.__STEMMIO_TEST_HANDOFF_OBSERVER__?.disconnect();
+      delete window.__STEMMIO_TEST_HANDOFF_OBSERVER__;
+      delete window.__STEMMIO_TEST_HANDOFF_MAX__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron keeps the comment lane width stable across current-draft tab switches", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
@@ -51,6 +109,7 @@ test("Electron keeps the comment lane width stable across current-draft tab swit
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
@@ -546,6 +605,7 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
   const first = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   let firstClosed = false;
   let restored = null;
@@ -683,6 +743,7 @@ test("Electron fences rapid cached A-to-B-to-C returns by navigation handoff ide
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
@@ -779,6 +840,7 @@ test("Electron releases a delayed cache iframe when the verified Canvas arrives 
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
@@ -868,6 +930,7 @@ test("Electron retains an accepted B cache iframe while C waits, then ignores C'
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
@@ -1003,6 +1066,7 @@ test("Electron mounts a hidden new iframe for a same-Hash repeat handoff", {
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath, projectC.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   let releaseARead = () => {};
   try {
@@ -2548,6 +2612,7 @@ test("Electron retires the cache after same-source hydration advances Canvas aut
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+    injectedEnv: cachedTabHandoffEnv,
   });
   try {
     const initial = await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");

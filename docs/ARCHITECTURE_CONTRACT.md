@@ -980,9 +980,10 @@ paired preview sessions and iframes. Workbench keeps exactly one active Edit
 Canvas mounted for the current document; script refresh stays inside that
 editor's bounded A/B Runtime slots. Inactive document tabs retain only bounded
 script-disabled static projections and never retain an `HtmlCanvasEditor` or
-Runtime DOM. DocumentSurfaceCache may cover a pending tab switch; it must not
-replace or inert the same document's live editor during text input or Runtime
-refresh.
+Runtime DOM. Normal tab switches do not mount the retained static display
+cover; only the explicit E2E diagnostic opt-in lets DocumentSurfaceCache cover
+a pending tab switch. Even then it must not replace or inert the same document's
+live editor during text input or Runtime refresh.
 
 Formal Review has no runtime-snapshot supplement. The trusted
 `AiReviewWorkspace` begins with the immutable static document pair and keeps

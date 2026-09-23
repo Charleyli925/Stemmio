@@ -92,6 +92,7 @@ function entryForToken(
 }
 
 export function useDocumentSurfaceHandoff({
+  enabled,
   cache,
   tabs,
   sourceSha256,
@@ -102,6 +103,7 @@ export function useDocumentSurfaceHandoff({
   navigationTransactionId,
   controller,
 }: {
+  enabled: boolean;
   cache: DocumentSurfaceCacheSnapshot;
   tabs: WorkbenchTabsSnapshot;
   sourceSha256: string | null;
@@ -122,9 +124,9 @@ export function useDocumentSurfaceHandoff({
   updateHandoffScroll: (token: DocumentSurfaceCacheToken, scrollTop: number) => void;
   markFirstScroll: (tabId: string, scrollTop: number) => void;
 } {
-  const pending = cache.entries.find((entry) => (
+  const pending = enabled ? cache.entries.find((entry) => (
     entry.tabId === tabs.pendingTabId
-  )) || null;
+  )) || null : null;
   const pendingTabId = pending?.tabId || null;
   const pendingSourceSha256 = pending?.sourceSha256 || null;
   const pendingHandoffToken = useMemo(() => (

@@ -40,6 +40,12 @@ known model's exact maximum-output parameter on preflight, execution and identit
 repair; Custom unknown capability omits it. The configuration digest and bumped
 capability revision fence remain the authority for launch.
 
+The read-only tab projection row below describes the retained static display
+handoff's ownership and safety limits. Production currently leaves that display
+handoff disabled and mounts no tab-cache iframe on a normal switch; only an
+explicit E2E diagnostic opt-in exercises it. Bounded HTML data and separate
+per-tab reading state remain active regardless of the display setting.
+
 | Mutable fact | Sole owner | Durable authority | Consumers |
 | --- | --- | --- | --- |
 | Open source locator before first durable action, registered identity, renderer generation and late-query fence | Renderer `ProjectSession` | active-file record before registration; project registry and `project.json` afterwards | Application workflows and the Controller aggregate snapshot |

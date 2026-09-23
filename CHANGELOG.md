@@ -4,6 +4,7 @@ Notable user-visible changes are documented here. This project follows Semantic 
 
 ## [Unreleased]
 
+- 当前稿切换默认停用临时静态 HTML 展示页，直接等待正式 Canvas，减少先后两次排版的微小跳动；保留数据缓存、阅读位置恢复及可供回归验证的旧交接实现。
 - 修复两个当前稿切换时临时 HTML 先覆盖评论栏、正式画布接管后又收缩的宽度闪动；交接页现在直接与画布同列同宽。
 - 修复 Developer Preview 中已写入项目的空历史激活占位字段导致历史不可读，并恢复已发布密文凭证的安全读取；非空旧回执、明文或损坏记录仍拒绝。
 - Agent 设置中 Qoder“检查”恢复可用，Codex 安装会显示真实失败原因并明确安装的是连接组件；API Key 保存失败时不再重复显示“连接”，也不在界面保留刚输入的 Key。

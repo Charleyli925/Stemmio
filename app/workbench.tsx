@@ -5950,7 +5950,11 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
+  // Keep the reversible static tab-handoff path covered by E2E, but default
+  // to the single authoritative Canvas to avoid a second visible layout.
+  const cachedTabHandoffEnabled = typeof window !== "undefined"
+    && window.stemmioRuntime?.diagnostics?.e2eCachedTabHandoff === true;
+  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ enabled: cachedTabHandoffEnabled, cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
   // This is the same complete accepted presentation that the cache component
   // renders. A hidden candidate alone must never make the Canvas inert.
   const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface && visibleHandoffId);
