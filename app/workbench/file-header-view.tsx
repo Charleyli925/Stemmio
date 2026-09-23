@@ -13,7 +13,6 @@ import {
   WorkbenchHeaderActions,
   WorkbenchHeaderShell,
 } from "./workbench-header-shell";
-import { WorkbenchTooltipHost } from "./workbench-tooltip";
 
 export type WorkbenchHeaderToolbarProps = {
   runInProgress: boolean;
@@ -141,7 +140,6 @@ export function WorkbenchHeaderToolbar({
             <WorkbenchMoreMenu {...moreMenu} />
           </div>
       </WorkbenchHeaderActions>
-      <WorkbenchTooltipHost />
     </>
   );
 }

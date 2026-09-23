@@ -93,16 +93,12 @@ export function WorkbenchTabBar({
   onSelect,
   onClose,
   onNew,
-  sidebarOpen,
-  onToggleSidebar,
 }: {
   snapshot: WorkbenchTabsSnapshot;
   presentation: WorkbenchPresentation;
   onSelect: (tab: WorkbenchTab) => void;
   onClose: (tab: WorkbenchTab) => void;
   onNew: () => void;
-  sidebarOpen: boolean;
-  onToggleSidebar: () => void;
 }) {
   const tabButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const pendingKeyboardFocusRef = useRef<string | null>(null);
@@ -115,9 +111,6 @@ export function WorkbenchTabBar({
 
   return (
     <nav className="workbench-tabbar" aria-label="已打开的页面">
-      {!sidebarOpen ? (
-        <SidebarToggle expanded={false} onClick={onToggleSidebar} />
-      ) : null}
       <div
         className="workbench-tablist"
         role="tablist"
@@ -429,7 +422,6 @@ export function WorkbenchGlobalSidebar({
   currentDraftActive,
   currentProjectBusy = false,
   projectRulesActive,
-  onToggle,
   onOpenLocal,
   onOpenCurrentProject,
   onOpenHistoryVersion,
@@ -463,7 +455,6 @@ export function WorkbenchGlobalSidebar({
   currentDraftActive: boolean;
   currentProjectBusy?: boolean;
   projectRulesActive: boolean;
-  onToggle: () => void;
   onOpenLocal: () => void;
   onOpenCurrentProject: (project: RegisteredProject) => void;
   onOpenHistoryVersion: (
@@ -583,7 +574,6 @@ export function WorkbenchGlobalSidebar({
       {open ? (
         <>
           <div className="workbench-sidebar-titlebar">
-            <SidebarToggle expanded onClick={onToggle} />
           </div>
           <div className="workbench-sidebar-product">
             <button type="button" onClick={onOpenAbout}>

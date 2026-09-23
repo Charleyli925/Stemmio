@@ -92,8 +92,7 @@ body {
   background: var(--chrome-inspector-surface);
 }
 
-/* The collapsed and expanded buttons are one visual component. Only their
-   containing shell decides where the same 28px control is anchored. */
+/* One toggle stays above both shell columns while they move beneath it. */
 .workbench-sidebar-toggle {
   -webkit-app-region: no-drag;
   width: 28px;
@@ -109,15 +108,11 @@ body {
   transition: background-color 140ms ease, color 140ms ease;
 }
 
-.workbench > .workbench-tabbar > .workbench-sidebar-toggle {
+.workbench > .workbench-sidebar-toggle {
   position: absolute;
-  z-index: 2;
+  z-index: 85;
   top: 6px;
   left: 86px;
-}
-
-.workbench-sidebar-titlebar > .workbench-sidebar-toggle {
-  margin-left: 86px;
 }
 
 .workbench-sidebar-toggle:hover:not(:disabled),
@@ -501,7 +496,8 @@ body {
    layer. Keep the old pseudo-tooltip for non-workbench surfaces only. */
 .workbench-header [data-tooltip]::after,
 .workbench-tabbar [data-tooltip]::after,
-.workbench-sidebar-titlebar [data-tooltip]::after {
+.workbench-sidebar-titlebar [data-tooltip]::after,
+.workbench > .workbench-sidebar-toggle[data-tooltip]::after {
   display: none !important;
   content: none !important;
 }

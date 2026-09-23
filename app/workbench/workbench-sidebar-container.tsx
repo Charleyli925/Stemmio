@@ -106,7 +106,6 @@ export const WorkbenchGlobalSidebarContainer = memo(function WorkbenchGlobalSide
   projectRulesActive: boolean;
   currentDraftActive: boolean;
   currentProjectBusy?: boolean;
-  onToggle(): void;
   onOpenLocal(): void;
   onOpenCurrentProject(project: RegisteredProject): void;
   onOpenHistoryVersion(
@@ -152,13 +151,6 @@ export const WorkbenchGlobalSidebarContainer = memo(function WorkbenchGlobalSide
         const outcome = await capability.commands.restoreWorkingCopy(projectId);
         if (outcome.status !== "succeeded") {
           setRestoreError("reason" in outcome ? String(outcome.reason) : "工作文件无法恢复。");
-        }
-      }}
-      onToggle={() => {
-        props.onToggle();
-        if (!props.open) {
-          void capability.commands.refreshRecents();
-          void capability.commands.refreshRegistered();
         }
       }}
       onResizeCommit={props.onResizeCommit}

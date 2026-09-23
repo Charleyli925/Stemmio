@@ -44,6 +44,116 @@ function currentProjectTabName(filePath) {
 
 const cachedTabHandoffEnv = { STEMMIO_E2E_CACHED_TAB_HANDOFF: "1" };
 
+test("sidebar toggle moves the Start tab without flashing it against the left edge", async () => {
+  const fixture = createSourceFixture("sidebar-toggle-motion.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    await loadedDiskFrame(launched.page, fixture.sourcePath, "list-item");
+    await launched.page.getByRole("button", { name: "新标签页" }).click();
+    await expect(launched.page.locator('.workbench-tab[data-kind="start"]')).toBeVisible();
+    await launched.page.emulateMedia({ reducedMotion: "no-preference" });
+
+    const traceToggle = (opening) => launched.page.evaluate(async (shouldOpen) => {
+      const workbench = document.querySelector(".workbench");
+      const tablist = document.querySelector(".workbench-tablist");
+      const startTab = () => document.querySelector('.workbench-tab[data-kind="start"]');
+      const toggle = document.querySelector(".workbench-sidebar-toggle");
+      if (!workbench || !tablist || !startTab() || !toggle) {
+        throw new Error("Sidebar or Start tab is unavailable.");
+      }
+      const tabLeft = () => startTab()?.getBoundingClientRect().left ?? null;
+      const positions = [tabLeft()];
+      const togglePositions = [toggle.getBoundingClientRect().left];
+      let collecting = true;
+      const sample = () => {
+        if (!collecting) return;
+        positions.push(tabLeft());
+        togglePositions.push(document.querySelector(".workbench-sidebar-toggle")?.getBoundingClientRect().left ?? null);
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      toggle.click();
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      const animations = [...workbench.getAnimations(), ...tablist.getAnimations()];
+      await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      collecting = false;
+      positions.push(tabLeft());
+      togglePositions.push(document.querySelector(".workbench-sidebar-toggle")?.getBoundingClientRect().left ?? null);
+      return {
+        positions,
+        togglePositions,
+        state: workbench.getAttribute("data-left-sidebar"),
+        durations: [
+          getComputedStyle(workbench).transitionDuration,
+          getComputedStyle(tablist).transitionDuration,
+        ],
+        expectedState: shouldOpen ? "open" : "collapsed",
+      };
+    }, opening);
+
+    const opening = await traceToggle(true);
+    expect(opening.state).toBe(opening.expectedState);
+    expect(opening.positions).not.toContain(null);
+    expect(opening.positions.length).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...opening.positions), JSON.stringify(opening.positions))
+      .toBeGreaterThanOrEqual(opening.positions[0] - 2);
+    expect(opening.durations).toEqual(["0.12s", "0.12s"]);
+    expect(Math.max(...opening.togglePositions) - Math.min(...opening.togglePositions))
+      .toBeLessThanOrEqual(1);
+    await launched.page.screenshot({
+      path: test.info().outputPath("sidebar-open.png"),
+      animations: "disabled",
+    });
+
+    const closing = await traceToggle(false);
+    expect(closing.state).toBe(closing.expectedState);
+    expect(closing.positions).not.toContain(null);
+    expect(closing.positions.length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...closing.positions), JSON.stringify(closing.positions))
+      .toBeLessThanOrEqual(closing.positions[0] + 2);
+    expect(closing.durations).toEqual(["0.12s", "0.12s"]);
+    expect(Math.max(...closing.togglePositions) - Math.min(...closing.togglePositions))
+      .toBeLessThanOrEqual(1);
+    await launched.page.screenshot({
+      path: test.info().outputPath("sidebar-collapsed.png"),
+      animations: "disabled",
+    });
+
+    await launched.page.emulateMedia({ reducedMotion: "reduce" });
+    const reducedDurations = await launched.page.evaluate(() => [
+      getComputedStyle(document.querySelector(".workbench")).transitionDuration,
+      getComputedStyle(document.querySelector(".workbench-tablist")).transitionDuration,
+    ]);
+    expect(reducedDurations).toEqual(["0s", "0s"]);
+    await launched.page.getByRole("button", { name: "展开左侧边栏" }).click();
+    await expect(launched.page.locator(".workbench")).toHaveAttribute("data-left-sidebar", "open");
+    const stableToggle = launched.page.getByRole("button", { name: "收起左侧边栏" });
+    await stableToggle.hover();
+    await expect(launched.page.getByRole("tooltip")).toHaveText("收起左侧边栏");
+    await stableToggle.click();
+    await expect(launched.page.getByRole("button", { name: "展开左侧边栏" })).toBeVisible();
+    await expect(launched.page.getByRole("tooltip")).toHaveText("展开左侧边栏");
+
+    await launched.page.emulateMedia({ reducedMotion: "no-preference" });
+    const appReducedDurations = await launched.page.evaluate(() => {
+      const workbench = document.querySelector(".workbench");
+      workbench.setAttribute("data-motion", "reduced");
+      const durations = [
+        getComputedStyle(workbench).transitionDuration,
+        getComputedStyle(document.querySelector(".workbench-tablist")).transitionDuration,
+      ];
+      workbench.setAttribute("data-motion", "system");
+      return durations;
+    });
+    expect(appReducedDurations[0]).toBe("0s");
+    expect(Number.parseFloat(appReducedDurations[1])).toBeLessThan(0.001);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron switches current drafts without a static tab-handoff iframe by default", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

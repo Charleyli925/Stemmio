@@ -11,6 +11,8 @@
   --notice-header-height: var(--workbench-header-height);
   --workbench-sidebar-width: 0px;
   --workbench-sidebar-width-saved: 264px;
+  --workbench-sidebar-toggle-duration: 120ms;
+  --workbench-sidebar-toggle-easing: cubic-bezier(.22, 1, .36, 1);
   --workbench-inspector-width: 376px;
 
   position: fixed;
@@ -27,7 +29,11 @@
     minmax(0, 1fr);
   overflow: hidden;
   background: #f5f4f1;
-  transition: grid-template-columns 180ms cubic-bezier(.22, 1, .36, 1);
+  transition: grid-template-columns var(--workbench-sidebar-toggle-duration) var(--workbench-sidebar-toggle-easing);
+}
+
+.workbench[data-motion="reduced"] {
+  transition: none;
 }
 
 .workbench[data-left-sidebar="open"] {
