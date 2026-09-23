@@ -178,7 +178,7 @@ test("unreadable remembered credentials stay on disk and do not trigger retry lo
   assert.equal(await readFile(credentialPath, "utf8"), before);
 });
 
-test("legacy v1 credential records are rejected without rewriting the file", async () => {
+test("the shipped v1 ciphertext remains readable and canonicalizes on explicit mutation", async () => {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), "stemmio-credential-"));
   const credentialPath = path.join(userDataPath, "agent-session-credential.v1.json");
   const crypto = memorySafeStorage();
@@ -192,7 +192,58 @@ test("legacy v1 credential records are rejected without rewriting the file", asy
     rememberedAt: "2026-01-01T00:00:00.000Z",
   };
   await writeFile(credentialPath, `${JSON.stringify(legacy)}\n`, { mode: 0o600 });
-  const before = await readFile(credentialPath, "utf8");
+  const store = createAgentSessionCredentialStore({
+    userDataPath,
+    encryptString: (value) => crypto.encryptString(value),
+    decryptString: (buffer) => crypto.decryptString(buffer),
+    isEncryptionAvailable: () => true,
+  });
+
+  const status = await store.publicStatus();
+  assert.equal(status.status, "saved");
+  assert.match(status.recordId, /^cred_[a-f0-9]{32}$/u);
+  assert.deepEqual(
+    await store.publicStatus({ operationId: "credential_unknown_legacy_1" }),
+    {
+      available: true,
+      remembered: false,
+      providerId: "stemmio",
+      vendorId: null,
+      recordId: null,
+      status: "unknown",
+      operationId: "credential_unknown_legacy_1",
+      code: "AGENT_CREDENTIAL_OPERATION_UNKNOWN",
+    },
+  );
+  assert.equal((await store.load()).apiKey, "sk-legacy");
+  assert.equal(JSON.parse(await readFile(credentialPath, "utf8")).schemaVersion, 1);
+
+  const saved = await store.persist({
+    operationId: "credential_replace_legacy_1",
+    apiKey: "sk-current",
+    vendorId: "deepseek",
+  });
+  assert.equal(saved.status, "saved");
+  const canonical = JSON.parse(await readFile(credentialPath, "utf8"));
+  assert.equal(canonical.schemaVersion, 2);
+  assert.equal(canonical.state, "saved");
+  assert.equal(canonical.vendorId, "deepseek");
+  assert.equal("apiKey" in canonical, false);
+});
+
+test("the v1 reader rejects partial, mixed, or plaintext legacy credential shapes", async () => {
+  const userDataPath = await mkdtemp(path.join(os.tmpdir(), "stemmio-credential-"));
+  const credentialPath = path.join(userDataPath, "agent-session-credential.v1.json");
+  const crypto = memorySafeStorage();
+  const mixedLegacy = {
+    schemaVersion: 1,
+    providerId: "stemmio",
+    vendorId: "deepseek",
+    ciphertext: crypto.encryptString("sk-encrypted").toString("base64"),
+    rememberedAt: "2026-01-01T00:00:00.000Z",
+    apiKey: "sk-plaintext",
+  };
+  await writeFile(credentialPath, `${JSON.stringify(mixedLegacy)}\n`, { mode: 0o600 });
   const store = createAgentSessionCredentialStore({
     userDataPath,
     encryptString: (value) => crypto.encryptString(value),
@@ -202,10 +253,23 @@ test("legacy v1 credential records are rejected without rewriting the file", asy
 
   const status = await store.publicStatus();
   assert.equal(status.status, "unreadable");
-  assert.equal(status.recordId, null);
-  assert.equal((await store.loadResult()).status, "unreadable");
+  assert.equal(status.reason, "AGENT_CREDENTIAL_RECORD_INVALID");
   assert.equal(await store.load(), null);
-  assert.equal(await readFile(credentialPath, "utf8"), before);
+  assert.equal(await readFile(credentialPath, "utf8"), `${JSON.stringify(mixedLegacy)}\n`);
+
+  const partialLegacy = {
+    schemaVersion: 1,
+    providerId: "stemmio",
+    vendorId: "deepseek",
+    ciphertext: crypto.encryptString("sk-encrypted").toString("base64"),
+    rememberedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await writeFile(credentialPath, `${JSON.stringify(partialLegacy)}\n`, { mode: 0o600 });
+  const partialStatus = await store.publicStatus();
+  assert.equal(partialStatus.status, "unreadable");
+  assert.equal(partialStatus.reason, "AGENT_CREDENTIAL_RECORD_INVALID");
+  assert.equal(await store.load(), null);
+  assert.equal(await readFile(credentialPath, "utf8"), `${JSON.stringify(partialLegacy)}\n`);
 });
 
 test("provider mutations commit in Main acceptance order even when the first write is pending", async () => {

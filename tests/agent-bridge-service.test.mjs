@@ -1036,7 +1036,7 @@ test("Agent Bridge preserves a verified Candidate when ACP teardown is unconfirm
   assert.equal(completed.errorMessage, null);
   assert.equal(completed.retryable, false);
   assert.equal(completed.safeToRetry, false);
-  for (let index = 0; index < 50 && !facts.some((fact) => fact.kind === "execution-ended"); index += 1) {
+  for (let index = 0; index < 50 && !facts.some((fact) => fact.kind === "public-summary"); index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(facts.some((fact) => fact.kind === "failed"), false);
@@ -1045,7 +1045,6 @@ test("Agent Bridge preserves a verified Candidate when ACP teardown is unconfirm
       .map((fact) => [fact.kind, fact.publicSummary || null]),
     [
       ["public-summary", "Candidate finalized successfully."],
-      ["execution-ended", null],
     ],
   );
 });

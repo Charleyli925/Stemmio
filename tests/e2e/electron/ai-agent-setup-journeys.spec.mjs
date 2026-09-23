@@ -393,7 +393,8 @@ test("credential recovery actions follow startup or persist facts despite mislea
   test.setTimeout(180_000);
   const fixture = createSourceFixture("credential-recovery.html");
   const httpAgent = await startStemmioHttpAgent();
-  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath, injectedEnv: stemmioHttpAgentEnv(httpAgent.baseUrl) });
+  const injectedEnv = stemmioHttpAgentEnv(httpAgent.baseUrl);
+  let launched = await launchStemmio({ activeSourcePath: fixture.sourcePath, injectedEnv });
   try {
     await loadedDiskFrame(launched.page, fixture.sourcePath);
     const reloadRenderer = async () => {
@@ -437,10 +438,20 @@ test("credential recovery actions follow startup or persist facts despite mislea
       }));
     });
     await reloadRenderer();
-    const settings = await openAgentSettingsPage(launched.page);
+    let settings = await openAgentSettingsPage(launched.page);
     await expandSettingsAgent(settings, "stemmio");
-    const card = settings.getByTestId("settings-agent-row-stemmio");
-    for (const reason of ["本机未能保存，本次连接仍有效。", "无法读取已保存的连接凭证。合成保存失败。"]) {
+    let card = settings.getByTestId("settings-agent-row-stemmio");
+    for (const [index, reason] of ["本机未能保存，本次连接仍有效。", "无法读取已保存的连接凭证。合成保存失败。"].entries()) {
+      if (index > 0) {
+        // A failed save deliberately leaves this session connected with only a
+        // retry-save action. Give the next failure wording a fresh session.
+        await stopStemmio(launched.electronApp, launched.isolatedUserData);
+        launched = await launchStemmio({ activeSourcePath: fixture.sourcePath, injectedEnv });
+        await loadedDiskFrame(launched.page, fixture.sourcePath);
+        settings = await openAgentSettingsPage(launched.page);
+        await expandSettingsAgent(settings, "stemmio");
+        card = settings.getByTestId("settings-agent-row-stemmio");
+      }
       await launched.electronApp.evaluate(({ ipcMain }, reason) => {
         ipcMain.removeHandler("html-agent-access:persist-credential");
         globalThis.__M1_PERSIST_CALLS__ = [];

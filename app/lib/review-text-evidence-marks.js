@@ -10,10 +10,8 @@ export const REVIEW_TEXT_EVIDENCE_REMOVED_COLOR = "#d92d20";
 export const REVIEW_TEXT_EVIDENCE_ADDED_COLOR = "#239b56";
 
 export const REVIEW_TEXT_EVIDENCE_MARKER_CSS = `
-  html[data-stemmio-review-filter="all"] [data-stemmio-review-text="removed"],
-  html[data-stemmio-review-filter="text"] [data-stemmio-review-text="removed"],
-  html[data-stemmio-review-filter="all"] [data-stemmio-review-text="added"],
-  html[data-stemmio-review-filter="text"] [data-stemmio-review-text="added"] {
+  [data-stemmio-review-text="removed"],
+  [data-stemmio-review-text="added"] {
     background: transparent !important;
     color: inherit !important;
     font: inherit !important;

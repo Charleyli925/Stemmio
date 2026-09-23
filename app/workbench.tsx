@@ -5950,7 +5950,11 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
+  // Keep the reversible static tab-handoff path covered by E2E, but default
+  // to the single authoritative Canvas to avoid a second visible layout.
+  const cachedTabHandoffEnabled = typeof window !== "undefined"
+    && window.stemmioRuntime?.diagnostics?.e2eCachedTabHandoff === true;
+  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ enabled: cachedTabHandoffEnabled, cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
   // This is the same complete accepted presentation that the cache component
   // renders. A hidden candidate alone must never make the Canvas inert.
   const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface && visibleHandoffId);
@@ -6398,19 +6402,6 @@ export default function Workbench() {
         }}
         openHtmlError={openHtmlError}
       /> : null}
-      <WorkbenchDocumentSurfaceCache
-        snapshot={documentSurfaceCacheSnapshot}
-        visibleTabId={visibleCachedSurface?.tabId || null}
-        visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
-        visibleHandoffId={visibleHandoffId}
-        candidateTabId={candidateCachedSurface?.tabId || null}
-        candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
-        candidateHandoffId={candidateHandoffId}
-        acceptDisplayReady={acceptDisplayReady}
-        onHandoffScroll={updateHandoffScroll}
-        onFirstScroll={markFirstScroll}
-        height="var(--comment-canvas-height, 760px)"
-      />
       {settingsPageActive ? (
         <SettingsPage
           activeTabId={activeWorkbenchTab.tabId}
@@ -6512,6 +6503,19 @@ export default function Workbench() {
           inert={readyReviewOverlay ? true : undefined}
           aria-hidden={readyReviewOverlay ? true : undefined}
         >
+          <WorkbenchDocumentSurfaceCache
+            snapshot={documentSurfaceCacheSnapshot}
+            visibleTabId={visibleCachedSurface?.tabId || null}
+            visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
+            visibleHandoffId={visibleHandoffId}
+            candidateTabId={candidateCachedSurface?.tabId || null}
+            candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
+            candidateHandoffId={candidateHandoffId}
+            acceptDisplayReady={acceptDisplayReady}
+            onHandoffScroll={updateHandoffScroll}
+            onFirstScroll={markFirstScroll}
+            height="var(--comment-canvas-height, 760px)"
+          />
           <div
             className="canvas-edit-surface"
             data-testid="workbench-active-document-canvas"

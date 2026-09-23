@@ -6,9 +6,10 @@ import {
   writeFile as defaultWriteFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { randomBytes as defaultRandomBytes } from "node:crypto";
+import { createHash, randomBytes as defaultRandomBytes } from "node:crypto";
 
 export const AGENT_SESSION_CREDENTIAL_FILE_NAME = "agent-session-credential.v1.json";
+const LEGACY_SCHEMA_VERSION = 1;
 const SCHEMA_VERSION = 2;
 const MAX_BYTES = 16_384;
 const MAX_RECEIPTS = 12;
@@ -19,6 +20,15 @@ const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,79}$/u;
 const SAFE_OPERATION_ID = /^[A-Za-z0-9_-]{8,160}$/u;
 const SAFE_RECORD_ID = /^cred_[a-f0-9]{24,32}$/u;
 const HTTPS_ORIGIN = /^https:\/\//u;
+const LEGACY_RECORD_KEYS = new Set([
+  "schemaVersion",
+  "providerId",
+  "vendorId",
+  "baseUrl",
+  "modelId",
+  "ciphertext",
+  "rememberedAt",
+]);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -43,6 +53,10 @@ function normalizeBaseUrl(value) {
 function validOperationId(value) {
   const operationId = String(value || "").trim();
   return SAFE_OPERATION_ID.test(operationId) ? operationId : "";
+}
+
+function legacyRecordId(raw) {
+  return `cred_${createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 32)}`;
 }
 
 function unavailableReceipt(operationId = "") {
@@ -250,6 +264,34 @@ export function createAgentSessionCredentialStore({
       return Object.freeze({ state: "unreadable", current: null, receipts: Object.freeze([]), reason: "AGENT_CREDENTIAL_RECORD_INVALID" });
     }
 
+    if (
+      isRecord(parsed)
+      && parsed.schemaVersion === LEGACY_SCHEMA_VERSION
+      && Object.keys(parsed).length === LEGACY_RECORD_KEYS.size
+      && Object.keys(parsed).every((key) => LEGACY_RECORD_KEYS.has(key))
+      && parsed.providerId === PROVIDER_ID
+      && SAFE_VENDOR.test(parsed.vendorId || "")
+      && typeof parsed.ciphertext === "string"
+      && parsed.ciphertext
+    ) {
+      return Object.freeze({
+        state: "record",
+        legacy: true,
+        receipts: Object.freeze([]),
+        current: Object.freeze({
+          state: "saved",
+          operationId: null,
+          recordId: legacyRecordId(raw),
+          providerId: PROVIDER_ID,
+          vendorId: parsed.vendorId,
+          baseUrl: normalizeBaseUrl(parsed.baseUrl),
+          modelId: SAFE_MODEL_ID.test(String(parsed.modelId || "")) ? String(parsed.modelId) : "",
+          ciphertext: parsed.ciphertext,
+          rememberedAt: typeof parsed.rememberedAt === "string" ? parsed.rememberedAt : null,
+        }),
+      });
+    }
+
     const operationId = validOperationId(parsed?.operationId);
     const receipts = Array.isArray(parsed?.receipts)
       ? parsed.receipts.map(parseReceipt).filter(Boolean).slice(-MAX_RECEIPTS)
@@ -346,6 +388,18 @@ export function createAgentSessionCredentialStore({
           vendorId: null,
         });
       }
+    }
+    if (operationId && result.legacy === true) {
+      return Object.freeze({
+        available: true,
+        remembered: false,
+        providerId: PROVIDER_ID,
+        vendorId: null,
+        recordId: null,
+        status: "unknown",
+        operationId,
+        code: "AGENT_CREDENTIAL_OPERATION_UNKNOWN",
+      });
     }
     if (operationId && current.operationId && current.operationId !== operationId) {
       return Object.freeze({

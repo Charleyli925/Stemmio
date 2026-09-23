@@ -90,7 +90,6 @@ export type {
   ReviewImpact,
   ReviewPresentation,
   ReviewRevealStep,
-  ReviewFilter,
   ReviewFocusGeometryMode,
   ReviewFocusOutlinePolicy,
   ReviewFocusGroup,

@@ -55,7 +55,7 @@ export type ReadOnlyCommentMarkerProps = {
 };
 
 const EDGE_MARGIN = 96;
-const HORIZONTAL_SPLIT = .55;
+const BUBBLE_GAP = 10;
 
 function markerLabel(items: readonly ReadOnlyCommentItem[]) {
   const text = items.map((item) => item.text).join("；");
@@ -67,13 +67,25 @@ function markerLabel(items: readonly ReadOnlyCommentItem[]) {
 export function readOnlyCommentBubblePlacement(
   marker: HTMLElement,
   viewport: HTMLElement,
+  preferredPlacement: "left" | "right" = "right",
 ) {
   const markerBounds = marker.getBoundingClientRect();
   const viewportBounds = viewport.getBoundingClientRect();
-  const centerX = markerBounds.left + markerBounds.width / 2 - viewportBounds.left;
+  const bubble = marker.querySelector<HTMLElement>('[data-comment-bubble="true"]');
+  const bubbleWidth = bubble?.getBoundingClientRect().width || 320;
+  const leftSpace = markerBounds.left - viewportBounds.left - BUBBLE_GAP;
+  const rightSpace = viewportBounds.right - markerBounds.right - BUBBLE_GAP;
+  const preferredSpace = preferredPlacement === "right" ? rightSpace : leftSpace;
+  const alternatePlacement = preferredPlacement === "right" ? "left" : "right";
+  const alternateSpace = alternatePlacement === "right" ? rightSpace : leftSpace;
+  const placement = preferredSpace >= bubbleWidth
+    ? preferredPlacement
+    : alternateSpace >= bubbleWidth
+      ? alternatePlacement
+      : rightSpace >= leftSpace ? "right" : "left";
   const centerY = markerBounds.top + markerBounds.height / 2 - viewportBounds.top;
   return {
-    placement: centerX < viewportBounds.width * HORIZONTAL_SPLIT ? "right" : "left",
+    placement,
     vertical: centerY < EDGE_MARGIN
       ? "below"
       : centerY > viewportBounds.height - EDGE_MARGIN
@@ -131,10 +143,14 @@ export default function ReadOnlyCommentMarker({
   const reposition = useCallback((marker: HTMLElement) => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const { placement, vertical } = readOnlyCommentBubblePlacement(marker, viewport);
+    const { placement, vertical } = readOnlyCommentBubblePlacement(
+      marker,
+      viewport,
+      initialPlacement,
+    );
     marker.dataset.bubblePlacement = placement;
     marker.dataset.bubbleVertical = vertical;
-  }, [viewportRef]);
+  }, [initialPlacement, viewportRef]);
 
   const handlePointerEnter = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     pointerInsideRef.current = true;

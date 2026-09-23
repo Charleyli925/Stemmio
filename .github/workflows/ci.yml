@@ -136,7 +136,7 @@ jobs:
       && github.event.pull_request.draft == true
       && needs.pr-feedback-plan.outputs.has_desktop == 'true'
     runs-on: macos-14
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 5
@@ -157,7 +157,7 @@ jobs:
           skip-electron: "false"
           install-mode: populate
       - name: Run Draft Electron and AI canaries
-        timeout-minutes: 20
+        timeout-minutes: 30
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DRAFT_PLANNED_SELECTION: ${{ needs.pr-feedback-plan.outputs.planned_selection }}

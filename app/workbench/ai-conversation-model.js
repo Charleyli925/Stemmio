@@ -341,11 +341,18 @@ export function sidebarTurnPresentation(messages = []) {
     else primary.push(message);
   }
   const timeline = [];
-  // Conversation messages already carry a strictly increasing sequence from
-  // the single Repository writer. Preserve that chronology across speakers:
-  // regrouping by actor made older Agent narration jump below newer Stemmio
-  // facts and left the live status detached at the bottom.
-  for (const message of messages) {
+  // Preserve repository order inside each semantic phase, but present every
+  // process fact before the settled result and every decision after it. Agent
+  // teardown can persist its final public narration after Candidate creation;
+  // rendering that late write below "AI 已修改完成" makes the result look as if
+  // it happened before validation. This stable phase ordering matches the
+  // user-visible lifecycle without regrouping by speaker.
+  const timelineMessages = [
+    ...messages.filter((message) => !["result-summary", "decision-outcome"].includes(message.kind)),
+    ...messages.filter((message) => message.kind === "result-summary"),
+    ...messages.filter((message) => message.kind === "decision-outcome"),
+  ];
+  for (const message of timelineMessages) {
     const isProcess = process.includes(message);
     const previous = timeline.at(-1);
     if (isProcess && message.kind !== "process-summary"

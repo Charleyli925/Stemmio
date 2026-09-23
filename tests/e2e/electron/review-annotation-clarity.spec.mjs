@@ -483,6 +483,8 @@ test("the review projection annotates a dense report cleanly and accurately", as
     await openReviewButton.click();
     await expect(launched.page.getByTestId("ai-review-workspace"))
       .toBeVisible({ timeout: 30_000 });
+    await expect(launched.page.getByRole("button", { name: "适应画布", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
     const liveReviewTools = launched.page.locator("header.workbench-header")
       .getByLabel("审阅工具", { exact: true });
     await expect(liveReviewTools).toBeVisible();
@@ -712,6 +714,12 @@ test("the review projection annotates a dense report cleanly and accurately", as
       { type: "structure", structureChange: "style" },
     );
     expect(inlineStyleGroupA.id).not.toBe(inlineStyleGroupB.id);
+    // The product now enters Review in fit-to-canvas mode. Pixel-isolation
+    // evidence intentionally switches to authored 1:1 pixels so clearing focus
+    // cannot change rasterization through a fractional canvas transform.
+    await launched.page.getByRole("button", { name: "原始大小", exact: true }).click();
+    await expect(launched.page.getByRole("button", { name: "原始大小", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
     for (const frame of [beforeFrame, afterFrame]) {
       await frame.locator("head").evaluate((head) => {
         const authoredStyle = document.createElement("style");
@@ -1328,23 +1336,11 @@ test("the review projection annotates a dense report cleanly and accurately", as
     }
 
     await activateFocusGroup(beforeFrame, afterFrame, singleStyleGroup);
-    for (const [filter, name] of [["文字变化", "text"], ["元素变化", "structure"]]) {
-      await launched.page.getByRole("button", { name: filter, exact: true }).click();
-      await expect.poll(
-        async () => afterFrame.locator("html").getAttribute("data-stemmio-review-filter"),
-        { timeout: 15_000 },
-      ).toBe(name);
-      for (const frame of [beforeFrame, afterFrame]) {
-        await expect(frame.locator("html"))
-          .toHaveAttribute("data-stemmio-review-focus-group", "");
-        await expect(frame.locator("[data-stemmio-review-overlay-box]")).toHaveCount(0);
-        await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(0);
-        await expect(frame.locator("[data-stemmio-review-mask-dim]")).toHaveCount(0);
-      }
-      await launched.page.screenshot({
-        path: path.join(captureDirectory, `review-annotation-${name}.png`),
-        animations: "disabled",
-      });
+    await expect(launched.page.getByRole("button", { name: /全部变化|文字变化|元素变化/u }))
+      .toHaveCount(0);
+    await launched.page.keyboard.press("Escape");
+    for (const frame of [beforeFrame, afterFrame]) {
+      await expect(frame.locator("html")).toHaveAttribute("data-stemmio-review-focus-group", "");
     }
 
     // Close-up evidence for the dash rhythm and the dot row. The strike and the
@@ -1353,11 +1349,6 @@ test("the review projection annotates a dense report cleanly and accurately", as
     // screenshots would be misplaced by the canvas scale transform, so clip the
     // page using layout coordinates and read the canvas at 100%. The shared
     // review toolbar is outside the page region and does not alter the clip.
-    await launched.page.getByRole("button", { name: "全部变化" }).click();
-    await expect.poll(
-      async () => afterFrame.locator("html").getAttribute("data-stemmio-review-filter"),
-      { timeout: 15_000 },
-    ).toBe("all");
     await launched.page.getByRole("button", { name: "原始大小", exact: true }).click();
     await expect(launched.page.getByRole("button", { name: "原始大小", exact: true }))
       .toHaveAttribute("aria-pressed", "true");

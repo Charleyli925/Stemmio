@@ -13,7 +13,6 @@ import {
   REVIEW_PROJECTION_FACTS_SERIALIZED_LENGTH_LIMIT,
   reviewProjectionFactKey,
   reviewProjectionFactsCanMerge,
-  reviewProjectionFactsForFilter,
   serializeReviewProjectionFacts,
 } from "../app/lib/review-projection-facts.js";
 
@@ -45,7 +44,7 @@ const removedText = {
   geometryMode: "text-content",
 };
 
-test("projection keeps text and source-structure facts in the existing filters", () => {
+test("projection keeps every text and source-structure fact", () => {
   const facts = appendReviewProjectionFact(
     appendReviewProjectionFact([], addedElement),
     removedText,
@@ -53,8 +52,6 @@ test("projection keeps text and source-structure facts in the existing filters",
 
   assert.deepEqual(facts, [addedElement, removedText]);
   assert.deepEqual(parseReviewProjectionFacts(serializeReviewProjectionFacts(facts)), facts);
-  assert.deepEqual(reviewProjectionFactsForFilter(facts, "structure"), [addedElement]);
-  assert.deepEqual(reviewProjectionFactsForFilter(facts, "text"), [removedText]);
 });
 
 test("movement, reorder, attributes, and element styles remain structure facts", () => {

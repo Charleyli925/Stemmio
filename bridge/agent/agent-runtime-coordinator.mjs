@@ -1097,7 +1097,11 @@ export class AgentRuntimeCoordinator {
         entry.visibleTextUpdates.map((update) => update.text).join("\n\n"),
       );
       if (summary) await this.#queueExecutionFact(entry, "public-summary", summary);
-      await this.#queueExecutionFact(entry, entry.state === "failed" ? "failed" : "execution-ended");
+      // Candidate/no-change/cancel outcomes already own the public terminal
+      // fact. A second generic "execution ended" row arrives later and makes a
+      // successful result read like an interruption, so retain it only for the
+      // failure path that has no independently stored result.
+      if (entry.state === "failed") await this.#queueExecutionFact(entry, "failed");
       if (entry.historyFailure) {
         entry.state = "interrupted";
         entry.phase = "interrupted";

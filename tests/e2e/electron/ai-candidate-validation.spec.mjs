@@ -68,7 +68,7 @@ test("a pre-load review navigation falls back without trusting the replacement p
       await expect(frame.locator("html"))
         .not.toHaveAttribute("data-review-navigation-replacement", "true");
       await expect(frame.locator("html"))
-        .toHaveAttribute("data-stemmio-review-filter", "all");
+        .not.toHaveAttribute("data-stemmio-review-filter");
     }
     await expect(afterReviewFrame.locator(
       '[data-stemmio-review-marker-types~="text"]',

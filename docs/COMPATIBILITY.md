@@ -1,7 +1,9 @@
 # Current-format compatibility policy
 
 Stemmio supports the records, interfaces and release artifacts produced by the
-current formal workflow only. There is no migration pass, compatibility window,
+current formal workflow. Two narrowly bounded ingress adapters cover bytes
+written by shipped Developer Preview builds; neither adapter restores a retired
+product model. There is no migration pass, general compatibility window,
 old-data recovery entry point, or old-client distribution path.
 
 ## Storage and request boundaries
@@ -13,8 +15,12 @@ old-data recovery entry point, or old-client distribution path.
   identity fields. The retired Qoder delivery shape, driver aliases and
   `allowLegacy` switch are rejected.
 - A project manifest contains one editable current Working Copy. Versions are
-  immutable snapshots. Retired Working Copy lists, historical activation
-  receipts and old promotion journals are rejected without rewriting bytes.
+  immutable snapshots. Retired Working Copy lists, non-null historical
+  activation receipts and old promotion journals are rejected without rewriting
+  bytes. A shipped v4 Runtime that contains only the inert
+  `historyActivation: null` tombstone is decoded at Registry ingress by dropping
+  that member in memory; the reader does not replay, expose or recreate an
+  activation receipt.
 - Current save, Version creation, Request freeze and adoption transactions keep
   their complete crash recovery, idempotent retry and source-identity checks.
   Source-element identity materialization for a newly imported external HTML is
@@ -26,6 +32,11 @@ old-data recovery entry point, or old-client distribution path.
   Records containing the retired full-array impact members are rejected.
 - Preferences use the current schema and validation rules. An unsupported or
   damaged file falls back to safe defaults without an upgrade write.
+- The shipped schema-1 Stemmio credential ciphertext remains readable through
+  the same macOS safe-storage boundary. It receives a deterministic current
+  record identity in memory and is rewritten as schema 2 only after an explicit
+  save or clear; malformed, plaintext or unsupported provider records remain
+  unreadable.
 - Public distribution assets contain the signed updater metadata, installers,
   differential update files, checksums and provenance. The schema-1
   `update-manifest.json` artifact is neither generated nor required.
@@ -43,9 +54,13 @@ reader for retired product models.
 The focused tests retain only small negative examples for retired shapes:
 
 - `tests/project-file-schema.test.mjs` rejects missing current-draft markers,
-  retired Working Copy members and runtime history activation.
-- `tests/project-registry-and-open.test.mjs` verifies unsupported runtime bytes
-  remain unchanged.
+  retired Working Copy members and persisted runtime history activation.
+- `tests/project-registry-and-open.test.mjs` verifies non-null activation
+  receipts remain rejected and the shipped null tombstone is ignored without
+  rewriting source bytes.
+- `tests/agent-session-credential-store.test.mjs` verifies the shipped
+  ciphertext-only credential remains readable and canonicalizes only on an
+  explicit mutation.
 - `tests/agent-delivery-codec.test.mjs` rejects the removed Qoder delivery
   record without conversion.
 - `tests/run-lifecycle.test.mjs` and
@@ -53,7 +68,8 @@ The focused tests retain only small negative examples for retired shapes:
 - `tests/conversation-v2.test.mjs` rejects unsupported conversation and draft
   schema versions without projecting them into current records.
 
-These tests do not attempt to repair, migrate, replay or inventory old data.
+These tests do not attempt to repair, replay or inventory old data beyond the
+two explicit shipped-current ingress adapters above.
 Current recovery scenarios are constructed by the current writers and remain
 covered by the save, Version, Request and adoption recovery suites.
 

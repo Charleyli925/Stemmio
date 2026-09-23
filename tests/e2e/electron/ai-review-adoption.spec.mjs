@@ -546,9 +546,17 @@ ${REVIEW_MASK_UNION_BEFORE}
       beforeReviewFrame,
       initialNavigationTarget,
     );
-    const reviewDirectorySummary = reviewWorkspace.locator(
+    const reviewDirectorySummary = sharedHeader.locator(
       'summary[aria-label^="变化目录，共"]',
     );
+    await expect.poll(async () => {
+      const [reviewModeBox, summaryBox] = await Promise.all([
+        sharedHeader.getByRole("button", { name: /^审阅/u }).boundingBox(),
+        reviewDirectorySummary.boundingBox(),
+      ]);
+      if (!reviewModeBox || !summaryBox) return false;
+      return summaryBox.x >= reviewModeBox.x + reviewModeBox.width - 2;
+    }).toBe(true);
     const reviewDirectoryMenu = launched.page.getByLabel("变化目录", { exact: true });
     await reviewDirectorySummary.click();
     await expect(reviewDirectoryMenu).toBeVisible();
@@ -587,7 +595,7 @@ ${REVIEW_MASK_UNION_BEFORE}
     await expect(afterReviewFrame.locator("html"))
       .not.toHaveAttribute("data-stemmio-preview-navigation-fallback", "true");
     await expect(afterReviewFrame.locator("html"))
-      .toHaveAttribute("data-stemmio-review-filter", "all");
+      .not.toHaveAttribute("data-stemmio-review-filter");
     await expect.poll(async () => afterReviewFrame.locator(
       "[data-review-anonymous-panel-copy]",
     ).evaluateAll((elements) => elements.map((element) => ({
@@ -648,29 +656,48 @@ ${REVIEW_MASK_UNION_BEFORE}
     const beforeReviewViewport = launched.page.locator(
       'section[data-side="before"] [aria-label="修改前画布滚动区"]',
     );
-    const reviewMarkerRailGeometry = async () => {
-      const [markerBox, viewportBox] = await Promise.all([
+    const reviewCommentTarget = beforeReviewFrame.locator(caseSelector("list-item"));
+    const reviewMarkerTargetGeometry = async () => {
+      const [markerBox, targetBox] = await Promise.all([
         reviewCommentMarker.boundingBox(),
-        beforeReviewViewport.boundingBox(),
+        reviewCommentTarget.boundingBox(),
       ]);
-      if (!markerBox || !viewportBox) return null;
+      if (!markerBox || !targetBox) return null;
+      const markerCenter = markerBox.x + markerBox.width / 2;
       return {
-        markerRight: markerBox.x + markerBox.width,
-        viewportRight: viewportBox.x + viewportBox.width,
+        markerBox,
+        targetBox,
+        markerCenter,
+        targetCenter: targetBox.x + targetBox.width / 2,
+        separated: markerBox.x + markerBox.width <= targetBox.x
+          || markerBox.x >= targetBox.x + targetBox.width,
+        gap: markerBox.x >= targetBox.x + targetBox.width
+          ? markerBox.x - (targetBox.x + targetBox.width)
+          : targetBox.x - (markerBox.x + markerBox.width),
       };
     };
-    const railBeforeHorizontalScroll = await reviewMarkerRailGeometry();
-    expect(railBeforeHorizontalScroll).not.toBeNull();
-    expect(Math.abs(
-      railBeforeHorizontalScroll.viewportRight - railBeforeHorizontalScroll.markerRight,
-    )).toBeLessThanOrEqual(4);
+    const markerBeforeHorizontalScroll = await reviewMarkerTargetGeometry();
+    expect(markerBeforeHorizontalScroll).toMatchObject({ separated: true });
+    // The frozen comment target can be the list container that owns an
+    // indented list item. Keep the marker within one small reading margin of
+    // the visible item while the bubble itself must avoid the exact item box.
+    if ((markerBeforeHorizontalScroll?.gap || 0) > 96) {
+      await test.info().attach("review-comment-marker-geometry.json", {
+        body: JSON.stringify(markerBeforeHorizontalScroll, null, 2),
+        contentType: "application/json",
+      });
+    }
+    expect(markerBeforeHorizontalScroll.gap).toBeLessThanOrEqual(96);
     await beforeReviewViewport.evaluate((element) => {
       element.scrollLeft = element.scrollWidth - element.clientWidth;
     });
     await expect.poll(async () => {
-      const current = await reviewMarkerRailGeometry();
-      return current && railBeforeHorizontalScroll
-        ? Math.abs(current.markerRight - railBeforeHorizontalScroll.markerRight)
+      const current = await reviewMarkerTargetGeometry();
+      return current && markerBeforeHorizontalScroll
+        ? Math.abs(
+          (current.markerCenter - current.targetCenter)
+          - (markerBeforeHorizontalScroll.markerCenter - markerBeforeHorizontalScroll.targetCenter),
+        )
         : Infinity;
     }).toBeLessThanOrEqual(1);
     await beforeReviewFrame.locator(caseSelector("list-item"))
@@ -702,14 +729,27 @@ ${REVIEW_MASK_UNION_BEFORE}
     await expect(afterReviewFrame.locator("[data-stemmio-review-comment-highlight]"))
       .toHaveCount(1);
     await expect.poll(async () => {
-      const [bubbleBox, viewportBox] = await Promise.all([
+      const [bubbleBox, viewportBox, targetBox] = await Promise.all([
         reviewCommentBubble.boundingBox(),
         beforeReviewViewport.boundingBox(),
+        reviewCommentTarget.boundingBox(),
       ]);
-      if (!bubbleBox || !viewportBox) return false;
-      return bubbleBox.x >= viewportBox.x + 4
-        && bubbleBox.x + bubbleBox.width <= viewportBox.x + viewportBox.width - 4;
-    }).toBe(true);
+      if (!bubbleBox || !viewportBox || !targetBox) return null;
+      const avoidsTarget = bubbleBox.x + bubbleBox.width <= targetBox.x
+        || bubbleBox.x >= targetBox.x + targetBox.width;
+      const leftSpace = targetBox.x - (viewportBox.x + 4);
+      const rightSpace = viewportBox.x + viewportBox.width - 4
+        - (targetBox.x + targetBox.width);
+      const canAvoidTarget = leftSpace >= bubbleBox.width || rightSpace >= bubbleBox.width;
+      return {
+        avoidsWhenPossible: !canAvoidTarget || avoidsTarget,
+        insideViewport: bubbleBox.x >= viewportBox.x + 4
+          && bubbleBox.x + bubbleBox.width <= viewportBox.x + viewportBox.width - 4,
+        bubbleBox,
+        viewportBox,
+        targetBox,
+      };
+    }).toMatchObject({ avoidsWhenPossible: true, insideViewport: true });
     await reviewCommentBubble.hover();
     await expect(reviewCommentBubble).toBeVisible();
     if (process.env.STEMMIO_CAPTURE_REVIEW) {
@@ -821,7 +861,6 @@ ${REVIEW_MASK_UNION_BEFORE}
     ).then((states) => states.every(Boolean))).toBe(true);
     await expect.poll(async () => Promise.all(
       [beforeReviewFrame, afterReviewFrame].map((frame) => frame.locator("html").evaluate(() => {
-        const filter = document.documentElement.dataset.stemmioReviewFilter || "all";
         return [...document.querySelectorAll("[data-stemmio-review-overlay-box]")]
           .filter((box) => !String(
             box.getAttribute("data-stemmio-review-fact") || "",
@@ -834,8 +873,6 @@ ${REVIEW_MASK_UNION_BEFORE}
               const markerTypes = String(
                 marker.getAttribute("data-stemmio-review-marker-types") || "",
               ).split(/\s+/u);
-              const matchesFilter = filter === "all" || markerTypes.includes(filter);
-              if (!matchesFilter) return false;
               if (markerTypes.includes("text")) {
                 const range = document.createRange();
                 range.selectNodeContents(marker);
@@ -1024,21 +1061,14 @@ ${REVIEW_MASK_UNION_BEFORE}
         animations: "disabled",
       });
     }
-    await launched.page.getByRole("button", { name: "文字变化" }).click();
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("text");
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-focus",
-    )).not.toBe("all");
-    // Switching the filter must select the first matching marker instead of
-    // leaving an unmatched target with an empty viewport.
-    const filteredFocusChangeId = await beforeReviewFrame.locator("html")
-      .getAttribute("data-stemmio-review-focus");
-    expect(filteredFocusChangeId).toBeTruthy();
-    await expect(beforeReviewFrame.locator(
+    await expect(launched.page.getByRole("button", { name: /全部变化|文字变化|元素变化/u }))
+      .toHaveCount(0);
+    const removedText = beforeReviewFrame.locator(
       '[data-stemmio-review-text="removed"]',
-    ).filter({ hasText: ORIGINAL_TEXT })).toBeVisible();
+    ).filter({ hasText: ORIGINAL_TEXT });
+    const filteredFocusChangeId = await removedText.getAttribute("data-stemmio-review-marker");
+    expect(filteredFocusChangeId).toBeTruthy();
+    await expect(removedText).toBeVisible();
     const filteredFocusBar = beforeReviewFrame.locator(
       `[data-stemmio-review-region-bar="${filteredFocusChangeId}"]`,
     ).first();
@@ -1050,9 +1080,6 @@ ${REVIEW_MASK_UNION_BEFORE}
     await expect(beforeReviewFrame.locator(
       `[data-stemmio-review-mask-hole="${filteredFocusChangeId}"]`,
     )).toHaveCount(1);
-    // Re-selecting the same filter keeps the user's position; page markers
-    // remain the explicit way to move to another change.
-    await launched.page.getByRole("button", { name: "文字变化" }).click();
     await expect.poll(async () => beforeReviewFrame.locator("html")
       .getAttribute("data-stemmio-review-focus")).toBe(filteredFocusChangeId);
     await expect(beforeReviewFrame.locator(
@@ -1119,11 +1146,24 @@ ${REVIEW_MASK_UNION_BEFORE}
           && maximumDelta < .25;
       })),
     ).then((results) => results.every(Boolean))).toBe(true);
+    const filteredFocusGroupId = await filteredFocusBar.getAttribute(
+      "data-stemmio-review-focus-group",
+    );
+    expect(filteredFocusGroupId).toBeTruthy();
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect(frame.locator(
         '[data-stemmio-review-overlay-box][data-tone^="text-"]',
       )).toHaveCount(0);
-      await expect(frame.locator("[data-stemmio-review-mask-hole]")).toHaveCount(1);
+      await expect(frame.locator("html")).toHaveAttribute(
+        "data-stemmio-review-focus-group",
+        filteredFocusGroupId,
+      );
+      const activeRegionId = await frame.locator("html")
+        .getAttribute("data-stemmio-review-focus-region");
+      // A selected locality can have no corresponding region on one side.
+      // Such a side must not invent a mask (INTERACTION_FLOW Review contract).
+      await expect(frame.locator("[data-stemmio-review-mask-hole]"))
+        .toHaveCount(activeRegionId ? 1 : 0);
     }
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
       await expect.poll(() => frame.locator("[data-stemmio-review-text-mark]").count())
@@ -1597,14 +1637,8 @@ ${REVIEW_MASK_UNION_BEFORE}
           && Boolean(hole.path)
         ));
     }).toBe(true);
-    await launched.page.getByRole("button", { name: "全部变化" }).click();
-    await expect.poll(async () => afterReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("all");
-    await launched.page.getByRole("button", { name: "文字变化" }).click();
-    await expect.poll(async () => afterReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("text");
+    await expect(launched.page.getByRole("button", { name: /全部变化|文字变化|元素变化/u }))
+      .toHaveCount(0);
     const ebitaMarker = afterReviewFrame.locator(
       '[data-review-ebita-copy] [data-stemmio-review-text="added"]',
     ).filter({ hasText: "建议继续保留实验策略" });
@@ -1625,28 +1659,17 @@ ${REVIEW_MASK_UNION_BEFORE}
     )).toHaveCount(1);
     await beforeCounter.evaluate((button) => button.click());
     await expect(afterCounter).toHaveAttribute("data-count", "3");
-    // The authored counter is unrelated to the review sequence controls and
-    // remains a separate page interaction synchronized across both frames.
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("text");
+    // The authored counter remains a separate page interaction synchronized
+    // across both frames without changing Review's complete evidence set.
     await expect(launched.page.locator('[data-view="split"]')).toBeVisible();
     await expect(launched.page.getByRole("slider", {
       name: "非修改区域上下文可见度",
     })).toHaveCount(0);
-    await launched.page.getByRole("button", { name: "全部变化" }).click();
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("all");
     await expect(launched.page.locator('[data-view="split"]')).toBeVisible();
     await expect(beforeReviewFrame.locator('[data-review-tab-panel="one"]'))
       .toBeVisible();
     await expect(afterReviewFrame.locator('[data-review-tab-panel="one"]'))
       .toBeVisible();
-    await launched.page.getByRole("button", { name: "元素变化" }).click();
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("structure");
     await activateReviewMarkerGroup(afterReviewFrame, afterReviewFrame.locator(
       '[data-review-brand-row="added"]',
     ));
@@ -1734,9 +1757,6 @@ ${REVIEW_MASK_UNION_BEFORE}
     }).click();
     await expect(launched.page.locator('[data-view="before"]')).toBeVisible();
     await expect(launched.page.locator('section[data-side="after"]')).toHaveAttribute("hidden", "");
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("structure");
     // Switching to a single page must widen it to the space available, never leave it at
     // the split width. Alignment of the right edges was the old way to say that, but it
     // silently assumed the scroll area is wider than the page: at 100% zoom a page wider
@@ -1752,9 +1772,6 @@ ${REVIEW_MASK_UNION_BEFORE}
       name: "双页对比",
     }).click();
     await expect(launched.page.locator('[data-view="split"]')).toBeVisible();
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("structure");
     const wholePageButton = launched.page.getByRole("button", {
       name: "双页对比",
     });
@@ -1773,11 +1790,7 @@ ${REVIEW_MASK_UNION_BEFORE}
     }).click();
     await expect(launched.page.locator('[data-view="after"]')).toBeVisible();
     await expect(launched.page.locator('section[data-side="before"]')).toHaveAttribute("hidden", "");
-    await launched.page.getByRole("button", { name: "全部变化" }).click();
     await expect(launched.page.locator('[data-view="after"]')).toBeVisible();
-    await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-      "data-stemmio-review-filter",
-    )).toBe("all");
     await wholePageButton.click();
     await expect(launched.page.locator('[data-view="split"]')).toBeVisible();
     await expect.poll(async () => {
@@ -2123,9 +2136,6 @@ ${REVIEW_MASK_UNION_BEFORE}
       const captureDirectory = path.join(productRoot, "output", "design-qa");
       mkdirSync(captureDirectory, { recursive: true });
       await wholePageButton.click();
-      await expect.poll(async () => beforeReviewFrame.locator("html").getAttribute(
-        "data-stemmio-review-filter",
-      )).toBe("all");
       await Promise.all([
         beforeViewport.evaluate((element) => { element.scrollLeft = 0; }),
         afterViewport.evaluate((element) => { element.scrollLeft = 0; }),
@@ -2678,11 +2688,7 @@ test("stable-ID Review keeps movement, reorder, attributes and styles position-b
     const beforeFrame = launched.page.frameLocator('iframe[title^="修改前"]');
     const afterFrame = launched.page.frameLocator('iframe[title^="修改后"]');
     for (const frame of [beforeFrame, afterFrame]) {
-      await expect(frame.locator("html")).toHaveAttribute(
-        "data-stemmio-review-filter",
-        "all",
-        { timeout: 30_000 },
-      );
+      await expect(frame.locator("html")).not.toHaveAttribute("data-stemmio-review-filter");
     }
 
     const structureKinds = async (locator) => JSON.parse(
@@ -2781,10 +2787,6 @@ test("stable-ID Review keeps movement, reorder, attributes and styles position-b
         + '[data-stable-review-exact="b"] [data-stemmio-review-text]',
       )).toHaveCount(0);
     }
-    await launched.page.getByRole("button", { name: "元素变化" }).click();
-    await expect(afterFrame.locator("html")).toHaveAttribute("data-stemmio-review-filter", "structure");
-    // Filter state publishes before its scheduled overlay render. Do not click
-    // a bar retained from the previous text-inclusive frame.
     await afterFrame.locator("html").evaluate(() => new Promise(resolve => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     }));
@@ -2843,11 +2845,7 @@ test("a rewrite outside <main> is still reviewed", {
     const beforeReviewFrame = launched.page.frameLocator('iframe[title^="修改前"]');
     const afterReviewFrame = launched.page.frameLocator('iframe[title^="修改后"]');
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
-      await expect(frame.locator("html")).toHaveAttribute(
-        "data-stemmio-review-filter",
-        "all",
-        { timeout: 30_000 },
-      );
+      await expect(frame.locator("html")).not.toHaveAttribute("data-stemmio-review-filter");
     }
     // The footer is a body-level sibling of <main>, so it must become its own
     // change region carrying text evidence on both sides.
@@ -3231,11 +3229,8 @@ test("a safe simple CSS selector creates one position-bound element change", {
     }
     await expect(afterFrame.locator('[data-stemmio-review-structure="style"]'))
       .toHaveCount(1);
-    const filters = launched.page.getByRole("group", { name: "变化审阅", exact: true });
-    await filters.getByRole("button", { name: "文字变化", exact: true }).click();
-    await expect(launched.page.getByTestId("review-empty-changes")).toBeVisible();
-    await expect(filters).toBeVisible();
-    await filters.getByRole("button", { name: "全部变化", exact: true }).click();
+    await expect(launched.page.getByRole("group", { name: "变化审阅", exact: true }))
+      .toHaveCount(0);
     await expect(launched.page.getByTestId("review-empty-changes")).toHaveCount(0);
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);

@@ -54,8 +54,7 @@ export const REVIEW_DOCUMENT_STYLE = String.raw`
     word-spacing: inherit !important;
   }
 
-  html[data-stemmio-review-filter="all"] [data-stemmio-review-confirmed="true"][data-stemmio-review-marker-types~="structure"],
-  html[data-stemmio-review-filter="structure"] [data-stemmio-review-confirmed="true"][data-stemmio-review-marker-types~="structure"] {
+  [data-stemmio-review-confirmed="true"][data-stemmio-review-marker-types~="structure"] {
     outline: none !important;
   }
 
@@ -370,7 +369,7 @@ ${REVIEW_TEXT_EVIDENCE_MARKER_CSS}
     pointer-events: none !important;
   }
 
-  html:not([data-stemmio-review-overlays="true"])[data-stemmio-review-filter]
+  html:not([data-stemmio-review-overlays="true"])
     [data-stemmio-review-confirmed="true"][data-stemmio-review-marker][data-stemmio-review-primary="true"][data-stemmio-review-active="true"]::after {
     position: absolute !important;
     z-index: 2147483000 !important;
@@ -470,7 +469,6 @@ export function prepareDocument(
   });
 
   document.documentElement.dataset.stemmioReviewSide = side;
-  document.documentElement.dataset.stemmioReviewFilter = "all";
   document.documentElement.dataset.stemmioReviewFocus = "all";
   document.documentElement.dataset.stemmioReviewFocusGroup = "";
 

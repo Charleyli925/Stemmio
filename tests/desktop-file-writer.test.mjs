@@ -55,6 +55,9 @@ test("welcome guidance names the current Agent review decisions", async () => {
   assert.match(DEFAULT_PROJECT_HTML, /查看修改/u);
   assert.match(DEFAULT_PROJECT_HTML, /采用修改/u);
   assert.match(DEFAULT_PROJECT_HTML, /不用这次/u);
+  assert.match(DEFAULT_PROJECT_HTML, /变化 7 处/u);
+  assert.match(DEFAULT_PROJECT_HTML, /适应画布/u);
+  assert.doesNotMatch(DEFAULT_PROJECT_HTML, /全部变化/u);
   assert.doesNotMatch(DEFAULT_PROJECT_HTML, /审阅对比|打开 AI 修改后|回到修改前继续/u);
 
   const firstOpenGuide = await readFile(

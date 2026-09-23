@@ -6,25 +6,15 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CornersOutIcon,
-  GitDiffIcon,
   LinkBreakIcon,
   LinkIcon,
-  TextTIcon,
-  TreeStructureIcon,
 } from "@phosphor-icons/react";
 
 import type {
-  ReviewChangeFilter,
   ReviewPageView,
   ReviewScrollMode,
   ReviewZoomMode,
 } from "./review-state";
-
-const FILTER_LABELS: Record<ReviewChangeFilter, string> = {
-  all: "全部",
-  text: "文字",
-  structure: "元素",
-};
 
 function handleSegmentedKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
   const buttons = [...(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
@@ -49,25 +39,19 @@ function handleSegmentedKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
 }
 
 export type ReviewToolbarControlsProps = {
-  hasChanges: boolean;
   pageView?: ReviewPageView;
-  changeFilter?: ReviewChangeFilter;
   scrollMode?: ReviewScrollMode;
   zoomMode?: ReviewZoomMode;
   onPageViewChange?: (value: ReviewPageView) => void;
-  onChangeFilter?: (value: ReviewChangeFilter) => void;
   onScrollModeChange?: (value: ReviewScrollMode) => void;
   onZoomModeChange?: (value: ReviewZoomMode) => void;
 };
 
 export function ReviewToolbarControls({
-  hasChanges,
   pageView = "split",
-  changeFilter = "all",
   scrollMode = "linked",
-  zoomMode = "actual",
+  zoomMode = "fit",
   onPageViewChange,
-  onChangeFilter,
   onScrollModeChange,
   onZoomModeChange,
 }: ReviewToolbarControlsProps) {
@@ -87,24 +71,6 @@ export function ReviewToolbarControls({
           <CaretRightIcon aria-hidden="true" size={13} weight="bold" />
         </button>
       </div>
-
-      {hasChanges ? <div className="toolbar-control-group toolbar-filter-group" role="group" aria-label="变化审阅">
-        {(["all", "text", "structure"] as ReviewChangeFilter[]).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-label={`${FILTER_LABELS[mode]}变化`}
-            data-tooltip={`${FILTER_LABELS[mode]}变化`}
-            aria-pressed={changeFilter === mode}
-            onClick={() => onChangeFilter?.(mode)}
-            onKeyDown={handleSegmentedKeyDown}
-          >
-            {mode === "all" ? <GitDiffIcon aria-hidden="true" size={14} weight="duotone" /> : null}
-            {mode === "text" ? <TextTIcon aria-hidden="true" size={14} weight="bold" /> : null}
-            {mode === "structure" ? <TreeStructureIcon aria-hidden="true" size={14} weight="duotone" /> : null}
-          </button>
-        ))}
-      </div> : null}
 
       <div className="toolbar-control-group" role="group" aria-label="滚动方式">
         <button type="button" aria-label="同步滚动" data-tooltip="同步滚动" aria-pressed={scrollMode === "linked"} onClick={() => onScrollModeChange?.("linked")}>

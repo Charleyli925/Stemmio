@@ -711,11 +711,19 @@ export function assertRuntime(runtime, project, manifest) {
       "runtime-state.json is not a supported Stemmio runtime state.",
     );
   }
-  if (Object.hasOwn(runtime, "historyActivation")) {
+  if (Object.hasOwn(runtime, "historyActivation") && runtime.historyActivation !== null) {
     throw new ProjectFileRepositoryError(
       "UNSUPPORTED_RUNTIME_FORMAT",
       "runtime-state.json contains an unsupported history activation receipt.",
     );
+  }
+  if (runtime.historyActivation === null) {
+    // A Developer Preview briefly wrote this inert tombstone into an otherwise
+    // current v4 Runtime. Decode it at the storage ingress only: no retired
+    // activation receipt or command reaches the current domain, and the next
+    // authoritative Runtime write naturally persists the canonical shape.
+    runtime = { ...runtime };
+    delete runtime.historyActivation;
   }
   if (runtime.projectId !== project.projectId || runtime.documentId !== project.documentId) {
     throw new ProjectFileRepositoryError(

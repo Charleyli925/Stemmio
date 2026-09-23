@@ -142,6 +142,29 @@ test("a Runtime with a historical activation receipt is rejected without rewriti
   assert.deepEqual(await readFile(runtimePath), bytes);
 });
 
+test("a shipped null history activation tombstone is ignored at Runtime ingress", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "null-history-activation.html");
+  const runtimePath = path.join(
+    imported.target.projectRootPath,
+    ".stemmio",
+    "runtime-state.json",
+  );
+  const runtime = await json(runtimePath);
+  runtime.historyActivation = null;
+  const bytes = Buffer.from(`${JSON.stringify(runtime)}\n`, "utf8");
+  await writeFile(runtimePath, bytes);
+
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  const workspace = await restarted.workspace({
+    sourcePath: imported.target.exactSourcePath,
+  });
+
+  assert.equal(workspace.target.projectId, imported.target.projectId);
+  assert.equal(Object.hasOwn(workspace.runtime, "historyActivation"), false);
+  assert.deepEqual(await readFile(runtimePath), bytes);
+});
+
 test("workspace reports complete non-authoritative repository stage timing", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "timed-workspace.html");

@@ -542,6 +542,7 @@ function AgentSettings({
                       }
                       if (recovery?.action === "install" || primaryLabel === "安装") void onInstall(card.selection);
                       else if (recovery?.action === "recheck") void onCheckSelection(card.selection);
+                      else if (primaryLabel === "检查") void onCheckSelection(card.selection);
                       else if (primaryLabel === "登录") void onStartLogin(card.selection);
                       setExpandedId(id);
                     }}

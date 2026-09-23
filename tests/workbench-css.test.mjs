@@ -168,6 +168,7 @@ test("project version lists retain compact unweighted rows", async () => {
 });
 
 test("cache mounts only explicit ready handoff surfaces on live canvas geometry", async () => {
+  const css = await readWorkbenchCascadeCss();
   const moduleCss = await readFile(new URL(
     "../app/workbench/workbench-document-surface-cache.module.css",
     import.meta.url,
@@ -177,7 +178,8 @@ test("cache mounts only explicit ready handoff surfaces on live canvas geometry"
     import.meta.url,
   ), "utf8");
 
-  assert.match(moduleCss, /\.cache\s*\{[\s\S]*?grid-column:\s*2/u);
+  assert.match(moduleCss, /\.cache\s*\{[\s\S]*?position:\s*absolute/u);
+  assert.match(css, /\.workbench > \.review-scroll-stage > \.canvas-column\s*\{[\s\S]*?position:\s*relative/u);
   assert.match(moduleCss, /\.cache\[data-visible="true"\]\s*\{[\s\S]*?padding:\s*0/u);
   assert.doesNotMatch(cacheComponent, /activeTabId/u);
   assert.match(cacheComponent, /candidateTabId/u);

@@ -362,7 +362,6 @@ function reviewBootstrap(
   let mirroringPanel = false;
   let mirroringAction = false;
   let currentState = {
-    filter: "all",
     focus: "all",
     activeFocusGroupId: null,
     activeFocusRegionId: null,
@@ -1707,6 +1706,10 @@ function reviewBootstrap(
             top: 22,
             viewportLeft: 22,
             viewportTop: 22,
+            targetLeft: 22,
+            targetRight: 22,
+            viewportTargetLeft: 22,
+            viewportTargetRight: 22,
             global: true,
           });
           continue;
@@ -1737,6 +1740,7 @@ function reviewBootstrap(
         const firstRect = rects.reduce((current, rect) => (
           rect.top < current.top ? rect : current
         ));
+        const targetLeft = Math.min(...rects.map((rect) => rect.left));
         const right = Math.max(...rects.map((rect) => rect.right));
         runtimeVisualArrayPush(commentLayouts, {
           key,
@@ -1744,6 +1748,10 @@ function reviewBootstrap(
           top: firstRect.top + scrollY + firstRect.height / 2,
           viewportLeft: right + 10,
           viewportTop: firstRect.top + firstRect.height / 2,
+          targetLeft: targetLeft + scrollX,
+          targetRight: right + scrollX,
+          viewportTargetLeft: targetLeft,
+          viewportTargetRight: right,
           global: false,
         });
       }
@@ -2829,7 +2837,6 @@ function reviewBootstrap(
   function renderReviewOverlays() {
     if (projectionTransitioning) return;
     document.querySelector('[data-stemmio-review-projection-layer]')?.remove();
-    const filter = currentState.filter || "all";
     // Phase 1: collect immutable source-backed atoms. Their exact identities
     // continue to own evidence marks and never become display grouping keys.
     const collectReviewAtoms = () => {
@@ -2838,7 +2845,6 @@ function reviewBootstrap(
           runtimeVisualArrayForEach(reviewFocusAtomEntriesForKey(atomKey), (entry) => {
           if (!runtimeVisualSetHas(projectedSourceChangeIds, entry.changeId)) return;
           const { element, changeId, fact } = entry;
-          if (filter !== "all" && fact.type !== filter) return;
           const semanticOwnerId = fact.semanticOwnerId;
           const geometryOwnerId = fact.geometryOwnerId || "";
           const factKey = fact.type + ":" + fact.id;
@@ -3169,7 +3175,7 @@ function reviewBootstrap(
     svg.append(dim);
     layer.append(svg);
     }
-    if (filter === "all" || filter === "text") {
+    {
       const uiScale = 1 / Math.max(.32, Math.min(1, Number(currentState.scale || 1)));
       const marksSvg = document.createElementNS(namespace, "svg");
       marksSvg.setAttribute("data-stemmio-review-text-marks", "true");
@@ -3417,7 +3423,24 @@ function reviewBootstrap(
   const applyState = (state) => {
     const ownsFocusRegion = Object.prototype.hasOwnProperty.call(state, "activeFocusRegionId");
     const ownsPaintPlan = Object.prototype.hasOwnProperty.call(state, "paintPlan");
-    currentState = { ...currentState, ...state };
+    currentState = {
+      focus: Object.prototype.hasOwnProperty.call(state, "focus")
+        ? state.focus
+        : currentState.focus,
+      activeFocusGroupId: Object.prototype.hasOwnProperty.call(state, "activeFocusGroupId")
+        ? state.activeFocusGroupId
+        : currentState.activeFocusGroupId,
+      activeFocusRegionId: ownsFocusRegion
+        ? state.activeFocusRegionId
+        : currentState.activeFocusRegionId,
+      paintPlan: ownsPaintPlan ? state.paintPlan : currentState.paintPlan,
+      transparency: Object.prototype.hasOwnProperty.call(state, "transparency")
+        ? state.transparency
+        : currentState.transparency,
+      scale: Object.prototype.hasOwnProperty.call(state, "scale")
+        ? state.scale
+        : currentState.scale,
+    };
     const requestedFocusGroupId = safeProjectionFactKey(currentState.activeFocusGroupId);
     const activeFocusPlan = runtimeVisualArrayFind(
       reviewFocusGroupPlans,
@@ -3452,7 +3475,6 @@ function reviewBootstrap(
         : null,
     };
     const root = document.documentElement;
-    root.dataset.stemmioReviewFilter = currentState.filter || "all";
     root.dataset.stemmioReviewFocus = currentState.focus || "all";
     root.dataset.stemmioReviewFocusGroup = commentHighlightActive
       ? ""

@@ -9,8 +9,7 @@ import type {
   ReviewVisualSourceBinding,
   SourceEvidence,
 } from "./review-visual-model.js";
-export type ReviewFilter = "all" | "text" | "structure";
-export type ReviewChangeType = Exclude<ReviewFilter, "all">;
+export type ReviewChangeType = "text" | "structure";
 export type ReviewSide = "before" | "after";
 export type ReviewRevealStep =
   | { kind: "panel"; key: string }

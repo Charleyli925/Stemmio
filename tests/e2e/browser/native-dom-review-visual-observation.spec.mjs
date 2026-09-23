@@ -406,7 +406,6 @@ test("source projection activates existing text UI without creating replacement 
     sessionId: "review-session",
     type: "state",
     state: {
-      filter: "all",
       focus: "change-1",
       activeFocusGroupId,
       transparency: 25,
@@ -542,7 +541,7 @@ test("one exact text atom may span several markers but remains one borderless fo
     source: "stemmio-ai-review-parent",
     sessionId: "review-session",
     type: "state",
-    state: { filter: "all", focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
+    state: { focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
   }, "*"), plan.id);
   const box = page.locator('[data-stemmio-review-overlay-box="change-1"]');
   const hole = page.locator("[data-stemmio-review-mask-hole]");
@@ -650,7 +649,6 @@ test("Escape inside every valid contenteditable form stays with the editor", asy
       sessionId: "review-session",
       type: "state",
       state: {
-        filter: "all",
         focus: "change-1",
         activeFocusGroupId,
         transparency: 25,
@@ -686,7 +684,7 @@ test("text-content geometry stays inside one loose reading flow of a complex ite
     source: "stemmio-ai-review-parent",
     sessionId: "review-session",
     type: "state",
-    state: { filter: "all", focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
+    state: { focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
   }, "*"), plan.id);
   const hole = page.locator("[data-stemmio-review-mask-hole]");
   await expect(page.locator("[data-stemmio-review-overlay-box]")).toHaveCount(0);
@@ -724,7 +722,7 @@ test("numbered-line geometry ignores br elements inside nested blocks", async ({
     source: "stemmio-ai-review-parent",
     sessionId: "review-session",
     type: "state",
-    state: { filter: "all", focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
+    state: { focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
   }, "*"), fixture.plan.id);
   const hole = page.locator("[data-stemmio-review-mask-hole]");
   await expect(page.locator("[data-stemmio-review-overlay-box]")).toHaveCount(0);
@@ -805,7 +803,7 @@ test("a style locality stays on one visible owner and never promotes to its pare
     source: "stemmio-ai-review-parent",
     sessionId: "review-session",
     type: "state",
-    state: { filter: "all", focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
+    state: { focus: "change-1", activeFocusGroupId, transparency: 25, scale: 1 },
   }, "*"), plan.id);
   const hole = page.locator("[data-stemmio-review-mask-hole]");
   await expect(page.locator("[data-stemmio-review-overlay-box]")).toHaveCount(0);
@@ -901,7 +899,6 @@ test("multi-screen table, list, and section owners keep navigation masks without
       sessionId: "review-session",
       type: "state",
       state: {
-        filter: "all",
         focus: changeId,
         activeFocusGroupId: focusGroupId,
         activeFocusRegionId: regionId,
@@ -970,7 +967,6 @@ test("reparenting an exact atom outside its captured display owner fails closed"
     sessionId: "review-session",
     type: "state",
     state: {
-      filter: "all",
       focus: "change-1",
       activeFocusGroupId,
       transparency: 25,

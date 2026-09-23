@@ -425,10 +425,3 @@ export function parseReviewProjectionFacts(value) {
     return [];
   }
 }
-
-export function reviewProjectionFactsForFilter(facts, filter) {
-  const normalized = Array.isArray(facts)
-    ? facts.map(normalizeReviewProjectionFact).filter(Boolean)
-    : [];
-  return filter === "all" ? normalized : normalized.filter((fact) => fact.type === filter);
-}

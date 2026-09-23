@@ -1,5 +1,22 @@
 # Design QA
 
+## 2026-09-23 — 标签打开中的轻量反馈
+
+- Truth: 复用导航持有的 `pendingTabId`，只在等待切入的非活动标签显示淡靛紫底色与 2px 底线；原活动标签仍保持选中，等待结束后效果和辅助名称中的“正在打开”一起清除。已选中标签内的历史版本加载保留原名称与选中样式。未新增进度或状态 owner。
+- Visual evidence: 已检查真实 Electron 定向用例的 `output/playwright/native-dom-electron/results/electron-workbench-tabs-El-74b17--intent-across-none-barrier/rules-tab-opening.png`：被暂缓的长期规则标签与相邻标签清晰可分，画布和评论栏布局不变。
+- Automated evidence: 新的 3 条 `held B navigation` 用例断言等待期目标的视觉样式、辅助名称、`aria-busy` 和旧标签选中态，并断言收口后等待状态消失。首次完整门禁还暴露已选中历史标签在版本加载时名称被追加“正在打开”；收窄反馈范围后，原历史用例与 3 条导航用例均通过（4/4）。完整门禁另以最终源码结果为准。
+- Boundary: 此图使用合成项目验证过渡态；没有把截图或用户 HTML 加入源码，也不声称已打包或安装 Developer Preview。
+
+## 2026-09-22 — Developer Preview 恢复与审阅收口
+
+- Truth: 审阅默认进入适应画布；“变化 N 处”与审阅模式相邻，展开目录浮在画布之上；全部／文字／元素筛选及其状态能力已删除。成功任务只保留一次“AI 已修改完成，已生成可审阅的新 HTML”，评论优先选择目标附近空间更充足的一侧，空间确实不足时允许原位覆盖。
+- Settings: Qoder 首次“检查”会执行真实诊断；Codex 安装显示结构化失败原因并说明安装的是连接组件。API Key 已连接但保存失败时只提供“重试保存”，清空刚输入的 Key，保留本次连接的真实状态。
+- Runtime and history: 已发布的空历史激活占位和旧密文凭证通过两个精确只读适配器恢复；不改写磁盘。非空旧回执及明文／混合凭证继续失败关闭。作者脚本变化仍按正常 HTML 修改处理，不检测、不提示；只有实际页面连续性不足或动态内容加载失败才进入各自既有状态。
+- Visual evidence: 已人工检查 `output/design-qa/review-focus-overview.png`、`review-focus-inline-isolated.png` 与 `review-annotation-all.png`。顶部目录位置、移除筛选后的工具密度、双页上下文层级和文字／结构标注保持清晰；评论位置由 Electron 几何断言验证视口内就近放置、可避让时不覆盖目标，并在横向滚动后保持相对关系。
+- Automated evidence: 原生 DOM 审阅视觉 20/20、密集报告 Electron 标注 1/1、AI 审阅采用主流程 1/1 通过。像素隔离最初在默认分数缩放下受抗锯齿影响，现明确在 100% 下比较；默认适应画布仍由进入态断言覆盖。编辑期门禁最终通过：typecheck、Node targeted 1387/1387、Node core 2665 通过且 1 个既有 skip。
+- First failures retained: 变化目录菜单最初被 pane header 拦截，已修正层级；适应画布下 Playwright 自动滚动会重建区域条，几何测试改为直接触发 owned action 后继续严格验证焦点和遮罩。隔离工作树最初未安装精确 ECharts 依赖；按锁文件执行 `npm ci` 后原三项 23/23 通过。
+- Boundary: 这是源码工作树与合成 HTML 的真实 Electron／Chromium 证据；不声明已安装 Developer Preview、真实外部 Agent、私人 HTML 语料、打包、发布或合并已经完成。
+
 ## 2026-09-22 — 凭据恢复动作与编辑恢复连续性
 
 - 凭据动作由 operationKind / status 决定，启动恢复失败显示重新连接，保存失败保留本次连接并提供重试保存；错误字段沿用共享 code 映射。
@@ -3842,3 +3859,11 @@ The temporary diagnostic head `e8c3726195e5ccc1e7037f503d4253c0354cd410` complet
 Final nondiagnostic head `3a57e3eebdf8573d9482869c828243f5c0bb16e4` passed all 17 complete Ready checks in run `35715193703`, including the unchanged recovery assertion and release-gate. Before merge, main advanced to `6ae998f7678311ea1ac55d54aca541c334fa9864` (PR #603). That authoritative update is integrated without changing its product or test implementation; only the concurrent CHANGELOG additions conflicted and both were retained. The visual diff against the new base remains the same, while final acceptance must now validate the combined source on that base. Earlier unclassified recovery failures remain recorded; the newly inherited main fix is not used to retroactively classify them.
 
 The combined-main local task run `2026-09-22T10-34-51-595Z-task` passed Node 296/296, Browser 92/92 and native Electron 89/89, but failed one of 29 selected AI cases: the managed-stop check still saw its recorded PID after 20s. The first trace is preserved. Five focused executions and the 13-case provider suite passed without reproducing that symptom; these passes do not establish an environment cause. Investigation found a separate concrete oracle defect: Settings diagnosis, preflight and the runtime all wrote the same fixture PID file. A controlled 2.5s runtime-start delay proved that the old test sampled preflight PID 97670, before the task process had started. Publishing the PID only when the fixture receives `session.prompt` made the same experiment observe runtime PID 97806 and pass. Experimental delay, identity logging and failure-only process probes are removed. The permanent test additionally asserts that Settings publishes no task PID and that the task process is alive before stop; all original post-stop process, source-byte, Candidate and durable-cancellation assertions remain. The original timeout's OS process identity was not captured, so it is not claimed as a proven product or environment failure. Final gates must validate the corrected task-process oracle and the shared Bridge cancellation/crash consumers.
+
+### 2026-09-23 — Current-draft handoff width
+
+DESIGN CHANGE, source truth: the user-observed current-draft switch should keep the authored page inside the canvas column while the comment rail remains visible. In the real 1440px Electron window with two synthetic current drafts and the left sidebar open, a held cache handoff reproduced the defect before the fix: canvas 800px, temporary HTML surface 1176px, comment rail 376px. The temporary surface was a sibling of the stage and occupied the entire workbench content column. It now mounts inside the canvas column and inherits its width without a second rail-width calculation. The same regression measured cache/canvas equality and a continuously present rail after the change; the reverse switch's painted canvas width stayed stable. The focused Electron case passed and saved `output/playwright/electron-smoke/results/electron-workbench-tabs-El-d7f7a--current-draft-tab-switches/cached-draft-with-comments.png` and `active-draft-with-comments.png` for visual comparison. The synthetic case does not establish behavior for every authored responsive script or the installed Developer Preview. Final result: passed for the measured source-build handoff geometry; installed-app and private-HTML-corpus acceptance remain unverified.
+
+### 2026-09-23 — Default-off static tab handoff trial
+
+BEHAVIOR CHANGE. The user chose a short wait for the authoritative Canvas over a preliminary script-disabled HTML page that could visibly reflow when replaced. The tab-cache data and per-tab reading state remain active; only its display handoff is default-off, with an E2E-only opt-in retaining its existing identity and late-callback tests. No new visible controls or copy were added. The rebuilt Electron tab suite passed 24/24 cases, including a new default-off oracle observing zero cache iframes on both switch directions and the prior cache-handoff cases under opt-in. A local real-HTML T1/T2 trace (not committed) also observed zero tab-cache iframes and constant 800px canvas / 376px comment rail. It still observed transient body-height changes inside the authoritative Canvas before its authored runtime settled, so this trial does not claim that every internal or script-driven layout change is gone; the user should judge the visible result in the source-build test window. Private HTML and the isolated test profile remain outside the repository diff.
