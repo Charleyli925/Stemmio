@@ -7,7 +7,8 @@ import type { CanvasMode } from "./types";
 type ModeHandlersInput = Readonly<{
   externalSourcePreview: boolean;
   canvasMode: CanvasMode;
-  interactionLocked: boolean;
+  previewAvailable: boolean;
+  previewNeedsEditorFence: boolean;
   previewToEditPendingRef: MutableRefObject<boolean>;
   pageViewDocumentKeyRef: MutableRefObject<string>;
   interactionPreviewRef: MutableRefObject<HtmlInteractionPreviewHandle | null>;
@@ -25,7 +26,8 @@ type ModeHandlersInput = Readonly<{
 export function createWorkbenchModeHandlers({
   externalSourcePreview,
   canvasMode,
-  interactionLocked,
+  previewAvailable,
+  previewNeedsEditorFence,
   previewToEditPendingRef,
   pageViewDocumentKeyRef,
   interactionPreviewRef,
@@ -74,22 +76,26 @@ export function createWorkbenchModeHandlers({
   };
 
   const onSelectPreview = () => {
-    if (interactionLocked) return;
+    if (!previewAvailable || canvasMode === "preview") return;
+    const expectedDocumentKey = pageViewDocumentKeyRef.current;
     const enterPreview = () => {
-      const committed = editorRef.current?.freezeWorkingSource({
-        resumeEditing: false,
-        trigger: "fence",
-        endBehavior: "leave-canvas",
-      });
-      if (!committed || !committed.ok) {
-        editorRef.current?.showCommitBlocked(
-          committed?.reason || "请点回文字完成输入，再进入预览。",
-        );
-        return;
+      if (pageViewDocumentKeyRef.current !== expectedDocumentKey) return;
+      if (previewNeedsEditorFence) {
+        const committed = editorRef.current?.freezeWorkingSource({
+          resumeEditing: false,
+          trigger: "fence",
+          endBehavior: "leave-canvas",
+        });
+        if (!committed || !committed.ok) {
+          editorRef.current?.showCommitBlocked(
+            committed?.reason || "请点回文字完成输入，再进入预览。",
+          );
+          return;
+        }
+        editorRef.current?.clearSelection();
       }
-      editorRef.current?.clearSelection();
       setPageViewContext(null);
-      editorRef.current?.applyPageViewContext(null);
+      if (previewNeedsEditorFence) editorRef.current?.applyPageViewContext(null);
       commentCanvasPort.setSelection(null);
       updateFocusedComment(null);
       setCanvasMode("preview");

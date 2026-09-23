@@ -11,7 +11,7 @@ function input() {
     activeTab: { tabId: "tabA", kind: "document", title: "A-V2.html", projectId: "A", documentId: "docA" },
     canvasMode: "edit", reviewActive: false, hasReadyPayload: false, hasReadyReviewSession: false,
     reviewPreparing: false, canShowCurrentFileInFolder: true, canOpenSelectedHtmlInDefaultBrowser: true,
-    persistState: "idle", editRevision: 0, lastPersistedRevision: 0, hasWorkspaceController: true,
+    persistState: "idle", editRevision: 0, lastPersistedRevision: 0, hasWorkspaceController: true, previewContentReady: true,
     projectHydrating: false, projectLoadError: false, viewTransitioning: false, runInProgress: false,
     workspaceIssue: false, externalSourcePreview: false, hasDocumentHistoryAction: false, interactionLocked: false,
   };
@@ -66,16 +66,29 @@ test("a different project tab cannot inherit the old project's history or select
   assert.equal(p.displayedVersion, null); assert.equal(p.viewLabel, null);
   assert.equal(p.currentEditingVersionId, null); assert.equal(p.latestVersionId, null);
 });
-test("safety conditions continue to control file and mode buttons", () => {
+test("background work still controls editing and file actions while authoritative content permits Preview", () => {
   const source = input(); source.runInProgress = true; source.interactionLocked = true;
   source.persistState = "saving";
   const p = deriveWorkbenchPresentation(source);
-  assert.equal(p.edit.enabled, false); assert.equal(p.preview.enabled, false);
+  assert.equal(p.edit.enabled, false); assert.equal(p.preview.enabled, true);
   assert.equal(p.canOpenSelectedHtml, true); assert.equal(p.canReloadCurrentSource, false);
   assert.match(p.actions.saveVersion.reason, /AI 任务/u);
   assert.equal(p.actions.exportHtml.enabled, true);
   assert.equal(p.actions.openInBrowser.enabled, true);
   assert.match(p.actions.reloadSource.reason, /AI 任务/u);
+});
+
+test("Preview requires matching document identity and authoritative content, not background readiness", () => {
+  const waiting = input();
+  waiting.projectHydrating = true;
+  waiting.viewTransitioning = true;
+  waiting.interactionLocked = true;
+  assert.equal(deriveWorkbenchPresentation(waiting).preview.enabled, true);
+  waiting.previewContentReady = false;
+  assert.equal(deriveWorkbenchPresentation(waiting).preview.enabled, false);
+  waiting.previewContentReady = true;
+  waiting.activeTab = { ...waiting.activeTab, projectId: "other" };
+  assert.equal(deriveWorkbenchPresentation(waiting).preview.enabled, false);
 });
 
 test("vendor API-key page capability succeeds only on an explicit opened acknowledgement", () => {

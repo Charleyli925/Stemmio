@@ -593,13 +593,6 @@ test("retired production modules and imports stay outside the graph", () => {
   );
   assert.match(
     retiredArtifactViolations({
-      file: "app/workbench/WorkbenchActiveDocumentCanvas.tsx",
-      source: "export function Host() { return cloneElement(child); }",
-    }).join("\n"),
-    /cloneElement canvas host cannot return/u,
-  );
-  assert.match(
-    retiredArtifactViolations({
       file: "app/workbench/review/runtime-projection.ts",
       source: "const pattern = /^element:\\d+:\\d+:[a-z]/iu;",
     }).join("\n"),
