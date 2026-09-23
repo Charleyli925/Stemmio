@@ -2556,6 +2556,25 @@ for (const barrier of ["none", "create", "close"]) {
       await launched.page.route("**/file?*", hold);
       await item(b).locator(".sidebar-project-rules-row").click();
       await expect.poll(() => heldB).toBe(true);
+      const pendingRulesTab = launched.page.locator('.workbench-tab[data-kind="project-rules"][data-pending="true"]');
+      await expect(pendingRulesTab).toHaveCount(1);
+      await expect(pendingRulesTab.getByRole("tab")).toHaveAttribute("aria-label", "navigation-intent-b · 长期规则，正在打开");
+      await expect(pendingRulesTab.getByRole("tab")).toHaveAttribute("aria-busy", "true");
+      await expect(pendingRulesTab.getByRole("tab")).toHaveAttribute("aria-selected", "false");
+      await expect(tabA).toHaveAttribute("aria-selected", "true");
+      const openingStyle = await pendingRulesTab.evaluate((element) => {
+        const tab = getComputedStyle(element);
+        const underline = getComputedStyle(element, "::after");
+        return { background: tab.backgroundColor, line: underline.backgroundColor,
+          lineHeight: underline.height, content: underline.content };
+      });
+      expect(openingStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+      expect(openingStyle.line).not.toBe("rgba(0, 0, 0, 0)");
+      expect(openingStyle.lineHeight).toBe("2px");
+      expect(openingStyle.content).toBe('""');
+      if (barrier === "none") {
+        await launched.page.screenshot({ path: test.info().outputPath("rules-tab-opening.png") });
+      }
       await rulesTab(c).click();
       if (barrier === "create") await launched.page.getByRole("button", { name: "新标签页", exact: true }).click();
       if (barrier === "close") await launched.page.getByRole("button", { name: "关闭 navigation-intent-a · 当前稿", exact: true }).click();
@@ -2583,6 +2602,8 @@ for (const barrier of ["none", "create", "close"]) {
         source: `navigation-intent-${id}.html`, path: "PROJECT.md",
       })));
       await expect(rulesTab(d)).toHaveAttribute("aria-selected", "true");
+      await expect(launched.page.locator('.workbench-tab[data-pending="true"]')).toHaveCount(0);
+      await expect(rulesTab(d)).not.toHaveAttribute("aria-busy", "true");
       await expect(launched.page.getByRole("textbox", { name: "长期规则内容" })).toBeVisible();
       await expect.poll(() => launched.page.evaluate(() => {
         const snapshot = window.__STEMMIO_TEST_NAVIGATION_OBSERVER__.snapshot();

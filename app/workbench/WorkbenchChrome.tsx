@@ -127,6 +127,7 @@ export function WorkbenchTabBar({
         {snapshot.tabs.map((tab) => {
           const selected = snapshot.activeTabId === tab.tabId;
           const pending = snapshot.pendingTabId === tab.tabId;
+          const opening = pending && !selected;
           const projected = selected && presentation.tabId === tab.tabId;
           const title = projected ? presentation.tabTitle : tab.title;
           const viewLabel = projected ? presentation.viewLabel : null;
@@ -149,7 +150,8 @@ export function WorkbenchTabBar({
                 id={`workbench-tab-${tab.tabId}`}
                 type="button"
                 role="tab"
-                aria-label={accessibleTitle}
+                aria-label={opening ? `${accessibleTitle}，正在打开` : accessibleTitle}
+                aria-busy={pending || undefined}
                 aria-selected={selected}
                 aria-controls={tab.kind === "project-rules"
                   ? "workbench-project-rules-outlet"

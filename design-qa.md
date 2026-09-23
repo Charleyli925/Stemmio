@@ -1,5 +1,12 @@
 # Design QA
 
+## 2026-09-23 — 标签打开中的轻量反馈
+
+- Truth: 复用导航持有的 `pendingTabId`，只在等待切入的非活动标签显示淡靛紫底色与 2px 底线；原活动标签仍保持选中，等待结束后效果和辅助名称中的“正在打开”一起清除。已选中标签内的历史版本加载保留原名称与选中样式。未新增进度或状态 owner。
+- Visual evidence: 已检查真实 Electron 定向用例的 `output/playwright/native-dom-electron/results/electron-workbench-tabs-El-74b17--intent-across-none-barrier/rules-tab-opening.png`：被暂缓的长期规则标签与相邻标签清晰可分，画布和评论栏布局不变。
+- Automated evidence: 新的 3 条 `held B navigation` 用例断言等待期目标的视觉样式、辅助名称、`aria-busy` 和旧标签选中态，并断言收口后等待状态消失。首次完整门禁还暴露已选中历史标签在版本加载时名称被追加“正在打开”；收窄反馈范围后，原历史用例与 3 条导航用例均通过（4/4）。完整门禁另以最终源码结果为准。
+- Boundary: 此图使用合成项目验证过渡态；没有把截图或用户 HTML 加入源码，也不声称已打包或安装 Developer Preview。
+
 ## 2026-09-22 — Developer Preview 恢复与审阅收口
 
 - Truth: 审阅默认进入适应画布；“变化 N 处”与审阅模式相邻，展开目录浮在画布之上；全部／文字／元素筛选及其状态能力已删除。成功任务只保留一次“AI 已修改完成，已生成可审阅的新 HTML”，评论优先选择目标附近空间更充足的一侧，空间确实不足时允许原位覆盖。
