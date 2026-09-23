@@ -28,7 +28,7 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
   capability: NavigationControllerCapability;
   presentation: WorkbenchPresentation;
   onBeforeSelect(snapshot: WorkbenchTabsSnapshot): void;
-  onOutcome(outcome: unknown): void;
+  onOutcome(outcome: unknown, target?: WorkbenchTab): void;
 }) {
   const navigation = useSyncExternalStore(
     capability.subscribe,
@@ -39,7 +39,7 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
 
   const selectTab = useCallback((tab: WorkbenchTab) => {
     onBeforeSelect(tabs);
-    void capability.commands.activateTab(tab.tabId).then(onOutcome);
+    void capability.commands.activateTab(tab.tabId).then((outcome) => onOutcome(outcome, tab));
   }, [capability, onBeforeSelect, onOutcome, tabs]);
 
   const createStartTab = useCallback(() => {

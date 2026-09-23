@@ -374,6 +374,28 @@
   color: #704c1d;
 }
 
+.workbench-tab-switch-error {
+  position: fixed;
+  z-index: 91;
+  top: 50px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid #deb5a9;
+  border-radius: 10px;
+  background: #fff8f5;
+  color: #713e32;
+  box-shadow: 0 12px 28px rgb(40 37 56 / 15%);
+  transform: translateX(-50%);
+}
+
+.workbench-tab-switch-error span { flex: 1; }
+.workbench-tab-switch-error button { white-space: nowrap; cursor: pointer; }
+
 .source-conflict-banner,
 .history-view-banner {
   top: 66px;

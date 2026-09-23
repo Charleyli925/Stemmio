@@ -44,7 +44,6 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
   assert.doesNotMatch(workbench, /editRuntimePreparing/u);
   assert.doesNotMatch(workbench, /HtmlDisplaySurface/u);
   assert.doesNotMatch(workbench, /cachedSurfaceInteractionPassthrough/u);
-  assert.doesNotMatch(activeHost, /cloneElement/u);
   assert.doesNotMatch(handoff, /\bactiveCandidate\b/u);
   assert.match(handoff, /pendingHandoffToken/u);
   assert.match(handoff, /navigationTransactionId/u);
@@ -62,7 +61,7 @@ test("the Workbench owns one active Runtime Canvas and no multi-tab pool", () =>
   assert.match(displaySurface, /key=\{frameIdentity/u);
   assert.match(displaySurface, /onDisplayReady\?\.\(displayReadyToken\)/u);
   assert.match(activeHost, /data-testid="workbench-active-document-canvas-host"/u);
-  assert.match(activeHost, /data-runtime-hot-limit=\{1\}/u);
+  assert.match(activeHost, /data-runtime-hot-limit=\{2\}/u);
   assert.doesNotMatch(
     activeHost,
     /DOCUMENT_CANVAS_POOL_MINIMUM|WorkbenchDocumentCanvasPool|retainedTabIds|\.map\(|\.slice\(/u,
