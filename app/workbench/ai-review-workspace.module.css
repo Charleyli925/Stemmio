@@ -718,6 +718,7 @@ button.reviewDirectoryItem[aria-current="location"] {
 }
 
 .modalBackdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: 200;
   inset: 0;

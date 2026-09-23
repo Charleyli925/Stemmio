@@ -27,10 +27,7 @@ export default function AttachmentLightbox({
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (!dialog.open) dialog.showModal();
-    const focusFrame = requestAnimationFrame(
-      () => closeButtonRef.current?.focus(),
-    );
-    return () => cancelAnimationFrame(focusFrame);
+    closeButtonRef.current?.focus();
   }, []);
 
   const handleBackdropPointer = (event: MouseEvent<HTMLDialogElement>) => {

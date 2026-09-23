@@ -84,7 +84,7 @@ export function globalInterruptionPresentation(interruption) {
         actionId: interruption.needsRemoval
           ? "review-comment-attachments"
           : "open-attachment-picker",
-        actionLabel: interruption.needsRemoval ? "查看附件" : "重新选择",
+        actionLabel: interruption.needsRemoval ? "查看附件" : "选择附件",
         usageKey: `attachment-batch-${interruption.target?.commentId || ""}`,
       };
     case "attachment-batch-partial":
@@ -100,7 +100,7 @@ export function globalInterruptionPresentation(interruption) {
             : "open-attachment-picker")
           : null,
         actionLabel: interruption.composerOpen
-          ? (interruption.needsRemoval ? "查看附件" : "重新选择")
+          ? (interruption.needsRemoval ? "查看附件" : "选择附件")
           : null,
         usageKey: `attachment-batch-${interruption.target?.commentId || ""}`,
       };
@@ -136,7 +136,7 @@ export function globalInterruptionPresentation(interruption) {
         tone: "error",
         dismissMs: null,
         actionId: "retry-export",
-        actionLabel: "重新选择位置",
+        actionLabel: "选择导出位置",
         usageKey: "export",
       };
     case "handoff-recopy":

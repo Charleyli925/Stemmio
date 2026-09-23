@@ -498,7 +498,7 @@ kernel, persistent history journal and action route are retired. There is no
 second inline current-source writer in `workspace-bridge.mjs`.
 Submission receipt replay also belongs to this repository: it checks stable
 event/Request identity while retaining an already stored fixed execution
-caption when only that UI wording changed between builds. Public Agent
+caption or truncation notice when only that UI wording changed between builds. Public Agent
 summaries and frozen requirements remain exact; caption copy grants no HTML,
 Request or Candidate authority.
 

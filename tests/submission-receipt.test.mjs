@@ -177,6 +177,18 @@ test("an older execution caption does not prevent opening the verified current H
     message.messageId === readyMessage.messageId ? { ...message, kind: "text" } : message) });
   await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
     { code: "SUBMISSION_IDENTITY_MISMATCH" });
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) =>
+    message.messageId === readyMessage.messageId ? {
+      ...message, text: "AI 已修改完成，已生成可审阅的新 HTML。", requestId: "request_other",
+    } : message) });
+  await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "SUBMISSION_IDENTITY_MISMATCH" });
+  const submitted = replayed.messages.find((message) => message.actor === "user" && message.turnId === receipt.turnId);
+  assert.ok(submitted);
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) =>
+    message.messageId === submitted.messageId ? { ...message, text: "Different user requirement" } : message) });
+  await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "CONVERSATION_MESSAGE_REUSED" });
 });
 
 
@@ -263,6 +275,20 @@ test("bounded progress exposes truncation while keeping the terminal outcome", a
   const conversation = await ensureCurrentConversation({ projectRoot: path.join(value.target.projectRootPath, ".stemmio"), projectId: value.target.projectId, documentId: value.target.documentId });
   assert.equal(conversation.messages.filter((message) => message.text.includes("早期过程已省略")).length, 1);
   assert.equal(conversation.turns[0].status, "completed");
+  const context = { projectRoot: path.join(value.target.projectRootPath, ".stemmio"),
+    projectId: value.target.projectId, documentId: value.target.documentId };
+  const truncated = conversation.messages.find((message) => message.messageId.endsWith("_truncated"));
+  assert.ok(truncated);
+  await writeConversation(context, { ...conversation, messages: conversation.messages.map((message) =>
+    message.messageId === truncated.messageId ? { ...message, text: "早期进度已省略。" } : message) });
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  await restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId });
+  const replayed = await readConversation(context, conversation.conversationId);
+  assert.equal(replayed.messages.find((message) => message.messageId === truncated.messageId)?.text, "早期进度已省略。");
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) =>
+    message.messageId === truncated.messageId ? { ...message, requestId: "request_other" } : message) });
+  await assert.rejects(restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "SUBMISSION_IDENTITY_MISMATCH" });
 });
 
 

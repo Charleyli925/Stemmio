@@ -40,12 +40,10 @@ export default function AboutStemmioDialog({
     if (!dialog) return;
     if (open && !dialog.open) {
       dialog.showModal();
+      closeButtonRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
     }
-    if (!open) return undefined;
-    const focusFrame = requestAnimationFrame(() => closeButtonRef.current?.focus());
-    return () => cancelAnimationFrame(focusFrame);
   }, [open]);
 
   const handleBackdropPointer = (event: MouseEvent<HTMLDialogElement>) => {

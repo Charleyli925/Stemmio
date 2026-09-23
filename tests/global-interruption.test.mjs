@@ -49,3 +49,12 @@ test("project-open recovery preserves only an opaque Prepared request for its ex
   assert.equal(registered?.message, "无法确认项目文件状态，原页面保持不变。");
   assert.equal(registered?.actionId, null);
 });
+
+test("recovery actions name the destination they actually open", () => {
+  const attachment = globalInterruptionPresentation({ kind: "attachment-rejected", needsRemoval: false });
+  assert.equal(attachment?.actionId, "open-attachment-picker");
+  assert.equal(attachment?.actionLabel, "选择附件");
+  const exportFailure = globalInterruptionPresentation({ kind: "export-failed" });
+  assert.equal(exportFailure?.actionId, "retry-export");
+  assert.equal(exportFailure?.actionLabel, "选择导出位置");
+});

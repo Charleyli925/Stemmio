@@ -141,9 +141,24 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       }] }, { now: () => receipt.completedAt });
     }
     if (receipt.eventsTruncated) {
+      const messageId = `message_${suffix}_truncated`;
+      const priorMessage = next.messages.find((message) => message.messageId === messageId);
+      if (priorMessage && (
+        priorMessage.turnId !== receipt.turnId
+        || priorMessage.contextId !== contextId
+        || priorMessage.actor !== "stemmio"
+        || priorMessage.kind !== "text"
+        || priorMessage.status !== "completed"
+        || priorMessage.createdAt !== receipt.createdAt
+        || priorMessage.requestId != null
+        || priorMessage.attemptId != null
+        || priorMessage.candidateId != null
+      )) {
+        throw new ProjectFileRepositoryError("SUBMISSION_IDENTITY_MISMATCH", "Truncation message does not match its receipt.");
+      }
       next = appendConversationTurnMessage(next, { turnId: receipt.turnId, message: {
-        messageId: `message_${suffix}_truncated`, actor: "stemmio", kind: "text", status: "completed",
-        text: "部分早期过程已省略；修改要求与最终结果仍保留。",
+        messageId, actor: "stemmio", kind: "text", status: "completed",
+        text: priorMessage?.text ?? "部分早期过程已省略；修改要求与最终结果仍保留。",
       } }, { now });
     }
     let successfulTerminalSeen = false;
@@ -164,7 +179,7 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       // Static execution copy is presentation, not the Request or event fact.
       // Keep the original wording across app upgrades, but never rebind an ID
       // to another turn, Request, attempt, candidate or event timestamp.
-      if (captionChanged && (
+      if (priorMessage && (
         priorMessage.turnId !== receipt.turnId
         || priorMessage.actor !== actor
         || (priorMessage.providerId || null) !== providerId
@@ -181,7 +196,7 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       next = appendConversationTurnMessage(next, { turnId: receipt.turnId, message: {
         messageId, actor,
         ...(providerId ? { providerId } : {}),
-        kind: priorMessage?.kind || messageKind, status: "completed",
+        kind: messageKind, status: "completed",
         text: event.kind === "public-summary" ? event.publicSummary : captionChanged ? priorMessage.text : fixedCaption,
         createdAt: event.timestamp, completedAt: event.timestamp,
         requestId: receipt.requestId, attemptId: receipt.attemptId, candidateId: event.candidateId,
