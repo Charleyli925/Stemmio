@@ -201,6 +201,8 @@ import {
 import {
   WorkbenchHeaderView,
 } from "./workbench/file-header-view";
+import { SidebarToggle } from "./workbench/WorkbenchChrome";
+import { WorkbenchTooltipHost } from "./workbench/workbench-tooltip";
 import {
   WorkbenchGlobalSidebarContainer,
   WorkbenchSettingsSidebar,
@@ -6125,15 +6127,23 @@ export default function Workbench() {
         }
         aria-label="Stemmio 可视化编辑工作台"
       >
+      {navigationCapability ? <div className="workbench-sidebar-toggle-titlebar">
+        <SidebarToggle
+          expanded={globalSidebarOpen}
+          onClick={() => {
+            const nextOpen = !globalSidebarOpen;
+            setGlobalSidebarOpen(nextOpen);
+            if (nextOpen) {
+              void projectCatalogCapability?.commands.refreshRecents();
+              void projectCatalogCapability?.commands.refreshRegistered();
+            }
+          }}
+        />
+      </div> : null}
+      <WorkbenchTooltipHost />
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}
         presentation={presentation}
-        sidebarOpen={globalSidebarOpen}
-        onToggleSidebar={() => {
-          setGlobalSidebarOpen(true);
-          void projectCatalogCapability?.commands.refreshRecents();
-          void projectCatalogCapability?.commands.refreshRegistered();
-        }}
         onBeforeSelect={rememberWorkbenchTabPresentation}
         onOutcome={presentWorkbenchTabOutcome}
       /> : null}
@@ -6378,9 +6388,6 @@ export default function Workbench() {
         currentDraftActive={!presentation.isHistory && !projectRulesPageActive && !startPageActive && !settingsPageActive}
         currentProjectBusy={viewTransitioning || activeSurfaceRunLocked || (activeWorkbenchTab?.kind === "document" && (projectHydrating || Boolean(projectLoadError)))}
         projectRulesActive={projectRulesPageActive}
-        onToggle={() => {
-          setGlobalSidebarOpen((open) => !open);
-        }}
         onOpenLocal={() => void openProject()}
         onOpenCurrentProject={openCurrentSidebarProject}
         onOpenHistoryVersion={openRegisteredSidebarVersion}

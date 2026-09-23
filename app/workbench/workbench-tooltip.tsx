@@ -19,7 +19,7 @@ function targetForEvent(value: EventTarget | null): HTMLElement | null {
   if (
     !target
     || !target.closest(".workbench")
-    || !target.closest(".workbench-header, .workbench-tabbar, .workbench-sidebar-titlebar")
+    || !target.closest(".workbench-header, .workbench-tabbar, .workbench-sidebar-titlebar, .workbench-sidebar-toggle-titlebar")
     || (
       target.getAttribute("aria-expanded") === "true"
       && !target.hasAttribute("data-sidebar-toggle")
@@ -48,6 +48,18 @@ export function WorkbenchTooltipHost() {
   const timerRef = useRef<number | null>(null);
   const targetRef = useRef<HTMLElement | null>(null);
   const previousDescribedByRef = useRef<string | null>(null);
+  const activeTarget = active?.target;
+
+  useEffect(() => {
+    if (!activeTarget) return;
+    const observer = new MutationObserver(() => {
+      setActive((current) => current?.target === activeTarget
+        ? { ...current, label: activeTarget.getAttribute("data-tooltip")?.trim() || "" }
+        : current);
+    });
+    observer.observe(activeTarget, { attributes: true, attributeFilter: ["data-tooltip"] });
+    return () => observer.disconnect();
+  }, [activeTarget]);
 
   useEffect(() => {
     const clearTimer = () => {

@@ -25,17 +25,20 @@
 }
 
 .workbench-tablist {
+  -webkit-app-region: drag;
   height: 100%;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 8px 0 140px;
+  margin-left: 140px;
+  padding: 0 8px 0 0;
   overflow-x: auto;
   scrollbar-width: none;
+  transition: margin-left var(--workbench-sidebar-toggle-duration) var(--workbench-sidebar-toggle-easing);
 }
 
 .workbench[data-left-sidebar="open"] .workbench-tablist {
-  padding-left: 8px;
+  margin-left: 8px;
 }
 
 .workbench-tablist::-webkit-scrollbar {
@@ -198,6 +201,7 @@
 
 .workbench-sidebar-titlebar {
   -webkit-app-region: drag;
+  margin-left: 128px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -211,7 +215,6 @@
   height: 28px;
   display: grid;
   place-items: center;
-  margin-left: 104px;
   padding: 0;
   border: 0;
   border-radius: 7px;
@@ -692,6 +695,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .workbench .workbench-tablist {
+    transition: none;
+  }
+
   .workbench-start-primary,
   .workbench-start-resume,
   .workbench-start-task-list > button {
