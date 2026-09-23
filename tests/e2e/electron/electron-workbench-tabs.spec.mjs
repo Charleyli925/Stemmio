@@ -42,6 +42,92 @@ function currentProjectTabName(filePath) {
   return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
 }
 
+test("Electron keeps the comment lane width stable across current-draft tab switches", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("tab-width-a.html");
+  const projectB = createSourceFixture("tab-width-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" });
+    const tabA = tabs.getByRole("tab").filter({ hasText: "tab-width-a" });
+    const tabB = tabs.getByRole("tab").filter({ hasText: "tab-width-b" });
+    const surfaceCache = launched.page.getByTestId("workbench-document-surface-cache");
+    await launched.page.evaluate(() => {
+      const stage = document.querySelector(".review-scroll-stage");
+      const canvas = stage?.querySelector(".canvas-column");
+      const read = () => ({
+        t: performance.now(),
+        inspector: stage?.getAttribute("data-inspector"),
+        stage: stage?.getBoundingClientRect().width || 0,
+        canvas: canvas?.getBoundingClientRect().width || 0,
+        rail: stage?.querySelector(".comments-panel.comment-rail")?.getBoundingClientRect().width || 0,
+        cache: document.querySelector('[data-testid="workbench-document-surface-cache"]')?.getBoundingClientRect().width || 0,
+        cacheVisible: document.querySelector('[data-testid="workbench-document-surface-cache"]')?.getAttribute("data-visible") || "false",
+        selected: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() || "",
+      });
+      window.__STEMMIO_TEST_TAB_WIDTH_TRACE__ = [read()];
+      const sample = () => {
+        window.__STEMMIO_TEST_TAB_WIDTH_TRACE__.push(read());
+        window.__STEMMIO_TEST_TAB_WIDTH_RAF__ = requestAnimationFrame(sample);
+      };
+      window.__STEMMIO_TEST_TAB_WIDTH_RAF__ = requestAnimationFrame(sample);
+    });
+    await holdCacheAndCanvasLoads(launched.page);
+    await tabA.click();
+    await expect(surfaceCache).toHaveAttribute("data-visible", "true");
+    const handoffGeometry = await launched.page.evaluate(() => {
+      const stage = document.querySelector(".review-scroll-stage");
+      const canvas = stage?.querySelector(".canvas-column");
+      const cache = document.querySelector('[data-testid="workbench-document-surface-cache"]');
+      const rail = stage?.querySelector(".comments-panel.comment-rail");
+      return {
+        inspector: stage?.getAttribute("data-inspector"),
+        canvas: canvas?.getBoundingClientRect().width || 0,
+        cache: cache?.getBoundingClientRect().width || 0,
+        rail: rail?.getBoundingClientRect().width || 0,
+      };
+    });
+    expect(handoffGeometry.inspector).toBe("comments");
+    expect(handoffGeometry.rail).toBeGreaterThan(0);
+    await launched.page.screenshot({ path: test.info().outputPath("cached-draft-with-comments.png") });
+    expect(Math.abs(handoffGeometry.cache - handoffGeometry.canvas), JSON.stringify(handoffGeometry))
+      .toBeLessThanOrEqual(2);
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await tabB.click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await launched.page.screenshot({ path: test.info().outputPath("active-draft-with-comments.png") });
+    const trace = await launched.page.evaluate(() => {
+      cancelAnimationFrame(window.__STEMMIO_TEST_TAB_WIDTH_RAF__);
+      return window.__STEMMIO_TEST_TAB_WIDTH_TRACE__;
+    });
+    const canvasWidths = trace.map((sample) => sample.canvas);
+    const railWidths = trace.map((sample) => sample.rail);
+    expect(Math.max(...canvasWidths) - Math.min(...canvasWidths), JSON.stringify(trace.filter((sample, index) => (
+      index === 0 || sample.canvas !== trace[index - 1].canvas || sample.inspector !== trace[index - 1].inspector
+    )))).toBeLessThanOrEqual(2);
+    expect(Math.min(...railWidths)).toBeGreaterThan(0);
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await launched.page.evaluate(() => {
+      cancelAnimationFrame(window.__STEMMIO_TEST_TAB_WIDTH_RAF__);
+      delete window.__STEMMIO_TEST_TAB_WIDTH_TRACE__;
+      delete window.__STEMMIO_TEST_TAB_WIDTH_RAF__;
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 async function interceptExternalBrowserOpen(electronApp) {
   await electronApp.evaluate(({ shell }) => {
     globalThis.__stemmioOpenedExternalUrls = [];

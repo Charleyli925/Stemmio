@@ -402,6 +402,8 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   | rapid switch/close | `tests/e2e/electron/electron-project-lifecycle.spec.mjs` |
   | workbench tabs / Start / Registry restore | `tests/e2e/electron/electron-workbench-tabs.spec.mjs` |
 
+  当前稿标签切换的宽度回归由同一 Electron 文件在缓存交接面确实可见时核对：交接页必须与画布列同宽，评论栏持续存在；逐帧采样覆盖交接结束和反向切换。修复前该断言实测交接页比画布宽 376px，恰为评论栏宽度。
+
   叶子 owner 收敛后，下列重复 oracle 已删除。每行删除都保留：故障注入时主
   oracle 仍失败、至少一条 Browser/Electron/AI canary 证明产品接线、Ready 完整
   矩阵仍覆盖平台边界。未删除 IME/Selection、CAS/原子写、未知结局对账、

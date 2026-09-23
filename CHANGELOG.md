@@ -4,6 +4,7 @@ Notable user-visible changes are documented here. This project follows Semantic 
 
 ## [Unreleased]
 
+- 修复两个当前稿切换时临时 HTML 先覆盖评论栏、正式画布接管后又收缩的宽度闪动；交接页现在直接与画布同列同宽。
 - 修复 Developer Preview 中已写入项目的空历史激活占位字段导致历史不可读，并恢复已发布密文凭证的安全读取；非空旧回执、明文或损坏记录仍拒绝。
 - Agent 设置中 Qoder“检查”恢复可用，Codex 安装会显示真实失败原因并明确安装的是连接组件；API Key 保存失败时不再重复显示“连接”，也不在界面保留刚输入的 Key。
 - AI 成功后只显示一次“AI 已修改完成，已生成可审阅的新 HTML”，不再追加容易误解为中断的结束提醒；处理记录在窄宽度下不再逐字换行。

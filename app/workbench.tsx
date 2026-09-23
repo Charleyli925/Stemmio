@@ -6398,19 +6398,6 @@ export default function Workbench() {
         }}
         openHtmlError={openHtmlError}
       /> : null}
-      <WorkbenchDocumentSurfaceCache
-        snapshot={documentSurfaceCacheSnapshot}
-        visibleTabId={visibleCachedSurface?.tabId || null}
-        visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
-        visibleHandoffId={visibleHandoffId}
-        candidateTabId={candidateCachedSurface?.tabId || null}
-        candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
-        candidateHandoffId={candidateHandoffId}
-        acceptDisplayReady={acceptDisplayReady}
-        onHandoffScroll={updateHandoffScroll}
-        onFirstScroll={markFirstScroll}
-        height="var(--comment-canvas-height, 760px)"
-      />
       {settingsPageActive ? (
         <SettingsPage
           activeTabId={activeWorkbenchTab.tabId}
@@ -6512,6 +6499,19 @@ export default function Workbench() {
           inert={readyReviewOverlay ? true : undefined}
           aria-hidden={readyReviewOverlay ? true : undefined}
         >
+          <WorkbenchDocumentSurfaceCache
+            snapshot={documentSurfaceCacheSnapshot}
+            visibleTabId={visibleCachedSurface?.tabId || null}
+            visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
+            visibleHandoffId={visibleHandoffId}
+            candidateTabId={candidateCachedSurface?.tabId || null}
+            candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
+            candidateHandoffId={candidateHandoffId}
+            acceptDisplayReady={acceptDisplayReady}
+            onHandoffScroll={updateHandoffScroll}
+            onFirstScroll={markFirstScroll}
+            height="var(--comment-canvas-height, 760px)"
+          />
           <div
             className="canvas-edit-surface"
             data-testid="workbench-active-document-canvas"
