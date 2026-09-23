@@ -454,13 +454,14 @@ test(`Qoder long public narration preserves reading state across updates and A-B
     await narration.evaluate((element) => {
       window.__stemmioLongNarrationArticle = element;
     });
-    const beforeScroll = await stream.evaluate((element) => {
-      element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
-      const top = Math.min(80, Math.max(0, element.scrollHeight - element.clientHeight - 20));
-      element.scrollTop = top;
-      element.dispatchEvent(new Event("scroll", { bubbles: true }));
-      return { top, scrollHeight: element.scrollHeight };
-    });
+    await stream.hover();
+    await launched.page.mouse.wheel(0, -10_000);
+    await expect.poll(() => stream.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(80);
+    const beforeScroll = await stream.evaluate((element) => ({
+      top: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+    }));
     await expect(launched.page.getByTestId("ai-conversation-unseen-content")).toBeVisible();
     await expect.poll(() => narration.textContent()).toContain("长公开说明 12/18");
     await expect(narration).toHaveCount(1);

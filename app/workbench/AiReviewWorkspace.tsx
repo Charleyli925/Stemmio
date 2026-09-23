@@ -342,11 +342,17 @@ function ReviewDocumentPane({
       const conflicts = (top: number) => commentMarkers.some((marker) => !marker.global
         && Math.abs(marker.left - layout.left) < 52 / scale
         && Math.abs(marker.top - top) < markerStep);
+      // viewportTop is a snapshot from the iframe's layout report. The frame
+      // scrolls independently after that report, so an offscreen source anchor
+      // still needs its collision-free document position computed here.
+      const anchorInReportedViewport = layout.viewportTop >= markerEdge
+        && layout.viewportTop <= viewportSize.height / scale - markerEdge;
       const place = (direction: 1 | -1) => {
         let top = layout.top;
         for (let step = 0; step <= commentEntries.length; step += 1) {
           const viewportTop = layout.viewportTop + top - layout.top;
-          if (viewportTop < markerEdge || viewportTop > viewportSize.height / scale - markerEdge) return null;
+          if (anchorInReportedViewport
+            && (viewportTop < markerEdge || viewportTop > viewportSize.height / scale - markerEdge)) return null;
           if (!conflicts(top)) return top;
           top += direction * markerStep;
         }

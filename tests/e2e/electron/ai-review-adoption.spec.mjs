@@ -2618,15 +2618,21 @@ test("bottom-row Review comments remain individually reachable", {
     ];
     const viewportBox = await viewport.boundingBox();
     expect(viewportBox).toBeTruthy();
+    await expect.poll(async () => {
+      const boxes = await Promise.all(bottomMarkers.map((marker) => marker.boundingBox()));
+      return boxes.every((box) => box
+        && box.y >= viewportBox.y
+        && box.y + box.height <= viewportBox.y + viewportBox.height);
+    }).toBe(true);
+    const [firstBox, lastBox] = await Promise.all(bottomMarkers.map((marker) => marker.boundingBox()));
+    expect(firstBox && lastBox).toBeTruthy();
+    expect(firstBox.x + firstBox.width <= lastBox.x
+      || lastBox.x + lastBox.width <= firstBox.x
+      || firstBox.y + firstBox.height <= lastBox.y
+      || lastBox.y + lastBox.height <= firstBox.y).toBe(true);
     for (const marker of bottomMarkers) {
       await expect(marker).toHaveCount(1);
       await expect(marker).toBeVisible();
-      await expect.poll(async () => {
-        const box = await marker.boundingBox();
-        return Boolean(box
-          && box.y >= viewportBox.y
-          && box.y + box.height <= viewportBox.y + viewportBox.height);
-      }).toBe(true);
       await marker.hover();
       await expect(before.locator("[data-stemmio-review-comment-mask-hole]")).toHaveCount(1);
     }
