@@ -304,6 +304,96 @@ test("Electron leaves the outgoing draft inert until the new Canvas can be displ
   }
 });
 
+test("Electron keeps scripted tab and mode transitions on their finished frame", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("runtime-handoff-static.html");
+  const projectB = createSourceFixture("runtime-handoff-scripted.html", (html) => (
+    html.replace("</body>", `<script>
+      const chart = document.createElement("div");
+      chart.id = "scripted-tab-chart";
+      chart.textContent = "图表已显示";
+      document.body.append(chart);
+    </script></body>`)
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .toHaveAttribute("data-edit-runtime-phase", "settled");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    await tabs.filter({ hasText: "runtime-handoff-static" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    const outgoingSize = await launched.page.locator('[data-runtime-hot-active="true"]')
+      .evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      });
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eHoldEditRuntimePrepare();
+    });
+    await tabs.filter({ hasText: "runtime-handoff-scripted" }).click();
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .toHaveAttribute("data-edit-runtime-phase", "preparing");
+    await expect(launched.page.locator('[data-handoff-candidate="true"] [data-render-verified="true"]'))
+      .toHaveCount(1);
+    const outgoing = launched.page.locator("[data-outgoing-draft]");
+    await expect(outgoing).toBeVisible();
+    await expect(outgoing).toHaveAttribute("inert", "");
+    expect(await outgoing.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    })).toEqual(outgoingSize);
+    await expect(launched.page.locator('[data-handoff-candidate="true"]')).toBeHidden();
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    });
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .toHaveAttribute("data-edit-runtime-phase", "settled");
+    await expect(outgoing).toHaveCount(0);
+    await expect(launched.page.frameLocator('iframe[data-runtime-slot-role="active"]')
+      .locator("#scripted-tab-chart")).toHaveText("图表已显示");
+    const editSize = await launched.page.locator(".canvas-edit-surface").evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      window.__STEMMIO_TEST_SCRIPTED_EDIT_FRAME__ = element.querySelector(
+        'iframe[data-runtime-slot-role="active"]',
+      );
+      return { width: bounds.width, height: bounds.height };
+    });
+    await launched.page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "预览" }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .toHaveAttribute("data-preview-underlay", "true");
+    const previewSize = await launched.page.locator(".canvas-edit-surface").evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    });
+    expect(previewSize).toEqual(editSize);
+    await launched.page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "编辑" }).click();
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .not.toHaveAttribute("data-preview-underlay", "true");
+    expect(await launched.page.evaluate(() => (
+      document.querySelector('.canvas-edit-surface iframe[data-runtime-slot-role="active"]')
+      === window.__STEMMIO_TEST_SCRIPTED_EDIT_FRAME__
+    ))).toBe(true);
+  } finally {
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron keeps the verified canvas during a rapid return to its tab", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

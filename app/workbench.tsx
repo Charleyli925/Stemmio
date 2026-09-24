@@ -850,6 +850,12 @@ export default function Workbench() {
     }),
     { mode: "edit", previewEntryOrdinal: 0 },
   );
+  const editSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const [editHandoffGeometry, setEditHandoffGeometry] = useState<{
+    key: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const aiSourceFileName = localFileNameFromSourcePath(sourcePath) || projectName;
   // The AI conversation sidebar. All of its React state lives in this hook, so
   // the Workbench gains one hook call and no extra budget.
@@ -2555,6 +2561,17 @@ export default function Workbench() {
     viewMode,
     historyPreview?.sourcePath || sourcePath || activeSurfaceDocumentId || activeSurfaceProjectId || "memory",
   ].join(":");
+  const editHandoffKey = `${activeWorkbenchTab?.tabId || "none"}:${canvasGeneration}:${sourceSha256 || "none"}`;
+  const captureEditPresentation = () => {
+    const bounds = editSurfaceRef.current?.getBoundingClientRect();
+    if (bounds?.width && bounds.height) {
+      setEditHandoffGeometry({
+        key: editHandoffKey,
+        width: bounds.width,
+        height: bounds.height,
+      });
+    }
+  };
   const expectedPreviewSha256 = historyPreview
     ? null
     : externalSourcePreview?.sourceSha256 || sourceSha256;
@@ -5859,7 +5876,10 @@ export default function Workbench() {
           return;
         }
         setHandoffPreviewOpen(false);
-        if (canvasMode !== "preview") setCanvasMode("preview");
+        if (canvasMode !== "preview") {
+          captureEditPresentation();
+          setCanvasMode("preview");
+        }
         revealAiConversation();
       }}
     />
@@ -5879,6 +5899,7 @@ export default function Workbench() {
     invalidateEditCanvasRenderAck,
     commentCanvasPort,
     updateFocusedComment,
+    captureEditPresentation,
     setCanvasMode,
     deferEditorCommand,
     isViewTransitioning,
@@ -6134,12 +6155,38 @@ export default function Workbench() {
     && canvasAuthority.generation === canvasGeneration
     && canvasAuthority.renderedSha256 === sourceSha256
   );
+  // Canvas verification proves the source bytes, not the visible frame of a
+  // script-backed page. Keep the outgoing draft over the new static iframe
+  // until the exact document's disposable author runtime has appeared (or
+  // explicitly fallen back). Otherwise charts briefly vanish on tab change.
+  const activeDocumentDisplayReady = Boolean(
+    activeDocumentCanvasReady
+    && editRuntimeSnapshot?.sourceSha256 === sourceSha256
+    && editRuntimeSnapshot.canvasGeneration === canvasGeneration
+    && (sourcePath
+      ? sameLocalSourcePath(editRuntimeSnapshot.sourcePath, sourcePath)
+      : !editRuntimeSnapshot.sourcePath)
+    && (
+      editRuntimePhase === "settled"
+      || editRuntimePhase === "static-fallback"
+      || (editRuntimePhase === "static"
+        && editRuntimeSnapshot.lastOutcome === "not-candidate")
+    )
+  );
   const activeDocumentCanvasFailed = Boolean(
     projectLoadError
     || (canvasAuthority?.status === "failed"
       && canvasAuthority.generation === canvasGeneration)
   );
+  const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
+    ? editHandoffGeometry : null;
+  const editPreviewUnderlay = displayedCanvasMode === "preview"
+    && !historyPreview
+    && !presentedReadyReviewSession
+    && Boolean(documentRuntimeTabId)
+    && Boolean(heldEditGeometry);
   const showEditSurface = displayedCanvasMode === "edit"
+    || editPreviewUnderlay
     || (displayedCanvasMode === "preview"
       && !historyPreview
       && !presentedReadyReviewSession
@@ -6639,6 +6686,7 @@ export default function Workbench() {
             height="var(--comment-canvas-height, 760px)"
           />
           <div
+            ref={editSurfaceRef}
             className="canvas-edit-surface"
             data-testid="workbench-active-document-canvas"
             data-runtime-hot-count={activeRuntimeCanvasMounted ? 1 : 0}
@@ -6646,6 +6694,11 @@ export default function Workbench() {
             data-edit-runtime-phase={editRuntimePhase}
             data-edit-runtime-outcome={editRuntimeSnapshot?.lastOutcome || undefined}
             data-preview-handoff={displayedCanvasMode === "preview" && showEditSurface ? "true" : undefined}
+            data-preview-underlay={editPreviewUnderlay ? "true" : undefined}
+            style={editPreviewUnderlay && heldEditGeometry ? {
+              width: heldEditGeometry.width,
+              height: heldEditGeometry.height,
+            } : undefined}
             hidden={!showEditSurface}
             aria-hidden={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas}
             inert={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas ? true : undefined}
@@ -6678,9 +6731,9 @@ export default function Workbench() {
                 <WorkbenchActiveDocumentCanvas
                   activeTabId={documentRuntimeTabId}
                   activeSourceSha256={sourceSha256}
-                  activeReady={activeDocumentCanvasReady}
+                  activeReady={activeDocumentDisplayReady}
                   activeFailed={activeDocumentCanvasFailed}
-                  presentationVisible={showEditSurface}
+                  presentationVisible={showEditSurface && (displayedCanvasMode === "edit" || !activePreviewReady)}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}
