@@ -37,7 +37,7 @@ export type HtmlInteractionPreviewHandle = {
   reload: () => void;
 };
 
-type HtmlInteractionPreviewProps = {
+export type HtmlInteractionPreviewProps = {
   html: string;
   documentKey: string;
   sourcePath?: string;
@@ -51,7 +51,7 @@ type HtmlInteractionPreviewProps = {
    */
   comments?: readonly unknown[];
   onInteraction?: () => void;
-  onReady?: (sourceSha256: string | null) => void;
+  onReady?: (sourceSha256: string | null, failure?: "failed") => void;
   presentationCovered?: boolean;
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
@@ -543,7 +543,7 @@ const HtmlInteractionPreview = forwardRef<
     sessionGenerationRef.current += 1;
     if (!previewApi) {
       setLoadFailed(true);
-      onReady?.(null);
+      onReady?.(null, "failed");
       return undefined;
     }
     void previewApi.createSession({
@@ -560,7 +560,7 @@ const HtmlInteractionPreview = forwardRef<
     }).catch(() => {
       if (!cancelled) {
         setLoadFailed(true);
-        onReady?.(null);
+        onReady?.(null, "failed");
       }
     });
     return () => {
@@ -696,7 +696,7 @@ const HtmlInteractionPreview = forwardRef<
           onError={() => {
             setFrameReady(false);
             setLoadFailed(true);
-            onReady?.(null);
+            onReady?.(null, "failed");
           }}
         />
         {/*

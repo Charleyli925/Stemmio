@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -39,6 +40,7 @@ import CancelAiRunDialog from "./components/CancelAiRunDialog";
 import HtmlInteractionPreview, {
   type HtmlInteractionPreviewHandle,
 } from "./components/HtmlInteractionPreview";
+import WorkbenchActivePreview from "./workbench/WorkbenchActivePreview";
 import { useAiConversation } from "./workbench/use-ai-conversation";
 import NoticeBar from "./components/NoticeBar";
 import {
@@ -331,6 +333,8 @@ class DeferredEditorCommandDiscardedError extends Error {
 type CanvasRenderAck = Readonly<{
   generation: number;
   sha256: string;
+  identity?: string;
+  failed?: boolean;
 }>;
 
 type CanvasRenderAcks = Readonly<Record<CanvasMode, CanvasRenderAck | null>>;
@@ -839,7 +843,13 @@ export default function Workbench() {
   const currentBasedOnVersionId =
     versionSnapshot.currentBasedOnVersionId;
   const viewMode = versionSnapshot.viewMode;
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>("edit");
+  const [{ mode: canvasMode, previewEntryOrdinal }, setCanvasMode] = useReducer(
+    (current: { mode: CanvasMode; previewEntryOrdinal: number }, next: CanvasMode) => ({
+      mode: next,
+      previewEntryOrdinal: current.previewEntryOrdinal + (next === "preview" ? 1 : 0),
+    }),
+    { mode: "edit", previewEntryOrdinal: 0 },
+  );
   const aiSourceFileName = localFileNameFromSourcePath(sourcePath) || projectName;
   // The AI conversation sidebar. All of its React state lives in this hook, so
   // the Workbench gains one hook call and no extra budget.
@@ -886,7 +896,6 @@ export default function Workbench() {
     // Review is the same workbench with a different Canvas: the thread stays
     // docked and read-only instead of disappearing and coming back.
     reviewing: Boolean(presentedReadyReviewSession),
-    commentComposerOpen: commentCanvasPort.getSnapshot().composerOpen,
     canvasMode,
     documentPresented: activeWorkbenchTab?.kind === "document",
     projectId: projectId ?? "",
@@ -1593,12 +1602,6 @@ export default function Workbench() {
     canvasRenderAcks.edit?.generation === canvasGeneration
       ? canvasRenderAcks.edit.sha256
       : null;
-  const handlePreviewReady = useCallback((sha256: string | null) => {
-    setCanvasRenderAcks((current) => ({
-      ...current,
-      preview: sha256 ? { generation: canvasGeneration, sha256 } : null,
-    }));
-  }, [canvasGeneration]);
   const activeRun = runSnapshot.activeRun;
   const recentRunOutcome = runSnapshot.recentOutcome;
   const projectLocked = runSnapshot.activeLocked;
@@ -2552,6 +2555,55 @@ export default function Workbench() {
     viewMode,
     historyPreview?.sourcePath || sourcePath || activeSurfaceDocumentId || activeSurfaceProjectId || "memory",
   ].join(":");
+  const expectedPreviewSha256 = historyPreview
+    ? null
+    : externalSourcePreview?.sourceSha256 || sourceSha256;
+  const previewSurfaceMounted = displayedCanvasMode === "preview"
+    && Boolean(historyPreview || documentRuntimeTabId);
+  const previewSourceIdentity = [
+    previewSurfaceMounted ? "mounted" : "unmounted",
+    activeWorkbenchTab?.tabId || "none",
+    pageViewDocumentKey,
+    canvasGeneration,
+    historyPreview?.versionId || "current",
+    expectedPreviewSha256 || "history",
+  ].join("\u0000");
+  // A returning tab or mode gets a fresh Preview session even when its source
+  // Hash matches a prior visit. An earlier ready ACK cannot uncover about:blank.
+  const previewIdentity = `${previewSourceIdentity}\u0000${previewEntryOrdinal}`;
+  const previewIdentityRef = useRef(previewIdentity);
+  useLayoutEffect(() => {
+    previewIdentityRef.current = previewIdentity;
+  }, [previewIdentity]);
+  const handlePreviewReady = useCallback((
+    sha256: string | null,
+    failure?: "failed",
+  ) => {
+    if (previewIdentityRef.current !== previewIdentity) return;
+    setCanvasRenderAcks((current) => ({
+      ...current,
+      preview: sha256 || failure
+        ? {
+            generation: canvasGeneration,
+            sha256: sha256 || "",
+            identity: previewIdentity,
+            failed: failure === "failed",
+          }
+        : null,
+    }));
+  }, [canvasGeneration, previewIdentity]);
+  const previewAck = canvasRenderAcks.preview;
+  const activePreviewReady = Boolean(
+    previewAck
+    && previewAck.identity === previewIdentity
+    && previewAck.generation === canvasGeneration
+    && !previewAck.failed
+    && previewAck.sha256
+    && (!expectedPreviewSha256 || previewAck.sha256 === expectedPreviewSha256)
+  );
+  const activePreviewFailed = Boolean(
+    previewAck?.identity === previewIdentity && previewAck.failed
+  );
   const activePageViewContext = (
     pageViewContext?.documentKey === pageViewDocumentKey
   ) ? pageViewContext : null;
@@ -5807,7 +5859,7 @@ export default function Workbench() {
           return;
         }
         setHandoffPreviewOpen(false);
-        setCanvasMode("preview");
+        if (canvasMode !== "preview") setCanvasMode("preview");
         revealAiConversation();
       }}
     />
@@ -6087,6 +6139,12 @@ export default function Workbench() {
     || (canvasAuthority?.status === "failed"
       && canvasAuthority.generation === canvasGeneration)
   );
+  const showEditSurface = displayedCanvasMode === "edit"
+    || (displayedCanvasMode === "preview"
+      && !historyPreview
+      && !presentedReadyReviewSession
+      && !activePreviewReady
+      && Boolean(documentRuntimeTabId));
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
   const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
     || activeWorkbenchTab?.kind === "history"
@@ -6587,9 +6645,10 @@ export default function Workbench() {
             data-runtime-hot-limit={1}
             data-edit-runtime-phase={editRuntimePhase}
             data-edit-runtime-outcome={editRuntimeSnapshot?.lastOutcome || undefined}
-            hidden={displayedCanvasMode !== "edit"}
+            data-preview-handoff={displayedCanvasMode === "preview" && showEditSurface ? "true" : undefined}
+            hidden={!showEditSurface}
             aria-hidden={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas}
-            inert={cachedSurfaceBlocksCanvas ? true : undefined}
+            inert={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas ? true : undefined}
           >
             {!desktopHostReady ? (
               <div className="canvas-loading" role="status">正在识别运行环境…</div>
@@ -6621,7 +6680,7 @@ export default function Workbench() {
                   activeSourceSha256={sourceSha256}
                   activeReady={activeDocumentCanvasReady}
                   activeFailed={activeDocumentCanvasFailed}
-                  presentationVisible={displayedCanvasMode === "edit"}
+                  presentationVisible={showEditSurface}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}
@@ -6720,9 +6779,14 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {displayedCanvasMode === "preview" && (historyPreview || documentRuntimeTabId) ? (
-            <HtmlInteractionPreview
-              key={`preview-authority-${canvasGeneration}-${historyPreview?.versionId || "current"}`}
+          {previewSurfaceMounted ? (
+            <WorkbenchActivePreview
+              identity={previewIdentity}
+              activeReady={activePreviewReady}
+              activeFailed={activePreviewFailed}
+              onRetry={() => interactionPreviewRef.current?.reload()}
+              activeElement={<HtmlInteractionPreview
+              key={`preview-authority-${previewIdentity}`}
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}
               staticFallbackOnFailure={Boolean(historyPreview)}
@@ -6733,7 +6797,7 @@ export default function Workbench() {
                 : "100%"}
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
-              onReady={historyPreview ? undefined : handlePreviewReady}
+              onReady={handlePreviewReady}
               presentationCovered={cachedSurfaceBlocksCanvas}
               initialScrollTop={historyPreview ? undefined : activeDocumentPresentation?.scrollTop}
               onScrollTopChange={(scrollTop) => {
@@ -6744,6 +6808,7 @@ export default function Workbench() {
                   );
                 }
               }}
+              />}
             />
           ) : null}
         </section>

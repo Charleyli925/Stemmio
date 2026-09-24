@@ -594,13 +594,14 @@ records together; both are validated against the same current identity. Preserve
 extensions cannot override current identity fields or revive a removed locator;
 known visual hints retain their bounded, DOM-free normalization.
 
-Edit-mode reveal actions use the same trust boundary. They accept only strict
-Tabs whose selected panel is proved by `aria-selected` plus `hidden`, native
-details with one direct summary, and local button/region disclosures whose
+Edit-mode reveal actions use the same trust boundary. They accept strict
+Tabs whose selected panel is proved by `aria-selected` plus `hidden`, bounded
+data-linked or constant-index tabs with one matching `active` control and panel,
+native details with one direct summary, and local button/region disclosures whose
 `aria-controls`, `aria-labelledby`, `aria-expanded` and `hidden` states agree.
-`data-p` / `data-tab` class-token Tabs and constant-index handlers such as
-`switchChart(0)` are not edit-mode presentation actions; those pages still use
-Preview when authored scripts must run. Links, forms, grouped details, popups,
+`data-p` / `data-tab` and constant-index handlers such as `switchChart(0)`
+provide structural evidence only; their scripts are never executed. Ambiguous
+groups still use Preview. Links, forms, grouped details, popups,
 popovers, drawers and authored event handlers are never executed. The action
 changes disposable attributes only and
 has no source-write, filesystem, navigation or implicit scroll authority.

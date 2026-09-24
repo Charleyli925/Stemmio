@@ -240,9 +240,10 @@ Tab 已经能操作，不为此增加眼睛徽章或工具栏「去预览」按�
 - Tab 必须属于 `role=tablist`，每个 `role=tab` 以唯一
   `aria-controls`（或本页锚点）对应唯一 `role=tabpanel`，并且
   `aria-selected` 与 `hidden` 状态一致。
-- `data-p` / `data-tab` 加 `active` class，以及 `onclick="switchChart(0)"`
-  一类固定索引处理器，都不再作为编辑模式页签动作。需要运行作者脚本时
-  仍使用预览。
+- `data-p` / `data-tab` 指向唯一面板的相邻页签，或同一组固定索引
+  `onclick="switchChart(0)"` 形式的控件，只有在控件与面板数量、顺序、
+  唯一选中状态及 `active` class 都一致时才显示相同动作。动作只切换临时
+  `active` 状态，不执行作者处理器；结构歧义或确实依赖脚本的页签仍使用预览。
 - `details` 必须拥有唯一直接 `summary`；首版不接管带 `name` 的互斥
   details 组。
 - disclosure 必须是本地按钮与紧邻 region 的一对，使用唯一

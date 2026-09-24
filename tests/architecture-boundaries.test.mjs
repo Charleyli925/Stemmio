@@ -530,13 +530,6 @@ test("retired production modules and imports stay outside the graph", () => {
   );
   assert.match(
     retiredArtifactViolations({
-      file: "app/lib/page-view-context.js",
-      source: 'const name = "data-p";',
-    }).join("\n"),
-    /retired page-view tab adapters/u,
-  );
-  assert.match(
-    retiredArtifactViolations({
       file: "app/workbench/review-document.ts",
       source: 'export const attr = "data-stemmio-review-source-node-id";',
     }).join("\n"),

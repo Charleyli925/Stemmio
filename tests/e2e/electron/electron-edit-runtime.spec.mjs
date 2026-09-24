@@ -1157,7 +1157,7 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
       if (selector.startsWith("#runtime-page-table")) {
         await expect(nextComposer).toContainText("页面级数据表");
         await expect(nextComposer.getByRole("textbox", { name: "评论内容" }))
-          .toHaveAttribute("placeholder", "输入对这部分内容的修改要求…");
+          .toHaveAttribute("placeholder", "写下修改要求…");
       }
       await nextComposer.getByRole("textbox", { name: "评论内容" }).fill(text);
       await nextComposer.getByRole("button", { name: "评论", exact: true }).click();
@@ -1285,9 +1285,9 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
 
     await page.getByRole("button", { name: "全局评论" }).click();
     const globalComposer = page.getByRole("region", { name: "添加评论" });
-    await expect(globalComposer).toContainText("全局评论");
+    await expect(globalComposer).toContainText("整个页面");
     await expect(globalComposer.getByRole("textbox", { name: "评论内容" }))
-      .toHaveAttribute("placeholder", "输入对整个页面的修改要求…");
+      .toHaveAttribute("placeholder", "写下修改要求…");
     await globalComposer.getByRole("button", { name: "关闭评论编辑器" }).click();
 
     await reopenedFrame.locator("#runtime-page-table caption").click();
@@ -1310,7 +1310,7 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
     const restoredDraftComposer = page.getByRole("region", { name: "添加评论" });
     await expect(restoredDraftComposer).toContainText("表格");
     await expect(restoredDraftComposer.getByRole("textbox", { name: "评论内容" }))
-      .toHaveAttribute("placeholder", "输入对这部分内容的修改要求…");
+      .toHaveAttribute("placeholder", "写下修改要求…");
     await restoredDraftComposer.getByRole("button", { name: "删除未保存评论" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "删除这条未保存评论" }))
       .toBeVisible();

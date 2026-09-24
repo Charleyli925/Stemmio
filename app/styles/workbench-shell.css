@@ -292,6 +292,12 @@
   height: 100%;
 }
 
+.canvas-edit-surface[data-preview-handoff="true"] {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+}
+
 .canvas-loading {
   min-height: calc(100vh - 56px);
 }

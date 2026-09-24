@@ -762,7 +762,10 @@ function rememberVisibleCanvasViewport({
   sourceIndex: SourceIndexValue | null;
   destination: { current: RuntimePresentationAnchor | null };
 }) {
-  if (!container?.getClientRects().length || !iframe) return;
+  // A retained outgoing Canvas is visible during Preview handoff but inert.
+  // Layout clamping can emit a stage scroll event while it is covered; that
+  // transient position must not replace the last editable reading anchor.
+  if (!container?.getClientRects().length || !iframe || container.closest("[inert]")) return;
   const next = captureRuntimePresentationAnchor({
     iframe,
     outerScrollElement: container.closest(".review-scroll-stage"),

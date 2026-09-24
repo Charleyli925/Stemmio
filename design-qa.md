@@ -3912,3 +3912,15 @@ DESIGN CHANGE. 输入区仅移除重复提示，草稿保存与发送边界保�
 - 第二次完整门禁通过了 305/305 Node、80/80 Browser、89/89 Electron，但 AI 50/52：两条测试仍要求展示本次刻意移除的机械进度和非处理态进度条。改为断言公开模型文字保留、机械活动不显示、未知 Request 仍 fail-closed 并自动核对后，两条定向 Electron 测试通过。新增底部用例首跑把帮助函数自动添加的基准评论漏算为 2 条，校正为 3 条且只对目标两条检查可达性后通过；该失败是测试计数错误。
 
 Result: passed for the scoped rebuilt-source Electron interactions and read-only private-source anchor diagnosis. 这不代表已安装 Developer Preview、真实外部模型生成质量或正式发布已更新；任务门禁结果由本次交付流程单独记录。
+
+## 2026-09-24 — 模式交接、页签操作与 AI 助手入口
+
+DESIGN CHANGE / FLOW AUDIT. 对编辑→预览、两个预览标签页之间、预览→编辑以及审阅→编辑的可见表面做有界交接检查；旧式页签工具条动作与顶栏 AI 助手的点击状态单独验收。评论输入卡片提供三个静态方案供选择，尚未改变正式界面。
+
+- 预览交接：真实 Electron 用例以延迟图片请求保持新 Preview 未 ready，确认已核对的编辑画布或上一份 Preview 持续可见且 inert，新 iframe 隐藏；新会话完成后按当前标签、generation、源 Hash 与进入代次切换为唯一可见预览。预览→编辑→同源预览的慢加载复现也通过，新实例不会复用旧就绪回执。输出见 `output/playwright/electron-smoke/`。已有审阅返回用例通过。
+- 审阅采纳首轮验证发现阅读位置回到顶部。同一用例在未修改的 `447da691` 通过，定位为交接期保留的 inert 画布接收了外层滚动收缩事件，覆盖原先的阅读锚点。画布现不从 inert 表面记录阅读位置；修复后审阅采纳用例通过，锚点仍在视口，且编辑在动态 Runtime 准备前解锁。
+- 编辑页签：有界 `data-p` / `data-tab` 和固定索引 `onclick` 页签在工具条显示“切换到此页签”；Browser 与 Electron 用例均验证一次工具条点击完成切换，页面处理器未运行，工作副本及外部 HTML 字节不变。歧义结构的 Node 负例保持无动作。截图对应的原始 HTML 尚未提供，因此该特定页面的命中情况未验收。
+- 顶栏 AI 助手：在未保存的评论输入卡片仍打开时，Electron 实际点击顶栏按钮后侧栏可见，草稿保留；按钮中心命中和 `no-drag` 检查通过。
+- 评论输入卡片 A/B/C 三个方案位于忽略的 `output/comment-composer-variants.html` 与 `output/comment-composer-variants.png`。用户选择 A 的轻标题并加入 C 的紫色定位线。正式卡片改为“添加评论”主标题和单行、可截断的目标说明；“评论内容”保留为屏幕阅读器标签，输入区只留细分隔线，焦点由卡片边缘轻微强调。真实 Electron 用例在页面元素评论输入、附件操作可见的状态下截图核对，位于 `output/design-qa/comment-composer-selected.png`，并确认草稿与顶栏 AI 助手交互通过。
+
+Result: passed for the named rebuilt-source Electron and Browser interactions and the selected comment-card composition; the exact HTML shown in the tab screenshot is still unverified. 附件与 AI 引用完整性由单独的聚焦验证记录，不由上述 UI 证据推断。

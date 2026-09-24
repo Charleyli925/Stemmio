@@ -399,6 +399,129 @@ test("Electron Preview opens the selected draft while unrelated Canvas work cont
   }
 });
 
+test("Electron keeps a verified page visible while Preview loads and across Preview tabs", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("preview-handoff-a.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "预览交接目标 A")
+      .replace("</body>", '<img src="https://stemmio-handoff.invalid/slow-a.png"></body>')
+  ));
+  const projectB = createSourceFixture("preview-handoff-b.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "预览交接目标 B")
+      .replace("</body>", '<img src="https://stemmio-handoff.invalid/slow-b.png"></body>')
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  let blockedRoute = null;
+  let blocking = true;
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const mode = launched.page.getByRole("group", { name: "工作模式", exact: true });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("预览交接目标 B")).toBeVisible();
+    await launched.page.getByRole("tablist", { name: "已打开的页面" })
+      .getByRole("tab").filter({ hasText: "preview-handoff-a" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+
+    await launched.page.route("https://stemmio-handoff.invalid/slow-*.png", async (route) => {
+      if (!blocking || blockedRoute) return route.continue();
+      blockedRoute = route;
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect.poll(() => blockedRoute !== null).toBe(true);
+    const previewHost = launched.page.getByTestId("workbench-active-preview");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
+    await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
+    await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
+      .getByText("预览交接目标 A")).toBeVisible();
+    blocking = false;
+    blockedRoute.release();
+    blockedRoute = null;
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("预览交接目标 A")).toBeVisible();
+
+    blocking = true;
+    await launched.page.getByRole("tablist", { name: "已打开的页面" })
+      .getByRole("tab").filter({ hasText: "preview-handoff-b" }).click();
+    await expect.poll(() => blockedRoute !== null).toBe(true);
+    await expect(previewHost).toHaveAttribute("data-outgoing-preview", "true");
+    await expect(previewHost.locator(':scope > [inert]:not([data-handoff-candidate]) iframe[title="HTML 交互预览"]'))
+      .toBeVisible();
+    await expect(previewHost.locator(':scope > [inert]:not([data-handoff-candidate]) iframe[title="HTML 交互预览"]')
+      .contentFrame().getByText("预览交接目标 A")).toBeVisible();
+    blocking = false;
+    blockedRoute.release();
+    blockedRoute = null;
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("预览交接目标 B")).toBeVisible();
+    await mode.getByRole("button", { name: "编辑", exact: true }).click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    blocking = true;
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect.poll(() => blockedRoute !== null).toBe(true);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
+    await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
+    await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
+      .getByText("预览交接目标 B")).toBeVisible();
+    blocking = false;
+    blockedRoute.release();
+    blockedRoute = null;
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("预览交接目标 B")).toBeVisible();
+  } finally {
+    blockedRoute?.release();
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron restores the bounded legacy tab toolbar action without running authored handlers", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const legacyHtml = readFileSync(
+    new URL("../../fixtures/native-dom/onclick-indexed-tabs.html", import.meta.url),
+    "utf8",
+  );
+  const fixture = createSourceFixture("bounded-legacy-tabs.html", () => legacyHtml);
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const { editor, frame } = await loadedDiskFrame(
+      launched.page, fixture.sourcePath, "onclick-indexed-tab-two",
+    );
+    const working = await launched.page.evaluate(() => window.stemmioProjects?.getActiveProject());
+    const before = readFileSync(working.sourcePath);
+    const firstPanel = frame.locator("#chart0");
+    const secondPanel = frame.locator("#chart1");
+    await frame.locator(caseSelector("onclick-indexed-tab-two")).click();
+    await expect(firstPanel).toBeVisible();
+    await expect(secondPanel).toBeHidden();
+    await editor.getByRole("button", { name: "切换到此页签" }).click();
+    await expect(firstPanel).toBeHidden();
+    await expect(secondPanel).toBeVisible();
+    expect(await frame.evaluate(() => document.documentElement.dataset.authorAction ?? null))
+      .toBeNull();
+    expect(readFileSync(working.sourcePath).equals(before)).toBe(true);
+    expect(readFileSync(fixture.sourcePath).equals(fixture.original)).toBe(true);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron keeps a failed tab switch recoverable until the user retries", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

@@ -1029,8 +1029,9 @@ from historical geometry.
 
 Edit-mode content reveal is another transition of that same projection, not a
 new owner. `HtmlCanvasEditor` may propose only an allowlisted source-backed
-presentation action: the strict ARIA/HTML semantic adapter, native details and
-local disclosures. Workbench accepts it only for the current document key and
+presentation action: the strict ARIA/HTML semantic adapter, bounded data-linked
+and constant-index active-class tab adapters, native details and local
+disclosures. Workbench accepts it only for the current document key and
 preserves the shared page scroll position. The Canvas then applies the accepted
 context without calling `onChange`, SourcePatch, authored handlers or
 persistence. No React view may keep a second copy of this state for shortcut

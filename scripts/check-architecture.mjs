@@ -121,12 +121,9 @@ const PARSE_KEY_ALLOWED_FILES = new Set([
   ["app", "lib", "source-patch-engine.js"].join("/"),
   ["app", "lib", "target-resolver.js"].join("/"),
 ]);
-const PAGE_VIEW_CONTEXT_FILE = ["app", "lib", "page-view-context.js"].join("/");
 const DOCUMENT_WORKFLOW_FILE = ["app", "application", "document-workflow.js"].join("/");
 const WORKBENCH_FILE = ["app", "workbench.tsx"].join("/");
 const TEXT_FRAGMENT_HOST_LITERAL = ["stemmio", "text", "fragment"].join("-");
-const PAGE_VIEW_CONTEXT_RETIRED_ADAPTERS =
-  /\bdata-p\b|\bdata-tab\b|resolveDataLinkedTabAction|resolveIndexedHandlerTabAction|SIMPLE_INDEXED_TAB_HANDLER|LEGACY_TAB_/u;
 const PROVIDER_LITERALS = ["qoder", "codex", "qoder-acp", "codex-acp"];
 const RAW_ENDPOINTS = new Set([
   "/workspace",
@@ -568,12 +565,6 @@ export function retiredArtifactViolations({ file = "", source = "", module = nul
     violations.push(
       `${file}: parseKey cannot leave source-index/source-patch`,
     );
-  }
-  if (
-    file === PAGE_VIEW_CONTEXT_FILE
-    && PAGE_VIEW_CONTEXT_RETIRED_ADAPTERS.test(source)
-  ) {
-    violations.push(`${file}: retired page-view tab adapters cannot return`);
   }
   return violations;
 }
