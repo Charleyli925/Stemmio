@@ -248,3 +248,114 @@ test("a file attachment is frozen as Request bytes before the AI handoff", async
     removeSourceFixture(fixture.sourceDirectory);
   }
 });
+
+test("two image comments keep their attachment identity through AI freeze", async () => {
+  test.setTimeout(120_000);
+  const fixture = createSourceFixture("two-image-comments.html");
+  const imageBytes = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc000000301010018dd8db40000000049454e44ae426082",
+    "hex",
+  );
+  const secondImageBytes = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cff01f00040101ff71eb47e50000000049454e44ae426082",
+    "hex",
+  );
+  const attachments = [
+    { fileName: "first.png", text: "第一张参考图只服务于第一条评论。", bytes: imageBytes },
+    { fileName: "second.png", text: "第二张参考图只服务于第二条评论。", bytes: secondImageBytes },
+  ];
+  for (const attachment of attachments) {
+    writeFileSync(path.join(fixture.sourceDirectory, attachment.fileName), attachment.bytes);
+  }
+  const discardedImagePath = path.join(fixture.sourceDirectory, "discarded.png");
+  writeFileSync(discardedImagePath, imageBytes);
+  const firstLaunch = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  let activeLaunch = firstLaunch;
+  try {
+    await loadedDiskFrame(firstLaunch.page, fixture.sourcePath);
+    for (const attachment of attachments) {
+      await openRailGlobalCommentComposer(activeLaunch.page);
+      const composer = activeLaunch.page.locator(".comment-composer");
+      await composer.getByRole("textbox", { name: "评论内容" }).fill(attachment.text);
+      if (attachment.fileName === "first.png") {
+        await composer.getByRole("button", { name: "添加图片", exact: true }).click();
+        await activeLaunch.page.locator('input[type="file"]').last()
+          .setInputFiles(discardedImagePath);
+        await expect(composer.getByRole("button", { name: "预览图片 discarded.png" }))
+          .toBeVisible({ timeout: 30_000 });
+        await composer.getByRole("button", { name: "移除图片 discarded.png" }).click();
+        await expect(composer.getByRole("button", { name: "预览图片 discarded.png" }))
+          .toHaveCount(0);
+      }
+      await composer.getByRole("button", { name: "添加图片", exact: true }).click();
+      await activeLaunch.page.locator('input[type="file"]').last()
+        .setInputFiles(path.join(fixture.sourceDirectory, attachment.fileName));
+      await expect(composer.getByRole("button", {
+        name: `预览图片 ${attachment.fileName}`,
+        exact: true,
+      })).toBeVisible({ timeout: 30_000 });
+      await composer.getByRole("button", { name: "评论", exact: true }).click();
+      await expect(composer.getByRole("textbox", { name: "评论内容" }))
+        .toBeHidden({ timeout: 45_000 });
+    }
+    for (const attachment of attachments) {
+      await expect(activeLaunch.page.getByRole("button", {
+        name: `预览图片 ${attachment.fileName}`,
+        exact: true,
+      })).toBeVisible({ timeout: 30_000 });
+    }
+    const firstPreview = activeLaunch.page.getByRole("button", {
+      name: "预览图片 first.png",
+      exact: true,
+    });
+    await firstPreview.scrollIntoViewIfNeeded();
+    await firstPreview.evaluate((button) => button.click());
+    await expect(activeLaunch.page.getByRole("dialog", {
+      name: "预览图片 first.png",
+      exact: true,
+    })).toBeVisible();
+    await activeLaunch.page.getByRole("button", { name: "关闭图片预览" }).click();
+
+    await activeLaunch.page.getByRole("button", { name: /AI 助手/u }).click();
+    await chooseClipboardDelivery(activeLaunch.page);
+    let promptPath = "";
+    await expect.poll(async () => {
+      const copied = await activeLaunch.electronApp.evaluate(
+        ({ clipboard }) => clipboard.readText(),
+      );
+      promptPath = copied.match(/请执行\s+(.+?\/PROMPT\.md)\s+中的单轮任务/u)?.[1] || "";
+      return Boolean(promptPath && existsSync(promptPath));
+    }, { timeout: 20_000 }).toBe(true);
+    const requestRoot = path.dirname(promptPath);
+    const requestRecord = JSON.parse(
+      readFileSync(path.join(requestRoot, "request.json"), "utf8"),
+    );
+    const comments = requestRecord.request.comments.filter((comment) => (
+      attachments.some((attachment) => comment.text === attachment.text)
+    ));
+    expect(comments).toHaveLength(2);
+    const frozenAttachments = requestRecord.request.taskSpec.attachments;
+    expect(frozenAttachments).toHaveLength(2);
+    for (const comment of comments) {
+      expect(comment.attachments).toHaveLength(1);
+      const attachment = comment.attachments[0];
+      const expected = attachments.find((candidate) => candidate.text === comment.text);
+      expect(expected).toBeTruthy();
+      expect(attachment.relativePath)
+        .toMatch(new RegExp(`^draft/attachments/${comment.commentId}/`));
+      const instruction = requestRecord.request.taskSpec.instructions.find((candidate) => (
+        candidate.instructionId === `instruction_${comment.commentId.replace(/^comment_/u, "")}`
+      ));
+      expect(instruction.attachmentRefs).toEqual([attachment.attachmentId]);
+      const frozen = frozenAttachments.find((candidate) => (
+        candidate.attachmentId === attachment.attachmentId
+      ));
+      expect(frozen.commentId).toBe(comment.commentId);
+      expect(readFileSync(path.join(requestRoot, ...frozen.requestRelativePath.split("/")))
+        .equals(expected.bytes)).toBe(true);
+    }
+  } finally {
+    await stopStemmio(activeLaunch.electronApp, firstLaunch.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
