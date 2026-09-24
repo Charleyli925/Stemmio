@@ -3936,3 +3936,11 @@ DESIGN CHANGE / FLOW AUDIT. 以用户三张真实桌面截图作为问题证据�
 - 首次完整任务门禁的 134 条 Electron 中有两条失败：提前投影目标模式一度覆盖了用户在后台画布核对时主动点选“预览”的状态；选中标签的加载后缀又改变了历史/重启流程依赖的稳定无障碍名称。模式提前投影现只用于尚未进入预览的已保存预览目标，选中标签保持原无障碍名称并用 `aria-busy` 表示加载。两个原失败用例与新增的跨标签时序用例定向重跑 3/3 通过；完整门禁以修复后的独立结果为准。
 
 Result: passed for the focused source Electron flows and real T1/欢迎页 reproduction; no installer or release artifact was produced.
+
+### 2026-09-24 追加：紫线、快速切换白帧与跨文档残影
+
+DESIGN CORRECTION. 用户补充截图及实际操作表明，上段的 DOM 就绪与抽样不足以证明每次画面交接都无白帧。已用真实欢迎页副本在 Electron 主进程连续截图，修复前 12 次编辑／预览往返的 58 帧中抓到 4 帧纯白；同一时刻 DOM 仍报告编辑 iframe 存在、尺寸正常，说明仅靠 DOM ready 会漏掉合成层交接。逐帧数据保存在忽略的 `output/t1-diagnostics/rapid-baseline.jsonl`。
+
+- 等待目标标签从 `pendingTabId` 出现起取得紫色线，旧标签同时取消视觉选中态；语义 `aria-selected` 与页面权威仍保持原标签，直到导航提交。紫线不再做透明度脉冲，提交后持续到目标画布或预览就绪。
+- 预览 iframe 的 `load` 后加入带 token、requestId 和 frame 身份核对的可见绘制回执：内容页首个内容绘制后给子页与宿主合成机会，脚本受限或空白页采用有界回退。预览→编辑保留原生预览 iframe，直到同一文档的编辑运行态就绪并经过绘制交接；目标预览就绪时退役上一文档的编辑画面。
+- 最终源码下，真实欢迎页 5 轮各 12 次往返共采样 497 帧，未见纯白（忽略输出 `output/t1-diagnostics/exact-final-paint-{1..5}.jsonl`）；真实欢迎页多次切换后转 T1 预览→编辑的逐帧记录只显示 T1 自身预览与编辑画面，旧欢迎页 iframe 不再出现。交接时 T1 预览 iframe 始终为 872px 高，编辑容器在遮盖下准备到 2294px，直到运行态 settled 后才揭示。合成 Electron 用例覆盖目标紫线与旧紫线互斥、首个内容绘制回执、跨文档残影退役、预览原尺寸保留到脚本编辑画布就绪。结果仅覆盖所测窗口、两份本地 HTML 和这些操作，原始 HTML 未修改也未入库。

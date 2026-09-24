@@ -2578,7 +2578,6 @@ export default function Workbench() {
   const previewSurfaceMounted = displayedCanvasMode === "preview"
     && Boolean(historyPreview || documentRuntimeTabId);
   const previewSourceIdentity = [
-    previewSurfaceMounted ? "mounted" : "unmounted",
     activeWorkbenchTab?.tabId || "none",
     pageViewDocumentKey,
     canvasGeneration,
@@ -6201,20 +6200,35 @@ export default function Workbench() {
     && (displayedCanvasMode === "preview"
       ? !activePreviewReady && !activePreviewFailed
       : !activeDocumentDisplayReady && !activeDocumentCanvasFailed);
+  const [editRevealPreviewIdentity, setEditRevealPreviewIdentity] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (displayedCanvasMode !== "edit" || !activePreviewReady || !activeDocumentDisplayReady) return;
+    let frame = 0;
+    let remainingPaints = 4;
+    const afterPaint = () => {
+      remainingPaints -= 1;
+      if (remainingPaints > 0) frame = window.requestAnimationFrame(afterPaint);
+      else setEditRevealPreviewIdentity(previewIdentity);
+    };
+    frame = window.requestAnimationFrame(afterPaint);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeDocumentDisplayReady, activePreviewReady, displayedCanvasMode, previewIdentity]);
+  // Keep the exact loaded Preview iframe in front while the same document's
+  // Edit runtime is preparing. The previous document's Edit frame is never a
+  // valid fallback for this transition.
+  const carryPreviewIntoEdit = displayedCanvasMode === "edit"
+    && activeWorkbenchTab?.kind === "document"
+    && activePreviewReady
+    && (!activeDocumentDisplayReady || editRevealPreviewIdentity !== previewIdentity)
+    && !activeDocumentCanvasFailed;
   const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
     ? editHandoffGeometry : null;
   const editPreviewUnderlay = displayedCanvasMode === "preview"
     && !historyPreview
     && !presentedReadyReviewSession
-    && Boolean(documentRuntimeTabId)
-    && Boolean(heldEditGeometry);
+    && Boolean(documentRuntimeTabId);
   const showEditSurface = displayedCanvasMode === "edit"
-    || editPreviewUnderlay
-    || (displayedCanvasMode === "preview"
-      && !historyPreview
-      && !presentedReadyReviewSession
-      && !activePreviewReady
-      && Boolean(documentRuntimeTabId));
+    || editPreviewUnderlay;
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
   const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
     || activeWorkbenchTab?.kind === "history"
@@ -6758,6 +6772,7 @@ export default function Workbench() {
                   activeSourceSha256={sourceSha256}
                   activeReady={activeDocumentDisplayReady}
                   activeFailed={activeDocumentCanvasFailed}
+                  retirePreviousTab={displayedCanvasMode === "preview" && activePreviewReady}
                   presentationVisible={showEditSurface && (displayedCanvasMode === "edit" || !activePreviewReady)}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
@@ -6857,11 +6872,12 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {previewSurfaceMounted ? (
+          {previewSurfaceMounted || carryPreviewIntoEdit ? (
             <WorkbenchActivePreview
               identity={previewIdentity}
               activeReady={activePreviewReady}
               activeFailed={activePreviewFailed}
+              carryForEdit={carryPreviewIntoEdit}
               onRetry={() => interactionPreviewRef.current?.reload()}
               activeElement={<HtmlInteractionPreview
               key={`preview-authority-${previewIdentity}`}

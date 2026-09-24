@@ -1,6 +1,6 @@
 "use client";
 
-import { cloneElement, useState, type ReactElement, type Ref } from "react";
+import { cloneElement, useLayoutEffect, useRef, useState, type ReactElement, type Ref } from "react";
 
 import type {
   HtmlInteractionPreviewHandle,
@@ -18,18 +18,37 @@ export default function WorkbenchActivePreview({
   activeElement,
   activeReady,
   activeFailed,
+  carryForEdit,
   onRetry,
 }: {
   identity: string;
   activeElement: PreviewElement;
   activeReady: boolean;
   activeFailed: boolean;
+  carryForEdit: boolean;
   onRetry(): void;
 }) {
   const [lastVerified, setLastVerified] = useState<{
     identity: string;
     element: PreviewElement;
   } | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [previewGeometry, setPreviewGeometry] = useState<{ width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host || carryForEdit) return;
+    const measure = () => {
+      const bounds = host.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      setPreviewGeometry((previous) => previous?.width === bounds.width && previous.height === bounds.height
+        ? previous
+        : { width: bounds.width, height: bounds.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [carryForEdit]);
   if (activeReady && lastVerified?.identity !== identity) {
     setLastVerified({ identity, element: activeElement });
   }
@@ -39,10 +58,13 @@ export default function WorkbenchActivePreview({
 
   return (
     <div
+      ref={hostRef}
       className={styles.host}
+      style={carryForEdit && previewGeometry ? previewGeometry : undefined}
       data-testid="workbench-active-preview"
       data-preview-ready={activeReady ? "true" : "false"}
       data-outgoing-preview={outgoing ? "true" : undefined}
+      data-preview-carry={carryForEdit ? "true" : undefined}
     >
       {outgoing ? (
         <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>

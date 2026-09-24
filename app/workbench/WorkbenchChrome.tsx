@@ -122,6 +122,10 @@ export function WorkbenchTabBar({
         {snapshot.tabs.map((tab) => {
           const selected = snapshot.activeTabId === tab.tabId;
           const pending = snapshot.pendingTabId === tab.tabId;
+          // Navigation keeps the old runtime until the new document is ready.
+          // The tab strip represents the user's destination from the first
+          // pending frame, so the outgoing tab must lose its visual selection.
+          const visuallySelected = snapshot.pendingTabId ? pending : selected;
           const opening = (pending && !selected) || (selected && activeTabOpening);
           const projected = selected && presentation.tabId === tab.tabId;
           const title = projected ? presentation.tabTitle : tab.title;
@@ -137,7 +141,7 @@ export function WorkbenchTabBar({
               data-kind={tab.kind}
               data-status={tab.status}
               data-view-label={viewLabel || undefined}
-              data-selected={selected ? "true" : undefined}
+              data-selected={visuallySelected ? "true" : undefined}
               data-pending={pending ? "true" : undefined}
               data-opening={opening ? "true" : undefined}
               key={tab.tabId}

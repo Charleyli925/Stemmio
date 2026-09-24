@@ -8,6 +8,14 @@
   pointer-events: none;
 }
 
+.host[data-preview-carry="true"] {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  /* Keep the prepared Edit iframe in the compositing tree until reveal. */
+  opacity: .999;
+}
+
 .entry {
   width: 100%;
   height: 100%;

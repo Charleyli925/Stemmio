@@ -363,6 +363,10 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       .toHaveCSS("visibility", "visible");
     await expect(launched.page.locator('.workbench-tab[data-selected="true"][data-opening="true"]'))
       .toBeVisible();
+    await expect(tabs.filter({ hasText: "runtime-handoff-static" }).locator("xpath=.."))
+      .not.toHaveAttribute("data-selected", "true");
+    await expect(tabs.filter({ hasText: "runtime-handoff-scripted" }).locator("xpath=.."))
+      .toHaveAttribute("data-selected", "true");
     await launched.electronApp.evaluate(() => {
       globalThis.__stemmioE2eReleaseEditRuntimePrepare();
     });
@@ -399,6 +403,45 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       document.querySelector('.canvas-edit-surface iframe[data-runtime-slot-role="active"]')
       === window.__STEMMIO_TEST_SCRIPTED_EDIT_FRAME__
     ))).toBe(true);
+
+    // A document Preview may be ready while its Edit runtime is still cold.
+    // Returning to Edit must keep that document's Preview in front instead of
+    // resurrecting the prior tab's Edit iframe.
+    await launched.page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "预览" }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await tabs.filter({ hasText: "runtime-handoff-static" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eHoldEditRuntimePrepare();
+    });
+    await tabs.filter({ hasText: "runtime-handoff-scripted" }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.locator("[data-outgoing-draft]")).toHaveCount(0);
+    const previewCarrySize = await launched.page.getByTestId("workbench-active-preview")
+      .evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      });
+    await launched.page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "编辑" }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-carry", "true");
+    expect(await launched.page.getByTestId("workbench-active-preview")
+      .evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      })).toEqual(previewCarrySize);
+    await expect(launched.page.locator("[data-outgoing-draft]")).toHaveCount(0);
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    });
+    await expect(launched.page.locator(".canvas-edit-surface"))
+      .toHaveAttribute("data-edit-runtime-phase", "settled");
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveCount(0);
   } finally {
     await launched.electronApp.evaluate(() => {
       globalThis.__stemmioE2eReleaseEditRuntimePrepare();
@@ -690,6 +733,52 @@ test("Electron stages a saved Preview mode before the tab page is revealed", {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron waits for the Preview document's first contentful paint", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("preview-paint-gate.html", () => `<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><title>Preview paint gate</title></head>
+    <body><script>
+      window.addEventListener("message", (event) => {
+        if (event.data?.type === "stemmio-preview-visual-ready-request") {
+          window.parent.postMessage({ type: "synthetic-visual-request-observed" }, "*");
+        }
+      });
+    </script></body></html>`);
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await expect(page.getByTestId("html-canvas-editor"))
+      .toHaveAttribute("data-render-verified", "true");
+    await page.evaluate(() => {
+      window.__syntheticVisualRequestObserved = false;
+      window.addEventListener("message", (event) => {
+        if (event.data?.type === "synthetic-visual-request-observed") {
+          window.__syntheticVisualRequestObserved = true;
+        }
+      });
+    });
+    await page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "预览" }).click();
+    await expect.poll(() => page.evaluate(() => window.__syntheticVisualRequestObserved))
+      .toBe(true);
+    const preview = page.getByTestId("workbench-active-preview");
+    await expect(preview).toHaveAttribute("data-preview-ready", "false");
+    await page.frameLocator('iframe[title="HTML 交互预览"]').locator("body")
+      .evaluate((body) => {
+        const heading = document.createElement("h1");
+        heading.textContent = "预览内容已绘制";
+        body.append(heading);
+      });
+    await expect(preview).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.frameLocator('iframe[title="HTML 交互预览"]').getByText("预览内容已绘制"))
+      .toBeVisible();
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
   }
 });
 

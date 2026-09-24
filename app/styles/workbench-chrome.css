@@ -180,11 +180,6 @@ body {
   border-radius: 2px;
   background: var(--chrome-accent);
   pointer-events: none;
-  animation: workbench-tab-opening-pulse 900ms ease-in-out infinite alternate;
-}
-
-@keyframes workbench-tab-opening-pulse {
-  to { opacity: .55; }
 }
 
 .workbench-tab-status {
@@ -548,10 +543,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workbench-tab[data-opening="true"]::after {
-    animation: none;
-  }
-
   .workbench-sidebar-toggle,
   .workbench-tooltip-overlay,
   .workbench-resizer,

@@ -23,6 +23,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeElement,
   activeReady,
   activeFailed,
+  retirePreviousTab,
   presentationVisible,
   failureMessage,
   onRetry,
@@ -34,6 +35,7 @@ export default function WorkbenchActiveDocumentCanvas({
   }> | null;
   activeReady: boolean;
   activeFailed: boolean;
+  retirePreviousTab: boolean;
   presentationVisible: boolean;
   failureMessage: string | null;
   onRetry(): void;
@@ -68,6 +70,10 @@ export default function WorkbenchActiveDocumentCanvas({
       entryKey: activeEntryKey,
       element: activeElement,
     });
+  } else if (retirePreviousTab && lastVerified && lastVerified.tabId !== activeTabId) {
+    // A ready Preview for the destination supersedes the prior document's
+    // Edit image. Do not resurrect that image on Preview -> Edit.
+    setLastVerified(null);
   }
   // Entry keys follow tab activations, preserving the mounted outgoing DOM.
   // Returning to A after starting B gets a distinct candidate key while the
