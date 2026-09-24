@@ -92,10 +92,10 @@ export function createWorkbenchModeHandlers({
           );
           return;
         }
-        editorRef.current?.clearSelection();
       }
+      editorRef.current?.clearSelection();
       setPageViewContext(null);
-      if (previewNeedsEditorFence) editorRef.current?.applyPageViewContext(null);
+      editorRef.current?.applyPageViewContext(null);
       commentCanvasPort.setSelection(null);
       updateFocusedComment(null);
       setCanvasMode("preview");

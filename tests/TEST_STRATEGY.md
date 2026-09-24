@@ -774,8 +774,9 @@ fixture、DOM 编辑兼容性扫描或仓库 Electron 通过代替真实语料�
 `electron-workbench-tabs.spec.mjs` owns current-draft presentation handoff:
 hold the incoming Canvas, compare the outgoing real canvas before/while held,
 prove it is inert, then verify the exact incoming Canvas takes over with one
-editor. The same Electron suite checks Preview of the selected HTML while the
-Edit Canvas is still pending, and failure with a visible retry. These
+editor. A rapid A→B→A return remains fenced until the newly mounted A Canvas
+verifies its generation. The same Electron suite checks Preview of the selected
+HTML while the Edit Canvas is still pending, and failure with a visible retry. These
 synthetic tests cover deterministic transitions; the user-designated real HTML
 corpus remains the acceptance source for actual page behavior.
 
