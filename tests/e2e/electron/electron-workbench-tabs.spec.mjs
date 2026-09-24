@@ -2536,7 +2536,7 @@ test("Electron local current draft saves immutable versions and exports with an 
     const recoveryDialog = launched.page.getByRole("dialog", { name: "找回此前的稿件", exact: true });
     await expect(recoveryDialog).toContainText("暂无需要找回的稿件。");
     await launched.page.screenshot({ path: test.info().outputPath("preserved-drafts-empty.png") });
-    await recoveryDialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await launched.page.mouse.click(400, 12);
     await expect(recoveryDialog).toHaveCount(0);
 
     const preservedDraft = {

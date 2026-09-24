@@ -416,6 +416,8 @@ test("indexed script tabs keep hidden comments grouped, suppress ghost markers, 
 
   const firstText = "锁单确收页评论";
   const secondText = "IPV页评论";
+  const firstCommentMarker = page.getByTestId("html-canvas-editor")
+    .locator('button[title^="查看"][title*="锁单确收评论目标"]');
   await saveComment(page, frame, "indexed-comment-one", firstText);
 
   await page.getByRole("button", { name: "预览", exact: true }).click();
@@ -438,9 +440,7 @@ test("indexed script tabs keep hidden comments grouped, suppress ghost markers, 
   await expect(rail.locator(
     ".comment-rail-content > .comment-card:not(.draft-comment-card)",
   )).toHaveCount(0);
-  await expect(page.getByTestId("html-canvas-editor").getByRole("button", {
-    name: /锁单确收评论目标/u,
-  })).toHaveCount(0);
+  await expect(firstCommentMarker).toHaveCount(0);
 
   await saveComment(page, frame, "indexed-comment-two", secondText);
   const currentCards = rail.locator(
@@ -466,9 +466,7 @@ test("indexed script tabs keep hidden comments grouped, suppress ghost markers, 
   await expect(frame.locator("#chart0")).toBeVisible();
   await expect(frame.locator("#chart1")).toBeHidden();
   await expect(currentCards.filter({ hasText: firstText })).toBeVisible();
-  await expect(page.getByTestId("html-canvas-editor").getByRole("button", {
-    name: /锁单确收评论目标/u,
-  })).toHaveText("评1");
+  await expect(firstCommentMarker).toHaveText("评1");
   await expect.poll(async () => {
     const box = await iframe.boundingBox();
     return Math.round(box?.height ?? 0);

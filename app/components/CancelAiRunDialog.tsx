@@ -25,10 +25,7 @@ export default function CancelAiRunDialog({
     if (!dialog) return;
     if (open && !dialog.open) {
       dialog.showModal();
-      const focusFrame = requestAnimationFrame(
-        () => waitButtonRef.current?.focus(),
-      );
-      return () => cancelAnimationFrame(focusFrame);
+      waitButtonRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
     }

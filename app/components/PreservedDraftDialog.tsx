@@ -49,7 +49,8 @@ export default function PreservedDraftDialog({ open, contextKey, onClose, onLoad
   }, [open, contextKey, onLoad]);
 
   return <dialog ref={ref} className="cancel-ai-run-dialog preserved-draft-dialog"
-    aria-labelledby="preserved-drafts-title" onCancel={(event) => { event.preventDefault(); onClose(); }} onClose={onClose}>
+    aria-labelledby="preserved-drafts-title" onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onClose={onClose} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <article className="cancel-ai-run-card">
       <h2 id="preserved-drafts-title">找回此前的稿件</h2>
       <p>恢复会保存为新版本，并找回当时的评论。当前内容也会保留。</p>

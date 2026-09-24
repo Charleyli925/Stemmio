@@ -4757,7 +4757,9 @@ test("dynamic and static candidate failure preserves latest HTML behind a read-o
       { timeout: 20_000 },
     );
     const preparingNotice = page.getByTestId("edit-runtime-static-fallback");
-    await preparingNotice.getByRole("button", { name: "关闭动态内容提示" }).click();
+    const closeBounds = await preparingNotice.getByRole("button", { name: "关闭动态内容提示" }).boundingBox();
+    expect(closeBounds).not.toBeNull();
+    await page.mouse.click(closeBounds.x + closeBounds.width / 2, closeBounds.y + closeBounds.height / 2);
     await expect(page.getByTestId("edit-runtime-static-fallback")).toHaveCount(0);
     await expect(editor).toHaveAttribute(
       "data-runtime-degradation",
