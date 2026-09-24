@@ -39,20 +39,32 @@ export default function WorkbenchActiveDocumentCanvas({
   const [lastVerified, setLastVerified] = useState<{
     tabId: string;
     sourceSha256: string | null;
+    entryKey: string;
     element: NonNullable<typeof activeElement>;
   } | null>(null);
+  const [activation, setActivation] = useState({ tabId: activeTabId, ordinal: 0 });
+  const currentActivation = activation.tabId === activeTabId
+    ? activation
+    : { tabId: activeTabId, ordinal: activation.ordinal + 1 };
+  if (currentActivation !== activation) setActivation(currentActivation);
+  const activeEntryKey = `${activeTabId || "none"}:${currentActivation.ordinal}`;
   // Retain only the last verified document. Intermediate ProjectWorkflow
   // renders cannot replace A's exact element with B's unverified HTML.
   if (activeTabId && activeElement && activeReady
     && (lastVerified?.tabId !== activeTabId
-      || lastVerified.sourceSha256 !== activeSourceSha256)) {
+      || lastVerified.sourceSha256 !== activeSourceSha256
+      || lastVerified.entryKey !== activeEntryKey)) {
     setLastVerified({
       tabId: activeTabId,
       sourceSha256: activeSourceSha256,
+      entryKey: activeEntryKey,
       element: activeElement,
     });
   }
-  const outgoing = lastVerified?.tabId !== activeTabId
+  // Entry keys follow tab activations, preserving the mounted outgoing DOM.
+  // Returning to A after starting B gets a distinct candidate key while the
+  // earlier A keeps its original key until the returned A verifies.
+  const outgoing = lastVerified?.entryKey !== activeEntryKey
     && lastVerified
     && !activeReady
     && !activeFailed
@@ -80,7 +92,7 @@ export default function WorkbenchActiveDocumentCanvas({
         data-outgoing-draft={outgoing.tabId}
         aria-hidden="true"
         inert
-        key={outgoing.tabId}
+        key={outgoing.entryKey}
       >
         {cloneElement(outgoing.element, {
           ref: null,
@@ -113,7 +125,7 @@ export default function WorkbenchActiveDocumentCanvas({
         data-handoff-candidate={outgoing ? "true" : undefined}
         aria-hidden={outgoing ? true : undefined}
         inert={outgoing ? true : undefined}
-        key={activeTabId || "none"}
+        key={activeEntryKey}
       >
         {activeElement}
       </div>

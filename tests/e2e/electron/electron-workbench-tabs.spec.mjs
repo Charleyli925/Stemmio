@@ -304,6 +304,66 @@ test("Electron leaves the outgoing draft inert until the new Canvas can be displ
   }
 });
 
+test("Electron keeps the verified canvas during a rapid return to its tab", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("rapid-return-a.html");
+  const projectB = createSourceFixture("rapid-return-b.html");
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await openRecentProject(launched.page, projectB.sourcePath);
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "rapid-return-a" });
+    const tabB = tabs.filter({ hasText: "rapid-return-b" });
+    await tabA.click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await holdCacheAndCanvasLoads(launched.page);
+
+    await tabB.dispatchEvent("click");
+    const outgoing = launched.page.locator("[data-outgoing-draft]");
+    await expect(outgoing).toBeVisible();
+    await expect(outgoing).toHaveAttribute("inert", "");
+    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+
+    await tabA.dispatchEvent("click");
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await expect(outgoing).toBeVisible();
+    await expect(outgoing).toHaveAttribute("inert", "");
+    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+    await expect(launched.page.locator("[data-handoff-candidate='true']"))
+      .toHaveAttribute("inert", "");
+    await expect(launched.page.getByRole("button", { name: "预览", exact: true }))
+      .toBeEnabled();
+
+    await expect.poll(() => launched.page.evaluate(() => Boolean(
+      window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__,
+    ))).toBe(true);
+    await launched.page.evaluate(() => {
+      const onLoad = window.__STEMMIO_TEST_DELAYED_CANVAS_ON_LOAD__;
+      const frame = window.__STEMMIO_TEST_DELAYED_CANVAS_FRAME__;
+      if (typeof onLoad !== "function" || !(frame instanceof HTMLIFrameElement)) {
+        throw new Error("Returned Canvas load callback was unavailable");
+      }
+      window.__STEMMIO_TEST_BLOCK_CANVAS_LOAD__ = false;
+      onLoad({ currentTarget: frame });
+    });
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(outgoing).toHaveCount(0);
+    await expect(launched.page.getByTestId("html-canvas-editor")).toHaveCount(1);
+  } finally {
+    await releaseCacheAndCanvasLoadHold(launched.page);
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron Preview opens the selected draft while unrelated Canvas work continues", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

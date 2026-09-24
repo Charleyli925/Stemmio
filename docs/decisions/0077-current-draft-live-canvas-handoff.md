@@ -36,6 +36,9 @@ Edit Canvas is released on that mode change.
   Inactive tabs retain no editor or iframe.
 - Exact Canvas authority is the reveal condition. A timeout, cache hit,
   screenshot or Preview-button readiness is not a substitute.
+- Returning to the previously verified tab during an unfinished switch is a
+  new activation. Its newly mounted Canvas remains hidden until that activation
+  verifies, even if its tab ID and source SHA match the retained surface.
 
 ## Required proof
 
@@ -45,3 +48,5 @@ Edit Canvas is released on that mode change.
 - Verify Preview opens the selected document during unrelated Canvas work.
 - Verify a failed switch preserves the old selected tab, presents a persistent
   error and succeeds through the retry entry.
+- Verify A→B→A before B verifies keeps the earlier A inert and visible until
+  the returned A Canvas verifies its new generation.
