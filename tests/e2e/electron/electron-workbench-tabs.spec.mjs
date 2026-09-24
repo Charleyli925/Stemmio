@@ -415,8 +415,9 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
   });
-  let blockedRoute = null;
+  let blockedRoutes = [];
   let blocking = true;
+  let blockedImage = "slow-a.png";
   try {
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
     await openRecentProject(launched.page, projectB.sourcePath);
@@ -430,13 +431,13 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
 
     await launched.page.route("https://stemmio-handoff.invalid/slow-*.png", async (route) => {
-      if (!blocking || blockedRoute) return route.continue();
-      blockedRoute = route;
+      if (!blocking || !route.request().url().endsWith(blockedImage)) return route.continue();
+      blockedRoutes.push(route);
       await new Promise((resolve) => { route.release = resolve; });
       await route.continue();
     });
     await mode.getByRole("button", { name: "预览", exact: true }).click();
-    await expect.poll(() => blockedRoute !== null).toBe(true);
+    await expect.poll(() => blockedRoutes.length > 0).toBe(true);
     const previewHost = launched.page.getByTestId("workbench-active-preview");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
     await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
@@ -444,24 +445,23 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
       .getByText("预览交接目标 A")).toBeVisible();
     blocking = false;
-    blockedRoute.release();
-    blockedRoute = null;
+    blockedRoutes.splice(0).forEach((route) => route.release());
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 A")).toBeVisible();
 
     blocking = true;
+    blockedImage = "slow-b.png";
     await launched.page.getByRole("tablist", { name: "已打开的页面" })
       .getByRole("tab").filter({ hasText: "preview-handoff-b" }).click();
-    await expect.poll(() => blockedRoute !== null).toBe(true);
+    await expect.poll(() => blockedRoutes.length > 0).toBe(true);
     await expect(previewHost).toHaveAttribute("data-outgoing-preview", "true");
     await expect(previewHost.locator(':scope > [inert]:not([data-handoff-candidate]) iframe[title="HTML 交互预览"]'))
       .toBeVisible();
     await expect(previewHost.locator(':scope > [inert]:not([data-handoff-candidate]) iframe[title="HTML 交互预览"]')
       .contentFrame().getByText("预览交接目标 A")).toBeVisible();
     blocking = false;
-    blockedRoute.release();
-    blockedRoute = null;
+    blockedRoutes.splice(0).forEach((route) => route.release());
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 B")).toBeVisible();
@@ -469,20 +469,19 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
     blocking = true;
     await mode.getByRole("button", { name: "预览", exact: true }).click();
-    await expect.poll(() => blockedRoute !== null).toBe(true);
+    await expect.poll(() => blockedRoutes.length > 0).toBe(true);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
     await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
     await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
     await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
       .getByText("预览交接目标 B")).toBeVisible();
     blocking = false;
-    blockedRoute.release();
-    blockedRoute = null;
+    blockedRoutes.splice(0).forEach((route) => route.release());
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 B")).toBeVisible();
   } finally {
-    blockedRoute?.release();
+    blockedRoutes.splice(0).forEach((route) => route.release());
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
