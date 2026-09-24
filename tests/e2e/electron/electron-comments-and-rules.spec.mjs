@@ -821,6 +821,11 @@ test("automatic update actions keep the sidebar product geometry and split About
         animations: "disabled",
       });
     }
+    await launched.page.mouse.click(400, 12);
+    await expect(launched.page.locator("dialog.about-dialog[open]"))
+      .toHaveCount(0);
+    await sidebar.getByRole("button", { name: "Stemmio", exact: true }).click();
+    await expect(aboutDialog).toBeVisible();
     await aboutDialog.getByRole("button", { name: "关闭关于源页" }).press("Escape");
     await expect(launched.page.locator("dialog.about-dialog[open]"))
       .toHaveCount(0);

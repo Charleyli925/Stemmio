@@ -1,6 +1,7 @@
 /* About keeps product identity and public distribution navigation in one deliberate
    desktop surface; update and Agent controls live on the Settings page. */
 .about-dialog {
+  -webkit-app-region: no-drag;
   width: min(580px, calc(100vw - 32px));
   max-width: none;
   max-height: calc(100vh - 48px);
@@ -13,6 +14,7 @@
 }
 
 .about-dialog::backdrop {
+  -webkit-app-region: no-drag;
   background: rgb(34 32 27 / 36%);
   backdrop-filter: blur(16px) saturate(140%);
 }
@@ -555,6 +557,7 @@
 }
 
 .cancel-ai-run-dialog {
+  -webkit-app-region: no-drag;
   width: min(460px, calc(100vw - 32px));
   max-width: none;
   padding: 0;
@@ -566,6 +569,7 @@
 }
 
 .cancel-ai-run-dialog::backdrop {
+  -webkit-app-region: no-drag;
   background: rgb(40 37 56 / 52%);
 }
 

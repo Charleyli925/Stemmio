@@ -398,6 +398,11 @@ Discussion is not an authorized Agent surface. The Bridge has no discussion
 routes, policy, Host, snapshot or session owner, and provider capabilities and
 preflight tickets reject any non-execution purpose. Historical Conversation
 records remain data only and cannot reopen an Agent process.
+During execution-history replay, a previously stored fixed Stemmio caption or
+truncation notice may retain its original wording only after its turn, Request, attempt, candidate
+and event time match the durable receipt. Stable IDs cannot be rebound to
+another fact; frozen user requirements and public Agent summaries still require
+exact content. Caption compatibility cannot authorize execution or adoption.
 
 The driver may retain at most 16 KiB of raw Qoder stderr only inside the live
 Bridge promise to classify authentication/capacity/process failures. It is

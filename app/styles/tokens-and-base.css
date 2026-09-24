@@ -819,6 +819,7 @@ input:focus-visible,
 }
 
 .attachment-lightbox {
+  -webkit-app-region: no-drag;
   max-width: none;
   max-height: none;
   padding: 0;
@@ -827,6 +828,7 @@ input:focus-visible,
 }
 
 .attachment-lightbox::backdrop {
+  -webkit-app-region: no-drag;
   background: rgb(20 20 25 / 76%);
   backdrop-filter: blur(12px);
 }

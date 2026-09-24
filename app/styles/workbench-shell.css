@@ -297,6 +297,7 @@
 }
 
 .edit-runtime-static-fallback {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: 101;
   top: 8px;

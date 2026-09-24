@@ -59,12 +59,15 @@ export function globalInterruptionPresentation(interruption) {
     case "project-open-failed":
       return {
         kind: interruption.kind,
-        title: "无法打开这个 HTML",
-        message: interruption.detail || "文件暂时无法完成安全切换。",
+        title: interruption.registered ? "当前稿未打开"
+          : interruption.requestId ? "打开尚未完成" : "无法打开这个 HTML",
+        message: interruption.registered
+          ? "无法确认项目文件状态，原页面保持不变。"
+          : interruption.detail || "文件暂时无法完成安全切换。",
         tone: "error",
         dismissMs: null,
-        actionId: "retry-project-open",
-        actionLabel: interruption.recent ? "重新选择位置" : "重新选择",
+        actionId: interruption.registered ? null : "retry-project-open",
+        actionLabel: interruption.registered ? null : interruption.requestId ? "继续打开" : "选择 HTML",
         actionRequestId: typeof interruption.requestId === "string"
           && interruption.requestId
           ? interruption.requestId
@@ -81,7 +84,7 @@ export function globalInterruptionPresentation(interruption) {
         actionId: interruption.needsRemoval
           ? "review-comment-attachments"
           : "open-attachment-picker",
-        actionLabel: interruption.needsRemoval ? "查看附件" : "重新选择",
+        actionLabel: interruption.needsRemoval ? "查看附件" : "选择附件",
         usageKey: `attachment-batch-${interruption.target?.commentId || ""}`,
       };
     case "attachment-batch-partial":
@@ -97,7 +100,7 @@ export function globalInterruptionPresentation(interruption) {
             : "open-attachment-picker")
           : null,
         actionLabel: interruption.composerOpen
-          ? (interruption.needsRemoval ? "查看附件" : "重新选择")
+          ? (interruption.needsRemoval ? "查看附件" : "选择附件")
           : null,
         usageKey: `attachment-batch-${interruption.target?.commentId || ""}`,
       };
@@ -133,7 +136,7 @@ export function globalInterruptionPresentation(interruption) {
         tone: "error",
         dismissMs: null,
         actionId: "retry-export",
-        actionLabel: "重新选择位置",
+        actionLabel: "选择导出位置",
         usageKey: "export",
       };
     case "handoff-recopy":

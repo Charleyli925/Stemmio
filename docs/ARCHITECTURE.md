@@ -496,6 +496,11 @@ under `bridge/project-file-repository/`; the façade remains the only public
 module and the only persistence owner. The v3 Bridge `SourceTransaction`
 kernel, persistent history journal and action route are retired. There is no
 second inline current-source writer in `workspace-bridge.mjs`.
+Submission receipt replay also belongs to this repository: it checks stable
+event/Request identity while retaining an already stored fixed execution
+caption or truncation notice when only that UI wording changed between builds. Public Agent
+summaries and frozen requirements remain exact; caption copy grants no HTML,
+Request or Candidate authority.
 
 At close, `DocumentSession` independently hashes the frozen renderer HTML and
 accepts any acknowledged persisted revision at or beyond the close cutoff. A

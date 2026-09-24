@@ -849,12 +849,13 @@ ${REVIEW_MASK_UNION_BEFORE}
     await expect(liveReviewTools).toBeVisible();
     // The directory navigation above may have revealed the second authored
     // tab. Restore this fixture's initial tab before its separate tab test.
+    await beforeReviewFrame.getByRole("button", { name: "审阅标签一" })
+      .evaluate((button) => button.click());
     for (const frame of [beforeReviewFrame, afterReviewFrame]) {
-      await frame.getByRole("button", { name: "审阅标签一" })
-        .evaluate((button) => button.click());
+      await expect(frame.locator('[data-review-tab-panel="one"]')).toBeVisible();
+      await expect(frame.locator("html"))
+        .not.toHaveAttribute("data-stemmio-review-transitioning", "true");
     }
-    await expect(beforeReviewFrame.locator('[data-review-tab-panel="two"]'))
-      .toBeHidden();
     await beforeReviewFrame.getByRole("button", { name: "审阅标签二" })
       .evaluate((button) => button.click());
     await expect.poll(async () => beforeReviewFrame.locator("html").evaluate(() => {
