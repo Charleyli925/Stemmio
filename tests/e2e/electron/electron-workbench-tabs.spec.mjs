@@ -264,7 +264,15 @@ test("Electron leaves the outgoing draft inert until the new Canvas can be displ
     const outgoing = launched.page.locator("[data-outgoing-draft]");
     await expect(outgoing).toBeVisible();
     await expect(outgoing).toHaveAttribute("inert", "");
-    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+    const openingTab = launched.page.locator('.workbench-tab[data-selected="true"][data-opening="true"]');
+    await expect(openingTab).toBeVisible();
+    expect(await openingTab.evaluate((element) => (
+      getComputedStyle(element, "::after").backgroundColor
+    ))).toBe("rgb(90, 85, 223)");
+    await expect(launched.page.locator("[data-handoff-candidate='true']"))
+      .toHaveCSS("opacity", "0");
+    await expect(launched.page.locator("[data-handoff-candidate='true']"))
+      .toHaveCSS("visibility", "visible");
     await expect(launched.page.getByRole("button", { name: "预览", exact: true }))
       .toBeEnabled();
     await expect.poll(() => launched.page.evaluate(() => Boolean(
@@ -349,13 +357,20 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       const bounds = element.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
     })).toEqual(outgoingSize);
-    await expect(launched.page.locator('[data-handoff-candidate="true"]')).toBeHidden();
+    await expect(launched.page.locator('[data-handoff-candidate="true"]'))
+      .toHaveCSS("opacity", "0");
+    await expect(launched.page.locator('[data-handoff-candidate="true"]'))
+      .toHaveCSS("visibility", "visible");
+    await expect(launched.page.locator('.workbench-tab[data-selected="true"][data-opening="true"]'))
+      .toBeVisible();
     await launched.electronApp.evaluate(() => {
       globalThis.__stemmioE2eReleaseEditRuntimePrepare();
     });
     await expect(launched.page.locator(".canvas-edit-surface"))
       .toHaveAttribute("data-edit-runtime-phase", "settled");
     await expect(outgoing).toHaveCount(0);
+    await expect(launched.page.locator('.workbench-tab[data-selected="true"][data-opening="true"]'))
+      .toHaveCount(0);
     await expect(launched.page.frameLocator('iframe[data-runtime-slot-role="active"]')
       .locator("#scripted-tab-chart")).toHaveText("图表已显示");
     const editSize = await launched.page.locator(".canvas-edit-surface").evaluate((element) => {
@@ -419,13 +434,15 @@ test("Electron keeps the verified canvas during a rapid return to its tab", {
     const outgoing = launched.page.locator("[data-outgoing-draft]");
     await expect(outgoing).toBeVisible();
     await expect(outgoing).toHaveAttribute("inert", "");
-    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+    await expect(launched.page.locator("[data-handoff-candidate='true']"))
+      .toHaveCSS("opacity", "0");
 
     await tabA.dispatchEvent("click");
     await expect(tabA).toHaveAttribute("aria-selected", "true");
     await expect(outgoing).toBeVisible();
     await expect(outgoing).toHaveAttribute("inert", "");
-    await expect(launched.page.locator("[data-handoff-candidate='true']")).toBeHidden();
+    await expect(launched.page.locator("[data-handoff-candidate='true']"))
+      .toHaveCSS("opacity", "0");
     await expect(launched.page.locator("[data-handoff-candidate='true']"))
       .toHaveAttribute("inert", "");
     await expect(launched.page.getByRole("button", { name: "预览", exact: true }))
@@ -530,6 +547,11 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await expect.poll(() => blockedRoutes.length > 0).toBe(true);
     const previewHost = launched.page.getByTestId("workbench-active-preview");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    await expect(mode.getByRole("button", { name: "预览", exact: true }))
+      .toHaveAttribute("aria-busy", "true");
+    await expect(mode.getByRole("button", { name: "预览", exact: true }))
+      .toHaveAttribute("data-preview-opening", "true");
+    await expect(previewHost.getByText("正在打开预览…")).toHaveCount(0);
     await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
     await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
     await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
@@ -537,6 +559,8 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     blocking = false;
     blockedRoutes.splice(0).forEach((route) => route.release());
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(mode.getByRole("button", { name: "预览", exact: true }))
+      .not.toHaveAttribute("aria-busy", "true");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 A")).toBeVisible();
 
@@ -571,6 +595,97 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 B")).toBeVisible();
   } finally {
+    blockedRoutes.splice(0).forEach((route) => route.release());
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron stages a saved Preview mode before the tab page is revealed", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("preview-order-edit.html");
+  const projectB = createSourceFixture("preview-order-preview.html", (html) => (
+    html.replace("</body>", '<img src="https://stemmio-handoff.invalid/preview-order.png"></body>')
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  const blockedRoutes = [];
+  let blocking = false;
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const previewButton = mode.getByRole("button", { name: "预览", exact: true });
+    await previewButton.click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    await tabs.filter({ hasText: "preview-order-edit" }).click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await expect(mode.getByRole("button", { name: "编辑", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    await page.route("https://stemmio-handoff.invalid/preview-order.png", async (route) => {
+      if (!blocking) return route.continue();
+      blockedRoutes.push(route);
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    blocking = true;
+    await page.evaluate(() => {
+      window.__previewOrderFrames = [];
+      let previous = "";
+      const sample = () => {
+        const button = document.querySelector('.canvas-mode-switch button:nth-child(2)');
+        const preview = document.querySelector('[data-testid="workbench-active-preview"]');
+        const state = {
+          selected: button?.getAttribute("aria-pressed") === "true",
+          spinning: button?.getAttribute("data-preview-opening") === "true",
+          ready: preview?.getAttribute("data-preview-ready") === "true",
+        };
+        const fingerprint = JSON.stringify(state);
+        if (fingerprint !== previous) {
+          window.__previewOrderFrames.push(state);
+          previous = fingerprint;
+        }
+        window.__previewOrderRaf = requestAnimationFrame(sample);
+      };
+      sample();
+    });
+    await tabs.filter({ hasText: "preview-order-preview" }).click();
+    await expect.poll(() => blockedRoutes.length).toBeGreaterThan(0);
+    const selectedTab = page.locator('.workbench-tab[data-selected="true"][data-opening="true"]');
+    await expect(selectedTab).toBeVisible();
+    await expect(previewButton).toHaveAttribute("aria-pressed", "true");
+    await expect(previewButton).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "false");
+    await expect(page.getByText("正在打开预览…")).toHaveCount(0);
+    await page.screenshot({ path: test.info().outputPath("preview-opening-order.png") });
+    blocking = false;
+    blockedRoutes.splice(0).forEach((route) => route.release());
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await expect(selectedTab).toHaveCount(0);
+    await expect(previewButton).not.toHaveAttribute("aria-busy", "true");
+    const frames = await page.evaluate(() => {
+      cancelAnimationFrame(window.__previewOrderRaf);
+      return window.__previewOrderFrames;
+    });
+    const selectedAt = frames.findIndex((state) => state.selected && !state.spinning);
+    const spinningAt = frames.findIndex((state) => state.spinning && !state.ready);
+    const readyAt = frames.findIndex((state) => state.ready);
+    expect(selectedAt).toBeGreaterThanOrEqual(0);
+    expect(spinningAt).toBeGreaterThan(selectedAt);
+    expect(readyAt).toBeGreaterThan(spinningAt);
+  } finally {
+    blocking = false;
     blockedRoutes.splice(0).forEach((route) => route.release());
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);

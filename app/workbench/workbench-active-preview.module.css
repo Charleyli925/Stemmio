@@ -17,7 +17,7 @@
 .entry[data-handoff-candidate="true"] {
   position: absolute;
   inset: 0;
-  visibility: hidden;
+  opacity: 0;
   pointer-events: none;
 }
 

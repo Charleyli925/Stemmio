@@ -58,14 +58,10 @@ export default function WorkbenchActivePreview({
       >
         {activeElement}
       </div>
-      {!activeReady ? (
+      {activeFailed ? (
         <div className={styles.status} role="status">
-          {activeFailed ? (
-            <>
-              <span>预览暂时无法显示</span>
-              <button type="button" onClick={onRetry}>重试打开</button>
-            </>
-          ) : "正在打开预览…"}
+          <span>预览暂时无法显示</span>
+          <button type="button" onClick={onRetry}>重试打开</button>
         </div>
       ) : null}
     </div>

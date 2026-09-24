@@ -6178,6 +6178,29 @@ export default function Workbench() {
     || (canvasAuthority?.status === "failed"
       && canvasAuthority.generation === canvasGeneration)
   );
+  const openingTabId = workbenchTabsSnapshot.pendingTabId
+    || (activeWorkbenchTab?.kind === "document" && !activeDocumentCanvasReady
+      ? activeWorkbenchTab.tabId : null);
+  const openingTab = workbenchTabsSnapshot.tabs.find((tab) => tab.tabId === openingTabId);
+  const openingCanvasMode = openingTab?.kind === "document"
+    ? documentSurfaceCacheSnapshot.presentations.find((entry) => entry.tabId === openingTabId)?.canvasMode
+    : undefined;
+  // The destination's saved mode is known when navigation starts. Show that
+  // selection before its new Preview session is mounted and finally painted.
+  const headerPresentation = openingCanvasMode === "preview"
+    && displayedCanvasMode !== "preview"
+    && !presentation.review.selected
+    ? {
+        ...presentation,
+        mode: "preview" as const,
+        edit: { ...presentation.edit, selected: false },
+        preview: { ...presentation.preview, selected: true },
+      }
+    : presentation;
+  const activeTabOpening = activeWorkbenchTab?.kind === "document"
+    && (displayedCanvasMode === "preview"
+      ? !activePreviewReady && !activePreviewFailed
+      : !activeDocumentDisplayReady && !activeDocumentCanvasFailed);
   const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
     ? editHandoffGeometry : null;
   const editPreviewUnderlay = displayedCanvasMode === "preview"
@@ -6283,14 +6306,16 @@ export default function Workbench() {
       <WorkbenchTooltipHost />
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}
-        presentation={presentation}
+        presentation={headerPresentation}
+        activeTabOpening={activeTabOpening}
         onBeforeSelect={rememberWorkbenchTabPresentation}
         onOutcome={presentWorkbenchTabOutcome}
       /> : null}
       {!startPageActive && !settingsPageActive && !projectRulesPageActive ? <>
         <WorkbenchHeaderView
           runInProgress={runInProgress}
-          presentation={presentation}
+          presentation={headerPresentation}
+          previewOpening={previewSurfaceMounted && !activePreviewReady && !activePreviewFailed}
           recentRunOutcome={recentRunOutcome}
           terminalRun={terminalRun}
           aiConversationVisible={aiConversation.visible}
