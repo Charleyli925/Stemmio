@@ -231,7 +231,6 @@ import {
 } from "./workbench/run-conversation-outlet";
 import { WorkbenchReviewOverlay } from "./workbench/workbench-review-overlay";
 import WorkbenchActiveDocumentCanvas from "./workbench/WorkbenchActiveDocumentCanvas";
-import WorkbenchDocumentSurfaceCache from "./workbench/WorkbenchDocumentSurfaceCache";
 import ProjectRulesEditorPage from "./workbench/project-rules-editor";
 import { useEditRuntimePreparation } from "./workbench/use-edit-runtime-preparation";
 import {
@@ -243,7 +242,6 @@ import {
   rememberActiveDocumentPresentation,
   readyVersionPublicationMatches,
   restoreCachedDocumentPresentation,
-  useDocumentSurfaceHandoff,
 } from "./workbench/document-surface-presentation";
 import { markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
 import {
@@ -6097,14 +6095,6 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  // The cached static tab handoff is diagnostic only. Normal switching keeps
-  // the outgoing final Canvas inert until the incoming final Canvas verifies.
-  const cachedTabHandoffEnabled = typeof window !== "undefined"
-    && window.stemmioRuntime?.diagnostics?.e2eCachedTabHandoff === true;
-  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ enabled: cachedTabHandoffEnabled, cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
-  // This is the same complete accepted presentation that the cache component
-  // renders. A hidden candidate alone must never make the Canvas inert.
-  const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface && visibleHandoffId);
   const retryProjectHydrationFromCommentRail = useCallback(() => {
     void workspaceController?.retryProjectHydration();
   }, [workspaceController]);
@@ -6369,6 +6359,13 @@ export default function Workbench() {
         data-left-sidebar={globalSidebarOpen ? "open" : "collapsed"}
         data-round-state={runInProgress ? "processing" : viewMode}
         data-canvas-mode={displayedCanvasMode}
+        data-document-cache-entry-count={documentSurfaceCacheSnapshot.entries.length}
+        data-document-cache-presentation-count={documentSurfaceCacheSnapshot.presentations.length}
+        data-document-cache-cold-count={documentSurfaceCacheSnapshot.coldTabIds.length}
+        data-document-cache-bytes={documentSurfaceCacheSnapshot.totalBytes}
+        data-document-cache-presentation-bytes={documentSurfaceCacheSnapshot.presentationBytes}
+        data-document-cache-max-entries={documentSurfaceCacheSnapshot.limits.maxEntries}
+        data-document-cache-max-bytes={documentSurfaceCacheSnapshot.limits.maxBytes}
         data-handoff-preview={runInProgress && handoffPreviewOpen ? "true" : undefined}
         data-document-persistence-banner={documentPersistenceBannerVisible ? "true" : undefined}
         data-persist-state={persistState}
@@ -6796,19 +6793,6 @@ export default function Workbench() {
           inert={readyReviewOverlay ? true : undefined}
           aria-hidden={readyReviewOverlay ? true : undefined}
         >
-          <WorkbenchDocumentSurfaceCache
-            snapshot={documentSurfaceCacheSnapshot}
-            visibleTabId={visibleCachedSurface?.tabId || null}
-            visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
-            visibleHandoffId={visibleHandoffId}
-            candidateTabId={candidateCachedSurface?.tabId || null}
-            candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
-            candidateHandoffId={candidateHandoffId}
-            acceptDisplayReady={acceptDisplayReady}
-            onHandoffScroll={updateHandoffScroll}
-            onFirstScroll={markFirstScroll}
-            height="var(--comment-canvas-height, 760px)"
-          />
           <div
             ref={editSurfaceRef}
             className="canvas-edit-surface"
@@ -6824,8 +6808,8 @@ export default function Workbench() {
               height: heldEditGeometry.height,
             } : undefined}
             hidden={!showEditSurface}
-            aria-hidden={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas}
-            inert={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas ? true : undefined}
+            aria-hidden={displayedCanvasMode !== "edit" ? true : undefined}
+            inert={displayedCanvasMode !== "edit" ? true : undefined}
           >
             {!desktopHostReady ? (
               <div className="canvas-loading" role="status">正在识别运行环境…</div>
@@ -6982,7 +6966,6 @@ export default function Workbench() {
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
               onDisplayResult={handlePreviewDisplayResult}
-              presentationCovered={cachedSurfaceBlocksCanvas}
               initialScrollTop={historyPreview ? undefined : activeDocumentPresentation?.scrollTop}
               onScrollTopChange={(scrollTop) => {
                 if (!historyPreview && activeWorkbenchTab.kind === "document") {

@@ -28,6 +28,7 @@ directory is the default reading path.
 | 0055 | [Edit uses one bounded ECharts isolated-capture handoff](0055-edit-one-shot-author-runtime.md) | Superseded | ADR 0025 |
 | 0056 | [Qoder ACP v1 synthetic spike](0056-qoder-acp-v1-spike.md) | Superseded | ADR 0032 |
 | 0058 | [Bounded Canvas and SVG programs may complete the visible Edit document](0058-bounded-canvas-svg-edit-runtime.md) | Superseded | ADR 0065 |
+| 0076 | [Tab display pages existed only during an explicit handoff](0076-transient-tab-display-handoff.md) | Superseded | ADR 0077 |
 
 The archive preserves the original rationale. Collision-renamed files carry a
 single renumbering note beneath their H1; no other historical body text was

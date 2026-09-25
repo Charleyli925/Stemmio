@@ -985,8 +985,9 @@ slots. During a current-draft switch, Workbench may briefly retain the prior
   retain the runtime's original startup SHA. Verification releases the old surface
   and reveals the new one in the same commit; failure reveals a retryable error.
 Inactive document tabs retain only bounded data projections and never retain an
-editor or Runtime DOM. Normal tab switches do not mount a static display cover;
-only the explicit E2E diagnostic opt-in may do so.
+editor, Runtime DOM or display iframe. Normal tab switches use the outgoing
+Canvas handoff and reveal the incoming Canvas only after exact generation and
+source verification.
 
 Formal Review has no runtime-snapshot supplement. The trusted
 `AiReviewWorkspace` begins with the immutable static document pair and keeps

@@ -40,11 +40,10 @@ known model's exact maximum-output parameter on preflight, execution and identit
 repair; Custom unknown capability omits it. The configuration digest and bumped
 capability revision fence remain the authority for launch.
 
-The read-only tab projection row below describes the retained static display
-handoff's ownership and safety limits. Production currently leaves that display
-handoff disabled and mounts no tab-cache iframe on a normal switch; only an
-explicit E2E diagnostic opt-in exercises it. Bounded HTML data and separate
-per-tab reading state remain active regardless of the display setting.
+The read-only tab projection row below describes the retained data and
+per-tab reading-state limits. `DocumentSurfaceCacheSession` never owns a DOM,
+iframe or presentation handoff; every current-draft switch uses the active
+Canvas contract.
 
 | Mutable fact | Sole owner | Durable authority | Consumers |
 | --- | --- | --- | --- |
@@ -60,7 +59,7 @@ per-tab reading state remain active regardless of the display setting.
 | Runtime Bridge/Session/workflow composition, aggregate-observer lifecycle, registration operation identity, single-flight, Document receipt/pending-write/flush fence and cross-Session publication sequence | `createRuntimeWorkspaceController()` and `WorkspaceController` | none; the factory creates the one fact-owner set and the Controller publishes only frozen aggregate projections through existing Project, Document, Comment, Draft, Version and SourceHistory owners. Managed registration publishes Project/Run/Document locator authority in one aggregate batch; a post-host failure stays on the same durable operation, and first-autosave recovery rekeys the latest write/history before the next drain resumes registration | Workbench shell projection subscription, local capability readers, live operation-time aggregate reads, Controller commands and presentation-event adapter |
 | Desktop workbench navigation admission, receipt and tab order/active/pending/mounted/runtime-owner identity | Renderer `WorkbenchNavigationSession` owns the transaction phase/receipt and `WorkbenchTabsSession` owns the project-scoped current/rules/history tab projection; the Controller-owned `WorkbenchNavigationWorkflow` is the only coordinator. An immutable `ProjectSurfaceContext` owns only one read-only rules/history transaction and never replaces `ProjectSession` | validated v2 `workbench-tabs.json` stores only presentation kind, `tabId + projectId + documentId`, selected history `versionId/ordinal` where applicable, and the active tab; it is restart-convenience metadata written best-effort, with no close veto and no filename, path, title, HTML, Hash, Request, Candidate or Conversation authority | Startup/restore, local/recent, registered/sidebar/tab, project-rules/history, OS-external and confirmation all enter one ordered admission stream. Current-draft opens publish Project/Document authority through a correlated SourceReceipt; rules/history resolve the registered OpenTarget read-only, then their owner opens the exact target before navigation commits that surface |
 | Workbench cross-capability rendering | Existing `WorkspaceController.shell` reader projection; no new store or Session | none; one current immutable presentation object, containing source/identity/lifecycle/error and structural fields only. Local Conversation, comment draft, rules text and Agent narration/clock/byte fields are absent, rather than stale copies hidden by a comparator | Workbench `useSyncExternalStore`; conversation and rules editors subscribe their owner facets and retain existing load/drain/IME boundaries |
-| Read-only tab source projections and exact-version per-tab Canvas mode/PageViewContext/scroll restoration | Controller-owned `DocumentSurfaceCacheSession` owns byte-bounded HTML data plus separately retained light presentation state; `useDocumentSurfaceHandoff()` owns the legacy diagnostic cached-display handoff. Normal current-draft switches use `WorkbenchActiveDocumentCanvas` to retain the outgoing Canvas inert until `DocumentSession` verifies the incoming final Canvas and the exact Edit Runtime settles or declares a static outcome. `WorkbenchNavigationWorkflow` only touches/removes projection entries | none; bounded process memory only, 20 HTML entries and 32 MiB of source projections, per-open-tab bounded presentation state. Normal handoff has at most two transient editors, one inert outgoing and one hidden incoming; settled state has one active Edit Canvas and its bounded internal A/B Runtime slot. Inactive tabs retain no iframe, editor or Runtime DOM | Normal switches reveal the incoming Canvas only after its current generation and exact source SHA verify and its same-path, same-generation runtime has settled, declared no script candidate or explicitly fallen back; failure removes the outgoing Canvas and presents recovery. The outgoing Canvas has no edit, save, export, comment or runtime callbacks. The legacy script-disabled cached `HtmlDisplaySurface` is available only by explicit E2E diagnostic opt-in. Its token and SourceReceipt fences remain mandatory there; `data-*` readiness attributes are diagnostics only |
+| Read-only tab source projections and exact-version per-tab Canvas mode/PageViewContext/scroll restoration | Controller-owned `DocumentSurfaceCacheSession` owns byte-bounded HTML data plus separately retained light presentation state. It never mounts a DOM or iframe. Normal current-draft switches use `WorkbenchActiveDocumentCanvas` to retain the outgoing Canvas inert until `DocumentSession` verifies the incoming final Canvas and the exact Edit Runtime settles or declares a static outcome. `WorkbenchNavigationWorkflow` only touches/removes projection entries | none; bounded process memory only, 20 HTML entries and 32 MiB of source projections, per-open-tab bounded presentation state. Normal handoff has at most two transient editors, one inert outgoing and one hidden incoming; settled state has one active Edit Canvas and its bounded internal A/B Runtime slot. Inactive tabs retain no iframe, editor or Runtime DOM | Normal switches reveal the incoming Canvas only after its current generation and exact source SHA verify and its same-path, same-generation runtime has settled, declared no script candidate or explicitly fallen back; failure removes the outgoing Canvas and presents recovery. The outgoing Canvas has no edit, save, export, comment or runtime callbacks. |
 | Project hydration generation and load outcome, switch/open operation, accepted-result execution, close request identity, project-switch publication, Prepared Intent automatic import/continue and explicit delete-original confirmation, and the unified managed-source prepare/commit handoff for Candidate promotion, same-current history creation, validated opening of a manually created historical Version and Registry opens | Renderer `ProjectWorkflow`, composed by `WorkspaceController` | none; it publishes through existing Session owners and trusted ProjectOpen/Canvas ports | Workbench commands and presentation-event adapter |
 | Durable source filename transaction, pending operation and active/recent path rebase | Desktop source-rename transaction | active-file `pendingRename` / `lastRename`, then filesystem path | trusted desktop rename port and Bridge relink |
 | Current active managed Working Copy restart cache | Main `activeManagedLocator` in the private active-file record | none; non-authoritative, fail-closed cache of the last verified identity tuple and path. Registry plus project metadata remain the only write authority. Missing cache never guesses by name or Hash | startup `getActiveProject`, Finder locator reconcile and trusted `reconcileActiveManagedSource` IPC |
@@ -251,23 +250,20 @@ Rules:
   canonical `prepareSwitch`/drain/Canvas fence, rejects pre-open matching
   identity, then mounts only a newer aggregate Project epoch. The operation
   commits its user-facing admission as soon as the correlated application has
-  published exact display bytes. Hydration, accepted-result FIFO and Canvas
+  published exact document bytes. Hydration, accepted-result FIFO and Canvas
   verification remain background readiness owned by `ProjectWorkflow` and the
-  close drain. A failure after display readiness remains attached to the mounted
-  target tab, keeps editing closed and offers hydration retry; it is never
-  handled as a failed open or pre-commit cleanup.
+  close drain. A failure after document publication remains attached to the
+  mounted target tab, keeps editing closed and offers hydration retry; it is
+  never handled as a failed open or pre-commit cleanup.
   A byte-bounded `DocumentSurfaceCacheSession` may retain exact, fully persisted
-  and Canvas-verified HTML for recent tabs. At most three script-disabled display
-  iframes remain mounted; they never retain contenteditable, Selection, IME,
-  observers or source serialization. Warm entries retain only allowlisted
-  presentation context and scroll. Evicted tabs become cold identities without
-  being closed, and every activation still enters canonical project open.
-  The display cover also retires when same-byte hydration publishes a newer
-  authority receipt within that exact navigation and document activation, once
-  the current Canvas generation and source hash are verified. This presentation
-  comparison permits existing local-path aliases only; session incarnation,
-  activation context and monotonic receipt sequence/generation remain fenced.
-  It does not relax exact source receipts used by Document or Canvas ACK owners.
+  and Canvas-verified HTML for recent tabs plus separate mode, PageViewContext
+  and scroll state. Entries are data only: no display iframe, contenteditable,
+  Selection, IME, observer or source serialization is retained. Evicted tabs
+  become cold identities without being closed, and every activation still enters
+  canonical project open. Current-draft presentation uses the outgoing/incoming
+  Canvas handoff, which keeps the outgoing Canvas inert until the incoming
+  Canvas generation and source hash are verified. It does not relax exact
+  source receipts used by Document or Canvas ACK owners.
   Start activation calls the same canonical `prepareSwitch`; only then
   does it unmount the document outlet while retaining `runtimeOwnerTabId`, so
   close/quit obligations remain owned by the same Controller. Close and activate

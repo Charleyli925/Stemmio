@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-27
-- Scope: foreground opening and tab navigation; caching follow-up is ADR 0045
+- Scope: foreground opening and tab navigation; current-draft Canvas handoff is ADR 0077
 
 ## Decision
 
@@ -10,7 +10,7 @@ Opening HTML has three readiness levels:
 
 1. **Display ready**: trusted source bytes and their exact Project, Document,
    OpenTarget and SHA-256 tuple have been synchronously published. The active
-   tab may show those bytes in a script-disabled, disposable surface.
+   tab begins its normal Canvas presentation from that authoritative tuple.
 2. **Edit ready**: workspace identity, recovery state and the final Edit Canvas
    are verified. Editing, comments and persistence remain locked until this
    level.
@@ -42,10 +42,9 @@ generation and rendered SHA-256 exactly match `DocumentSession`. Dirty,
 unverified, failed or mismatched Canvas state still performs the full fence.
 
 Edit runtime resource preparation must not produce a blank workspace. While the
-disposable runtime iframe is being prepared, Workbench shows a separate
-script-disabled display surface. That surface has no SourceIndex, edit, comment,
-save or serialization authority and is destroyed when the final Edit iframe
-mounts.
+disposable runtime candidate is being prepared, the current Edit Canvas remains
+visible and its static fallback stays inside `HtmlCanvasEditor`; that fallback
+has no SourceIndex, edit, comment, save or serialization authority.
 
 ## Non-goals
 
@@ -53,8 +52,8 @@ mounts.
 - It does not cache HTML, SourceIndex or review analysis across document tabs.
 - It does not relax write CAS, source-path safety, Registry identity, recovery,
   Candidate validation, promotion or close/quit gates.
-- Review first-paint caching and post-accept hot-document restoration belong to
-  the follow-up tab-cache change.
+- Review first-paint caching and post-accept document restoration remain
+  separate from the current-draft Canvas handoff in ADR 0077.
 
 ## Required proof
 
@@ -66,4 +65,4 @@ mounts.
   as an error and keeps editing closed.
 - A clean, exact verified Canvas does not execute a second render fence.
 - During Edit runtime preparation the HTML remains visible and the
-  temporary surface cannot execute authored scripts.
+  in-editor static fallback cannot execute authored scripts.

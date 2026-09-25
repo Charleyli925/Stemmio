@@ -838,9 +838,7 @@
         "^app/application/workbench-(?:tabs-(?:session|persistence-coordinator)|navigation-(?:session|workflow))\\.(?:js|d\\.ts)$",
         "^app/application/document-surface-cache-session\\.(?:js|d\\.ts)$",
         "^app/application/browser-document-session\\.(?:js|d\\.ts)$",
-        "^app/workbench/(?:WorkbenchChrome|WorkbenchDocumentSurfaceCache|WorkbenchActiveDocumentCanvas|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
-        "^app/components/HtmlDisplaySurface\\.tsx$",
-        "^app/workbench/workbench-document-surface-cache\\.module\\.css$",
+        "^app/workbench/(?:WorkbenchChrome|WorkbenchActiveDocumentCanvas|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
         "^desktop/workbench-tabs-state\\.mjs$",
         "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$",
         "^tests/(?:browser-document-session|document-surface-cache-session|workbench-(?:navigation-workflow|tabs-(?:session|state|persistence-coordinator)))\\.test\\.mjs$"
@@ -1328,7 +1326,7 @@
     {
       "id": "runtime-continuity",
       "patterns": [
-        "^app/components/(?:HtmlCanvasEditor(?:\\.types)?|HtmlDisplaySurface(?:\\.module)?|html-canvas-presentation-scroll|html-canvas-structural-projection|runtime-continuity-probe)\\.(?:tsx|ts|js|css|d\\.ts)$"
+        "^app/components/(?:HtmlCanvasEditor(?:\\.types)?|html-canvas-presentation-scroll|html-canvas-structural-projection|runtime-continuity-probe)\\.(?:tsx|ts|js|css|d\\.ts)$"
       ],
       "suites": [
         "typecheck",
