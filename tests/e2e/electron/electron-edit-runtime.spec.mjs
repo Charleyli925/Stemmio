@@ -5719,6 +5719,33 @@ for (const scenario of ["static", "scripted", "unsupported-script"]) {
         await expect(frame.locator("body")).toHaveAttribute("data-author-starts", "1");
       }
 
+      // A same-activation source revision refreshes its proof asynchronously.
+      // Observe the whole interval so a transient candidate/inert frame is
+      // caught even if the final content and save both succeed.
+      await page.evaluate(() => {
+        window.__modeContinuityPresentationInterruptions = [];
+        const surface = document.querySelector(".canvas-edit-surface");
+        const record = () => {
+          const host = surface?.querySelector('[data-testid="workbench-active-document-canvas-host"]');
+          const active = host?.querySelector(':scope > [data-runtime-hot-active]:last-of-type');
+          if (surface?.hasAttribute("inert") || active?.hasAttribute("inert")
+            || active?.hasAttribute("data-handoff-candidate")) {
+            window.__modeContinuityPresentationInterruptions.push({
+              surfaceInert: surface?.hasAttribute("inert"),
+              activeInert: active?.hasAttribute("inert"),
+              candidate: active?.hasAttribute("data-handoff-candidate"),
+            });
+          }
+        };
+        window.__modeContinuityPresentationObserver = new MutationObserver(record);
+        window.__modeContinuityPresentationObserver.observe(surface, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+          attributeFilter: ["inert", "data-handoff-candidate", "data-runtime-hot-active"],
+        });
+      });
+
       await activateNativeEdit(frame, "mode-continuity");
       await setTextSelection(frame, "mode-continuity", 0, "Alpha".length);
       await page.keyboard.insertText("Beta");
@@ -5726,6 +5753,10 @@ for (const scenario of ["static", "scripted", "unsupported-script"]) {
       await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
         .toContain("Beta");
       await expect(editor).toHaveAttribute("data-render-verified", "true");
+      expect(await page.evaluate(() => {
+        window.__modeContinuityPresentationObserver.disconnect();
+        return window.__modeContinuityPresentationInterruptions;
+      })).toEqual([]);
       frame = await currentEditorFrame(page);
       expect(await documentToken(frame)).toBe(physicalDocument);
 

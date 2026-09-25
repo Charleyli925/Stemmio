@@ -681,6 +681,106 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
   }
 });
 
+test("Electron retains the actual surface when a mode handoff is interrupted by another tab", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("interrupted-mode-a.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "中断交接画面 A")
+      .replace("</body>", '<img src="https://stemmio-handoff.invalid/interrupted-a.png"></body>')
+  ));
+  const projectB = createSourceFixture("interrupted-mode-b.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "中断交接画面 B")
+      .replace("</body>", "<script>document.body.dataset.interruptedRuntime = 'ready';</script></body>")
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  const heldWorkspace = [];
+  const heldImages = [];
+  let blockedTarget = null;
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "interrupted-mode-a" });
+    const tabB = tabs.filter({ hasText: "interrupted-mode-b" });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+
+    await page.route("**/workspace?*", async (route) => {
+      const source = new URL(route.request().url()).searchParams.get("sourcePath");
+      if (!blockedTarget || !source || path.basename(source) !== path.basename(blockedTarget)) {
+        await route.continue();
+        return;
+      }
+      heldWorkspace.push(route);
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eHoldEditRuntimePrepare();
+    });
+    await tabB.click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await mode.getByRole("button", { name: "编辑", exact: true }).click();
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await expect(previewHost).toHaveAttribute("data-preview-carry", "true");
+    blockedTarget = projectA.sourcePath;
+    await tabA.click();
+    await expect.poll(() => heldWorkspace.length).toBeGreaterThan(0);
+    await expect(previewHost).toBeVisible();
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "outgoing");
+    await expect(previewHost.locator(':scope > [inert] iframe[title="HTML 交互预览"]')
+      .contentFrame().getByText("中断交接画面 B")).toBeVisible();
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    });
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+
+    await page.route("https://stemmio-handoff.invalid/interrupted-a.png", async (route) => {
+      heldImages.push(route);
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect.poll(() => heldImages.length).toBeGreaterThan(0);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    blockedTarget = projectB.sourcePath;
+    await tabB.click();
+    await expect.poll(() => heldWorkspace.length).toBeGreaterThan(0);
+    await expect(page.locator(".canvas-edit-surface")).toBeVisible();
+    await expect(page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
+    await expect(page.locator('[data-outgoing-draft] iframe[title^="HTML 可视化编辑画布"]')
+      .contentFrame()
+      .getByText("中断交接画面 A")).toBeVisible();
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    heldImages.splice(0).forEach((route) => route.release());
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+  } finally {
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    heldImages.splice(0).forEach((route) => route.release());
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("a failed Preview target releases the prior page and a fresh retry loads the target", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

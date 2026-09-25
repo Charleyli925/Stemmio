@@ -14,6 +14,8 @@ import type {
   HtmlCanvasEditorHandle,
   HtmlCanvasEditorProps,
 } from "../components/HtmlCanvasEditor";
+import type { DisplayTarget } from "./display-handoff-decision";
+import type { DisplaySurfaceHandoffState } from "./use-display-handoff";
 
 import styles from "./workbench-active-document-canvas.module.css";
 
@@ -23,7 +25,8 @@ export default function WorkbenchActiveDocumentCanvas({
   activeElement,
   activeReady,
   activeFailed,
-  retirePreviousTab,
+  handoff,
+  onRetainedChange,
   presentationVisible,
   foregroundVisible,
   failureMessage,
@@ -36,7 +39,8 @@ export default function WorkbenchActiveDocumentCanvas({
   }> | null;
   activeReady: boolean;
   activeFailed: boolean;
-  retirePreviousTab: boolean;
+  handoff: DisplaySurfaceHandoffState;
+  onRetainedChange(target: DisplayTarget | null): void;
   presentationVisible: boolean;
   foregroundVisible: boolean;
   failureMessage: string | null;
@@ -46,6 +50,7 @@ export default function WorkbenchActiveDocumentCanvas({
     tabId: string;
     sourceSha256: string | null;
     entryKey: string;
+    identity: string;
     element: NonNullable<typeof activeElement>;
   } | null>(null);
   const activeEntryRef = useRef<HTMLDivElement | null>(null);
@@ -62,36 +67,75 @@ export default function WorkbenchActiveDocumentCanvas({
   const activeEntryKey = `${activeTabId || "none"}:${currentActivation.ordinal}`;
   // Retain only the last verified document. Intermediate ProjectWorkflow
   // renders cannot replace A's exact element with B's unverified HTML.
-  if (activeTabId && activeElement && activeReady
-    && (lastVerified?.tabId !== activeTabId
+  const activeTarget = handoff.target;
+  const canRegisterActive = Boolean(
+    activeTabId
+    && activeElement
+    && activeReady
+    && activeTarget
+    && handoff.reveal,
+  );
+  if (canRegisterActive && activeTarget && activeTabId && activeElement) {
+    if (!lastVerified
+      || lastVerified.entryKey !== activeEntryKey
+      || lastVerified.tabId !== activeTabId
       || lastVerified.sourceSha256 !== activeSourceSha256
-      || lastVerified.entryKey !== activeEntryKey)) {
-    setLastVerified({
-      tabId: activeTabId,
-      sourceSha256: activeSourceSha256,
-      entryKey: activeEntryKey,
-      element: activeElement,
-    });
-  } else if (retirePreviousTab && lastVerified && lastVerified.tabId !== activeTabId) {
-    // A ready Preview for the destination supersedes the prior document's
-    // Edit image. Do not resurrect that image on Preview -> Edit.
-    setLastVerified(null);
+      || lastVerified.identity !== activeTarget.identity) {
+      setLastVerified({
+        tabId: activeTabId,
+        sourceSha256: activeSourceSha256,
+        entryKey: activeEntryKey,
+        identity: activeTarget.identity,
+        element: activeElement,
+      });
+    }
+  } else if (handoff.release || (!handoff.retain && !handoff.reveal && (activeFailed || !activeReady))) {
+    if (lastVerified) setLastVerified(null);
   }
+  useLayoutEffect(() => {
+    if (canRegisterActive && activeTarget) {
+      onRetainedChange(activeTarget);
+      return;
+    }
+    if (handoff.release || (!handoff.retain && !handoff.reveal && (activeFailed || !activeReady))) {
+      onRetainedChange(null);
+    }
+  }, [
+    activeElement,
+    activeEntryKey,
+    activeFailed,
+    activeReady,
+    activeSourceSha256,
+    activeTabId,
+    canRegisterActive,
+    handoff.retain,
+    handoff.release,
+    handoff.reveal,
+    activeTarget,
+    onRetainedChange,
+  ]);
   // Entry keys follow tab activations, preserving the mounted outgoing DOM.
   // Returning to A after starting B gets a distinct candidate key while the
   // earlier A keeps its original key until the returned A verifies.
-  const outgoing = lastVerified?.entryKey !== activeEntryKey
+  const outgoing = handoff.retain
     && lastVerified
-    && !activeReady
-    && !activeFailed
-    && presentationVisible
+    && lastVerified.entryKey !== activeEntryKey
+    && lastVerified.identity !== activeTarget?.identity
     ? lastVerified
     : null;
+  const retainedActive = Boolean(
+    handoff.retain
+    && lastVerified?.entryKey === activeEntryKey,
+  );
+  const activeVisible = Boolean(
+    (handoff.reveal && foregroundVisible && !outgoing)
+    || retainedActive,
+  );
   const outgoingEntryRef = useRef<string | null>(null);
   const displayedEntryRef = useRef<string | null>(null);
   const editVisibleRef = useRef(false);
   useEffect(() => {
-    if (!presentationVisible || !foregroundVisible || !activeReady || outgoing) {
+    if (!presentationVisible || !foregroundVisible || !activeReady || !handoff.reveal || outgoing) {
       editVisibleRef.current = false;
       return;
     }
@@ -106,26 +150,30 @@ export default function WorkbenchActiveDocumentCanvas({
     });
     displayedEntryRef.current = activeEntryKey;
     editVisibleRef.current = true;
-  }, [activeEntryKey, activeReady, foregroundVisible, outgoing, presentationVisible]);
+  }, [activeEntryKey, activeReady, foregroundVisible, handoff.reveal, outgoing, presentationVisible]);
   useEffect(() => {
     if (outgoing) {
       outgoingEntryRef.current = outgoing.entryKey;
       return;
     }
-    if (!outgoingEntryRef.current || (!activeReady && !activeFailed && !retirePreviousTab)) return;
+    if (!outgoingEntryRef.current || (!activeReady && !activeFailed && !handoff.release)) return;
     performance.mark("stemmio:edit-canvas:outgoing-release", {
       detail: Object.freeze({
         activationId: activeEntryKey,
         releasedActivationId: outgoingEntryRef.current,
         targetType: "edit-canvas",
-        actionReason: activeFailed ? "target-failed" : retirePreviousTab ? "preview-ready" : "target-ready",
+        actionReason: activeFailed
+          ? "target-failed"
+          : handoff.release
+            ? "handoff-release"
+            : "target-ready",
       }),
     });
     outgoingEntryRef.current = null;
-  }, [activeEntryKey, activeFailed, activeReady, outgoing, retirePreviousTab]);
+  }, [activeEntryKey, activeFailed, activeReady, handoff.release, outgoing]);
   useLayoutEffect(() => {
     const entry = activeEntryRef.current;
-    if (!entry || !activeReady || outgoing) return;
+    if (!entry || !activeReady || !handoff.reveal || outgoing) return;
     const measure = () => {
       const bounds = entry.getBoundingClientRect();
       if (bounds.width <= 0 || bounds.height <= 0) return;
@@ -138,7 +186,7 @@ export default function WorkbenchActiveDocumentCanvas({
     const observer = new ResizeObserver(measure);
     observer.observe(entry);
     return () => observer.disconnect();
-  }, [activeEntryKey, activeReady, outgoing]);
+  }, [activeEntryKey, activeReady, handoff.reveal, outgoing]);
   const outgoingGeometry = outgoing?.entryKey === lastVerifiedGeometry?.entryKey
     ? lastVerifiedGeometry : null;
   useEffect(() => {
@@ -155,6 +203,11 @@ export default function WorkbenchActiveDocumentCanvas({
       data-testid="workbench-active-document-canvas-host"
       data-runtime-hot-count={outgoing ? 2 : 1}
       data-runtime-hot-limit={2}
+      data-display-handoff-role={handoff.reveal
+        ? "target"
+        : handoff.retain
+          ? "outgoing"
+          : "candidate"}
     >
       {outgoing ? <div
         className={styles.entry}
@@ -198,10 +251,10 @@ export default function WorkbenchActiveDocumentCanvas({
       <div
         ref={activeEntryRef}
         className={styles.entry}
-        data-runtime-hot-active={outgoing ? "false" : "true"}
-        data-handoff-candidate={outgoing ? "true" : undefined}
-        aria-hidden={outgoing ? true : undefined}
-        inert={outgoing ? true : undefined}
+        data-runtime-hot-active={activeVisible ? "true" : "false"}
+        data-handoff-candidate={activeVisible ? undefined : "true"}
+        aria-hidden={foregroundVisible && !outgoing ? undefined : true}
+        inert={foregroundVisible && !outgoing ? undefined : true}
         key={activeEntryKey}
       >
         {cloneElement(activeElement, { diagnosticActivationId: activeEntryKey })}

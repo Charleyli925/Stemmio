@@ -838,10 +838,10 @@
         "^app/application/workbench-(?:tabs-(?:session|persistence-coordinator)|navigation-(?:session|workflow))\\.(?:js|d\\.ts)$",
         "^app/application/document-surface-cache-session\\.(?:js|d\\.ts)$",
         "^app/application/browser-document-session\\.(?:js|d\\.ts)$",
-        "^app/workbench/(?:WorkbenchChrome|WorkbenchActiveDocumentCanvas|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
+        "^app/workbench/(?:WorkbenchChrome|WorkbenchActiveDocumentCanvas|WorkbenchActivePreview|display-handoff-decision|use-display-handoff|document-surface-presentation|performance-timeline|workbench-navigation-container)\\.(?:tsx|ts)$",
         "^desktop/workbench-tabs-state\\.mjs$",
         "^tests/e2e/electron/electron-workbench-tabs\\.spec\\.mjs$",
-        "^tests/(?:browser-document-session|document-surface-cache-session|workbench-(?:navigation-workflow|tabs-(?:session|state|persistence-coordinator)))\\.test\\.mjs$"
+        "^tests/(?:browser-document-session|document-surface-cache-session|workbench-(?:display-handoff|navigation-workflow|tabs-(?:session|state|persistence-coordinator)))\\.test\\.mjs$"
       ],
       "suites": [
         "typecheck",
@@ -849,6 +849,7 @@
       ],
       "nodeTests": [
         "tests/workbench-tabs-session.test.mjs",
+        "tests/workbench-display-handoff.test.mjs",
         "tests/workbench-navigation-workflow.test.mjs",
         "tests/document-surface-cache-session.test.mjs",
         "tests/runtime-canvas-retirement.test.mjs",
