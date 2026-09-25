@@ -253,10 +253,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   Hash 完全一致的 verified Canvas 必须证明不会重复 render fence。
   Electron 通过暂停 B 的真实规则文件读取后点击 C/D，证明相邻待执行激活只执行 B/D、被替代的 C 及其余命令都到达终态；插入创建或关闭操作时必须仍执行 C。最终活动页、挂载文档和 Runtime owner 要与可见规则页一致，未保存和 IME 围栏沿用原导航场景。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
-  20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
-  标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。缓存交接的受控暂停必须阻断新 Canvas 文档的可用性，
-  不得在真实连接完成后改写 `data-render-verified`；释放后必须由真实连接流程启动 Runtime 并退掉缓存。
-  保存的旧 ready 回调和 same-Hash 新交接仍须验证身份隔离。Registry-before-hydrate 与
+  20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；缓存只保留数据，不挂载 Document、iframe 或 Runtime。
+  Electron 标签页用例证明启动恢复不预热投影，当前稿切换始终沿真实 Canvas 打开链路进行；暂停 incoming Canvas 时，outgoing Canvas 保持可见且 inert，释放后由真实连接完成切换并只保留一个编辑器。
+  Preview 模式的页面与滚动状态仍须在 HTML 淘汰后按同一 tab、Project、Document 和 source Hash 恢复。Registry-before-hydrate 与
   hydrate-before-Registry 都必须得到相同标题/缺失项结果。持久化测试拒绝 title/path/HTML/Hash
   和未知字段，验证 `activeTabId:null`、原子替换与无效文件 fail-closed；Electron 证明 Left/Right/
   Home/End 的 roving focus、键盘关闭后的活动标签焦点、Start 冷重启抑制 activePath、Start→Registry 原位打开、Registry 标题恢复及 unmounted outlet 安全关闭。
@@ -402,7 +401,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   | rapid switch/close | `tests/e2e/electron/electron-project-lifecycle.spec.mjs` |
   | workbench tabs / Start / Registry restore | `tests/e2e/electron/electron-workbench-tabs.spec.mjs` |
 
-  当前稿标签切换的宽度回归由同一 Electron 文件在缓存交接面确实可见时核对：交接页必须与画布列同宽，评论栏持续存在；逐帧采样覆盖交接结束和反向切换。修复前该断言实测交接页比画布宽 376px，恰为评论栏宽度。
+  当前稿标签切换的宽度回归由同一 Electron 文件在 outgoing Canvas 保持 inert 时核对：画布列宽度保持稳定，评论栏持续存在；逐帧采样覆盖 incoming Canvas 就绪和反向切换。
 
   叶子 owner 收敛后，下列重复 oracle 已删除。每行删除都保留：故障注入时主
   oracle 仍失败、至少一条 Browser/Electron/AI canary 证明产品接线、Ready 完整

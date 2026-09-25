@@ -461,7 +461,6 @@ declare global {
         e2eStaticCandidateFailure?: boolean;
         e2eRuntimeCommitHooks?: boolean;
         e2eCanvasCapabilityProbe?: boolean;
-        e2eCachedTabHandoff?: boolean;
         e2eDocumentSurfaceCacheMaxEntries?: number | null;
       }>;
     };

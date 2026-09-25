@@ -491,10 +491,6 @@ export class WorkspaceController {
     tabId: string,
     presentation?: Readonly<Record<string, unknown>>,
   ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
-  updateDocumentSurfacePresentationForToken(
-    token: import("./document-surface-cache-session.js").DocumentSurfaceCacheToken,
-    presentation?: Readonly<Record<string, unknown>>,
-  ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
   subscribe(
     listener: (
       snapshot: import("./workspace-controller-capabilities.js").WorkspaceControllerSnapshot,

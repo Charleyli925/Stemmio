@@ -52,7 +52,6 @@ export type HtmlInteractionPreviewProps = {
   comments?: readonly unknown[];
   onInteraction?: () => void;
   onReady?: (sourceSha256: string | null, failure?: "failed") => void;
-  presentationCovered?: boolean;
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
 };
@@ -486,7 +485,6 @@ const HtmlInteractionPreview = forwardRef<
   comments,
   onInteraction,
   onReady,
-  presentationCovered = false,
   initialScrollTop,
   onScrollTopChange,
 }, forwardedRef) {
@@ -724,8 +722,6 @@ const HtmlInteractionPreview = forwardRef<
       data-testid="html-interaction-preview"
       style={{ "--preview-height": height } as CSSProperties}
       onPointerDown={onInteraction}
-      aria-hidden={presentationCovered || undefined}
-      inert={presentationCovered || undefined}
     >
       {staticFallback ? <p role="status">动态内容暂时不可用，正在显示只读静态内容。可刷新重试。</p> : null}
       <div className={styles.viewport} ref={viewportRef}>

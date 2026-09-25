@@ -533,8 +533,7 @@
         "^app/application/workbench-navigation",
         "^app/application/workbench-tabs",
         "^app/application/browser-document",
-        "^app/workbench/(?:WorkbenchDocumentSurfaceCache|WorkbenchActiveDocumentCanvas|document-surface-presentation|workbench-header-projection|workbench-mode-handlers)",
-        "^app/components/HtmlDisplaySurface",
+        "^app/workbench/(?:WorkbenchActiveDocumentCanvas|document-surface-presentation|workbench-header-projection|workbench-mode-handlers)",
         "^app/workbench/workbench-navigation-container",
         "^tests/workbench-navigation",
         "^tests/workbench-tabs"

@@ -122,7 +122,6 @@ const PARSE_KEY_ALLOWED_FILES = new Set([
   ["app", "lib", "target-resolver.js"].join("/"),
 ]);
 const DOCUMENT_WORKFLOW_FILE = ["app", "application", "document-workflow.js"].join("/");
-const WORKBENCH_FILE = ["app", "workbench.tsx"].join("/");
 const TEXT_FRAGMENT_HOST_LITERAL = ["stemmio", "text", "fragment"].join("-");
 const PROVIDER_LITERALS = ["qoder", "codex", "qoder-acp", "codex-acp"];
 const RAW_ENDPOINTS = new Set([
@@ -540,11 +539,6 @@ export function retiredArtifactViolations({ file = "", source = "", module = nul
   if (source.includes(TEXT_FRAGMENT_HOST_LITERAL)) {
     violations.push(
       `${file}: disposable text-fragment hosts cannot return`,
-    );
-  }
-  if (file === WORKBENCH_FILE && hasIdentifier(handle, "HtmlDisplaySurface")) {
-    violations.push(
-      `${file}: Workbench cannot replace the live editor with HtmlDisplaySurface`,
     );
   }
   if (

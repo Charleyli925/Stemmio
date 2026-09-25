@@ -1367,13 +1367,6 @@ export class WorkspaceController {
     ) || null;
   }
 
-  updateDocumentSurfacePresentationForToken(token, presentation) {
-    return this.#documentSurfaceCacheSession?.updatePresentationForToken(
-      token,
-      presentation,
-    ) || null;
-  }
-
   async #initializeWorkbenchTabs() {
     if (!this.#workbenchTabsSession || !this.#projectWorkflow) return;
     const initialExternalPromise = typeof this.#navigationHostPort?.readInitialExternalOpen === "function"

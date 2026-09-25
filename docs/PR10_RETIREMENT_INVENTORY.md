@@ -23,8 +23,8 @@ safety, and the read-only compatibility surfaces below.
 | `trackedTargetRefs`, `targetMappings`, and Canvas target refresh | `UNKNOWN` | Current editor/comment/selection and session-local inverse flows still consume them. | First separate Stable-ID deterministic refresh from ID-less history compatibility; do not bulk-delete. |
 | `canvas-target-rebind.js`, common rebind codecs, and fingerprint fields | `UNKNOWN` | Stable-ID deterministic refresh and historical ID-less fallback share the same modules. | Delete only an isolated heuristic branch after proving no current target consumer. |
 | `app/workbench/review/runtime-projection.ts` | `UNKNOWN` | Despite its name, it currently projects frozen source-derived Review facts into isolated frames. | It is not old Runtime DOM or pixel-diff authority. Keep unless Review presentation is replaced. |
-| document surface cache | `RETAIN` | Multi-document Workbench uses bounded script-disabled source projections for visible handoff. | Presentation-only; never Source or Runtime authority. |
-| Canvas pool and Runtime residency modules | `DELETE` | The product keeps one active `HtmlCanvasEditor`; inactive tabs use only the static document surface cache. | Retired by the third serial negative-code PR after #415. |
+| document surface cache | `RETAIN` | Multi-document Workbench uses bounded exact HTML data plus per-tab mode, PageViewContext and scroll state. The cache never mounts a display iframe; current-draft presentation uses the verified outgoing/incoming Canvas handoff. | Data and reading-state only; never Source, persistence, Runtime or presentation authority. |
+| Canvas pool and Runtime residency modules | `DELETE` | The product keeps one active `HtmlCanvasEditor`; inactive tabs retain only bounded cache data and per-tab reading state. | Retired by the third serial negative-code PR after #415. |
 
 ## Required deletion proof
 
