@@ -25,6 +25,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeFailed,
   retirePreviousTab,
   presentationVisible,
+  foregroundVisible,
   failureMessage,
   onRetry,
 }: {
@@ -37,6 +38,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeFailed: boolean;
   retirePreviousTab: boolean;
   presentationVisible: boolean;
+  foregroundVisible: boolean;
   failureMessage: string | null;
   onRetry(): void;
 }) {
@@ -89,7 +91,7 @@ export default function WorkbenchActiveDocumentCanvas({
   const displayedEntryRef = useRef<string | null>(null);
   const editVisibleRef = useRef(false);
   useEffect(() => {
-    if (!presentationVisible || !activeReady || outgoing) {
+    if (!presentationVisible || !foregroundVisible || !activeReady || outgoing) {
       editVisibleRef.current = false;
       return;
     }
@@ -104,7 +106,7 @@ export default function WorkbenchActiveDocumentCanvas({
     });
     displayedEntryRef.current = activeEntryKey;
     editVisibleRef.current = true;
-  }, [activeEntryKey, activeReady, outgoing, presentationVisible]);
+  }, [activeEntryKey, activeReady, foregroundVisible, outgoing, presentationVisible]);
   useEffect(() => {
     if (outgoing) {
       outgoingEntryRef.current = outgoing.entryKey;

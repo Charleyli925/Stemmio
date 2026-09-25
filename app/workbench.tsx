@@ -6859,6 +6859,7 @@ export default function Workbench() {
                   activeFailed={activeDocumentCanvasFailed}
                   retirePreviousTab={displayedCanvasMode === "preview" && activePreviewReady}
                   presentationVisible={showEditSurface && (displayedCanvasMode === "edit" || !activePreviewReady)}
+                  foregroundVisible={displayedCanvasMode === "edit" && !carryPreviewIntoEdit}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}

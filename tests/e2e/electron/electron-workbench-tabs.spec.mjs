@@ -464,10 +464,16 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
         const bounds = element.getBoundingClientRect();
         return { width: bounds.width, height: bounds.height };
       });
+    const editHandoffsBeforeCarry = await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length);
     await launched.page.getByRole("group", { name: "工作模式" })
       .getByRole("button", { name: "编辑" }).click();
     await expect(launched.page.getByTestId("workbench-active-preview"))
       .toHaveAttribute("data-preview-carry", "true");
+    expect(await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length)).toBe(editHandoffsBeforeCarry);
     expect(await launched.page.getByTestId("workbench-active-preview")
       .evaluate((element) => {
         const bounds = element.getBoundingClientRect();
@@ -481,6 +487,9 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       .toHaveAttribute("data-edit-runtime-phase", "settled");
     await expect(launched.page.getByTestId("workbench-active-preview"))
       .toHaveCount(0);
+    await expect.poll(() => launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length)).toBe(editHandoffsBeforeCarry + 1);
   } finally {
     await launched.electronApp.evaluate(() => {
       globalThis.__stemmioE2eReleaseEditRuntimePrepare();

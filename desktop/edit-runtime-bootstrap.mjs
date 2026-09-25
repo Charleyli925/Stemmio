@@ -148,12 +148,11 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     }
   };
 
-  const activateAuthorScripts = async (asyncSettlements) => {
+  const activateAuthorScripts = async (asyncSettlements, activationCounts) => {
     const placeholders = Array.from(document.querySelectorAll(
       "script[" + config.scriptStubAttribute + "]",
     ));
     let scriptLoadFailed = false;
-    let attemptedScriptCount = 0;
     for (const placeholder of placeholders) {
       if (!placeholder.isConnected) continue;
       const script = document.createElement("script");
@@ -184,7 +183,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
             script.addEventListener("error", () => resolve(false), { once: true });
           })
         : Promise.resolve(true);
-      attemptedScriptCount += 1;
+      activationCounts.attemptedScriptCount += 1;
       placeholder.replaceWith(script);
       if (!script.async) {
         if (!await settled) scriptLoadFailed = true;
@@ -192,7 +191,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
         asyncSettlements.push(settled);
       }
     }
-    return { resourceFailureCount: scriptLoadFailed ? 1 : 0, attemptedScriptCount };
+    return { resourceFailureCount: scriptLoadFailed ? 1 : 0 };
   };
 
   let activationStarted = false;
@@ -211,7 +210,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     const activationStartedAt = performance.now();
     let authorErrorCount = 0;
     let resourceFailureCount = 0;
-    let attemptedScriptCount = 0;
+    const activationCounts = { attemptedScriptCount: 0 };
     let activationReported = false;
     const asyncSettlements = [];
     const reportOnce = (outcome) => {
@@ -229,9 +228,8 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     window.addEventListener("unhandledrejection", captureActivationRejection, true);
     try {
       proveParsedSource();
-      const activation = await activateAuthorScripts(asyncSettlements);
+      const activation = await activateAuthorScripts(asyncSettlements, activationCounts);
       resourceFailureCount += activation.resourceFailureCount;
-      attemptedScriptCount = activation.attemptedScriptCount;
     } catch {
       resourceFailureCount += 1;
     } finally {
@@ -260,7 +258,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
               : "activation-ready",
           authorErrorCount,
           resourceFailureCount,
-          attemptedScriptCount,
+          attemptedScriptCount: activationCounts.attemptedScriptCount,
           elapsedMs: Math.max(0, Math.round(performance.now() - activationStartedAt)),
         }));
       }
