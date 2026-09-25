@@ -579,13 +579,6 @@ test("retired production modules and imports stay outside the graph", () => {
   );
   assert.match(
     retiredArtifactViolations({
-      file: "app/workbench.tsx",
-      source: "export function Surface() { return HtmlDisplaySurface({}); }",
-    }).join("\n"),
-    /cannot replace the live editor with HtmlDisplaySurface/u,
-  );
-  assert.match(
-    retiredArtifactViolations({
       file: "app/workbench/review/runtime-projection.ts",
       source: "const pattern = /^element:\\d+:\\d+:[a-z]/iu;",
     }).join("\n"),

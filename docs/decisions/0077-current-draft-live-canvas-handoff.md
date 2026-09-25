@@ -5,6 +5,11 @@
 - Scope: current-draft tab presentation and Preview availability
 - Supersedes: ADR 0076's normal tab-switch display-cover presentation; its bounded HTML data and reading-state policies remain
 
+The static display-cover implementation from ADR 0076 is fully retired. The
+retained `DocumentSurfaceCacheSession` stores only bounded HTML data and
+per-tab mode, PageViewContext and scroll state; it never mounts a tab display
+iframe and has no E2E opt-in handoff path.
+
 ## Decision
 
 An ordinary current-draft switch still uses the existing navigation and

@@ -109,11 +109,10 @@ source or be reconciled node by node.
   the authored script markup and bodies have the same exact program identity.
   A script change requires a new Canvas generation and a newly authorized
   resource closure.
-- Inactive tabs retain no Edit page or Runtime DOM; only the selected document
-  owns the single active Canvas.
-  Switching away discards the page and revokes its resource session; returning
-  prepares a fresh closure and runs a fresh disposable page. Script-disabled
-  static Canvases keep the existing bounded hot cache for other tabs only.
+- Inactive tabs retain no Edit page, Runtime DOM or static tab display; only the
+  selected document owns the single active Canvas. Switching away discards the
+  page and revokes its resource session; returning prepares a fresh closure and
+  runs a fresh disposable page.
   Runtime preparing does not unmount the active `HtmlCanvasEditor` or replace
   it with an outer static Surface. Replacing authoritative HTML (adopted
   Version, disk reload, history, first open) writes Active as a static
