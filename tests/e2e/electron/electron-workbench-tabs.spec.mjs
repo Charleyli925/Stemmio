@@ -711,6 +711,55 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
   }
 });
 
+test("a failed historical Preview keeps its static fallback visible", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-version-display"],
+}, async () => {
+  const fixture = createSourceFixture("history-preview-static-fallback.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await waitForProjectReady(page);
+    await launched.electronApp.evaluate(({ ipcMain }) => {
+      const channel = "html-preview:create-session";
+      const original = ipcMain._invokeHandlers?.get(channel);
+      if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
+      ipcMain.removeHandler(channel);
+      ipcMain.handle(channel, () => {
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, original);
+        throw new Error("synthetic historical Preview creation failure");
+      });
+    });
+    await page.getByRole("button", { name: "展开左侧边栏" }).click();
+    const project = page.locator(".sidebar-project-item")
+      .filter({ hasText: "history-preview-static-fallback" }).first();
+    if (await project.locator(".sidebar-project-row").getAttribute("aria-expanded") !== "true") {
+      await project.locator(".sidebar-project-row").click();
+    }
+    if (await project.locator(".sidebar-project-history-toggle").getAttribute("aria-expanded") !== "true") {
+      await project.locator(".sidebar-project-history-toggle").click();
+    }
+    await project.getByRole("button", { name: "V1，历史版本", exact: true }).click();
+
+    const host = page.getByTestId("workbench-active-preview");
+    const fallback = page.getByTestId("html-interaction-preview");
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(fallback.getByRole("status"))
+      .toContainText("正在显示只读静态内容");
+    await expect(host.frameLocator('iframe[title="HTML 交互预览"]')
+      .locator(caseSelector("list-item"))).toBeVisible();
+    await page.waitForTimeout(150);
+    await expect(fallback.getByRole("status"))
+      .toContainText("正在显示只读静态内容");
+    await expect(host.frameLocator('iframe[title="HTML 交互预览"]')
+      .locator(caseSelector("list-item"))).toBeVisible();
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron stages a saved Preview mode before the tab page is revealed", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

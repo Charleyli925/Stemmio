@@ -564,6 +564,8 @@ test("comments keep current-tab alignment, render other tabs as neutral header c
   await expect(frame.locator("#panel-two")).toBeVisible();
   await expect(frame.locator("#panel-one")).toBeHidden();
 
+  await expect(page.getByTestId("workbench-active-preview")).toHaveCount(0);
+
   const rail = page.locator('aside[aria-label="本轮评论"]');
   const header = rail.locator(".comment-rail-header");
   const currentCards = rail.locator(

@@ -749,7 +749,7 @@ const HtmlInteractionPreview = forwardRef<
               || (independentTransport && !staticFallback && desktopSession
                 && loadedFrame.getAttribute("src") !== desktopSession.url)
             ) return;
-            if (independentTransport && !desktopSession) return;
+            if (independentTransport && !desktopSession && !staticFallback) return;
             visualReadyCleanupRef.current?.();
             const sessionGeneration = sessionGenerationRef.current;
             const loadSequence = ++loadCompletionSequenceRef.current;
@@ -766,7 +766,10 @@ const HtmlInteractionPreview = forwardRef<
                   || loadCompletionSequenceRef.current !== loadSequence
                 ) return;
                 setFrameReady(true);
-                setLoadFailed(false);
+                // A failed desktop session may deliberately serve the
+                // script-disabled historical srcDoc. Keep that failure state
+                // until an explicit reload starts a fresh session.
+                if (!staticFallback) setLoadFailed(false);
                 onReady?.(prepared.sourceSha256);
               }));
             };

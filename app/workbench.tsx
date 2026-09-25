@@ -6248,9 +6248,11 @@ export default function Workbench() {
   }, [activeDocumentDisplayReady, activePreviewReady, displayedCanvasMode, previewIdentity]);
   // Keep the exact loaded Preview iframe in front while the same document's
   // Edit runtime is preparing. The previous document's Edit frame is never a
-  // valid fallback for this transition.
+  // valid fallback for this transition. In-memory browser documents have no
+  // DocumentSession/Runtime acknowledgement to wait for and reuse Edit directly.
   const carryPreviewIntoEdit = displayedCanvasMode === "edit"
     && activeWorkbenchTab?.kind === "document"
+    && Boolean(sourcePath)
     && activePreviewReady
     && (!activeDocumentDisplayReady || editRevealPreviewIdentity !== previewIdentity)
     && !activeDocumentCanvasFailed;
