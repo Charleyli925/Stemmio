@@ -357,6 +357,43 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       .toHaveCount(0);
     await expect(launched.page.frameLocator('iframe[data-runtime-slot-role="active"]')
       .locator("#scripted-tab-chart")).toHaveText("图表已显示");
+    await expect.poll(() => launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:outgoing-release", "mark",
+    ).length)).toBeGreaterThan(0);
+    const runtimeMarks = await launched.page.evaluate(() => performance.getEntriesByType("mark")
+      .filter((entry) => /^(stemmio:edit-canvas:|stemmio:edit-runtime:)/u.test(entry.name))
+      .map((entry) => ({ name: entry.name, detail: entry.detail })));
+    for (const name of [
+      "stemmio:edit-canvas:iframe-create",
+      "stemmio:edit-canvas:candidate-create",
+      "stemmio:edit-runtime:prepare-start",
+      "stemmio:edit-runtime:prepare-result",
+      "stemmio:edit-runtime:execute-start",
+      "stemmio:edit-runtime:execute-result",
+      "stemmio:edit-runtime:author-scripts",
+      "stemmio:edit-canvas:display-handoff",
+      "stemmio:edit-canvas:outgoing-release",
+    ]) expect(runtimeMarks.some((mark) => mark.name === name)).toBe(true);
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-runtime:author-scripts"
+      && mark.detail?.attemptedScriptCount === 1)).toBe(true);
+    const authored = runtimeMarks.filter((mark) => mark.name === "stemmio:edit-runtime:author-scripts"
+      && mark.detail?.attemptedScriptCount === 1).at(-1);
+    expect(authored?.detail?.activationId).toBeTruthy();
+    expect(authored?.detail?.runtimeSessionId).toBeTruthy();
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-canvas:iframe-create"
+      && mark.detail?.activationId === authored.detail.activationId)).toBe(true);
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-canvas:candidate-create"
+      && mark.detail?.activationId === authored.detail.activationId
+      && mark.detail?.attemptId === authored.detail.attemptId)).toBe(true);
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-runtime:prepare-result"
+      && mark.detail?.runtimeSessionId === authored.detail.runtimeSessionId)).toBe(true);
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-runtime:execute-result"
+      && mark.detail?.runtimeSessionId === authored.detail.runtimeSessionId
+      && mark.detail?.attemptId === authored.detail.attemptId)).toBe(true);
+    expect(runtimeMarks.some((mark) => mark.name === "stemmio:edit-canvas:outgoing-release"
+      && mark.detail?.activationId === authored.detail.activationId)).toBe(true);
+    expect(runtimeMarks.every((mark) => !Object.keys(mark.detail || {})
+      .some((key) => /html|sourcePath|absolutePath/iu.test(key)))).toBe(true);
     const editSize = await launched.page.locator(".canvas-edit-surface").evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       window.__STEMMIO_TEST_SCRIPTED_EDIT_FRAME__ = element.querySelector(
@@ -399,16 +436,24 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
     await tabs.filter({ hasText: "runtime-handoff-scripted" }).click();
     await expect(launched.page.getByTestId("workbench-active-preview"))
       .toHaveAttribute("data-preview-ready", "true");
+    await expect(launched.page.locator('.workbench-tab[data-selected="true"][data-opening="true"]'))
+      .toHaveCount(0);
     await expect(launched.page.locator("[data-outgoing-draft]")).toHaveCount(0);
     const previewCarrySize = await launched.page.getByTestId("workbench-active-preview")
       .evaluate((element) => {
         const bounds = element.getBoundingClientRect();
         return { width: bounds.width, height: bounds.height };
       });
+    const editHandoffsBeforeCarry = await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length);
     await launched.page.getByRole("group", { name: "工作模式" })
       .getByRole("button", { name: "编辑" }).click();
     await expect(launched.page.getByTestId("workbench-active-preview"))
       .toHaveAttribute("data-preview-carry", "true");
+    expect(await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length)).toBe(editHandoffsBeforeCarry);
     expect(await launched.page.getByTestId("workbench-active-preview")
       .evaluate((element) => {
         const bounds = element.getBoundingClientRect();
@@ -422,6 +467,9 @@ test("Electron keeps scripted tab and mode transitions on their finished frame",
       .toHaveAttribute("data-edit-runtime-phase", "settled");
     await expect(launched.page.getByTestId("workbench-active-preview"))
       .toHaveCount(0);
+    await expect.poll(() => launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-canvas:display-handoff", "mark",
+    ).length)).toBe(editHandoffsBeforeCarry + 1);
   } finally {
     await launched.electronApp.evaluate(() => {
       globalThis.__stemmioE2eReleaseEditRuntimePrepare();
@@ -579,11 +627,19 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
     await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
       .getByText("预览交接目标 A")).toBeVisible();
+    await mode.getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(mode.getByRole("button", { name: "编辑", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:display-result", "mark",
+    ).some((entry) => entry.detail?.status === "cancelled"))).toBe(true);
     blocking = false;
     blockedRoutes.splice(0).forEach((route) => route.release());
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(mode.getByRole("button", { name: "预览", exact: true }))
       .not.toHaveAttribute("aria-busy", "true");
+    await expect(previewHost).toHaveAttribute("data-preview-outcome", "verified");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 A")).toBeVisible();
 
@@ -674,6 +730,7 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await tabB.click();
     await expect(previewHost.getByRole("status")).toContainText("预览暂时无法显示");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    await expect(previewHost).toHaveAttribute("data-preview-outcome", "failed");
     await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
     await expect(previewHost.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("失败前页面 A")).toHaveCount(0);
@@ -681,6 +738,7 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
       .not.toHaveAttribute("data-opening", "true");
     await previewHost.getByRole("button", { name: "重试打开" }).click();
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(previewHost).toHaveAttribute("data-preview-outcome", "verified");
     await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("重试目标页面 B")).toBeVisible();
     await expect(previewHost.getByRole("status")).toHaveCount(0);
@@ -725,6 +783,8 @@ test("a failed historical Preview keeps its static fallback visible", {
     const host = page.getByTestId("workbench-active-preview");
     const fallback = page.getByTestId("html-interaction-preview");
     await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(host).toHaveAttribute("data-preview-outcome", "degraded");
+    await expect(host).toHaveAttribute("data-preview-degradation", "history-static");
     await expect(fallback.getByRole("status"))
       .toContainText("正在显示只读静态内容");
     await expect(host.frameLocator('iframe[title="HTML 交互预览"]')
@@ -831,7 +891,7 @@ test("Electron stages a saved Preview mode before the tab page is revealed", {
   }
 });
 
-test("Electron waits for the Preview document's first contentful paint", {
+test("Electron waits for Preview paint evidence or its bounded fallback", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
   const fixture = createSourceFixture("preview-paint-gate.html", () => `<!DOCTYPE html>
@@ -869,8 +929,47 @@ test("Electron waits for the Preview document's first contentful paint", {
         body.append(heading);
       });
     await expect(preview).toHaveAttribute("data-preview-ready", "true");
+    // An occluded macOS test window may not publish FCP. In that case the
+    // bounded fallback must be reported honestly instead of called verified.
+    const outcome = await preview.getAttribute("data-preview-outcome");
+    expect(["verified", "degraded"]).toContain(outcome);
+    if (outcome === "degraded") {
+      expect(["paint-timeout", "host-timeout"])
+        .toContain(await preview.getAttribute("data-preview-degradation"));
+    }
     await expect(page.frameLocator('iframe[title="HTML 交互预览"]').getByText("预览内容已绘制"))
       .toBeVisible();
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("a valid blank Preview opens through the bounded display fallback", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("blank-preview-result.html", () => (
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Blank preview</title></head><body data-native-case=\"blank-root\"></body></html>"
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "blank-root");
+    await page.getByRole("group", { name: "工作模式" })
+      .getByRole("button", { name: "预览" }).click();
+    const preview = page.getByTestId("workbench-active-preview");
+    await expect(preview).toHaveAttribute("data-preview-ready", "true");
+    await expect(preview).toHaveAttribute("data-preview-outcome", "degraded");
+    await expect(preview).toHaveAttribute("data-preview-degradation", /^(paint-timeout|host-timeout)$/u);
+    await expect(preview.getByRole("status")).toHaveCount(0);
+    const marks = await page.evaluate(() => performance.getEntriesByType("mark")
+      .filter((entry) => entry.name.startsWith("stemmio:preview:"))
+      .map((entry) => ({ name: entry.name, detail: entry.detail })));
+    expect(marks.some((mark) => mark.name === "stemmio:preview:session-created")).toBe(true);
+    expect(marks.some((mark) => mark.name === "stemmio:preview:display-result"
+      && mark.detail?.status === "degraded")).toBe(true);
+    expect(marks.every((mark) => !Object.keys(mark.detail || {})
+      .some((key) => /html|sourcePath|absolutePath/iu.test(key)))).toBe(true);
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);

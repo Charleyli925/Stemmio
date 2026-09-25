@@ -40,6 +40,8 @@ import { CurrentDraftStatus } from "./workbench/current-draft-status";
 import CancelAiRunDialog from "./components/CancelAiRunDialog";
 import HtmlInteractionPreview, {
   type HtmlInteractionPreviewHandle,
+  type PreviewDisplayResult,
+  type PreviewOpenReason,
 } from "./components/HtmlInteractionPreview";
 import WorkbenchActivePreview from "./workbench/WorkbenchActivePreview";
 import { useAiConversation } from "./workbench/use-ai-conversation";
@@ -334,6 +336,9 @@ type CanvasRenderAck = Readonly<{
   sha256: string;
   identity?: string;
   failed?: boolean;
+  previewResult?: "verified" | "degraded" | "failed";
+  degradationReason?: "paint-timeout" | "host-timeout" | "history-static";
+  attemptId?: string;
 }>;
 
 type CanvasRenderAcks = Readonly<Record<CanvasMode, CanvasRenderAck | null>>;
@@ -2586,25 +2591,70 @@ export default function Workbench() {
   // A returning tab or mode gets a fresh Preview session even when its source
   // Hash matches a prior visit. An earlier ready ACK cannot uncover about:blank.
   const previewIdentity = `${previewSourceIdentity}\u0000${previewEntryOrdinal}`;
+  const [previewTargetState, setPreviewTargetState] = useState<{
+    identity: string;
+    tabId: string | null;
+    mode: CanvasMode;
+    sourceIdentity: string;
+    reason: PreviewOpenReason;
+  }>(() => ({
+    identity: previewIdentity,
+    tabId: activeWorkbenchTab?.tabId || null,
+    mode: displayedCanvasMode,
+    sourceIdentity: previewSourceIdentity,
+    reason: historyPreview ? "history-open" : "initial-open",
+  }));
+  const previewTargetChanged = previewTargetState.identity !== previewIdentity
+    || previewTargetState.tabId !== (activeWorkbenchTab?.tabId || null)
+    || previewTargetState.mode !== displayedCanvasMode
+    || previewTargetState.sourceIdentity !== previewSourceIdentity;
+  const previewOpenReason: PreviewOpenReason = !previewTargetChanged
+    ? previewTargetState.reason
+    : historyPreview
+      ? "history-open"
+      : previewTargetState.tabId !== (activeWorkbenchTab?.tabId || null)
+        ? "tab-switch"
+        : previewTargetState.mode !== displayedCanvasMode
+          ? "mode-switch"
+          : "source-change";
+  if (previewTargetChanged) {
+    setPreviewTargetState({
+      identity: previewIdentity,
+      tabId: activeWorkbenchTab?.tabId || null,
+      mode: displayedCanvasMode,
+      sourceIdentity: previewSourceIdentity,
+      reason: previewOpenReason,
+    });
+  }
   const previewIdentityRef = useRef(previewIdentity);
+  const previewAttemptRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     previewIdentityRef.current = previewIdentity;
   }, [previewIdentity]);
-  const handlePreviewReady = useCallback((
-    sha256: string | null,
-    failure?: "failed",
-  ) => {
+  const handlePreviewDisplayResult = useCallback((result: PreviewDisplayResult) => {
     if (previewIdentityRef.current !== previewIdentity) return;
+    if (result.status === "pending") {
+      previewAttemptRef.current = result.attemptId;
+      setCanvasRenderAcks((current) => ({ ...current, preview: null }));
+      return;
+    }
+    if (previewAttemptRef.current !== result.attemptId) return;
+    if (result.status === "cancelled") {
+      previewAttemptRef.current = null;
+      setCanvasRenderAcks((current) => ({ ...current, preview: null }));
+      return;
+    }
     setCanvasRenderAcks((current) => ({
       ...current,
-      preview: sha256 || failure
-        ? {
-            generation: canvasGeneration,
-            sha256: sha256 || "",
-            identity: previewIdentity,
-            failed: failure === "failed",
-          }
-        : null,
+      preview: {
+        generation: canvasGeneration,
+        sha256: result.status === "failed" ? "" : result.sourceSha256,
+        identity: previewIdentity,
+        failed: result.status === "failed",
+        previewResult: result.status,
+        attemptId: result.attemptId,
+        ...(result.status === "degraded" ? { degradationReason: result.reason } : {}),
+      },
     }));
   }, [canvasGeneration, previewIdentity]);
   const previewAck = canvasRenderAcks.preview;
@@ -2612,12 +2662,12 @@ export default function Workbench() {
     previewAck
     && previewAck.identity === previewIdentity
     && previewAck.generation === canvasGeneration
-    && !previewAck.failed
+    && (previewAck.previewResult === "verified" || previewAck.previewResult === "degraded")
     && previewAck.sha256
     && (!expectedPreviewSha256 || previewAck.sha256 === expectedPreviewSha256)
   );
   const activePreviewFailed = Boolean(
-    previewAck?.identity === previewIdentity && previewAck.failed
+    previewAck?.identity === previewIdentity && previewAck.previewResult === "failed"
   );
   const activePageViewContext = (
     pageViewContext?.documentKey === pageViewDocumentKey
@@ -6793,6 +6843,7 @@ export default function Workbench() {
                   activeFailed={activeDocumentCanvasFailed}
                   retirePreviousTab={displayedCanvasMode === "preview" && activePreviewReady}
                   presentationVisible={showEditSurface && (displayedCanvasMode === "edit" || !activePreviewReady)}
+                  foregroundVisible={displayedCanvasMode === "edit" && !carryPreviewIntoEdit}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}
@@ -6896,6 +6947,9 @@ export default function Workbench() {
               identity={previewIdentity}
               activeReady={activePreviewReady}
               activeFailed={activePreviewFailed}
+              activeOutcome={previewAck?.identity === previewIdentity ? previewAck.previewResult : undefined}
+              activeDegradationReason={previewAck?.identity === previewIdentity ? previewAck.degradationReason : undefined}
+              activeAttemptId={previewAck?.identity === previewIdentity ? previewAck.attemptId : undefined}
               carryForEdit={carryPreviewIntoEdit}
               onRetry={() => interactionPreviewRef.current?.reload()}
               activeElement={<HtmlInteractionPreview
@@ -6903,6 +6957,7 @@ export default function Workbench() {
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}
               staticFallbackOnFailure={Boolean(historyPreview)}
+              openReason={previewOpenReason}
               documentKey={historyPreview ? `${pageViewDocumentKey}:${historyPreview.versionId}` : pageViewDocumentKey}
               sourcePath={historyPreview?.sourcePath || sourcePath || undefined}
               height={historyPreview
@@ -6910,7 +6965,7 @@ export default function Workbench() {
                 : "100%"}
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
-              onReady={handlePreviewReady}
+              onDisplayResult={handlePreviewDisplayResult}
               initialScrollTop={historyPreview ? undefined : activeDocumentPresentation?.scrollTop}
               onScrollTopChange={(scrollTop) => {
                 if (!historyPreview && activeWorkbenchTab.kind === "document") {

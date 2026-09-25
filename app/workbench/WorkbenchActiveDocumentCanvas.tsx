@@ -25,6 +25,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeFailed,
   retirePreviousTab,
   presentationVisible,
+  foregroundVisible,
   failureMessage,
   onRetry,
 }: {
@@ -37,6 +38,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeFailed: boolean;
   retirePreviousTab: boolean;
   presentationVisible: boolean;
+  foregroundVisible: boolean;
   failureMessage: string | null;
   onRetry(): void;
 }) {
@@ -85,6 +87,42 @@ export default function WorkbenchActiveDocumentCanvas({
     && presentationVisible
     ? lastVerified
     : null;
+  const outgoingEntryRef = useRef<string | null>(null);
+  const displayedEntryRef = useRef<string | null>(null);
+  const editVisibleRef = useRef(false);
+  useEffect(() => {
+    if (!presentationVisible || !foregroundVisible || !activeReady || outgoing) {
+      editVisibleRef.current = false;
+      return;
+    }
+    if (editVisibleRef.current) return;
+    performance.mark("stemmio:edit-canvas:display-handoff", {
+      detail: Object.freeze({
+        activationId: activeEntryKey,
+        targetType: "edit-canvas",
+        actionReason: displayedEntryRef.current === activeEntryKey ? "mode-return" : "tab-activation",
+        outcome: "verified",
+      }),
+    });
+    displayedEntryRef.current = activeEntryKey;
+    editVisibleRef.current = true;
+  }, [activeEntryKey, activeReady, foregroundVisible, outgoing, presentationVisible]);
+  useEffect(() => {
+    if (outgoing) {
+      outgoingEntryRef.current = outgoing.entryKey;
+      return;
+    }
+    if (!outgoingEntryRef.current || (!activeReady && !activeFailed && !retirePreviousTab)) return;
+    performance.mark("stemmio:edit-canvas:outgoing-release", {
+      detail: Object.freeze({
+        activationId: activeEntryKey,
+        releasedActivationId: outgoingEntryRef.current,
+        targetType: "edit-canvas",
+        actionReason: activeFailed ? "target-failed" : retirePreviousTab ? "preview-ready" : "target-ready",
+      }),
+    });
+    outgoingEntryRef.current = null;
+  }, [activeEntryKey, activeFailed, activeReady, outgoing, retirePreviousTab]);
   useLayoutEffect(() => {
     const entry = activeEntryRef.current;
     if (!entry || !activeReady || outgoing) return;
@@ -133,6 +171,7 @@ export default function WorkbenchActiveDocumentCanvas({
         {cloneElement(outgoing.element, {
           ref: null,
           height: outgoingGeometry?.height ?? outgoing.element.props.height,
+          diagnosticActivationId: outgoing.entryKey,
           locked: true,
           readOnly: true,
           interactionMode: "processing",
@@ -165,7 +204,7 @@ export default function WorkbenchActiveDocumentCanvas({
         inert={outgoing ? true : undefined}
         key={activeEntryKey}
       >
-        {activeElement}
+        {cloneElement(activeElement, { diagnosticActivationId: activeEntryKey })}
       </div>
       {activeFailed && failureMessage ? <section
         className={styles.failure}

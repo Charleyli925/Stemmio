@@ -148,7 +148,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     }
   };
 
-  const activateAuthorScripts = async (asyncSettlements) => {
+  const activateAuthorScripts = async (asyncSettlements, activationCounts) => {
     const placeholders = Array.from(document.querySelectorAll(
       "script[" + config.scriptStubAttribute + "]",
     ));
@@ -183,6 +183,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
             script.addEventListener("error", () => resolve(false), { once: true });
           })
         : Promise.resolve(true);
+      activationCounts.attemptedScriptCount += 1;
       placeholder.replaceWith(script);
       if (!script.async) {
         if (!await settled) scriptLoadFailed = true;
@@ -190,7 +191,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
         asyncSettlements.push(settled);
       }
     }
-    return scriptLoadFailed ? 1 : 0;
+    return { resourceFailureCount: scriptLoadFailed ? 1 : 0 };
   };
 
   let activationStarted = false;
@@ -209,6 +210,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     const activationStartedAt = performance.now();
     let authorErrorCount = 0;
     let resourceFailureCount = 0;
+    const activationCounts = { attemptedScriptCount: 0 };
     let activationReported = false;
     const asyncSettlements = [];
     const reportOnce = (outcome) => {
@@ -226,7 +228,8 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
     window.addEventListener("unhandledrejection", captureActivationRejection, true);
     try {
       proveParsedSource();
-      resourceFailureCount += await activateAuthorScripts(asyncSettlements);
+      const activation = await activateAuthorScripts(asyncSettlements, activationCounts);
+      resourceFailureCount += activation.resourceFailureCount;
     } catch {
       resourceFailureCount += 1;
     } finally {
@@ -255,6 +258,7 @@ export function createEditRuntimeBootstrap({ executionId, sessionId } = {}) {
               : "activation-ready",
           authorErrorCount,
           resourceFailureCount,
+          attemptedScriptCount: activationCounts.attemptedScriptCount,
           elapsedMs: Math.max(0, Math.round(performance.now() - activationStartedAt)),
         }));
       }
