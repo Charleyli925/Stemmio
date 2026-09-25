@@ -3912,3 +3912,35 @@ DESIGN CHANGE. 输入区仅移除重复提示，草稿保存与发送边界保�
 - 第二次完整门禁通过了 305/305 Node、80/80 Browser、89/89 Electron，但 AI 50/52：两条测试仍要求展示本次刻意移除的机械进度和非处理态进度条。改为断言公开模型文字保留、机械活动不显示、未知 Request 仍 fail-closed 并自动核对后，两条定向 Electron 测试通过。新增底部用例首跑把帮助函数自动添加的基准评论漏算为 2 条，校正为 3 条且只对目标两条检查可达性后通过；该失败是测试计数错误。
 
 Result: passed for the scoped rebuilt-source Electron interactions and read-only private-source anchor diagnosis. 这不代表已安装 Developer Preview、真实外部模型生成质量或正式发布已更新；任务门禁结果由本次交付流程单独记录。
+
+## 2026-09-24 — 模式交接、页签操作与 AI 助手入口
+
+DESIGN CHANGE / FLOW AUDIT. 对编辑→预览、两个预览标签页之间、预览→编辑以及审阅→编辑的可见表面做有界交接检查；旧式页签工具条动作与顶栏 AI 助手的点击状态单独验收。评论输入卡片提供三个静态方案供选择，尚未改变正式界面。
+
+- 预览交接：真实 Electron 用例以延迟图片请求保持新 Preview 未 ready，确认已核对的编辑画布或上一份 Preview 持续可见且 inert，新 iframe 隐藏；新会话完成后按当前标签、generation、源 Hash 与进入代次切换为唯一可见预览。预览→编辑→同源预览的慢加载复现也通过，新实例不会复用旧就绪回执。输出见 `output/playwright/electron-smoke/`。已有审阅返回用例通过。
+- 审阅采纳首轮验证发现阅读位置回到顶部。同一用例在未修改的 `447da691` 通过，定位为交接期保留的 inert 画布接收了外层滚动收缩事件，覆盖原先的阅读锚点。画布现不从 inert 表面记录阅读位置；修复后审阅采纳用例通过，锚点仍在视口，且编辑在动态 Runtime 准备前解锁。
+- 编辑页签：有界 `data-p` / `data-tab` 和固定索引 `onclick` 页签在工具条显示“切换到此页签”；Browser 与 Electron 用例均验证一次工具条点击完成切换，页面处理器未运行，工作副本及外部 HTML 字节不变。歧义结构的 Node 负例保持无动作。截图对应的原始 HTML 尚未提供，因此该特定页面的命中情况未验收。
+- 顶栏 AI 助手：在未保存的评论输入卡片仍打开时，Electron 实际点击顶栏按钮后侧栏可见，草稿保留；按钮中心命中和 `no-drag` 检查通过。
+- 评论输入卡片 A/B/C 三个方案位于忽略的 `output/comment-composer-variants.html` 与 `output/comment-composer-variants.png`。用户选择 A 的轻标题并加入 C 的紫色定位线。正式卡片改为“添加评论”主标题和单行、可截断的目标说明；“评论内容”保留为屏幕阅读器标签，输入区只留细分隔线，焦点由卡片边缘轻微强调。真实 Electron 用例在页面元素评论输入、附件操作可见的状态下截图核对，位于 `output/design-qa/comment-composer-selected.png`，并确认草稿与顶栏 AI 助手交互通过。
+
+Result: passed for the named rebuilt-source Electron and Browser interactions and the selected comment-card composition; the exact HTML shown in the tab screenshot is still unverified. 附件与 AI 引用完整性由单独的聚焦验证记录，不由上述 UI 证据推断。
+
+## 2026-09-24 — T1 页签与预览加载时序复核
+
+DESIGN CHANGE / FLOW AUDIT. 以用户三张真实桌面截图作为问题证据；当前源码的隔离 Electron 窗口以本地 T1 和欢迎页副本重放，原文件未修改，诊断输出保存在忽略目录 `output/t1-diagnostics/`。
+
+- 当前稿互切：旧画布在目标运行态完成之前保持原节点和尺寸；T1 进入目标时，候选从静态帧经历 preparing/running，直到 settled 且 15 个图表画布存在才交接。候选画布在等待中正常布局、以透明度遮住，避免揭示时才开始绘制。窗口画布区域逐帧截图采样在两个切换方向都没有全白帧；欢迎页与 T1 各只出现一次最终画面转换。这个证据针对所测窗口、两份本地 HTML 和本轮交互。
+- 跨标签进入 T1 预览：真实 T1 时序记录依次出现目标预览模式选中、预览按钮加载状态、预览 ready；正式页就绪前仍显示旧页。目标标签被选中但新页尚未就绪时，紫色下划线持续显示，到 ready 才撤下。合成 Electron 回归用慢资源保持加载阶段，核对这三个状态的顺序、转圈图标、旧画布连续可见和无浮动“正在打开预览”文案。
+- 加载状态截图：合成 Electron 页面见 `output/design-qa/preview-opening-order.png`，紫色线分别贴在目标标签和“预览”按钮，转圈图标占据原眼睛图标的位置；旧页面仍完整可见。
+- 视觉规则：转圈图标占用原眼睛图标的位置，按钮文字和尺寸不变；系统减少动态效果时停止旋转，保留静态加载图标。失败时保留就近重试入口。
+- 首次完整任务门禁的 134 条 Electron 中有两条失败：提前投影目标模式一度覆盖了用户在后台画布核对时主动点选“预览”的状态；选中标签的加载后缀又改变了历史/重启流程依赖的稳定无障碍名称。模式提前投影现只用于尚未进入预览的已保存预览目标，选中标签保持原无障碍名称并用 `aria-busy` 表示加载。两个原失败用例与新增的跨标签时序用例定向重跑 3/3 通过；完整门禁以修复后的独立结果为准。
+
+Result: passed for the focused source Electron flows and real T1/欢迎页 reproduction; no installer or release artifact was produced.
+
+### 2026-09-24 追加：紫线、快速切换白帧与跨文档残影
+
+DESIGN CORRECTION. 用户补充截图及实际操作表明，上段的 DOM 就绪与抽样不足以证明每次画面交接都无白帧。已用真实欢迎页副本在 Electron 主进程连续截图，修复前 12 次编辑／预览往返的 58 帧中抓到 4 帧纯白；同一时刻 DOM 仍报告编辑 iframe 存在、尺寸正常，说明仅靠 DOM ready 会漏掉合成层交接。逐帧数据保存在忽略的 `output/t1-diagnostics/rapid-baseline.jsonl`。
+
+- 等待目标标签从 `pendingTabId` 出现起取得紫色线，旧标签同时取消视觉选中态；语义 `aria-selected` 与页面权威仍保持原标签，直到导航提交。紫线不再做透明度脉冲，提交后持续到目标画布或预览就绪。
+- 预览 iframe 的 `load` 后加入带 token、requestId 和 frame 身份核对的可见绘制回执：内容页首个内容绘制后给子页与宿主合成机会，脚本受限或空白页采用有界回退。预览→编辑保留原生预览 iframe，直到同一文档的编辑运行态就绪并经过绘制交接；目标预览就绪时退役上一文档的编辑画面。
+- 最终源码下，真实欢迎页 5 轮各 12 次往返共采样 497 帧，未见纯白（忽略输出 `output/t1-diagnostics/exact-final-paint-{1..5}.jsonl`）；真实欢迎页多次切换后转 T1 预览→编辑的逐帧记录只显示 T1 自身预览与编辑画面，旧欢迎页 iframe 不再出现。交接时 T1 预览 iframe 始终为 872px 高，编辑容器在遮盖下准备到 2294px，直到运行态 settled 后才揭示。合成 Electron 用例覆盖目标紫线与旧紫线互斥、首个内容绘制回执、跨文档残影退役、预览原尺寸保留到脚本编辑画布就绪。结果仅覆盖所测窗口、两份本地 HTML 和这些操作，原始 HTML 未修改也未入库。

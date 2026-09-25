@@ -54,6 +54,40 @@ function managedDraftComment(managedSourcePath, text) {
   return null;
 }
 
+test("AI assistant remains clickable while an unsaved comment composer is open", async ({}, testInfo) => {
+  const fixture = createSourceFixture("assistant-with-comment-composer.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const { frame } = await loadedDiskFrame(launched.page, fixture.sourcePath, "list-item");
+    await frame.locator(caseSelector("list-item")).click();
+    await launched.page.getByRole("button", { name: /给.+留评论/u })
+      .filter({ visible: true }).first().click();
+    const draft = launched.page.getByRole("textbox", { name: "评论内容" });
+    await draft.fill("保留的评论草稿");
+    await launched.page.locator(".rail-comment-composer")
+      .screenshot({ path: testInfo.outputPath("comment-composer-selected.png") });
+
+    const assistant = launched.page.getByRole("button", { name: "AI 助手", exact: true });
+    await expect(assistant).toBeEnabled();
+    await expect.poll(() => assistant.evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return Boolean(hit && (hit === button || button.contains(hit)))
+        && getComputedStyle(button).getPropertyValue("-webkit-app-region") === "no-drag";
+    })).toBe(true);
+    await assistant.click();
+    await expect(assistant).toHaveAttribute("aria-expanded", "true");
+    await expect(launched.page.getByTestId("ai-conversation-sidebar")).toBeVisible();
+
+    await launched.page.getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(launched.page.getByRole("textbox", { name: "评论内容" }))
+      .toHaveValue("保留的评论草稿");
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 async function retainedEditorDocumentToken(page) {
   return page.locator(
     '[data-testid="workbench-active-document-canvas"] iframe[title*="HTML"]',
@@ -423,6 +457,8 @@ test("Electron preview shows the read-only comment marker and opens it on hover 
     await composer.getByRole("button", { name: "评论", exact: true }).click();
 
     await launched.page.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.locator('iframe[title="HTML 交互预览"]'))
       .toBeVisible();
 
@@ -515,6 +551,8 @@ test("Electron preview mounts the modification-only AI sidebar across reopen", a
     await launched.page.getByRole("button", { name: "评论", exact: true }).click();
 
     await launched.page.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(launched.page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.locator('iframe[title="HTML 交互预览"]'))
       .toBeVisible();
 

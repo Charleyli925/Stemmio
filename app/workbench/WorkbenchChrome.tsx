@@ -90,12 +90,14 @@ export function SidebarToggle({
 export function WorkbenchTabBar({
   snapshot,
   presentation,
+  activeTabOpening,
   onSelect,
   onClose,
   onNew,
 }: {
   snapshot: WorkbenchTabsSnapshot;
   presentation: WorkbenchPresentation;
+  activeTabOpening: boolean;
   onSelect: (tab: WorkbenchTab) => void;
   onClose: (tab: WorkbenchTab) => void;
   onNew: () => void;
@@ -120,7 +122,11 @@ export function WorkbenchTabBar({
         {snapshot.tabs.map((tab) => {
           const selected = snapshot.activeTabId === tab.tabId;
           const pending = snapshot.pendingTabId === tab.tabId;
-          const opening = pending && !selected;
+          // Navigation keeps the old runtime until the new document is ready.
+          // The tab strip represents the user's destination from the first
+          // pending frame, so the outgoing tab must lose its visual selection.
+          const visuallySelected = snapshot.pendingTabId ? pending : selected;
+          const opening = (pending && !selected) || (selected && activeTabOpening);
           const projected = selected && presentation.tabId === tab.tabId;
           const title = projected ? presentation.tabTitle : tab.title;
           const viewLabel = projected ? presentation.viewLabel : null;
@@ -135,15 +141,16 @@ export function WorkbenchTabBar({
               data-kind={tab.kind}
               data-status={tab.status}
               data-view-label={viewLabel || undefined}
-              data-selected={selected ? "true" : undefined}
+              data-selected={visuallySelected ? "true" : undefined}
               data-pending={pending ? "true" : undefined}
+              data-opening={opening ? "true" : undefined}
               key={tab.tabId}
             >
               <button
                 id={`workbench-tab-${tab.tabId}`}
                 type="button"
                 role="tab"
-                aria-label={opening ? `${accessibleTitle}，正在打开` : accessibleTitle}
+                aria-label={opening && !selected ? `${accessibleTitle}，正在打开` : accessibleTitle}
                 aria-busy={pending || undefined}
                 aria-selected={selected}
                 aria-controls={tab.kind === "project-rules"

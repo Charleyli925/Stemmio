@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
+import { CircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
 import { PencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
 
@@ -24,6 +25,7 @@ export type WorkbenchHeaderToolbarProps = {
   moreMenu: WorkbenchMoreMenuProps;
   onSelectEdit: () => void;
   onSelectPreview: () => void;
+  previewOpening: boolean;
   onOpenReview: () => void;
   onRefreshCanvas: () => void;
   reopenRecentRunOutcome: () => void;
@@ -39,6 +41,7 @@ export function WorkbenchHeaderToolbar({
   moreMenu,
   onSelectEdit,
   onSelectPreview,
+  previewOpening,
   onOpenReview,
   onRefreshCanvas,
   reopenRecentRunOutcome,
@@ -70,11 +73,15 @@ export function WorkbenchHeaderToolbar({
               <button
                 type="button"
                 aria-pressed={presentation.preview.selected}
+                aria-busy={previewOpening || undefined}
+                data-preview-opening={previewOpening ? "true" : undefined}
                 disabled={!presentation.preview.enabled}
                 data-tooltip={presentation.preview.reason}
                 onClick={onSelectPreview}
               >
-                <EyeIcon aria-hidden="true" size={16} weight="bold" />
+                {previewOpening
+                  ? <CircleNotchIcon aria-hidden="true" size={16} weight="bold" />
+                  : <EyeIcon aria-hidden="true" size={16} weight="bold" />}
                 预览
               </button>
               <button

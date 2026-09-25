@@ -12,7 +12,8 @@
 .entry[data-handoff-candidate="true"] {
   position: absolute;
   inset: 0;
-  visibility: hidden;
+  /* Keep authored canvases paintable at their final size before handoff. */
+  opacity: 0;
   pointer-events: none;
 }
 

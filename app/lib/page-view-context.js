@@ -13,6 +13,12 @@ const MAX_PRESENTATION_TAB_COUNT = 24;
 const MAX_CLASS_TOKENS = 128;
 const MAX_QUALIFIED_CLASS_TOKENS = 8;
 const MAX_CLASS_TOKEN_LENGTH = 96;
+const LEGACY_TAB_STATE_CLASS = "active";
+const LEGACY_TAB_ATTRIBUTES = Object.freeze(["data-p", "data-tab"]);
+const LEGACY_TAB_CONTROL_TAGS = new Set(["button", "div"]);
+const INDEXED_HANDLER_TAB_CONTROL_TAGS = new Set(["button", "div", "li"]);
+const SIMPLE_INDEXED_TAB_HANDLER =
+  /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\(\s*(0|[1-9]\d?)\s*\);?$/u;
 const EXCLUDED_TAGS = new Set([
   "html",
   "head",
@@ -682,6 +688,393 @@ function resolveTabAction({
   });
 }
 
+function legacyTabDescriptor(element) {
+  const attributes = LEGACY_TAB_ATTRIBUTES.map((name) => ({
+    name,
+    attribute: sourceAttribute(element, name),
+  }));
+  if (attributes.some(({ attribute }) => !attribute.valid)) return null;
+  const present = attributes.filter(({ attribute }) => attribute.present);
+  if (present.length !== 1) return null;
+  const panelId = String(present[0].attribute.value ?? "").trim();
+  if (!panelId || /[\t\n\f\r ]/u.test(panelId)) return null;
+  return {
+    attributeName: present[0].name,
+    panelId,
+  };
+}
+
+function classTokensWithoutLegacyTabState(state) {
+  return state.classTokens.filter(
+    (token) => token !== LEGACY_TAB_STATE_CLASS,
+  );
+}
+
+/**
+ * Some authored reports use an explicit `data-p`/`data-tab` → panel id
+ * mapping instead of ARIA tabs. The edit sandbox does not execute their
+ * scripts, so we reproduce only the disposable `active` class transition.
+ * Ambiguous or structurally inferred markup remains inert.
+ */
+function resolveDataLinkedTabAction({
+  sourceIndex,
+  states,
+  target,
+  documentKey,
+  generation,
+}) {
+  const control = closestSourceElement(
+    sourceIndex,
+    target,
+    (candidate) => (
+      LEGACY_TAB_CONTROL_TAGS.has(candidate.tagName)
+      && legacyTabDescriptor(candidate)
+    ),
+  );
+  if (
+    !control
+    || !sourceAttributeIsAbsent(control, "disabled")
+    || !sourceAriaBooleanIsAbsentOrFalse(control, "aria-disabled")
+    || !sourceAttributeIsAbsent(control, "aria-haspopup")
+    || !sourceAttributeIsAbsent(control, "popovertarget")
+    || sourceAncestors(sourceIndex, control).some(
+      (ancestor) => ancestor.tagName === "form",
+    )
+  ) return null;
+  const descriptor = legacyTabDescriptor(control);
+  const controlParent = sourceParent(sourceIndex, control);
+  if (!descriptor || !controlParent) return null;
+
+  const controls = controlParent.childElementIds
+    .map((nodeId) => sourceIndex.byNodeId.get(nodeId))
+    .filter((candidate) => candidate?.type === "element")
+    .filter((candidate) => legacyTabDescriptor(candidate));
+  if (
+    controls.length < 2
+    || controls.length > MAX_PRESENTATION_TAB_COUNT
+    || !controls.some((candidate) => candidate.nodeId === control.nodeId)
+    || controls.some((candidate) => (
+      candidate.tagName !== control.tagName
+      || legacyTabDescriptor(candidate)?.attributeName
+        !== descriptor.attributeName
+      || !sourceAttributeIsAbsent(candidate, "disabled")
+      || !sourceAriaBooleanIsAbsentOrFalse(candidate, "aria-disabled")
+      || !sourceAttributeIsAbsent(candidate, "aria-haspopup")
+      || !sourceAttributeIsAbsent(candidate, "popovertarget")
+    ))
+  ) return null;
+
+  const panels = [];
+  const seenPanelIds = new Set();
+  for (const candidate of controls) {
+    const candidateDescriptor = legacyTabDescriptor(candidate);
+    const panel = uniqueElementById(
+      sourceIndex,
+      candidateDescriptor?.panelId,
+    );
+    if (
+      !candidateDescriptor
+      || !panel
+      || seenPanelIds.has(candidateDescriptor.panelId)
+      || sourceContains(sourceIndex, controlParent, panel)
+      || sourceContains(sourceIndex, panel, controlParent)
+      || !sourceContentExists(sourceIndex, panel)
+    ) return null;
+    seenPanelIds.add(candidateDescriptor.panelId);
+    panels.push(panel);
+  }
+  const panelParentId = panels[0]?.parentId;
+  if (
+    !panelParentId
+    || panels.some((panel) => panel.parentId !== panelParentId)
+  ) return null;
+
+  const controlStates = controls.map((candidate) => (
+    effectiveStateFor(sourceIndex, states, candidate)
+  ));
+  const panelStates = panels.map((panel) => (
+    effectiveStateFor(sourceIndex, states, panel)
+  ));
+  if (
+    controlStates.some((state) => !state)
+    || panelStates.some((state) => !state)
+  ) return null;
+  const controlBaseClasses = controlStates.map(
+    classTokensWithoutLegacyTabState,
+  );
+  const panelBaseClasses = panelStates.map(
+    classTokensWithoutLegacyTabState,
+  );
+  if (
+    controlBaseClasses.some((tokens) => tokens.length === 0)
+    || panelBaseClasses.some((tokens) => tokens.length === 0)
+    || new Set(controlBaseClasses.map((tokens) => (
+      [...tokens].sort().join("\u0000")
+    ))).size !== 1
+    || new Set(panelBaseClasses.map((tokens) => (
+      [...tokens].sort().join("\u0000")
+    ))).size !== 1
+  ) return null;
+
+  const selectedIndexes = controlStates.flatMap((state, index) => (
+    state.classTokens.includes(LEGACY_TAB_STATE_CLASS) ? [index] : []
+  ));
+  const visibleIndexes = panelStates.flatMap((state, index) => (
+    state.classTokens.includes(LEGACY_TAB_STATE_CLASS) ? [index] : []
+  ));
+  if (
+    selectedIndexes.length !== 1
+    || visibleIndexes.length !== 1
+    || selectedIndexes[0] !== visibleIndexes[0]
+  ) return null;
+
+  const targetIndex = controls.findIndex(
+    (candidate) => candidate.nodeId === control.nodeId,
+  );
+  const isCurrent = selectedIndexes[0] === targetIndex;
+  if (!isCurrent) {
+    controls.forEach((candidate, index) => {
+      states.set(sourceElementKey(candidate), {
+        ...controlStates[index],
+        classTokens: [
+          ...controlBaseClasses[index],
+          ...(index === targetIndex ? [LEGACY_TAB_STATE_CLASS] : []),
+        ],
+      });
+    });
+    panels.forEach((panel, index) => {
+      states.set(sourceElementKey(panel), {
+        ...panelStates[index],
+        classTokens: [
+          ...panelBaseClasses[index],
+          ...(index === targetIndex ? [LEGACY_TAB_STATE_CLASS] : []),
+        ],
+      });
+    });
+  }
+  const nextContext = contextFromPresentationStates({
+    sourceIndex,
+    states,
+    documentKey,
+    generation,
+  });
+  if (nextContext === undefined) return null;
+  return Object.freeze({
+    kind: "activate-tab",
+    label: isCurrent ? "当前页签" : "切换到此页签",
+    isCurrent,
+    nextContext,
+  });
+}
+
+function indexedHandlerDescriptor(element) {
+  if (!INDEXED_HANDLER_TAB_CONTROL_TAGS.has(element.tagName)) return null;
+  const handler = sourceAttribute(element, "onclick");
+  if (!handler.valid || !handler.present) return null;
+  const match = String(handler.value ?? "").trim().match(
+    SIMPLE_INDEXED_TAB_HANDLER,
+  );
+  if (!match) return null;
+  const index = Number.parseInt(match[2], 10);
+  if (!Number.isInteger(index) || index >= MAX_PRESENTATION_TAB_COUNT) {
+    return null;
+  }
+  return {
+    handlerName: match[1],
+    index,
+  };
+}
+
+function classTokensWithoutIndexedTabState(state) {
+  return state.classTokens.filter(
+    (token) => token !== LEGACY_TAB_STATE_CLASS,
+  );
+}
+
+function indexedTabBaseSignature(element, state) {
+  const tokens = classTokensWithoutIndexedTabState(state);
+  if (tokens.length === 0) return null;
+  return `${element.tagName}\u0000${[...tokens].sort().join("\u0000")}`;
+}
+
+function relatedIndexedTabGroupParents(
+  sourceIndex,
+  controlParent,
+  panelParent,
+) {
+  if (controlParent.nodeId === panelParent.nodeId) return true;
+  const controlContainer = sourceParent(sourceIndex, controlParent);
+  if (controlContainer?.nodeId === panelParent.nodeId) return true;
+  const panelContainer = sourceParent(sourceIndex, panelParent);
+  return Boolean(
+    controlContainer
+    && panelContainer
+    && controlContainer.nodeId === panelContainer.nodeId,
+  );
+}
+
+/**
+ * A second bounded compatibility route covers exported reports whose tabs are
+ * authored as one uniform sibling group with handlers such as
+ * `switchChart(0)`, followed by one uniquely matching uniform panel group.
+ * The handler is never evaluated: its exact constant index is only structural
+ * evidence that control order is intentional. Ambiguous groups remain inert.
+ */
+function resolveIndexedHandlerTabAction({
+  sourceIndex,
+  states,
+  target,
+  documentKey,
+  generation,
+}) {
+  const control = closestSourceElement(
+    sourceIndex,
+    target,
+    (candidate) => indexedHandlerDescriptor(candidate),
+  );
+  if (
+    !control
+    || !sourceAttributeIsAbsent(control, "disabled")
+    || !sourceAriaBooleanIsAbsentOrFalse(control, "aria-disabled")
+    || !sourceAttributeIsAbsent(control, "aria-haspopup")
+    || !sourceAttributeIsAbsent(control, "popovertarget")
+    || sourceAncestors(sourceIndex, control).some(
+      (ancestor) => ancestor.tagName === "form",
+    )
+  ) return null;
+  const descriptor = indexedHandlerDescriptor(control);
+  const controlParent = sourceParent(sourceIndex, control);
+  if (!descriptor || !controlParent) return null;
+
+  const controls = controlParent.childElementIds
+    .map((nodeId) => sourceIndex.byNodeId.get(nodeId))
+    .filter((candidate) => candidate?.type === "element")
+    .filter((candidate) => indexedHandlerDescriptor(candidate));
+  if (
+    controls.length < 2
+    || controls.length > MAX_PRESENTATION_TAB_COUNT
+    || !controls.some((candidate) => candidate.nodeId === control.nodeId)
+    || controls.some((candidate) => (
+      candidate.tagName !== control.tagName
+      || !sourceAttributeIsAbsent(candidate, "disabled")
+      || !sourceAriaBooleanIsAbsentOrFalse(candidate, "aria-disabled")
+      || !sourceAttributeIsAbsent(candidate, "aria-haspopup")
+      || !sourceAttributeIsAbsent(candidate, "popovertarget")
+    ))
+  ) return null;
+
+  const descriptors = controls.map(indexedHandlerDescriptor);
+  const firstIndex = descriptors[0]?.index;
+  if (
+    ![0, 1].includes(firstIndex)
+    || descriptors.some((candidate, index) => (
+      !candidate
+      || candidate.handlerName !== descriptor.handlerName
+      || candidate.index !== firstIndex + index
+    ))
+  ) return null;
+
+  const controlStates = controls.map((candidate) => (
+    effectiveStateFor(sourceIndex, states, candidate)
+  ));
+  if (controlStates.some((state) => !state)) return null;
+  const controlSignatures = controls.map((candidate, index) => (
+    indexedTabBaseSignature(candidate, controlStates[index])
+  ));
+  if (
+    controlSignatures.some((signature) => !signature)
+    || new Set(controlSignatures).size !== 1
+  ) return null;
+  const selectedIndexes = controlStates.flatMap((state, index) => (
+    state.classTokens.includes(LEGACY_TAB_STATE_CLASS) ? [index] : []
+  ));
+  if (selectedIndexes.length !== 1) return null;
+
+  const controlIds = new Set(controls.map((candidate) => candidate.nodeId));
+  const lastControlEnd = Math.max(
+    ...controls.map((candidate) => candidate.range.endOffset),
+  );
+  const panelGroups = [];
+  for (const panelParent of sourceIndex.elements) {
+    if (
+      !relatedIndexedTabGroupParents(
+        sourceIndex,
+        controlParent,
+        panelParent,
+      )
+    ) continue;
+    const groups = new Map();
+    for (const nodeId of panelParent.childElementIds) {
+      if (controlIds.has(nodeId)) continue;
+      const candidate = sourceIndex.byNodeId.get(nodeId);
+      if (
+        candidate?.type !== "element"
+        || candidate.range.startOffset <= lastControlEnd
+        || !sourceContentExists(sourceIndex, candidate)
+        || indexedHandlerDescriptor(candidate)
+      ) continue;
+      const state = effectiveStateFor(sourceIndex, states, candidate);
+      if (!state) continue;
+      const signature = indexedTabBaseSignature(candidate, state);
+      if (!signature) continue;
+      const group = groups.get(signature) ?? [];
+      group.push({ candidate, state });
+      groups.set(signature, group);
+    }
+    for (const group of groups.values()) {
+      if (group.length !== controls.length) continue;
+      const visibleIndexes = group.flatMap(({ state }, index) => (
+        state.classTokens.includes(LEGACY_TAB_STATE_CLASS) ? [index] : []
+      ));
+      if (
+        visibleIndexes.length !== 1
+        || visibleIndexes[0] !== selectedIndexes[0]
+      ) continue;
+      panelGroups.push(group);
+    }
+  }
+  if (panelGroups.length !== 1) return null;
+
+  const panels = panelGroups[0];
+  const targetIndex = controls.findIndex(
+    (candidate) => candidate.nodeId === control.nodeId,
+  );
+  const isCurrent = selectedIndexes[0] === targetIndex;
+  if (!isCurrent) {
+    controls.forEach((candidate, index) => {
+      states.set(sourceElementKey(candidate), {
+        ...controlStates[index],
+        classTokens: [
+          ...classTokensWithoutIndexedTabState(controlStates[index]),
+          ...(index === targetIndex ? [LEGACY_TAB_STATE_CLASS] : []),
+        ],
+      });
+    });
+    panels.forEach(({ candidate, state }, index) => {
+      states.set(sourceElementKey(candidate), {
+        ...state,
+        classTokens: [
+          ...classTokensWithoutIndexedTabState(state),
+          ...(index === targetIndex ? [LEGACY_TAB_STATE_CLASS] : []),
+        ],
+      });
+    });
+  }
+  const nextContext = contextFromPresentationStates({
+    sourceIndex,
+    states,
+    documentKey,
+    generation,
+  });
+  if (nextContext === undefined) return null;
+  return Object.freeze({
+    kind: "activate-tab",
+    label: isCurrent ? "当前页签" : "切换到此页签",
+    isCurrent,
+    nextContext,
+  });
+}
+
 function resolveDetailsAction({
   sourceIndex,
   states,
@@ -876,6 +1269,8 @@ export function createPagePresentationAction({
     generation: currentContext?.generation ?? generation,
   };
   return resolveTabAction(options)
+    ?? resolveDataLinkedTabAction(options)
+    ?? resolveIndexedHandlerTabAction(options)
     ?? resolveDetailsAction(options)
     ?? resolveDisclosureAction(options);
 }

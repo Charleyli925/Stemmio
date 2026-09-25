@@ -37,7 +37,7 @@ export type HtmlInteractionPreviewHandle = {
   reload: () => void;
 };
 
-type HtmlInteractionPreviewProps = {
+export type HtmlInteractionPreviewProps = {
   html: string;
   documentKey: string;
   sourcePath?: string;
@@ -51,7 +51,7 @@ type HtmlInteractionPreviewProps = {
    */
   comments?: readonly unknown[];
   onInteraction?: () => void;
-  onReady?: (sourceSha256: string | null) => void;
+  onReady?: (sourceSha256: string | null, failure?: "failed") => void;
   presentationCovered?: boolean;
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
@@ -88,7 +88,10 @@ const COMMENT_MEASURE_REQUEST_TYPE = "stemmio-preview-comment-measure-request";
 const COMMENT_LAYOUT_RESPONSE_TYPE = "stemmio-preview-comment-layout";
 const SCROLL_REQUEST_TYPE = "stemmio-preview-scroll-request";
 const SCROLL_EVENT_TYPE = "stemmio-preview-scroll";
+const VISUAL_READY_REQUEST_TYPE = "stemmio-preview-visual-ready-request";
+const VISUAL_READY_RESPONSE_TYPE = "stemmio-preview-visual-ready-response";
 const CAPTURE_TIMEOUT_MS = 1_200;
+const VISUAL_READY_TIMEOUT_MS = 900;
 const MAX_CAPTURED_ELEMENTS = 512;
 const INDEPENDENT_PREVIEW_SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads";
@@ -114,6 +117,8 @@ function previewBootstrapJavaScript({
     commentLayoutType: COMMENT_LAYOUT_RESPONSE_TYPE,
     scrollRequestType: SCROLL_REQUEST_TYPE,
     scrollEventType: SCROLL_EVENT_TYPE,
+    visualReadyRequestType: VISUAL_READY_REQUEST_TYPE,
+    visualReadyResponseType: VISUAL_READY_RESPONSE_TYPE,
     maxElements: MAX_CAPTURED_ELEMENTS,
     maxCommentTargets: MAX_PREVIEW_COMMENT_GROUPS,
   }).replace(/</gu, "\\u003c");
@@ -208,6 +213,50 @@ function previewBootstrapJavaScript({
       requestId: payload.requestId,
       snapshot: capture(),
     }, "*");
+  });
+
+  // The outer iframe load event can precede the first composited content.
+  // Reply only after this document has reported a contentful paint and has
+  // passed through its own animation frames. Blank documents use a bounded
+  // fallback so Preview still opens.
+  window.addEventListener("message", (event) => {
+    const payload = event.data;
+    if (
+      event.source !== window.parent
+      || !payload
+      || payload.type !== config.visualReadyRequestType
+      || payload.channelToken !== config.channelToken
+      || typeof payload.requestId !== "string"
+    ) return;
+    let finished = false;
+    let observer = null;
+    let timeoutId = 0;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      observer?.disconnect();
+      window.clearTimeout(timeoutId);
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        window.setTimeout(() => window.parent.postMessage({
+          type: config.visualReadyResponseType,
+          channelToken: config.channelToken,
+          requestId: payload.requestId,
+        }, "*"), 0);
+      }));
+    };
+    if (performance.getEntriesByType("paint").some((entry) => entry.name === "first-contentful-paint")) {
+      finish();
+      return;
+    }
+    try {
+      observer = new PerformanceObserver((list) => {
+        if (list.getEntries().some((entry) => entry.name === "first-contentful-paint")) finish();
+      });
+      observer.observe({ type: "paint", buffered: true });
+    } catch {
+      // Older or restricted pages still receive the bounded fallback.
+    }
+    timeoutId = window.setTimeout(finish, 350);
   });
 
   window.addEventListener("message", (event) => {
@@ -448,6 +497,8 @@ const HtmlInteractionPreview = forwardRef<
   }, [onScrollTopChange]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const sessionGenerationRef = useRef(0);
+  const loadCompletionSequenceRef = useRef(0);
+  const visualReadyCleanupRef = useRef<(() => void) | null>(null);
   const [reloadRevision, setReloadRevision] = useState(0);
   const [desktopSession, setDesktopSession] = useState<DesktopPreviewSession | null>(null);
   const [frameReady, setFrameReady] = useState(false);
@@ -455,6 +506,8 @@ const HtmlInteractionPreview = forwardRef<
   const [commentLayouts, setCommentLayouts] = useState<PreviewCommentLayout[]>([]);
   const independentTransport = transport === "independent-url";
   const reload = useCallback(() => {
+    visualReadyCleanupRef.current?.();
+    loadCompletionSequenceRef.current += 1;
     setFrameReady(false);
     setLoadFailed(false);
     setCommentLayouts([]);
@@ -473,7 +526,10 @@ const HtmlInteractionPreview = forwardRef<
 
   useEffect(() => {
     onReady?.(null);
-    return () => onReady?.(null);
+    return () => {
+      visualReadyCleanupRef.current?.();
+      onReady?.(null);
+    };
   }, [onReady, prepared.sourceSha256]);
 
   // Comment markers are derived in this trusted host. The page receives only
@@ -543,7 +599,7 @@ const HtmlInteractionPreview = forwardRef<
     sessionGenerationRef.current += 1;
     if (!previewApi) {
       setLoadFailed(true);
-      onReady?.(null);
+      onReady?.(null, "failed");
       return undefined;
     }
     void previewApi.createSession({
@@ -560,7 +616,7 @@ const HtmlInteractionPreview = forwardRef<
     }).catch(() => {
       if (!cancelled) {
         setLoadFailed(true);
-        onReady?.(null);
+        onReady?.(null, "failed");
       }
     });
     return () => {
@@ -686,17 +742,78 @@ const HtmlInteractionPreview = forwardRef<
           sandbox={staticFallback ? "" : frameSandbox}
           allow="autoplay; clipboard-write; fullscreen; picture-in-picture"
           referrerPolicy="no-referrer"
-          onLoad={() => {
-            if (staticFallback) { onReady?.(prepared.sourceSha256); return; }
-            if (independentTransport && !desktopSession) return;
-            setFrameReady(true);
-            setLoadFailed(false);
-            onReady?.(prepared.sourceSha256);
+          onLoad={(event) => {
+            const loadedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== loadedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && loadedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
+            if (independentTransport && !desktopSession && !staticFallback) return;
+            visualReadyCleanupRef.current?.();
+            const sessionGeneration = sessionGenerationRef.current;
+            const loadSequence = ++loadCompletionSequenceRef.current;
+            let completed = false;
+            const finish = () => {
+              if (completed) return;
+              completed = true;
+              visualReadyCleanupRef.current?.();
+              window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+                if (
+                  !loadedFrame?.isConnected
+                  || iframeRef.current !== loadedFrame
+                  || sessionGenerationRef.current !== sessionGeneration
+                  || loadCompletionSequenceRef.current !== loadSequence
+                ) return;
+                setFrameReady(true);
+                // A failed desktop session may deliberately serve the
+                // script-disabled historical srcDoc. Keep that failure state
+                // until an explicit reload starts a fresh session.
+                if (!staticFallback) setLoadFailed(false);
+                onReady?.(prepared.sourceSha256);
+              }));
+            };
+            if (staticFallback || !loadedFrame?.contentWindow) {
+              finish();
+              return;
+            }
+            const frameWindow = loadedFrame.contentWindow;
+            const requestId = randomToken();
+            const handleVisualReady = (event: MessageEvent) => {
+              const payload = event.data;
+              if (
+                event.source !== frameWindow
+                || payload?.type !== VISUAL_READY_RESPONSE_TYPE
+                || payload.channelToken !== prepared.channelToken
+                || payload.requestId !== requestId
+              ) return;
+              finish();
+            };
+            window.addEventListener("message", handleVisualReady);
+            const timeoutId = window.setTimeout(finish, VISUAL_READY_TIMEOUT_MS);
+            visualReadyCleanupRef.current = () => {
+              window.removeEventListener("message", handleVisualReady);
+              window.clearTimeout(timeoutId);
+              visualReadyCleanupRef.current = null;
+            };
+            frameWindow.postMessage({
+              type: VISUAL_READY_REQUEST_TYPE,
+              channelToken: prepared.channelToken,
+              requestId,
+            }, "*");
           }}
-          onError={() => {
+          onError={(event) => {
+            const failedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== failedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && failedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
+            visualReadyCleanupRef.current?.();
+            loadCompletionSequenceRef.current += 1;
             setFrameReady(false);
             setLoadFailed(true);
-            onReady?.(null);
+            onReady?.(null, "failed");
           }}
         />
         {/*

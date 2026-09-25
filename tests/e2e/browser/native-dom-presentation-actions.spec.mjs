@@ -99,7 +99,7 @@ test("edit mode reveals semantic source content without running authored actions
   expect((await exportCurrentHtml(page)).equals(original)).toBe(true);
 });
 
-test("explicit data-linked tabs stay inert in edit mode without running scripts or changing bytes", async ({
+test("explicit data-linked tabs switch from the edit toolbar without running scripts or changing bytes", async ({
   page,
 }) => {
   const original = identifiedHtmlBuffer(fixtureBuffer("indexed-script-tabs.html"));
@@ -117,11 +117,11 @@ test("explicit data-linked tabs stay inert in edit mode without running scripts 
   await secondTab.click();
   await expect(firstPanel).toBeVisible();
   await expect(secondPanel).toBeHidden();
-  await expect(editor.getByRole("button", {
-    name: /^(?:切换到此页签|当前页签)$/u,
-  })).toHaveCount(0);
+  await editor.getByRole("button", { name: "切换到此页签" }).click();
+  await expect(firstPanel).toBeHidden();
+  await expect(secondPanel).toBeVisible();
 
-  await secondTab.click({ modifiers: ["Alt"] });
+  await frame.locator(caseSelector("indexed-tab-one")).click({ modifiers: ["Alt"] });
   await expect(firstPanel).toBeVisible();
   await expect(secondPanel).toBeHidden();
 
@@ -135,7 +135,7 @@ test("explicit data-linked tabs stay inert in edit mode without running scripts 
   expect((await exportCurrentHtml(page)).equals(original)).toBe(true);
 });
 
-test("constant-index onclick tabs stay inert in edit mode without executing their handler", async ({
+test("constant-index onclick tabs switch from the edit toolbar without executing their handler", async ({
   page,
 }) => {
   const original = identifiedHtmlBuffer(fixtureBuffer("onclick-indexed-tabs.html"));
@@ -154,16 +154,14 @@ test("constant-index onclick tabs stay inert in edit mode without executing thei
   await secondTab.click();
   await expect(firstPanel).toBeVisible();
   await expect(secondPanel).toBeHidden();
-  await expect(editor.getByRole("button", {
-    name: /^(?:切换到此页签|当前页签)$/u,
-  })).toHaveCount(0);
+  await editor.getByRole("button", { name: "切换到此页签" }).click();
+  await expect(firstPanel).toBeHidden();
+  await expect(secondPanel).toBeVisible();
 
   await fourthTab.click({ modifiers: ["Alt"] });
-  await expect(firstPanel).toBeVisible();
+  await expect(firstPanel).toBeHidden();
   await expect(secondPanel).toBeHidden();
-  await expect(editor.getByRole("button", {
-    name: /^(?:切换到此页签|当前页签)$/u,
-  })).toHaveCount(0);
+  await expect(frame.locator("#chart3")).toBeVisible();
 
   expect(await frame.evaluate(() => ({
     authorAction: document.documentElement.dataset.authorAction ?? null,

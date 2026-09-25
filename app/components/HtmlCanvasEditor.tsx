@@ -762,7 +762,10 @@ function rememberVisibleCanvasViewport({
   sourceIndex: SourceIndexValue | null;
   destination: { current: RuntimePresentationAnchor | null };
 }) {
-  if (!container?.getClientRects().length || !iframe) return;
+  // A retained outgoing Canvas is visible during Preview handoff but inert.
+  // Layout clamping can emit a stage scroll event while it is covered; that
+  // transient position must not replace the last editable reading anchor.
+  if (!container?.getClientRects().length || !iframe || container.closest("[inert]")) return;
   const next = captureRuntimePresentationAnchor({
     iframe,
     outerScrollElement: container.closest(".review-scroll-stage"),
@@ -8166,6 +8169,33 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       getRenderedFrameDocument: () => containerRef.current?.getAttribute("data-render-verified") === "true"
         ? iframeRef.current?.contentDocument || null
         : null,
+      getCurrentDisplayRuntime: () => {
+        const frameDocument = iframeRef.current?.contentDocument;
+        const source = frameSourceHtmlRef.current;
+        const sourceIndex = sourceIndexRef.current;
+        if (
+          !frameDocument
+          || containerRef.current?.getAttribute("data-render-verified") !== "true"
+          || renderedSourceHtmlRef.current !== source
+          || !sourceIndex
+          || renderedProjectionSha256Ref.current !== sourceIndex.sourceSha256
+          || runtimeCandidateRef.current
+          || runtimeRefreshPendingRef.current
+          || nativeEditNeedsReloadRef.current
+        ) return null;
+        const analysis = runtimeDocumentAnalysis(source);
+        const runtime = runtimeFrameRef.current;
+        if (runtime) {
+          if (
+            !runtime.settled
+            || runtime.elementGeneration !== frameLoadGenerationRef.current
+            || analysis.programIdentity !== runtime.grant.programIdentity
+          ) return null;
+          return { kind: "runtime", grant: runtime.grant };
+        }
+        if (analysis.unsupportedReason || analysis.executableScripts.length > 0) return null;
+        return { kind: "static", grant: null };
+      },
       isCurrentProjectionEditable: () => !readOnlyRef.current
         && !lockedRef.current
         && renderedSourceHtmlRef.current === frameSourceHtmlRef.current

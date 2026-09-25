@@ -3,6 +3,8 @@
 import {
   cloneElement,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   type ReactElement,
   type Ref,
@@ -21,6 +23,7 @@ export default function WorkbenchActiveDocumentCanvas({
   activeElement,
   activeReady,
   activeFailed,
+  retirePreviousTab,
   presentationVisible,
   failureMessage,
   onRetry,
@@ -32,6 +35,7 @@ export default function WorkbenchActiveDocumentCanvas({
   }> | null;
   activeReady: boolean;
   activeFailed: boolean;
+  retirePreviousTab: boolean;
   presentationVisible: boolean;
   failureMessage: string | null;
   onRetry(): void;
@@ -41,6 +45,12 @@ export default function WorkbenchActiveDocumentCanvas({
     sourceSha256: string | null;
     entryKey: string;
     element: NonNullable<typeof activeElement>;
+  } | null>(null);
+  const activeEntryRef = useRef<HTMLDivElement | null>(null);
+  const [lastVerifiedGeometry, setLastVerifiedGeometry] = useState<{
+    entryKey: string;
+    width: number;
+    height: number;
   } | null>(null);
   const [activation, setActivation] = useState({ tabId: activeTabId, ordinal: 0 });
   const currentActivation = activation.tabId === activeTabId
@@ -60,6 +70,10 @@ export default function WorkbenchActiveDocumentCanvas({
       entryKey: activeEntryKey,
       element: activeElement,
     });
+  } else if (retirePreviousTab && lastVerified && lastVerified.tabId !== activeTabId) {
+    // A ready Preview for the destination supersedes the prior document's
+    // Edit image. Do not resurrect that image on Preview -> Edit.
+    setLastVerified(null);
   }
   // Entry keys follow tab activations, preserving the mounted outgoing DOM.
   // Returning to A after starting B gets a distinct candidate key while the
@@ -71,6 +85,24 @@ export default function WorkbenchActiveDocumentCanvas({
     && presentationVisible
     ? lastVerified
     : null;
+  useLayoutEffect(() => {
+    const entry = activeEntryRef.current;
+    if (!entry || !activeReady || outgoing) return;
+    const measure = () => {
+      const bounds = entry.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      setLastVerifiedGeometry((current) => current?.entryKey === activeEntryKey
+        && current.width === bounds.width && current.height === bounds.height
+        ? current
+        : { entryKey: activeEntryKey, width: bounds.width, height: bounds.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(entry);
+    return () => observer.disconnect();
+  }, [activeEntryKey, activeReady, outgoing]);
+  const outgoingGeometry = outgoing?.entryKey === lastVerifiedGeometry?.entryKey
+    ? lastVerifiedGeometry : null;
   useEffect(() => {
     if (!activeTabId || !activeSourceSha256 || !activeElement) return;
     performance.mark("stemmio:runtime-hot:visible-ready", {
@@ -88,6 +120,10 @@ export default function WorkbenchActiveDocumentCanvas({
     >
       {outgoing ? <div
         className={styles.entry}
+        style={outgoingGeometry ? {
+          width: outgoingGeometry.width,
+          height: outgoingGeometry.height,
+        } : undefined}
         data-runtime-hot-active="false"
         data-outgoing-draft={outgoing.tabId}
         aria-hidden="true"
@@ -96,6 +132,7 @@ export default function WorkbenchActiveDocumentCanvas({
       >
         {cloneElement(outgoing.element, {
           ref: null,
+          height: outgoingGeometry?.height ?? outgoing.element.props.height,
           locked: true,
           readOnly: true,
           interactionMode: "processing",
@@ -120,6 +157,7 @@ export default function WorkbenchActiveDocumentCanvas({
         })}
       </div> : null}
       <div
+        ref={activeEntryRef}
         className={styles.entry}
         data-runtime-hot-active={outgoing ? "false" : "true"}
         data-handoff-candidate={outgoing ? "true" : undefined}
