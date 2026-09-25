@@ -645,6 +645,72 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
   }
 });
 
+test("a failed Preview target releases the prior page and a fresh retry loads the target", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("preview-failure-a.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "失败前页面 A")
+  ));
+  const projectB = createSourceFixture("preview-failure-b.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "重试目标页面 B")
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "preview-failure-a" });
+    const tabB = tabs.filter({ hasText: "preview-failure-b" });
+    const mode = page.getByRole("group", { name: "工作模式" });
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("失败前页面 A")).toBeVisible();
+
+    await launched.electronApp.evaluate(({ ipcMain }) => {
+      const channel = "html-preview:create-session";
+      const original = ipcMain._invokeHandlers?.get(channel);
+      if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
+      let failNext = true;
+      ipcMain.removeHandler(channel);
+      ipcMain.handle(channel, (event, payload) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("synthetic Preview creation failure");
+        }
+        return original(event, payload);
+      });
+    });
+    await tabB.click();
+    await expect(previewHost.getByRole("status")).toContainText("预览暂时无法显示");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
+    await expect(previewHost.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("失败前页面 A")).toHaveCount(0);
+    await expect(page.locator('.workbench-tab[data-selected="true"]'))
+      .not.toHaveAttribute("data-opening", "true");
+    await previewHost.getByRole("button", { name: "重试打开" }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
+      .getByText("重试目标页面 B")).toBeVisible();
+    await expect(previewHost.getByRole("status")).toHaveCount(0);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron stages a saved Preview mode before the tab page is revealed", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

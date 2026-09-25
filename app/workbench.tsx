@@ -16,6 +16,7 @@ import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
 import AttachmentLightbox from "./components/AttachmentLightbox";
 import EditRuntimeStaticFallbackNotice from "./components/EditRuntimeStaticFallbackNotice";
 import HtmlCanvasEditor from "./components/HtmlCanvasEditor";
+import { sameRuntimeGrant } from "./components/html-canvas-frame.js";
 import type {
   HtmlCanvasEditRuntimeLoadOutcome,
   HtmlCanvasCommentLayoutTarget,
@@ -6154,22 +6155,54 @@ export default function Workbench() {
     && canvasAuthority.generation === canvasGeneration
     && canvasAuthority.renderedSha256 === sourceSha256
   );
-  // Canvas verification proves the source bytes, not the visible frame of a
-  // script-backed page. Keep the outgoing draft over the new static iframe
-  // until the exact document's disposable author runtime has appeared (or
-  // explicitly fallen back). Otherwise charts briefly vanish on tab change.
+  const displayProofKey = [
+    activeWorkbenchTab?.tabId ?? "",
+    projectId ?? "",
+    documentId ?? "",
+    sourceReceipt?.sessionIncarnation ?? "",
+    sourceReceipt?.sequence ?? "",
+    sourceSha256 ?? "",
+    canvasGeneration,
+    shellSnapshot?.workbenchNavigation?.transactionId
+      || shellSnapshot?.workbenchNavigation?.lastReceipt?.transactionId
+      || "",
+  ].join("\u0000");
+  const [physicalDisplayProof, setPhysicalDisplayProof] = useState<{
+    key: string;
+    evidence: NonNullable<ReturnType<HtmlCanvasEditorHandle["getCurrentDisplayRuntime"]>>;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!activeDocumentCanvasReady) return;
+    let frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      const evidence = editorRef.current?.getCurrentDisplayRuntime();
+      setPhysicalDisplayProof(evidence ? { key: displayProofKey, evidence } : null);
+    });
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [activeDocumentCanvasReady, displayProofKey, editRuntimePhase, editRuntimeSnapshot?.grant]);
+  const currentPhysicalDisplay = physicalDisplayProof?.key === displayProofKey
+    ? physicalDisplayProof.evidence : null;
+  // Canvas verification proves the latest source. The physical frame proof
+  // separately binds a retained author runtime to its settled grant and to
+  // the source's confirmed in-place projection. The grant keeps its original
+  // startup hash when a safe edit changes the source without rerunning scripts.
   const activeDocumentDisplayReady = Boolean(
     activeDocumentCanvasReady
-    && editRuntimeSnapshot?.sourceSha256 === sourceSha256
-    && editRuntimeSnapshot.canvasGeneration === canvasGeneration
+    && editRuntimeSnapshot?.canvasGeneration === canvasGeneration
     && (sourcePath
       ? sameLocalSourcePath(editRuntimeSnapshot.sourcePath, sourcePath)
       : !editRuntimeSnapshot.sourcePath)
     && (
-      editRuntimePhase === "settled"
-      || editRuntimePhase === "static-fallback"
+      (editRuntimePhase === "settled"
+        && currentPhysicalDisplay?.kind === "runtime"
+        && sameRuntimeGrant(currentPhysicalDisplay.grant, editRuntimeSnapshot.grant))
+      || (editRuntimePhase === "static-fallback"
+        && editRuntimeSnapshot.sourceSha256 === sourceSha256)
       || (editRuntimePhase === "static"
-        && editRuntimeSnapshot.lastOutcome === "not-candidate")
+        && editRuntimeSnapshot.lastOutcome === "not-candidate"
+        && currentPhysicalDisplay?.kind === "static")
     )
   );
   const activeDocumentCanvasFailed = Boolean(

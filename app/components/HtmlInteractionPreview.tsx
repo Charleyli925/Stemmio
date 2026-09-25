@@ -742,10 +742,15 @@ const HtmlInteractionPreview = forwardRef<
           sandbox={staticFallback ? "" : frameSandbox}
           allow="autoplay; clipboard-write; fullscreen; picture-in-picture"
           referrerPolicy="no-referrer"
-          onLoad={() => {
+          onLoad={(event) => {
+            const loadedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== loadedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && loadedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
             if (independentTransport && !desktopSession) return;
             visualReadyCleanupRef.current?.();
-            const loadedFrame = iframeRef.current;
             const sessionGeneration = sessionGenerationRef.current;
             const loadSequence = ++loadCompletionSequenceRef.current;
             let completed = false;
@@ -794,7 +799,13 @@ const HtmlInteractionPreview = forwardRef<
               requestId,
             }, "*");
           }}
-          onError={() => {
+          onError={(event) => {
+            const failedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== failedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && failedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
             visualReadyCleanupRef.current?.();
             loadCompletionSequenceRef.current += 1;
             setFrameReady(false);

@@ -5687,6 +5687,82 @@ test("unsupported Script programs enter an explicit static Edit state", async ()
   });
 });
 
+for (const scenario of ["static", "scripted", "unsupported-script"]) {
+  test(`ordinary edits keep the ${scenario} current draft usable after Preview`, {
+    tag: ["@gate-smoke", "@smoke-editing", "@smoke-project-lifecycle"],
+  }, async () => {
+    test.setTimeout(120_000);
+    const program = scenario === "scripted"
+      ? `<script>window.__modeContinuityStarts = (window.__modeContinuityStarts || 0) + 1;
+          document.body.dataset.authorStarts = String(window.__modeContinuityStarts);</script>`
+      : scenario === "unsupported-script"
+        ? `<script type="module">import { marker } from './unsupported-module.js';
+            document.body.dataset.authorStarts = marker;</script>`
+        : "";
+    const originalHtml = `<!doctype html><html><head><title>Mode continuity ${scenario}</title></head><body>
+      <main><p data-native-case="mode-continuity">Alpha</p></main>${program}</body></html>`;
+    await withRuntimeProject(`stemmio-mode-continuity-${scenario}-`, {
+      "runtime-report.html": originalHtml,
+      ...(scenario === "unsupported-script" ? {
+        "unsupported-module.js": "export const marker = 'unexpected';",
+      } : {}),
+    }, async ({ page, sourcePath }) => {
+      const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+      const editor = page.getByTestId("html-canvas-editor").filter({ visible: true }).first();
+      let frame = (await loadedDiskFrame(page, sourcePath, "mode-continuity")).frame;
+      const physicalDocument = await documentToken(frame);
+      const expectedPhase = scenario === "scripted" ? "settled"
+        : scenario === "unsupported-script" ? "static-fallback" : "static";
+      const editSurface = page.locator(".canvas-edit-surface");
+      await expect(editSurface).toHaveAttribute("data-edit-runtime-phase", expectedPhase);
+      if (scenario === "scripted") {
+        await expect(frame.locator("body")).toHaveAttribute("data-author-starts", "1");
+      }
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", 0, "Alpha".length);
+      await page.keyboard.insertText("Beta");
+      await page.locator(".comments-panel.comment-rail").click({ position: { x: 4, y: 4 } });
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toContain("Beta");
+      await expect(editor).toHaveAttribute("data-render-verified", "true");
+      frame = await currentEditorFrame(page);
+      expect(await documentToken(frame)).toBe(physicalDocument);
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", 0, "Beta".length);
+      await editor.getByRole("button", { name: "加粗", exact: true }).click();
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toMatch(/font-weight:\s*700/u);
+      expect(await documentToken(await currentEditorFrame(page))).toBe(physicalDocument);
+
+      const mode = page.getByRole("group", { name: "工作模式" });
+      await mode.getByRole("button", { name: "预览", exact: true }).click();
+      await expect(page.getByTestId("workbench-active-preview"))
+        .toHaveAttribute("data-preview-ready", "true");
+      await mode.getByRole("button", { name: "编辑", exact: true }).click();
+      await expect(page.getByTestId("workbench-active-preview")).toHaveCount(0);
+      await expect(page.locator('.workbench-tab[data-selected="true"]'))
+        .not.toHaveAttribute("data-opening", "true");
+      await expect(page.locator("[data-outgoing-draft]")).toHaveCount(0);
+      await expect(editor).toHaveAttribute("data-render-verified", "true");
+      await expect(editor).toHaveAttribute("aria-readonly", "false");
+      frame = await currentEditorFrame(page);
+      expect(await documentToken(frame)).toBe(physicalDocument);
+      if (scenario === "scripted") {
+        await expect(frame.locator("body")).toHaveAttribute("data-author-starts", "1");
+      }
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", "Beta".length);
+      await page.keyboard.insertText(" again");
+      await page.keyboard.press(keyShortcut("S"));
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toContain("Beta again");
+    });
+  });
+}
+
 test("static fallback can reload dynamic content and dismiss itself after success", async ({}, testInfo) => {
   const html = `<!doctype html>
 <html><head><title>Runtime retry</title></head><body>

@@ -49,10 +49,12 @@ export default function WorkbenchActivePreview({
     observer.observe(host);
     return () => observer.disconnect();
   }, [carryForEdit]);
-  if (activeReady && lastVerified?.identity !== identity) {
+  if (activeFailed && lastVerified) {
+    setLastVerified(null);
+  } else if (activeReady && lastVerified?.identity !== identity) {
     setLastVerified({ identity, element: activeElement });
   }
-  const outgoing = lastVerified?.identity !== identity && !activeReady
+  const outgoing = lastVerified?.identity !== identity && !activeReady && !activeFailed
     ? lastVerified
     : null;
 

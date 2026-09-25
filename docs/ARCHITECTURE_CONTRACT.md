@@ -979,9 +979,11 @@ document cache immediately. Unmounting the Review workspace then releases its
 paired preview sessions and iframes. Settled Workbench has exactly one active
 Edit Canvas; script refresh stays inside that editor's bounded A/B Runtime
 slots. During a current-draft switch, Workbench may briefly retain the prior
-Canvas as an inert, callback-free visual surface while the incoming final Canvas
-verifies exact generation and source SHA. Verification releases the old surface
-and reveals the new one in the same commit; failure reveals a retryable error.
+  Canvas as an inert, callback-free visual surface while the incoming final Canvas
+  verifies exact generation and latest source SHA, and its physical frame proves
+  a settled runtime or script-free static result. A safely projected edit may
+  retain the runtime's original startup SHA. Verification releases the old surface
+  and reveals the new one in the same commit; failure reveals a retryable error.
 Inactive document tabs retain only bounded data projections and never retain an
 editor or Runtime DOM. Normal tab switches do not mount a static display cover;
 only the explicit E2E diagnostic opt-in may do so.
