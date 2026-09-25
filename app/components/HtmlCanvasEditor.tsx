@@ -1061,6 +1061,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   {
     html,
     sourceReceipt,
+    diagnosticActivationId,
     semanticRevision = 0,
     onChange,
     onSelect,
@@ -1111,6 +1112,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const runtimeSlotARef = useRef<HTMLIFrameElement | null>(null);
   const runtimeSlotBRef = useRef<HTMLIFrameElement | null>(null);
+  const createdEditFramesRef = useRef<WeakSet<HTMLIFrameElement>>(new WeakSet());
   const hoverHintMeasureRef = useRef<HTMLDivElement>(null);
   const selectionChromeProjectionRef = useRef<SelectionChromeProjection | null>(null);
   const pagePresentationActionCacheRef = useRef<PagePresentationActionCache | null>(null);
@@ -2070,9 +2072,18 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       sourceRevision,
       kind,
     });
+    performance.mark("stemmio:edit-canvas:candidate-create", {
+      detail: Object.freeze({
+        attemptId: identity.candidateId,
+        activationId: diagnosticActivationId,
+        targetType: "edit-canvas",
+        actionReason: kind === "static-disabled" ? "static-fallback" : "runtime-candidate",
+        generation,
+      }),
+    });
     syncRuntimeCandidateDiagnostics();
     return identity;
-  }, [syncRuntimeCandidateDiagnostics]);
+  }, [diagnosticActivationId, syncRuntimeCandidateDiagnostics]);
 
   const endRuntimeNativeEdit = useCallback(() => {
     runtimeFrameCoordinatorRef.current!.endNativeEdit();
@@ -2902,6 +2913,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
             const status = detail.status;
             const authorErrorCount = detail.authorErrorCount;
             const resourceFailureCount = detail.resourceFailureCount;
+            const attemptedScriptCount = detail.attemptedScriptCount;
             const elapsedMs = detail.elapsedMs;
             if (
               ![
@@ -2915,6 +2927,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
               || !Number.isSafeInteger(resourceFailureCount)
               || Number(resourceFailureCount) < 0
               || Number(resourceFailureCount) > 10_000
+              || !Number.isSafeInteger(attemptedScriptCount)
+              || Number(attemptedScriptCount) < 0
+              || Number(attemptedScriptCount) > 10_000
               || !Number.isSafeInteger(elapsedMs)
               || Number(elapsedMs) < 0
               || (status === "activation-ready"
@@ -2937,6 +2952,18 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
               String(resourceFailureCount),
             );
             containerRef.current?.setAttribute("data-runtime-activation-ms", String(elapsedMs));
+            performance.mark("stemmio:edit-runtime:author-scripts", {
+              detail: Object.freeze({
+                attemptId: candidate.attempt.candidateId,
+                activationId: diagnosticActivationId,
+                runtimeSessionId: runtimeFrame.grant.sessionId,
+                targetType: "edit-runtime",
+                actionReason: candidate.attempt.kind,
+                attemptedScriptCount: Number(attemptedScriptCount),
+                outcome: String(status),
+                elapsedMs: Number(elapsedMs),
+              }),
+            });
             const activationExceededBudget = Number(elapsedMs)
               >= EDIT_AUTHOR_RUNTIME_BUDGET.runtimeDeadlineMs;
             if (activationExceededBudget) {
@@ -10988,6 +11015,17 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       <iframe
         key={`runtime-slot-${slotId}`}
         ref={(node) => {
+          if (node && !createdEditFramesRef.current.has(node)) {
+            createdEditFramesRef.current.add(node);
+            performance.mark("stemmio:edit-canvas:iframe-create", {
+              detail: Object.freeze({
+                activationId: diagnosticActivationId,
+                targetType: "edit-canvas",
+                actionReason: "editor-mount",
+                slotId,
+              }),
+            });
+          }
           if (slotId === "a") runtimeSlotARef.current = node;
           else runtimeSlotBRef.current = node;
           if (node && isActive) iframeRef.current = node;

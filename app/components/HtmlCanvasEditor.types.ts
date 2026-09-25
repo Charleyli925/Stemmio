@@ -358,6 +358,8 @@ export type HtmlCanvasEditorProps = {
   html: string;
   /** Source-owner receipt for this exact HTML projection. */
   sourceReceipt: DocumentSourceReceipt | null;
+  /** Opaque, in-memory tab activation identifier for performance marks only. */
+  diagnosticActivationId?: string;
   /** Host-owned edit revision used as the semantic operation base revision. */
   semanticRevision?: number;
   /** Called with the exact next source; returns the source-owner receipt synchronously. */

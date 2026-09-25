@@ -1,6 +1,6 @@
 "use client";
 
-import { cloneElement, useLayoutEffect, useRef, useState, type ReactElement, type Ref } from "react";
+import { cloneElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type Ref } from "react";
 
 import type {
   HtmlInteractionPreviewHandle,
@@ -18,6 +18,9 @@ export default function WorkbenchActivePreview({
   activeElement,
   activeReady,
   activeFailed,
+  activeOutcome,
+  activeDegradationReason,
+  activeAttemptId,
   carryForEdit,
   onRetry,
 }: {
@@ -25,10 +28,13 @@ export default function WorkbenchActivePreview({
   activeElement: PreviewElement;
   activeReady: boolean;
   activeFailed: boolean;
+  activeOutcome?: "verified" | "degraded" | "failed";
+  activeDegradationReason?: "paint-timeout" | "host-timeout" | "history-static";
+  activeAttemptId?: string;
   carryForEdit: boolean;
   onRetry(): void;
 }) {
-  const [lastVerified, setLastVerified] = useState<{
+  const [lastDisplayed, setLastDisplayed] = useState<{
     identity: string;
     element: PreviewElement;
   } | null>(null);
@@ -49,14 +55,35 @@ export default function WorkbenchActivePreview({
     observer.observe(host);
     return () => observer.disconnect();
   }, [carryForEdit]);
-  if (activeFailed && lastVerified) {
-    setLastVerified(null);
-  } else if (activeReady && lastVerified?.identity !== identity) {
-    setLastVerified({ identity, element: activeElement });
+  if (activeFailed && lastDisplayed) {
+    setLastDisplayed(null);
+  } else if (activeReady && lastDisplayed?.identity !== identity) {
+    setLastDisplayed({ identity, element: activeElement });
   }
-  const outgoing = lastVerified?.identity !== identity && !activeReady && !activeFailed
-    ? lastVerified
+  const outgoing = lastDisplayed?.identity !== identity && !activeReady && !activeFailed
+    ? lastDisplayed
     : null;
+  const hadOutgoingRef = useRef(false);
+  const lastHandoffAttemptRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (outgoing) {
+      hadOutgoingRef.current = true;
+      return;
+    }
+    if (!activeAttemptId || (!activeReady && !activeFailed)) return;
+    if (lastHandoffAttemptRef.current !== activeAttemptId && activeReady) {
+      lastHandoffAttemptRef.current = activeAttemptId;
+      performance.mark("stemmio:preview:display-handoff", {
+        detail: Object.freeze({ attemptId: activeAttemptId, outcome: activeOutcome }),
+      });
+    }
+    if (hadOutgoingRef.current) {
+      hadOutgoingRef.current = false;
+      performance.mark("stemmio:preview:outgoing-release", {
+        detail: Object.freeze({ attemptId: activeAttemptId, outcome: activeOutcome }),
+      });
+    }
+  }, [activeAttemptId, activeFailed, activeOutcome, activeReady, outgoing]);
 
   return (
     <div
@@ -65,6 +92,8 @@ export default function WorkbenchActivePreview({
       style={carryForEdit && previewGeometry ? previewGeometry : undefined}
       data-testid="workbench-active-preview"
       data-preview-ready={activeReady ? "true" : "false"}
+      data-preview-outcome={activeOutcome}
+      data-preview-degradation={activeDegradationReason}
       data-outgoing-preview={outgoing ? "true" : undefined}
       data-preview-carry={carryForEdit ? "true" : undefined}
     >

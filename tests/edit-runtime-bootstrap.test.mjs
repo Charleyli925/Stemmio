@@ -43,6 +43,7 @@ test("disposable runtime bootstrap proves the parsed source set before author wo
   assert.match(source, /activation-ready/u);
   assert.match(source, /authorErrorCount/u);
   assert.match(source, /resourceFailureCount/u);
+  assert.match(source, /attemptedScriptCount/u);
   assert.match(source, /elapsedMs/u);
   assert.match(source, /activationReported/u);
   assert.match(source, /activateAuthorScripts\(asyncSettlements\)/u);
