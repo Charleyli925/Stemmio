@@ -112,7 +112,10 @@ source or be reconciled node by node.
 - Inactive tabs retain no Edit page, Runtime DOM or static tab display; only the
   selected document owns the single active Canvas. Switching away discards the
   page and revokes its resource session; returning prepares a fresh closure and
-  runs a fresh disposable page.
+  runs a fresh disposable page when Edit is the requested mode. A document
+  restored directly into Preview leaves its Edit preparation pending until
+  the user actually enters Edit; Preview's independent session never needs
+  that Edit resource grant.
   Runtime preparing does not unmount the active `HtmlCanvasEditor` or replace
   it with an outer static Surface. Replacing authoritative HTML (adopted
   Version, disk reload, history, first open) writes Active as a static

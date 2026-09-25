@@ -577,6 +577,53 @@ test("Electron Preview opens the selected draft while unrelated Canvas work cont
   }
 });
 
+test("Electron defers cold Edit Runtime preparation while restoring a Preview-only tab", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("preview-only-source.html");
+  const projectB = createSourceFixture("preview-only-script.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewOnlyBoot = "ready";</script></body>',
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    await tabs.filter({ hasText: "preview-only-source" }).click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    const preparesBefore = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length);
+    await tabs.filter({ hasText: "preview-only-script" }).click();
+    await expect(mode.getByRole("button", { name: "预览", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length)).toBe(preparesBefore);
+    await mode.getByRole("button", { name: "编辑", exact: true }).click();
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length)).toBeGreaterThan(preparesBefore);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("Electron keeps a verified page visible while Preview loads and across Preview tabs", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

@@ -3950,3 +3950,9 @@ DESIGN CORRECTION. 用户补充截图及实际操作表明，上段的 DOM 就�
 DESIGN CHANGE / FLOW AUDIT. 原有编辑与预览模式控件、加载反馈和失败重试位置保持一致；本次核对的是切换后的真实页面身份、就绪时机与交互权限。合成 Electron 走 Preview→Edit→Preview，验证同一物理 iframe 和脚本启动标记、零新增 Preview 会话，编辑返回后画布可操作；显式刷新、源码修改、隐藏超过 3 秒及 Main 资源会话撤销分别验证新加载和新回执。完整任务门禁 8/8 步骤通过，含 Browser 选中测试、Electron 129/129 和 AI 18/18。另以 8 份真实 HTML 的隔离副本逐一运行相同快速往返，8/8 得到 verified 显示并复用，原文件哈希均不变；此项是聚焦复用验收，不代替完整私有 HTML 场景矩阵。
 
 Result: passed for the scoped source-build Electron flow. 查询 Main 会话后到实际交接之间仍存在极短的并发撤销窗口；后续资源请求保持原有失败关闭行为。未验证安装包或长期跨标签保留。
+
+## 2026-09-26 — 仅进入预览时延后编辑运行态准备
+
+DESIGN CHANGE / FLOW AUDIT. 用同一组静态 A／脚本 B 合成夹具、同一 Electron 环境，先打开 B 并保存 Preview 模式，再回 A，随后直接切回 B Preview 和进入 Edit。修复前回到 B Preview 的 `Edit Runtime prepare-start` 增加 1 次；新增回归在修复前实际失败（3→4）。修复后连续三个独立运行在 Preview 阶段均增加 0 次，真正进入 Edit 后均增加 1 次且作者脚本执行 1 次；Preview 会话均增加 1 次，编辑 iframe 均增加 2 次，与基线一致。受限于跨进程采样和窗口调度，Preview 可交互耗时的三次范围从 294–298ms 变为 191–300ms，进程工作集峰值从约 1088–1100MB 变为 1088–1115MB；这组样本只支持“少一次无用准备”，不证明耗时或内存明显改善。临时性能夹具已移除，正式回归保留用户路径和次数断言。
+
+Result: passed for the scoped synthetic Electron flow. `task:finish` 的 9/9 步骤通过，含 Electron 130/130 与 AI 18/18。另用指定真实 HTML 语料的 8 份隔离副本逐一验证已保存 Preview 标签的返回、零新增 Edit Runtime 准备、再进入可写 Edit，8/8 通过；原件及副本的初始 HTML 哈希不变，导入后的受管理工作副本在模式往返期间也不变。官方只读能力预检覆盖全部 8 份原件，结果为 4 `PENDING_REVIEW`、4 `DISCOVERY_ERROR`（探针定位或超时），原件全部未变；因此定向验收不能被表述为完整私有场景矩阵通过。既有安全文字、样式、结构投影和过时导航的正确性仍由相关正式回归与任务门禁验证；跨标签长期保留、安装包与资源峰值优化不在本次结论内。
