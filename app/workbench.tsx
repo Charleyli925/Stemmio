@@ -341,6 +341,7 @@ type CanvasRenderAck = Readonly<{
   previewResult?: "verified" | "degraded" | "failed";
   degradationReason?: "paint-timeout" | "host-timeout" | "history-static";
   attemptId?: string;
+  sessionId?: string;
 }>;
 
 type CanvasRenderAcks = Readonly<Record<CanvasMode, CanvasRenderAck | null>>;
@@ -416,6 +417,9 @@ const EDIT_RUNTIME_PENDING_PHASES = new Set([
   "ready",
   "running",
 ]);
+// A Preview can stay physically mounted only for a quick same-document return.
+// Its authored timers and network activity continue while hidden.
+const PREVIEW_PARK_MS = 3_000;
 const INITIAL_COMMENT_SNAPSHOT: CommentSessionSnapshot<
   CommentItem,
   DirectEditEvent,
@@ -856,6 +860,17 @@ export default function Workbench() {
     }),
     { mode: "edit", previewEntryOrdinal: 0 },
   );
+  const [previewLease, setPreviewLease] = useState<{
+    sourceIdentity: string;
+    identity: string;
+    attemptId: string;
+    sessionId: string;
+    validated: boolean;
+  } | null>(null);
+  const [mountedPreviewIdentity, setMountedPreviewIdentity] = useState<string | null>(null);
+  const onPreviewPhysicalPresenceChange = useCallback((identity: string, mounted: boolean) => {
+    setMountedPreviewIdentity((current) => mounted ? identity : current === identity ? null : current);
+  }, []);
   const editSurfaceRef = useRef<HTMLDivElement | null>(null);
   const [editHandoffGeometry, setEditHandoffGeometry] = useState<{
     key: string;
@@ -2590,9 +2605,12 @@ export default function Workbench() {
     historyPreview?.versionId || "current",
     expectedPreviewSha256 || "history",
   ].join("\u0000");
-  // A returning tab or mode gets a fresh Preview session even when its source
-  // Hash matches a prior visit. An earlier ready ACK cannot uncover about:blank.
-  const previewIdentity = `${previewSourceIdentity}\u0000${previewEntryOrdinal}`;
+  // A click ordinal is an intent, not a physical iframe identity. Only the
+  // exact still-mounted Preview may reuse its earlier display acknowledgement.
+  const livePreviewLease = previewLease?.sourceIdentity === previewSourceIdentity
+    && mountedPreviewIdentity === previewLease.identity ? previewLease : null;
+  const previewIdentity = livePreviewLease?.identity
+    || `${previewSourceIdentity}\u0000${previewEntryOrdinal}`;
   const [previewTargetState, setPreviewTargetState] = useState<{
     identity: string;
     tabId: string | null;
@@ -2655,6 +2673,7 @@ export default function Workbench() {
         failed: result.status === "failed",
         previewResult: result.status,
         attemptId: result.attemptId,
+        ...(result.status === "verified" && result.sessionId ? { sessionId: result.sessionId } : {}),
         ...(result.status === "degraded" ? { degradationReason: result.reason } : {}),
       },
     }));
@@ -2665,12 +2684,53 @@ export default function Workbench() {
     && previewAck.identity === previewIdentity
     && previewAck.generation === canvasGeneration
     && (previewAck.previewResult === "verified" || previewAck.previewResult === "degraded")
+    && (displayedCanvasMode !== "preview" || !livePreviewLease || livePreviewLease.validated)
     && previewAck.sha256
     && (!expectedPreviewSha256 || previewAck.sha256 === expectedPreviewSha256)
   );
   const activePreviewFailed = Boolean(
     previewAck?.identity === previewIdentity && previewAck.previewResult === "failed"
   );
+  const previewLeaseEligible = Boolean(
+    sourcePath && documentRuntimeTabId
+    && activeWorkbenchTab?.kind === "document"
+    && !historyPreview && !externalSourcePreview
+    && !workbenchTabsSnapshot.pendingTabId
+    && !presentedReadyReviewSession && !pendingExit,
+  );
+  const verifiedPreviewAttemptId = previewAck?.attemptId;
+  if (previewLease && previewLease.sourceIdentity !== previewSourceIdentity) {
+    setPreviewLease(null);
+  } else if (displayedCanvasMode === "preview" && activePreviewReady
+    && previewAck?.previewResult === "verified"
+    && previewLeaseEligible && verifiedPreviewAttemptId && previewAck.sessionId
+    && mountedPreviewIdentity === previewIdentity
+    && (previewLease?.identity !== previewIdentity
+      || previewLease.attemptId !== verifiedPreviewAttemptId)) {
+    setPreviewLease({ sourceIdentity: previewSourceIdentity, identity: previewIdentity,
+      attemptId: verifiedPreviewAttemptId, sessionId: previewAck.sessionId, validated: true });
+  } else if (previewLease && displayedCanvasMode === "edit" && previewLease.validated) {
+    setPreviewLease({ ...previewLease, validated: false });
+  }
+  useEffect(() => {
+    if (displayedCanvasMode !== "preview" || !previewLeaseEligible
+      || !livePreviewLease || livePreviewLease.validated) return undefined;
+    let cancelled = false;
+    const { identity, attemptId, sessionId } = livePreviewLease;
+    const inspectSession = window.stemmioPreview?.inspectSession;
+    void Promise.resolve().then(() => inspectSession?.(sessionId) ?? { active: false }).then((result) => {
+      if (cancelled) return;
+      setPreviewLease((current) => current?.identity === identity && current.attemptId === attemptId
+        && current.sessionId === sessionId
+        ? result.active === true ? { ...current, validated: true } : null
+        : current);
+    }).catch(() => {
+      if (cancelled) return;
+      setPreviewLease((current) => current?.identity === identity && current.attemptId === attemptId
+        && current.sessionId === sessionId ? null : current);
+    });
+    return () => { cancelled = true; };
+  }, [displayedCanvasMode, livePreviewLease, previewLeaseEligible]);
   const activePageViewContext = (
     pageViewContext?.documentKey === pageViewDocumentKey
   ) ? pageViewContext : null;
@@ -6332,6 +6392,25 @@ export default function Workbench() {
       ...(historyPreview ? { historical: true } : {}) } },
   });
   const displayHandoff = displayHandoffState.decision;
+  const parkedPreviewLease = Boolean(
+    displayedCanvasMode === "edit"
+    && previewLeaseEligible
+    && livePreviewLease
+    && activePreviewReady
+    && previewAck?.attemptId === livePreviewLease.attemptId,
+  );
+  if (previewLease && displayedCanvasMode === "edit"
+    && (!previewLeaseEligible || activePreviewFailed || workbenchTabsSnapshot.pendingTabId)) {
+    setPreviewLease(null);
+  }
+  useEffect(() => {
+    if (!parkedPreviewLease || displayHandoff.phase !== "settled") return undefined;
+    const retainedIdentity = livePreviewLease?.identity;
+    const timer = window.setTimeout(() => {
+      setPreviewLease((current) => current?.identity === retainedIdentity ? null : current);
+    }, PREVIEW_PARK_MS);
+    return () => window.clearTimeout(timer);
+  }, [displayHandoff.phase, livePreviewLease?.identity, parkedPreviewLease]);
   // The destination's saved mode is known when navigation starts. Show that
   // selection before its new Preview session is mounted and finally painted.
   const headerPresentation = openingCanvasMode === "preview"
@@ -6352,7 +6431,8 @@ export default function Workbench() {
   // DocumentSession/Runtime acknowledgement to wait for and reuse Edit directly.
   const carryPreviewIntoEdit = displayHandoffState.roles.carryPreviewIntoEdit;
   const keepPreviewInEdit = carryPreviewIntoEdit
-    || (displayedCanvasMode === "edit" && displayHandoffState.preview.retain);
+    || (displayedCanvasMode === "edit" && displayHandoffState.preview.retain)
+    || parkedPreviewLease;
   const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
     ? editHandoffGeometry : null;
   const editPreviewUnderlay = displayHandoffState.roles.editPreviewUnderlay;
@@ -7013,9 +7093,11 @@ export default function Workbench() {
               activeAttemptId={previewAck?.identity === previewIdentity ? previewAck.attemptId : undefined}
               handoff={displayHandoffState.preview}
               onRetainedChange={(target) => displayHandoffState.reportRetained("preview", target)}
+              onPhysicalPresenceChange={onPreviewPhysicalPresenceChange}
               carryForEdit={keepPreviewInEdit}
+              parked={parkedPreviewLease && !carryPreviewIntoEdit && !displayHandoffState.preview.retain}
               onRetry={() => interactionPreviewRef.current?.reload()}
-              activeElement={previewSurfaceMounted ? <HtmlInteractionPreview
+              activeElement={previewSurfaceMounted || parkedPreviewLease ? <HtmlInteractionPreview
               key={`preview-authority-${previewIdentity}`}
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}

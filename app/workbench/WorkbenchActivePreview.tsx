@@ -25,7 +25,9 @@ export default function WorkbenchActivePreview({
   activeAttemptId,
   handoff,
   onRetainedChange,
+  onPhysicalPresenceChange,
   carryForEdit,
+  parked,
   onRetry,
 }: {
   identity: string;
@@ -37,7 +39,9 @@ export default function WorkbenchActivePreview({
   activeAttemptId?: string;
   handoff: DisplaySurfaceHandoffState;
   onRetainedChange(target: DisplayTarget | null): void;
+  onPhysicalPresenceChange(identity: string, mounted: boolean): void;
   carryForEdit: boolean;
+  parked: boolean;
   onRetry(): void;
 }) {
   const [lastDisplayed, setLastDisplayed] = useState<{
@@ -102,11 +106,18 @@ export default function WorkbenchActivePreview({
     && lastDisplayed?.identity === identity,
   );
   const outgoing = handoff.retain && !retainedActive && lastDisplayed
+    && lastDisplayed.identity !== identity
     ? lastDisplayed
     : null;
   const activeVisible = handoff.reveal || retainedActive;
   const activeInteractive = handoff.reveal && !carryForEdit;
   const activeContent = activeElement || (retainedActive ? lastDisplayed?.element : null);
+  const hasActiveContent = Boolean(activeContent);
+  useLayoutEffect(() => {
+    if (!hasActiveContent) return undefined;
+    onPhysicalPresenceChange(identity, true);
+    return () => onPhysicalPresenceChange(identity, false);
+  }, [hasActiveContent, identity, onPhysicalPresenceChange]);
   const hadOutgoingRef = useRef(false);
   const lastHandoffAttemptRef = useRef<string | null>(null);
   useEffect(() => {
@@ -133,7 +144,8 @@ export default function WorkbenchActivePreview({
     <div
       ref={hostRef}
       className={styles.host}
-      style={carryForEdit && previewGeometry ? previewGeometry : undefined}
+      style={parked ? { visibility: "hidden", pointerEvents: "none" }
+        : carryForEdit && previewGeometry ? previewGeometry : undefined}
       data-testid="workbench-active-preview"
       data-preview-ready={activeReady ? "true" : "false"}
       data-preview-outcome={activeOutcome}
@@ -145,6 +157,7 @@ export default function WorkbenchActivePreview({
           : "candidate"}
       data-outgoing-preview={outgoing ? "true" : undefined}
       data-preview-carry={carryForEdit ? "true" : undefined}
+      data-preview-parked={parked ? "true" : undefined}
     >
       {outgoing ? (
         <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>

@@ -613,6 +613,27 @@ test("a full preview session map evicts the least-recently-accessed idle session
   assert.notEqual(third.sessionId, second.sessionId);
 });
 
+test("preview inspection reports expiry and revocation without extending the resource lease", async () => {
+  let now = 1_000;
+  const controller = createPreviewProtocolController({
+    protocolApi: { handle() {} },
+    netFetch: async () => new Response("unreachable"),
+    now: () => now,
+    sessionTtlMs: 100,
+  });
+  const first = await controller.createSession({ html: "<p>first</p>", bootstrapJavaScript: "void 0;" });
+  now += 90;
+  assert.deepEqual(controller.inspectSession(first.sessionId), { active: true });
+  now += 11;
+  assert.deepEqual(controller.inspectSession(first.sessionId), { active: false });
+  assert.equal((await controller.handleRequest(new Request(first.url))).status, 404);
+  const second = await controller.createSession({ html: "<p>second</p>", bootstrapJavaScript: "void 0;" });
+  assert.deepEqual(controller.inspectSession(second.sessionId), { active: true });
+  controller.revokeSession(second.sessionId);
+  assert.deepEqual(controller.inspectSession(second.sessionId), { active: false });
+  assert.deepEqual(controller.inspectSession("invalid"), { active: false });
+});
+
 test("refreshing a preview session keeps its id and replaces declared sibling assets", async (t) => {
   const temporaryRoot = await mkdtemp(
     path.join(tmpdir(), "stemmio-preview-session-refresh-"),

@@ -116,6 +116,13 @@ export function registerProjectIpc({
     ),
   );
   ipcMain.handle(
+    PREVIEW_CHANNELS.inspectSession,
+    trustedProject(
+      handlers.inspectPreviewSession,
+      "preview_inspect_session",
+    ),
+  );
+  ipcMain.handle(
     EDIT_RUNTIME_CHANNELS.prepare,
     trustedProject(handlers.prepareEditAuthorRuntime, "edit_runtime_prepare"),
   );

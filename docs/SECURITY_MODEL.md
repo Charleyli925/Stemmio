@@ -95,6 +95,12 @@ Stemmio edits local files and renders user-controlled HTML, so its default polic
   exposed. The document response blocks `file:` resource loading and authored
   base URLs. The application renderer's CSP remains strict and the preview
   scheme does not receive `bypassCSP`.
+  The trusted application main frame may ask Main whether an exact preview
+  session ID is still active before reusing a briefly retained iframe. This
+  read-only result does not extend the session lifetime, expose its resource
+  manifest or grant an authored frame access to preview IPC. A missing or
+  expired session requires a new Preview attempt; resource requests continue
+  to enforce the same allowlist and containment checks.
 - Ordinary static Edit may use the same contained resource root for images,
   fonts, styles and media, but not for renderer or authored scripts:
   `stemmio-preview:` is absent from `script-src` and every source transition

@@ -355,6 +355,7 @@ const UI_PREFERENCE_CHANNELS = Object.freeze({
 const PREVIEW_CHANNELS = Object.freeze({
   createSession: "html-preview:create-session",
   revokeSession: "html-preview:revoke-session",
+  inspectSession: "html-preview:inspect-session",
 });
 const EDIT_RUNTIME_CHANNELS = Object.freeze({
   prepare: "html-edit-runtime:prepare",
@@ -4355,6 +4356,9 @@ function registerProjectIpc() {
       createPreviewSession,
       revokePreviewSession: (sessionId) => (
         ensurePreviewProtocolController().revokeSession(sessionId)
+      ),
+      inspectPreviewSession: (sessionId) => (
+        ensurePreviewProtocolController().inspectSession(sessionId)
       ),
       prepareEditAuthorRuntime,
       revokeEditAuthorRuntime,

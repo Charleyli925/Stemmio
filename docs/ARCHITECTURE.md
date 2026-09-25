@@ -90,6 +90,10 @@ the historical synthetic-spike decision.
   load completes, that session becomes a one-way, stricter-CSP scriptless
   fallback retaining only the owned bootstrap, then reloads the same frame;
   attempts after load leave the current document intact.
+  For a quick unchanged current-draft Preview→Edit→Preview return, Workbench may
+  retain that exact iframe for at most three seconds after Edit settles. Before
+  reuse, a narrow Main IPC checks that its volatile resource session is still
+  live; failed or unavailable inspection starts a fresh Preview attempt.
 - Preview-to-edit carries only a bounded `PageViewContext`: source-backed
   active/inactive class transitions and `hidden`, `open`, `aria-selected` or
   `aria-expanded` state. It never carries runtime DOM, pixels or table markup.

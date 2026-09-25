@@ -403,7 +403,7 @@ test("preload exposes the UI-preferences port during E2E launches", async () => 
   assert.equal(typeof uiPreferences.record, "function");
 });
 
-test("preload exposes only preview session creation and revocation", async () => {
+test("preload exposes narrow preview session creation, inspection and revocation", async () => {
   const calls = [];
   const { preview } = await loadPreloadApis(async (...args) => {
     calls.push(args);
@@ -413,6 +413,7 @@ test("preload exposes only preview session creation and revocation", async () =>
         url: "stemmio-preview://0123456789abcdef0123456789abcdef/index.html",
       });
     }
+    if (args[0] === "html-preview:inspect-session") return success({ active: true });
     return success({ revoked: true });
   });
   const payload = {
@@ -437,8 +438,17 @@ test("preload exposes only preview session creation and revocation", async () =>
     "html-preview:revoke-session",
     "0123456789abcdef0123456789abcdef",
   ]);
+  assert.deepEqual(
+    await preview.inspectSession("0123456789abcdef0123456789abcdef"),
+    { active: true },
+  );
+  assert.deepEqual(calls[2], [
+    "html-preview:inspect-session",
+    "0123456789abcdef0123456789abcdef",
+  ]);
   assert.deepEqual(Object.keys(preview).sort(), [
     "createSession",
+    "inspectSession",
     "revokeSession",
   ]);
 });
