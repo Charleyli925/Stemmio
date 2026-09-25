@@ -1546,6 +1546,10 @@ test("Electron restores the visible reading position and Preview mode after HTML
       .then(() => stage.evaluate((element) => element.scrollTop));
 
     await openRecentProject(launched.page, projectB.sourcePath);
+    const workbench = launched.page.locator("main.workbench");
+    await expect(workbench).toHaveAttribute("data-document-cache-max-entries", "1");
+    await expect(workbench).toHaveAttribute("data-document-cache-entry-count", "1");
+    await expect(workbench).toHaveAttribute("data-document-cache-cold-count", "1");
     const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     const tabA = tabs.filter({ hasText: "tab-reading-a" });
     const tabB = tabs.filter({ hasText: "tab-reading-b" });
