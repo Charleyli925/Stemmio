@@ -147,7 +147,9 @@ export default function WorkbenchActivePreview({
       data-preview-carry={carryForEdit ? "true" : undefined}
     >
       {outgoing ? (
-        <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>
+        // A refresh can retain the same document identity while replacing its
+        // physical iframe. Distinct sibling keys let React retire the old one.
+        <div className={styles.entry} aria-hidden="true" inert key={`outgoing:${outgoing.identity}`}>
           {cloneElement(outgoing.element, { ref: null })}
         </div>
       ) : null}
@@ -156,7 +158,7 @@ export default function WorkbenchActivePreview({
         data-handoff-candidate={activeVisible ? undefined : "true"}
         aria-hidden={activeInteractive ? undefined : true}
         inert={activeInteractive ? undefined : true}
-        key={identity}
+        key={`active:${identity}`}
       >
         {activeContent}
       </div>
