@@ -661,23 +661,341 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
     await mode.getByRole("button", { name: "编辑", exact: true }).click();
     await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
     blocking = true;
+    const settledSessionCreates = await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
     await mode.getByRole("button", { name: "预览", exact: true }).click();
-    await expect.poll(() => blockedRoutes.length > 0).toBe(true);
-    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
-    await expect(launched.page.locator(".canvas-edit-surface")).toBeVisible();
-    await expect(launched.page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
-    await expect(launched.page.frameLocator('iframe[title="HTML 可视化编辑画布"]')
-      .getByText("预览交接目标 B")).toBeVisible();
-    blocking = false;
-    blockedRoutes.splice(0).forEach((route) => route.release());
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(launched.page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("预览交接目标 B")).toBeVisible();
+    expect(blockedRoutes).toHaveLength(0);
+    expect(await launched.page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(settledSessionCreates);
   } finally {
     blockedRoutes.splice(0).forEach((route) => route.release());
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron reuses a live unchanged current-draft Preview across a quick mode roundtrip", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("preview-live-reuse.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewBoot = String(Math.random());</script></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    const frame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const boot = await frame.locator("body").getAttribute("data-preview-boot");
+    expect(boot).toBeTruthy();
+    const sessionCreates = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
+    expect(sessionCreates).toBe(1);
+
+    await edit.click();
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await expect(previewHost.locator('[inert] iframe[title="HTML 交互预览"]'))
+      .toHaveCount(1);
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    expect(await frame.locator("body").getAttribute("data-preview-boot")).toBe(boot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(sessionCreates);
+
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBeGreaterThan(sessionCreates);
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(sessionCreates + 1);
+    await expect.poll(() => frame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(boot);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    const refreshedBoot = await frame.locator("body").getAttribute("data-preview-boot");
+
+    const releasedBefore = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-released", "mark",
+    ).length);
+    await edit.click();
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(0, { timeout: 10_000 });
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-released", "mark",
+    ).length)).toBeGreaterThan(releasedBefore);
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    expect(await frame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(refreshedBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(sessionCreates + 2);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("a parked Preview cannot publish a late scroll receipt over the active reading position", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("preview-parked-scroll.html", (html) => html.replace(
+    "</body>",
+    '<section style="height:3200px">READING_TAIL</section></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const previewHost = page.getByTestId("workbench-active-preview");
+    const frame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const captureScroll = () => page.evaluate(() => {
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__ = null;
+      const receive = (event) => {
+        if (event.data?.type !== "stemmio-preview-scroll") return;
+        window.__STEMMIO_E2E_PREVIEW_SCROLL__ = event.data;
+        window.removeEventListener("message", receive);
+      };
+      window.addEventListener("message", receive);
+    });
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 1_200, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(1_100);
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(1_100);
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 1_250, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(1_200);
+
+    await edit.click();
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await page.evaluate(() => {
+      const iframe = document.querySelector('[data-preview-parked="true"] iframe[title="HTML 交互预览"]');
+      if (!iframe?.contentWindow || !window.__STEMMIO_E2E_PREVIEW_SCROLL__) {
+        throw new Error("The parked Preview and its valid scroll receipt must still exist.");
+      }
+      window.dispatchEvent(new MessageEvent("message", {
+        source: iframe.contentWindow,
+        data: { ...window.__STEMMIO_E2E_PREVIEW_SCROLL__, scrollTop: 300 },
+      }));
+    });
+    await expect(page.locator('iframe[title="HTML 交互预览"]'))
+      .toHaveCount(0, { timeout: 10_000 });
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(1_100);
+
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 600, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(500);
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(500);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("Electron replaces a retained Preview whose Main resource session was revoked", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("preview-session-expired.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewBoot = String(Math.random());</script></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    const frame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const firstBoot = await frame.locator("body").getAttribute("data-preview-boot");
+    const sessionUrl = await page.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
+    expect(sessionUrl).toBeTruthy();
+    const sessionId = new URL(sessionUrl).hostname;
+    const createdBefore = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
+    await edit.click();
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    expect(await page.evaluate(async (id) => window.stemmioPreview.revokeSession(id), sessionId))
+      .toEqual({ revoked: true });
+    await preview.click();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(createdBefore + 1);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => frame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(firstBoot);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("Electron invalidates a parked Preview when the current draft changes", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("preview-lease-edit.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewBoot = String(Math.random());</script></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await preview.click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    const previewFrame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const firstBoot = await previewFrame.locator("body").getAttribute("data-preview-boot");
+    const firstCreates = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
+    await edit.click();
+    const { frame } = await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 3);
+    await page.keyboard.insertText("LEASE_CHANGED");
+    await page.keyboard.press(keyShortcut("S"));
+    const workingCopyPath = await managedWorkingCopyPath(page, fixture.sourcePath);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("LEASE_CHANGED");
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(0);
+    await preview.click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => previewFrame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(firstBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(firstCreates + 1);
+    await expect(previewFrame.getByText("LEASE_CHANGED")).toBeVisible();
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("Electron does not reuse a parked Preview while an edited current draft waits for autosave", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("preview-lease-pending-save.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewBoot = String(Math.random());</script></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const routePattern = /\/autosave(?:\?|$)/u;
+  let releaseSave;
+  const saveBarrier = new Promise((resolve) => { releaseSave = resolve; });
+  let saveStarted;
+  const saving = new Promise((resolve) => { saveStarted = resolve; });
+  let saveFinished;
+  const saved = new Promise((resolve) => { saveFinished = resolve; });
+  const holdSave = async (route) => {
+    saveStarted();
+    await saveBarrier;
+    try {
+      await route.continue().catch(() => {});
+    } finally {
+      saveFinished();
+    }
+  };
+  try {
+    const page = launched.page;
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const { frame } = await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await preview.click();
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    const previewFrame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const firstBoot = await previewFrame.locator("body").getAttribute("data-preview-boot");
+    const firstCreates = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
+    await page.route(routePattern, holdSave);
+    await edit.click();
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 3);
+    await page.keyboard.insertText("LEASE_UNSAVED");
+    await expect(previewHost.locator('[inert] iframe[title="HTML 交互预览"]'))
+      .toHaveCount(1);
+    await expect.poll(() => page.locator('main[data-edit-revision]').evaluate((element) => (
+      Number(element.getAttribute("data-edit-revision"))
+        - Number(element.getAttribute("data-persisted-revision"))
+    ))).toBeGreaterThan(0);
+    await preview.click();
+    await saving;
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(previewFrame.getByText("LEASE_UNSAVED")).toBeVisible();
+    expect(await previewFrame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(firstBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(firstCreates + 1);
+    const newBoot = await previewFrame.locator("body").getAttribute("data-preview-boot");
+    releaseSave();
+    await saved;
+    const workingCopyPath = await managedWorkingCopyPath(page, fixture.sourcePath);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath))
+      .toContain("LEASE_UNSAVED");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    expect(await previewFrame.locator("body").getAttribute("data-preview-boot"))
+      .toBe(newBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(firstCreates + 1);
+  } finally {
+    releaseSave();
+    await launched.page.unroute(routePattern, holdSave).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
   }
 });
 
@@ -2026,7 +2344,8 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await expect(selectedB).toHaveAccessibleName("sidebar-history-b · 历史 V5");
     await expect(importedProject.locator('[data-selected="true"] .sidebar-version-file'))
       .toHaveAccessibleName("V5，历史版本");
-    // The label can update while V3 remains as an inert outgoing page.
+    // The tab label may update while V3 remains as an inert outgoing page.
+    // Read V5 only after its Canvas takes over and that V3 iframe retires.
     await expect(previewHost).toHaveAttribute("data-display-handoff-role", "target");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");

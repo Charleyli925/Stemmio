@@ -41,7 +41,7 @@ export type HtmlInteractionPreviewHandle = {
 export type PreviewDisplayResult =
   | Readonly<{ status: "pending"; attemptId: string }>
   | Readonly<{ status: "cancelled"; attemptId: string }>
-  | Readonly<{ status: "verified"; attemptId: string; sourceSha256: string }>
+  | Readonly<{ status: "verified"; attemptId: string; sourceSha256: string; sessionId?: string }>
   | Readonly<{
     status: "degraded";
     attemptId: string;
@@ -95,6 +95,7 @@ type DesktopPreviewApi = {
     sessionId?: string;
   }) => Promise<DesktopPreviewSession>;
   revokeSession: (sessionId: string) => Promise<{ revoked: boolean }>;
+  inspectSession?: (sessionId: string) => Promise<{ active: boolean }>;
 };
 
 declare global {
@@ -517,7 +518,7 @@ const HtmlInteractionPreview = forwardRef<
 }, forwardedRef) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const onScrollTopChangeRef = useRef(onScrollTopChange);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onScrollTopChangeRef.current = onScrollTopChange;
   }, [onScrollTopChange]);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -894,7 +895,8 @@ const HtmlInteractionPreview = forwardRef<
                   ...(result === "verified" ? {} : { reason: result }),
                 });
                 onDisplayResult?.(result === "verified"
-                  ? { status: "verified", attemptId, sourceSha256: prepared.sourceSha256 }
+                  ? { status: "verified", attemptId, sourceSha256: prepared.sourceSha256,
+                    ...(desktopSession?.sessionId ? { sessionId: desktopSession.sessionId } : {}) }
                   : { status: "degraded", attemptId, sourceSha256: prepared.sourceSha256, reason: result });
               }));
             };

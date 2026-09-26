@@ -960,14 +960,16 @@ export class VersionWorkflow {
               this.#versionSession.restoreView(priorView);
               return stale(current);
             }
+            let openedAcknowledged = false;
             try {
               await this.#bridgeClient.confirmHistoryCreationOpened({
                 target: liveContext,
                 operationId: creation.operationId,
               });
-            } catch { /* The exact current Canvas is already usable; retry acknowledgement on restart. */ }
+              openedAcknowledged = true;
+            } catch { /* The exact current Canvas is usable; keep this operation retryable. */ }
             this.#setHistoryCreation({
-              phase: "opened",
+              phase: openedAcknowledged ? "opened" : "created",
               operationId: creation.operationId,
               context: current,
               result,
@@ -1416,8 +1418,10 @@ export class VersionWorkflow {
           await verifyCurrentCanvas();
           if (!this.#projectSession.matches(context) || generation !== this.#creationGeneration
             || this.#snapshot.navigation.phase !== "idle") return;
-          phase = "opened";
-          try { await this.#bridgeClient.confirmHistoryCreationOpened({ target: context, operationId }); } catch { /* The verified current Canvas is already usable. */ }
+          try {
+            await this.#bridgeClient.confirmHistoryCreationOpened({ target: context, operationId });
+            phase = "opened";
+          } catch { /* Keep the verified result retryable until its durable acknowledgement succeeds. */ }
         } catch { /* Keep the committed result available for explicit opening. */ }
       }
       if (!this.#projectSession.matches(context)) return;
@@ -1523,8 +1527,12 @@ export class VersionWorkflow {
       if (!this.#isNavigationActive(operation) || !this.#projectSession.matches(nextContext)) return stale(nextContext);
       // A lost opened acknowledgement cannot turn an already opened file into
       // another creation. The durable receipt remains queryable on restart.
-      try { await this.#bridgeClient.confirmHistoryCreationOpened({ target: nextContext, operationId }); } catch { /* Retry acknowledgement on the next explicit open. */ }
-      this.#setHistoryCreation({ phase: "opened", operationId, context: nextContext, result }, generation);
+      let openedAcknowledged = false;
+      try {
+        await this.#bridgeClient.confirmHistoryCreationOpened({ target: nextContext, operationId });
+        openedAcknowledged = true;
+      } catch { /* Keep the created result available for an exact retry. */ }
+      this.#setHistoryCreation({ phase: openedAcknowledged ? "opened" : "created", operationId, context: nextContext, result }, generation);
       this.#documentWorkflow.clearAudit();
       this.#documentWorkflow.clearRecovery(nextContext);
       this.#projectWorkflow.scheduleProjectListRefreshAfterSettlement(nextContext);

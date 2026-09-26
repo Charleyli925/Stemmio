@@ -86,6 +86,7 @@ const workbenchTabChannels = Object.freeze({
 const previewChannels = Object.freeze({
   createSession: "html-preview:create-session",
   revokeSession: "html-preview:revoke-session",
+  inspectSession: "html-preview:inspect-session",
 });
 const editRuntimeChannels = Object.freeze({
   prepare: "html-edit-runtime:prepare",
@@ -533,6 +534,7 @@ const previewApi = Object.freeze({
     previewChannels.revokeSession,
     sessionId,
   ),
+  inspectSession: (sessionId) => invokeProject(previewChannels.inspectSession, sessionId),
 });
 
 const editRuntimeApi = Object.freeze({

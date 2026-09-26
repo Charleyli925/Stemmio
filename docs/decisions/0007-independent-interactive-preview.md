@@ -26,11 +26,12 @@ The independent preview/session decision below remains active. The two-case
 Canvas/table visual handoff is retained here as historical context and is
 superseded by `0017-shared-runtime-snapshot-owner.md`.
 
-- Electron registers one standard, secure `pageroot-preview:` scheme before the
+- Electron registers one standard, secure `stemmio-preview:` scheme before the
   app is ready. The scheme does not bypass CSP.
 - The main process owns bounded, short-lived preview sessions. A trusted
-  application main frame may create or revoke a session through two narrow IPC
-  methods. Preview subframes receive no PageRoot preload API.
+  application main frame may create, inspect liveness of, or revoke a session
+  through narrow IPC methods. Inspection neither refreshes the expiry nor
+  returns a resource manifest. Preview subframes receive no Stemmio preload API.
 - A session serves prepared HTML, one fixed bootstrap script and a bounded
   manifest of declared relative script, style, image, font and media assets.
   The manifest follows safe CSS and module dependencies, but rejects dotfiles,
@@ -65,6 +66,11 @@ new mode or user step, and existing text editing, Selection and IME keep their
 current source/DOM assumptions. Script-rendered charts and empty authored table
 bodies remain visible for review in Edit, but are deliberately not selectable
 or editable.
+
+The current draft may keep its exact verified Preview iframe hidden for a
+three-second same-document return after Edit settles. Workbench checks the
+corresponding Main resource session before revealing it again and otherwise
+loads a new iframe. The old Preview never becomes an editing or saving source.
 
 Arbitrary runtime DOM, rewritten prose, SVG trees, form values and scroll state
 remain preview-only. Extending the projection beyond the two bounded,

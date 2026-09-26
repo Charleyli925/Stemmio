@@ -25,7 +25,9 @@ export default function WorkbenchActivePreview({
   activeAttemptId,
   handoff,
   onRetainedChange,
+  onPhysicalPresenceChange,
   carryForEdit,
+  parked,
   onRetry,
 }: {
   identity: string;
@@ -37,7 +39,9 @@ export default function WorkbenchActivePreview({
   activeAttemptId?: string;
   handoff: DisplaySurfaceHandoffState;
   onRetainedChange(target: DisplayTarget | null): void;
+  onPhysicalPresenceChange(identity: string, mounted: boolean): void;
   carryForEdit: boolean;
+  parked: boolean;
   onRetry(): void;
 }) {
   const [lastDisplayed, setLastDisplayed] = useState<{
@@ -102,11 +106,25 @@ export default function WorkbenchActivePreview({
     && lastDisplayed?.identity === identity,
   );
   const outgoing = handoff.retain && !retainedActive && lastDisplayed
+    && lastDisplayed.identity !== identity
     ? lastDisplayed
     : null;
   const activeVisible = handoff.reveal || retainedActive;
   const activeInteractive = handoff.reveal && !carryForEdit;
   const activeContent = activeElement || (retainedActive ? lastDisplayed?.element : null);
+  const hasActiveContent = Boolean(activeContent);
+  // A retained iframe may keep running, but only the revealed foreground
+  // instance may publish the tab's reading position.
+  const presentedContent = activeContent ? cloneElement(activeContent, {
+    onScrollTopChange: activeInteractive && !parked
+      ? activeContent.props.onScrollTopChange
+      : undefined,
+  }) : null;
+  useLayoutEffect(() => {
+    if (!hasActiveContent) return undefined;
+    onPhysicalPresenceChange(identity, true);
+    return () => onPhysicalPresenceChange(identity, false);
+  }, [hasActiveContent, identity, onPhysicalPresenceChange]);
   const hadOutgoingRef = useRef(false);
   const lastHandoffAttemptRef = useRef<string | null>(null);
   useEffect(() => {
@@ -133,7 +151,8 @@ export default function WorkbenchActivePreview({
     <div
       ref={hostRef}
       className={styles.host}
-      style={carryForEdit && previewGeometry ? previewGeometry : undefined}
+      style={parked ? { visibility: "hidden", pointerEvents: "none" }
+        : carryForEdit && previewGeometry ? previewGeometry : undefined}
       data-testid="workbench-active-preview"
       data-preview-ready={activeReady ? "true" : "false"}
       data-preview-outcome={activeOutcome}
@@ -145,12 +164,13 @@ export default function WorkbenchActivePreview({
           : "candidate"}
       data-outgoing-preview={outgoing ? "true" : undefined}
       data-preview-carry={carryForEdit ? "true" : undefined}
+      data-preview-parked={parked ? "true" : undefined}
     >
       {outgoing ? (
         // A refresh can retain the same document identity while replacing its
         // physical iframe. Distinct sibling keys let React retire the old one.
         <div className={styles.entry} aria-hidden="true" inert key={`outgoing:${outgoing.identity}`}>
-          {cloneElement(outgoing.element, { ref: null })}
+          {cloneElement(outgoing.element, { ref: null, onScrollTopChange: undefined })}
         </div>
       ) : null}
       <div
@@ -160,7 +180,7 @@ export default function WorkbenchActivePreview({
         inert={activeInteractive ? undefined : true}
         key={`active:${identity}`}
       >
-        {activeContent}
+        {presentedContent}
       </div>
       {activeFailed ? (
         <div className={styles.status} role="status">

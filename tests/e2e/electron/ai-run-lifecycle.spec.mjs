@@ -470,6 +470,9 @@ test("accepted source survives a display verification failure and repairs withou
     const sidebar = launched.page.getByTestId("ai-conversation-sidebar");
     const actions = sidebar.getByTestId("ai-conversation-action-bar");
     await expect(actions).toContainText("已采用，但页面需要恢复");
+    const stage = launched.page.locator(".review-scroll-stage");
+    await stage.evaluate((element) => { element.scrollTop = 800; });
+    await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeGreaterThan(750);
     await expect(actions).toBeInViewport({ ratio: 1 });
     await expect(actions.getByRole("button", { name: "重试恢复页面", exact: true })).toBeInViewport({ ratio: 1 });
     expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);
