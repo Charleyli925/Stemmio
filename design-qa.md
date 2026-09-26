@@ -3956,3 +3956,5 @@ Result: passed for the scoped source-build Electron flow. 查询 Main 会话后�
 DESIGN CORRECTION. 合并前审查发现 Edit 交接失败时，隐藏的 Preview 实例会绕过三秒释放计时；终止交接现在立即撤销复用资格并卸载旧 iframe，正常已就绪 Edit 的短时复用不变。显示决定测试覆盖 opening、settled、failed、closed 的保留资格。
 
 Ready CI 的完整 AI 通道暴露另一条可见问题：恢复卡片内容已出现，但画布所在外层容器滚动时，AI 侧栏跟着页面内容上移，卡片只有部分进入窗口。真实 Electron 几何记录显示侧栏顶部从 88px 移到 -712px，恢复卡片移到窗口上方；旧布局下主动滚动画布 800px 的回归用例明确失败。侧栏在原滚动容器中改为 sticky 后，同一用例重复 3 次均确认卡片和“重试恢复页面”按钮完整可见，点击后恢复链路继续完成。此证据来自 1440×960 的源码构建 Electron 窗口；最终完整门禁另行核对。
+
+最终审查又发现自动保存尚未确认时，旧 Preview 资格只绑定已保存 Hash；新增真实 Electron 回归在编辑已接受、保存请求被控制性延迟时，旧实现能收到新 iframe 的 verified 回执，却因继续核对旧 Hash 而让 Preview 保持 opening（旧代码定向失败）。现在以已接受编辑修订即时区分实例，并以工作 HTML Hash 核对当前画面；保存完成后同一新 iframe 和脚本启动标记不变。该回归与未修改的快速复用、已保存编辑失效用例在修改后合计 3/3 通过。最终任务门禁与 Ready 门禁须针对新的提交重新运行。

@@ -920,6 +920,85 @@ test("Electron invalidates a parked Preview when the current draft changes", {
   }
 });
 
+test("Electron does not reuse a parked Preview while an edited current draft waits for autosave", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("preview-lease-pending-save.html", (html) => html.replace(
+    "</body>",
+    '<script>document.body.dataset.previewBoot = String(Math.random());</script></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  const routePattern = /\/autosave(?:\?|$)/u;
+  let releaseSave;
+  const saveBarrier = new Promise((resolve) => { releaseSave = resolve; });
+  let saveStarted;
+  const saving = new Promise((resolve) => { saveStarted = resolve; });
+  let saveFinished;
+  const saved = new Promise((resolve) => { saveFinished = resolve; });
+  const holdSave = async (route) => {
+    saveStarted();
+    await saveBarrier;
+    try {
+      await route.continue().catch(() => {});
+    } finally {
+      saveFinished();
+    }
+  };
+  try {
+    const page = launched.page;
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const { frame } = await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await preview.click();
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    const previewFrame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const firstBoot = await previewFrame.locator("body").getAttribute("data-preview-boot");
+    const firstCreates = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length);
+    await page.route(routePattern, holdSave);
+    await edit.click();
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 3);
+    await page.keyboard.insertText("LEASE_UNSAVED");
+    await expect(previewHost.locator('[inert] iframe[title="HTML 交互预览"]'))
+      .toHaveCount(1);
+    await expect.poll(() => page.locator('main[data-edit-revision]').evaluate((element) => (
+      Number(element.getAttribute("data-edit-revision"))
+        - Number(element.getAttribute("data-persisted-revision"))
+    ))).toBeGreaterThan(0);
+    await preview.click();
+    await saving;
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(previewFrame.getByText("LEASE_UNSAVED")).toBeVisible();
+    expect(await previewFrame.locator("body").getAttribute("data-preview-boot"))
+      .not.toBe(firstBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(firstCreates + 1);
+    const newBoot = await previewFrame.locator("body").getAttribute("data-preview-boot");
+    releaseSave();
+    await saved;
+    const workingCopyPath = await managedWorkingCopyPath(page, fixture.sourcePath);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath))
+      .toContain("LEASE_UNSAVED");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    expect(await previewFrame.locator("body").getAttribute("data-preview-boot"))
+      .toBe(newBoot);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length)).toBe(firstCreates + 1);
+  } finally {
+    releaseSave();
+    await launched.page.unroute(routePattern, holdSave).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron retains the actual surface when a mode handoff is interrupted by another tab", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
