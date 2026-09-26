@@ -113,6 +113,13 @@ export default function WorkbenchActivePreview({
   const activeInteractive = handoff.reveal && !carryForEdit;
   const activeContent = activeElement || (retainedActive ? lastDisplayed?.element : null);
   const hasActiveContent = Boolean(activeContent);
+  // A retained iframe may keep running, but only the revealed foreground
+  // instance may publish the tab's reading position.
+  const presentedContent = activeContent ? cloneElement(activeContent, {
+    onScrollTopChange: activeInteractive && !parked
+      ? activeContent.props.onScrollTopChange
+      : undefined,
+  }) : null;
   useLayoutEffect(() => {
     if (!hasActiveContent) return undefined;
     onPhysicalPresenceChange(identity, true);
@@ -161,7 +168,7 @@ export default function WorkbenchActivePreview({
     >
       {outgoing ? (
         <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>
-          {cloneElement(outgoing.element, { ref: null })}
+          {cloneElement(outgoing.element, { ref: null, onScrollTopChange: undefined })}
         </div>
       ) : null}
       <div
@@ -171,7 +178,7 @@ export default function WorkbenchActivePreview({
         inert={activeInteractive ? undefined : true}
         key={identity}
       >
-        {activeContent}
+        {presentedContent}
       </div>
       {activeFailed ? (
         <div className={styles.status} role="status">

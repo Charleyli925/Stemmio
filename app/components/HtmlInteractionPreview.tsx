@@ -518,7 +518,7 @@ const HtmlInteractionPreview = forwardRef<
 }, forwardedRef) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const onScrollTopChangeRef = useRef(onScrollTopChange);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onScrollTopChangeRef.current = onScrollTopChange;
   }, [onScrollTopChange]);
   const viewportRef = useRef<HTMLDivElement>(null);
