@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { loadWorkbenchModel } from "./helpers/workbench-model-loader.mjs";
 
-const { decideDisplayHandoff } = await loadWorkbenchModel("display-handoff-decision");
+const { allowsPreviewLeaseRetention, decideDisplayHandoff } = await loadWorkbenchModel("display-handoff-decision");
 
 const editA = { surface: "edit", identity: "A:edit:1" };
 const editB = { surface: "edit", identity: "B:edit:1" };
@@ -62,6 +62,7 @@ test("Edit -> Preview -> Edit allows Preview to remain in front until Edit settl
   assert.equal(editOpening.phase, "opening");
   assert.deepEqual(editOpening.actual, previewA);
   assert.equal(editOpening.outgoingInteractive, false);
+  assert.equal(allowsPreviewLeaseRetention(editOpening), true);
 
   const editReady = decision({
     target: editA,
@@ -72,6 +73,7 @@ test("Edit -> Preview -> Edit allows Preview to remain in front until Edit settl
   assert.equal(editReady.phase, "settled");
   assert.deepEqual(editReady.actual, editA);
   assert.equal(editReady.releaseOutgoing, true);
+  assert.equal(allowsPreviewLeaseRetention(editReady), true);
 });
 
 test("a checked target can hand off while an unrelated retained surface retires", () => {
@@ -110,6 +112,7 @@ test("failure releases the old attempt and retry starts without resurrecting it"
   assert.equal(failed.actual, null);
   assert.equal(failed.keepOutgoing, false);
   assert.equal(failed.releaseOutgoing, true);
+  assert.equal(allowsPreviewLeaseRetention(failed), false);
   assert.deepEqual(failed.missingEvidence, ["canvas-authority", "physical-frame", "target-failed"]);
 
   const retry = decision({
@@ -136,4 +139,5 @@ test("closing clears any retained display and never grants editability", () => {
   assert.equal(closed.canHandoff, false);
   assert.equal(closed.releaseOutgoing, true);
   assert.equal(closed.outgoingInteractive, false);
+  assert.equal(allowsPreviewLeaseRetention(closed), false);
 });

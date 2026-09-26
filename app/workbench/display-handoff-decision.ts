@@ -63,6 +63,11 @@ export type DisplayHandoffDecision = Readonly<{
   reason: DisplayHandoffReason;
 }>;
 
+/** A short-lived Preview lease may outlive a successful Edit handoff, not a terminal one. */
+export function allowsPreviewLeaseRetention(decision: DisplayHandoffDecision): boolean {
+  return decision.phase === "opening" || decision.phase === "settled";
+}
+
 function uniqueEvidence(labels: readonly string[]): readonly string[] {
   return Object.freeze([...new Set(labels.filter((label) => label.length > 0))]);
 }
