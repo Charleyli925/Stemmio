@@ -224,6 +224,10 @@ test(`adoption consumes only unchanged submitted comments and replays once (same
   const value = await setup(t);
   const unchanged = { ...value.input.comments[0], commentId: "comment_unchanged" };
   value.input.comments.push(unchanged);
+  value.input.taskSpec = compileTaskSpec({
+    comments: value.input.comments,
+    targets: value.input.targets,
+  });
   const receipt = await prepareRecordedRequest(value);
   const edited = { ...value.input.comments[0], text: "Keep my later edit", updatedAt: "2026-09-08T10:00:00.000Z" };
   const added = { ...unchanged, commentId: "comment_added", text: "Next round" };
@@ -409,6 +413,10 @@ test("canonical renderer comments keep frozen compatibility and newer requiremen
   assert.ok(submitted.every((comment) => !Object.hasOwn(comment, "target")));
   value.input.comments = submitted.map(persistedComment);
   value.input.targets = value.input.comments.map((comment) => comment.target);
+  value.input.taskSpec = compileTaskSpec({
+    comments: value.input.comments,
+    targets: value.input.targets,
+  });
   const receipt = await prepareRecordedRequest(value);
   const annotationsPath = path.join(value.target.projectRootPath, ".stemmio", "requests", receipt.requestId, "input", "annotations", "records.json");
   const frozenAnnotations = await readFile(annotationsPath, "utf8");
