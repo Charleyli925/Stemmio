@@ -613,10 +613,17 @@ test("Electron defers cold Edit Runtime preparation while restoring a Preview-on
       "stemmio:edit-runtime:prepare-start", "mark",
     ).length)).toBe(preparesBefore);
     await mode.getByRole("button", { name: "编辑", exact: true }).click();
-    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const { frame } = await loadedDiskFrame(page, projectB.sourcePath, "list-item");
     await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
       "stemmio:edit-runtime:prepare-start", "mark",
     ).length)).toBeGreaterThan(preparesBefore);
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 3);
+    await page.keyboard.insertText("PREVIEW_TO_EDIT_WRITABLE");
+    await page.keyboard.press(keyShortcut("S"));
+    const workingCopyPath = await managedWorkingCopyPath(page, projectB.sourcePath);
+    await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+      .toContain("PREVIEW_TO_EDIT_WRITABLE");
   } finally {
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
