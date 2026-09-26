@@ -1020,6 +1020,93 @@ test("Electron retains the actual surface when a mode handoff is interrupted by 
   }
 });
 
+test("Electron ignores a replaced Preview receipt and requires proof from a new same-source iframe", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("receipt-boundary-a.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 A",
+  ));
+  const projectB = createSourceFixture("receipt-boundary-b.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 B",
+  ));
+  const launched = await launchStemmio({ activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath] });
+  const releaseHeldSession = async () => launched.electronApp.evaluate(() => {
+    globalThis.__stemmioReleaseHeldPreviewSession?.();
+    globalThis.__stemmioReleaseHeldPreviewSession = null;
+  });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "receipt-boundary-a" });
+    const tabB = tabs.filter({ hasText: "receipt-boundary-b" });
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const host = page.getByTestId("workbench-active-preview");
+    const frames = host.locator('iframe[title="HTML 交互预览"]');
+    const frame = host.frameLocator('iframe[title="HTML 交互预览"]');
+    const holdNextSession = async () => launched.electronApp.evaluate(({ ipcMain }) => {
+      const channel = "html-preview:create-session";
+      if (!globalThis.__stemmioOriginalPreviewSessionHandler) {
+        const original = ipcMain._invokeHandlers?.get(channel);
+        if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
+        globalThis.__stemmioOriginalPreviewSessionHandler = original;
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, async (event, payload) => {
+          if (globalThis.__stemmioHoldNextPreviewSession) {
+            globalThis.__stemmioHoldNextPreviewSession = false;
+            await new Promise((resolve) => { globalThis.__stemmioReleaseHeldPreviewSession = resolve; });
+          }
+          return original(event, payload);
+        });
+      }
+      globalThis.__stemmioHoldNextPreviewSession = true;
+    });
+
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+
+    await holdNextSession();
+    await tabB.click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await tabA.click();
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    await expect(frame.getByText("回执目标 B")).toHaveCount(0);
+
+    const originalSrc = await frames.getAttribute("src");
+    await holdNextSession();
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await expect(host).toHaveAttribute("data-preview-ready", "false");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    expect(await frames.getAttribute("src")).not.toBe(originalSrc);
+  } finally {
+    await releaseHeldSession();
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("a failed Preview target releases the prior page and a fresh retry loads the target", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
@@ -1038,6 +1125,7 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await loadedDiskFrame(page, projectA.sourcePath, "list-item");
     await openRecentProject(page, projectB.sourcePath);
     await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const managedBPath = await managedWorkingCopyPath(page, projectB.sourcePath);
     const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     const tabA = tabs.filter({ hasText: "preview-failure-a" });
     const tabB = tabs.filter({ hasText: "preview-failure-b" });
@@ -1052,20 +1140,20 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("失败前页面 A")).toBeVisible();
 
-    await launched.electronApp.evaluate(({ ipcMain }) => {
+    await launched.electronApp.evaluate(({ ipcMain }, targetPath) => {
       const channel = "html-preview:create-session";
       const original = ipcMain._invokeHandlers?.get(channel);
       if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
-      let failNext = true;
+      let failNextTarget = true;
       ipcMain.removeHandler(channel);
       ipcMain.handle(channel, (event, payload) => {
-        if (failNext) {
-          failNext = false;
+        if (failNextTarget && payload?.sourcePath === targetPath) {
+          failNextTarget = false;
           throw new Error("synthetic Preview creation failure");
         }
         return original(event, payload);
       });
-    });
+    }, managedBPath);
     await tabB.click();
     await expect(previewHost.getByRole("status")).toContainText("预览暂时无法显示");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");

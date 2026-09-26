@@ -74,18 +74,19 @@ test("Edit -> Preview -> Edit allows Preview to remain in front until Edit settl
   assert.equal(editReady.releaseOutgoing, true);
 });
 
-test("a late receipt for a replaced identity cannot hand off", () => {
-  const lateB = decision({
+test("a checked target can hand off while an unrelated retained surface retires", () => {
+  const handoffA = decision({
     target: editA,
     targetReady: true,
     retained: editB,
     retainOutgoing: true,
-    missingEvidence: ["late-receipt"],
   });
-  assert.equal(lateB.canHandoff, true);
-  assert.deepEqual(lateB.actual, editA);
-  assert.deepEqual(lateB.missingEvidence, ["late-receipt"]);
+  assert.equal(handoffA.canHandoff, true);
+  assert.deepEqual(handoffA.actual, editA);
+  assert.equal(handoffA.releaseOutgoing, true);
+});
 
+test("a superseded target cannot hand off even if its earlier proof was ready", () => {
   const superseded = decision({
     target: editB,
     targetReady: true,
