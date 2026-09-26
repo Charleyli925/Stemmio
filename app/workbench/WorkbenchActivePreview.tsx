@@ -6,6 +6,8 @@ import type {
   HtmlInteractionPreviewHandle,
   HtmlInteractionPreviewProps,
 } from "../components/HtmlInteractionPreview";
+import type { DisplayTarget } from "./display-handoff-decision";
+import type { DisplaySurfaceHandoffState } from "./use-display-handoff";
 import styles from "./workbench-active-preview.module.css";
 
 type PreviewElement = ReactElement<HtmlInteractionPreviewProps & {
@@ -21,16 +23,20 @@ export default function WorkbenchActivePreview({
   activeOutcome,
   activeDegradationReason,
   activeAttemptId,
+  handoff,
+  onRetainedChange,
   carryForEdit,
   onRetry,
 }: {
   identity: string;
-  activeElement: PreviewElement;
+  activeElement: PreviewElement | null;
   activeReady: boolean;
   activeFailed: boolean;
   activeOutcome?: "verified" | "degraded" | "failed";
   activeDegradationReason?: "paint-timeout" | "host-timeout" | "history-static";
   activeAttemptId?: string;
+  handoff: DisplaySurfaceHandoffState;
+  onRetainedChange(target: DisplayTarget | null): void;
   carryForEdit: boolean;
   onRetry(): void;
 }) {
@@ -55,14 +61,52 @@ export default function WorkbenchActivePreview({
     observer.observe(host);
     return () => observer.disconnect();
   }, [carryForEdit]);
-  if (activeFailed && lastDisplayed) {
-    setLastDisplayed(null);
-  } else if (activeReady && lastDisplayed?.identity !== identity) {
-    setLastDisplayed({ identity, element: activeElement });
+  const activeTarget = handoff.target;
+  const canRegisterActive = Boolean(
+    activeElement
+    && activeReady
+    && !activeFailed
+    && activeTarget
+    && handoff.reveal,
+  );
+  if (canRegisterActive && activeTarget && activeElement) {
+    if (!lastDisplayed || lastDisplayed.identity !== identity) {
+      setLastDisplayed({ identity, element: activeElement });
+    }
+  } else if (handoff.release || activeFailed || (!handoff.retain && !handoff.reveal && !activeReady)) {
+    if (lastDisplayed) setLastDisplayed(null);
   }
-  const outgoing = lastDisplayed?.identity !== identity && !activeReady && !activeFailed
+  useLayoutEffect(() => {
+    if (canRegisterActive && activeTarget) {
+      onRetainedChange(activeTarget);
+      return;
+    }
+    if (handoff.release || activeFailed || (!handoff.retain && !handoff.reveal && !activeReady)) {
+      onRetainedChange(null);
+    }
+  }, [
+    activeElement,
+    activeFailed,
+    activeReady,
+    canRegisterActive,
+    handoff.retain,
+    handoff.release,
+    handoff.reveal,
+    activeTarget,
+    identity,
+    onRetainedChange,
+  ]);
+  const retainedActive = Boolean(
+    handoff.retain
+    && activeReady
+    && lastDisplayed?.identity === identity,
+  );
+  const outgoing = handoff.retain && !retainedActive && lastDisplayed
     ? lastDisplayed
     : null;
+  const activeVisible = handoff.reveal || retainedActive;
+  const activeInteractive = handoff.reveal && !carryForEdit;
+  const activeContent = activeElement || (retainedActive ? lastDisplayed?.element : null);
   const hadOutgoingRef = useRef(false);
   const lastHandoffAttemptRef = useRef<string | null>(null);
   useEffect(() => {
@@ -94,22 +138,29 @@ export default function WorkbenchActivePreview({
       data-preview-ready={activeReady ? "true" : "false"}
       data-preview-outcome={activeOutcome}
       data-preview-degradation={activeDegradationReason}
+      data-display-handoff-role={handoff.reveal
+        ? "target"
+        : handoff.retain
+          ? "outgoing"
+          : "candidate"}
       data-outgoing-preview={outgoing ? "true" : undefined}
       data-preview-carry={carryForEdit ? "true" : undefined}
     >
       {outgoing ? (
-        <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>
+        // A refresh can retain the same document identity while replacing its
+        // physical iframe. Distinct sibling keys let React retire the old one.
+        <div className={styles.entry} aria-hidden="true" inert key={`outgoing:${outgoing.identity}`}>
           {cloneElement(outgoing.element, { ref: null })}
         </div>
       ) : null}
       <div
         className={styles.entry}
-        data-handoff-candidate={!activeReady ? "true" : undefined}
-        aria-hidden={!activeReady ? true : undefined}
-        inert={!activeReady ? true : undefined}
-        key={identity}
+        data-handoff-candidate={activeVisible ? undefined : "true"}
+        aria-hidden={activeInteractive ? undefined : true}
+        inert={activeInteractive ? undefined : true}
+        key={`active:${identity}`}
       >
-        {activeElement}
+        {activeContent}
       </div>
       {activeFailed ? (
         <div className={styles.status} role="status">

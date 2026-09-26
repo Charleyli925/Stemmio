@@ -681,6 +681,193 @@ test("Electron keeps a verified page visible while Preview loads and across Prev
   }
 });
 
+test("Electron retains the actual surface when a mode handoff is interrupted by another tab", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const projectA = createSourceFixture("interrupted-mode-a.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "中断交接画面 A")
+      .replace("</body>", '<img src="https://stemmio-handoff.invalid/interrupted-a.png"></body>')
+  ));
+  const projectB = createSourceFixture("interrupted-mode-b.html", (html) => (
+    html.replace("列表项中的文字保持项目符号和缩进。", "中断交接画面 B")
+      .replace("</body>", "<script>document.body.dataset.interruptedRuntime = 'ready';</script></body>")
+  ));
+  const launched = await launchStemmio({
+    activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
+  });
+  const heldWorkspace = [];
+  const heldImages = [];
+  let blockedTarget = null;
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "interrupted-mode-a" });
+    const tabB = tabs.filter({ hasText: "interrupted-mode-b" });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+
+    await page.route("**/workspace?*", async (route) => {
+      const source = new URL(route.request().url()).searchParams.get("sourcePath");
+      if (!blockedTarget || !source || path.basename(source) !== path.basename(blockedTarget)) {
+        await route.continue();
+        return;
+      }
+      heldWorkspace.push(route);
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eHoldEditRuntimePrepare();
+    });
+    await tabB.click();
+    await expect(page.getByTestId("workbench-active-preview"))
+      .toHaveAttribute("data-preview-ready", "true");
+    await mode.getByRole("button", { name: "编辑", exact: true }).click();
+    const previewHost = page.getByTestId("workbench-active-preview");
+    await expect(previewHost).toHaveAttribute("data-preview-carry", "true");
+    blockedTarget = projectA.sourcePath;
+    await tabA.click();
+    await expect.poll(() => heldWorkspace.length).toBeGreaterThan(0);
+    await expect(previewHost).toBeVisible();
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "outgoing");
+    await expect(previewHost.locator(':scope > [inert] iframe[title="HTML 交互预览"]')
+      .contentFrame().getByText("中断交接画面 B")).toBeVisible();
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    });
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+
+    await page.route("https://stemmio-handoff.invalid/interrupted-a.png", async (route) => {
+      heldImages.push(route);
+      await new Promise((resolve) => { route.release = resolve; });
+      await route.continue();
+    });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    await expect.poll(() => heldImages.length).toBeGreaterThan(0);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
+    blockedTarget = projectB.sourcePath;
+    await tabB.click();
+    await expect.poll(() => heldWorkspace.length).toBeGreaterThan(0);
+    await expect(page.locator(".canvas-edit-surface")).toBeVisible();
+    await expect(page.locator(".canvas-edit-surface")).toHaveAttribute("inert", "");
+    await expect(page.locator('[data-outgoing-draft] iframe[title^="HTML 可视化编辑画布"]')
+      .contentFrame()
+      .getByText("中断交接画面 A")).toBeVisible();
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    heldImages.splice(0).forEach((route) => route.release());
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+  } finally {
+    blockedTarget = null;
+    heldWorkspace.splice(0).forEach((route) => route.release());
+    heldImages.splice(0).forEach((route) => route.release());
+    await launched.electronApp.evaluate(() => {
+      globalThis.__stemmioE2eReleaseEditRuntimePrepare();
+    }).catch(() => {});
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
+test("Electron ignores a replaced Preview receipt and requires proof from a new same-source iframe", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("receipt-boundary-a.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 A",
+  ));
+  const projectB = createSourceFixture("receipt-boundary-b.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 B",
+  ));
+  const launched = await launchStemmio({ activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath] });
+  const releaseHeldSession = async () => launched.electronApp.evaluate(() => {
+    globalThis.__stemmioReleaseHeldPreviewSession?.();
+    globalThis.__stemmioReleaseHeldPreviewSession = null;
+  });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "receipt-boundary-a" });
+    const tabB = tabs.filter({ hasText: "receipt-boundary-b" });
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const host = page.getByTestId("workbench-active-preview");
+    const frames = host.locator('iframe[title="HTML 交互预览"]');
+    const frame = host.frameLocator('iframe[title="HTML 交互预览"]');
+    const holdNextSession = async () => launched.electronApp.evaluate(({ ipcMain }) => {
+      const channel = "html-preview:create-session";
+      if (!globalThis.__stemmioOriginalPreviewSessionHandler) {
+        const original = ipcMain._invokeHandlers?.get(channel);
+        if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
+        globalThis.__stemmioOriginalPreviewSessionHandler = original;
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, async (event, payload) => {
+          if (globalThis.__stemmioHoldNextPreviewSession) {
+            globalThis.__stemmioHoldNextPreviewSession = false;
+            await new Promise((resolve) => { globalThis.__stemmioReleaseHeldPreviewSession = resolve; });
+          }
+          return original(event, payload);
+        });
+      }
+      globalThis.__stemmioHoldNextPreviewSession = true;
+    });
+
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+
+    await holdNextSession();
+    await tabB.click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await tabA.click();
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    await expect(frame.getByText("回执目标 B")).toHaveCount(0);
+
+    const originalSrc = await frames.getAttribute("src");
+    await holdNextSession();
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await expect(host).toHaveAttribute("data-preview-ready", "false");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    expect(await frames.getAttribute("src")).not.toBe(originalSrc);
+  } finally {
+    await releaseHeldSession();
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("a failed Preview target releases the prior page and a fresh retry loads the target", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
@@ -699,6 +886,7 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await loadedDiskFrame(page, projectA.sourcePath, "list-item");
     await openRecentProject(page, projectB.sourcePath);
     await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const managedBPath = await managedWorkingCopyPath(page, projectB.sourcePath);
     const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     const tabA = tabs.filter({ hasText: "preview-failure-a" });
     const tabB = tabs.filter({ hasText: "preview-failure-b" });
@@ -713,20 +901,20 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("失败前页面 A")).toBeVisible();
 
-    await launched.electronApp.evaluate(({ ipcMain }) => {
+    await launched.electronApp.evaluate(({ ipcMain }, targetPath) => {
       const channel = "html-preview:create-session";
       const original = ipcMain._invokeHandlers?.get(channel);
       if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
-      let failNext = true;
+      let failNextTarget = true;
       ipcMain.removeHandler(channel);
       ipcMain.handle(channel, (event, payload) => {
-        if (failNext) {
-          failNext = false;
+        if (failNextTarget && payload?.sourcePath === targetPath) {
+          failNextTarget = false;
           throw new Error("synthetic Preview creation failure");
         }
         return original(event, payload);
       });
-    });
+    }, managedBPath);
     await tabB.click();
     await expect(previewHost.getByRole("status")).toContainText("预览暂时无法显示");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
@@ -1806,7 +1994,9 @@ test("Electron sidebar opens an imported historical version in the existing proj
       .toHaveAttribute("datetime", historicalVersion.modifiedAt);
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
-    const historicalPreview = launched.page.frameLocator('iframe[title="HTML 交互预览"]');
+    const previewHost = launched.page.getByTestId("workbench-active-preview");
+    const historicalFrames = previewHost.locator('iframe[title="HTML 交互预览"]');
+    const historicalPreview = previewHost.frameLocator('iframe[title="HTML 交互预览"]');
     await expect(historicalPreview.locator("body")).toBeVisible();
     await expect.poll(async () => (await launched.page.locator('iframe[title="HTML 交互预览"]').boundingBox())?.height || 0).toBeGreaterThan(400);
     await expect(mode.getByRole("button", { name: "预览", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -1836,6 +2026,11 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await expect(selectedB).toHaveAccessibleName("sidebar-history-b · 历史 V5");
     await expect(importedProject.locator('[data-selected="true"] .sidebar-version-file'))
       .toHaveAccessibleName("V5，历史版本");
+    // The label can update while V3 remains as an inert outgoing page.
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "target");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
+    await expect(historicalFrames).toHaveCount(1);
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V5");
     await launched.page.unroute("**/version-file?*", delayVersionFive);
 
@@ -1857,6 +2052,9 @@ test("Electron sidebar opens an imported historical version in the existing proj
       exact: true,
     }).click();
     await expect(selectedB).toHaveAccessibleName(`sidebar-history-b · 历史 V${historicalVersion.ordinal}`);
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "target");
+    await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
+    await expect(historicalFrames).toHaveCount(1);
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V3");
 
     await importedProject.locator(".sidebar-project-current-row").click();

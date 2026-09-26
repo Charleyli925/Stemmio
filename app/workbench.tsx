@@ -44,7 +44,9 @@ import HtmlInteractionPreview, {
   type PreviewOpenReason,
 } from "./components/HtmlInteractionPreview";
 import WorkbenchActivePreview from "./workbench/WorkbenchActivePreview";
+import type { DisplayTarget } from "./workbench/display-handoff-decision";
 import { useAiConversation } from "./workbench/use-ai-conversation";
+import { useDisplayHandoff } from "./workbench/use-display-handoff";
 import NoticeBar from "./components/NoticeBar";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -6250,29 +6252,9 @@ export default function Workbench() {
     || (canvasAuthority?.status === "failed"
       && canvasAuthority.generation === canvasGeneration)
   );
-  const openingTabId = workbenchTabsSnapshot.pendingTabId
-    || (activeWorkbenchTab?.kind === "document" && !activeDocumentCanvasReady
-      ? activeWorkbenchTab.tabId : null);
-  const openingTab = workbenchTabsSnapshot.tabs.find((tab) => tab.tabId === openingTabId);
-  const openingCanvasMode = openingTab?.kind === "document"
-    ? documentSurfaceCacheSnapshot.presentations.find((entry) => entry.tabId === openingTabId)?.canvasMode
-    : undefined;
-  // The destination's saved mode is known when navigation starts. Show that
-  // selection before its new Preview session is mounted and finally painted.
-  const headerPresentation = openingCanvasMode === "preview"
-    && displayedCanvasMode !== "preview"
-    && !presentation.review.selected
-    ? {
-        ...presentation,
-        mode: "preview" as const,
-        edit: { ...presentation.edit, selected: false },
-        preview: { ...presentation.preview, selected: true },
-      }
-    : presentation;
-  const activeTabOpening = activeWorkbenchTab?.kind === "document"
-    && (displayedCanvasMode === "preview"
-      ? !activePreviewReady && !activePreviewFailed
-      : !activeDocumentDisplayReady && !activeDocumentCanvasFailed);
+  // In-memory renderer documents have no managed source or Edit Runtime
+  // receipt. Preserve their existing immediate mounted-Canvas edit entry.
+  const editTargetReady = sourcePath ? activeDocumentDisplayReady : activeRuntimeCanvasMounted;
   const [editRevealPreviewIdentity, setEditRevealPreviewIdentity] = useState<string | null>(null);
   useLayoutEffect(() => {
     if (displayedCanvasMode !== "edit" || !activePreviewReady || !activeDocumentDisplayReady) return;
@@ -6286,24 +6268,95 @@ export default function Workbench() {
     frame = window.requestAnimationFrame(afterPaint);
     return () => window.cancelAnimationFrame(frame);
   }, [activeDocumentDisplayReady, activePreviewReady, displayedCanvasMode, previewIdentity]);
+  const openingTabId = workbenchTabsSnapshot.pendingTabId
+    || (activeWorkbenchTab?.kind === "document" && !activeDocumentCanvasReady
+      ? activeWorkbenchTab.tabId : null);
+  const openingTab = workbenchTabsSnapshot.tabs.find((tab) => tab.tabId === openingTabId);
+  const openingCanvasMode = openingTab?.kind === "document"
+    ? documentSurfaceCacheSnapshot.presentations.find((entry) => entry.tabId === openingTabId)?.canvasMode
+    : undefined;
+  const pendingTabId = workbenchTabsSnapshot.pendingTabId;
+  const pendingMode = openingCanvasMode || "edit";
+  const editContinuityKey = documentRuntimeTabId
+    && activeWorkbenchTab?.tabId === documentRuntimeTabId
+    ? `${documentRuntimeTabId}:${canvasGeneration}` : null;
+  const displayTarget: DisplayTarget = {
+    surface: displayedCanvasMode,
+    identity: displayedCanvasMode === "preview" ? previewIdentity : editHandoffKey,
+    ...(displayedCanvasMode === "edit" ? { continuityKey: editContinuityKey } : {}),
+    ...(displayedCanvasMode === "preview" && historyPreview ? { historical: true } : {}),
+  };
+  const pendingDisplayTarget: DisplayTarget | null = pendingTabId
+    ? { surface: pendingMode, identity: `pending-tab:${pendingTabId}:${pendingMode}` }
+    : null;
+  const displayTargetReady = displayedCanvasMode === "preview"
+    ? activePreviewReady
+    : editTargetReady;
+  const displayTargetFailed = displayedCanvasMode === "preview"
+    ? activePreviewFailed
+    : activeDocumentCanvasFailed;
+  const displayMissingEvidence = displayTargetReady || displayTargetFailed
+    ? []
+    : [displayedCanvasMode === "edit" && activePreviewReady
+      && editRevealPreviewIdentity !== previewIdentity
+      ? "edit-paint-handoff"
+      : displayedCanvasMode === "preview" ? "preview-display" : "edit-display"];
+  const displayHandoffState = useDisplayHandoff({
+    target: displayTarget,
+    pendingTarget: pendingDisplayTarget,
+    intent: {
+      pendingTabId,
+      pendingMode: pendingTabId ? pendingMode : null,
+      currentMode: displayedCanvasMode,
+      sourceAvailable: Boolean(sourcePath) && activeWorkbenchTab?.kind === "document",
+      hasDocumentRuntime: Boolean(documentRuntimeTabId),
+      historyPreview: Boolean(historyPreview),
+      presentedReadyReviewSession: Boolean(presentedReadyReviewSession),
+      previewReady: activePreviewReady,
+      editFailed: activeDocumentCanvasFailed,
+      previewFailed: activePreviewFailed,
+      editRevealSettled: editRevealPreviewIdentity === previewIdentity,
+    },
+    targetReady: displayTargetReady,
+    targetFailed: displayTargetFailed,
+    targetLifecycle: pendingExit ? "closing" : "active",
+    targetMissingEvidence: displayMissingEvidence,
+    retainedSurface: displayedCanvasMode === "edit"
+      ? activePreviewReady && Boolean(sourcePath) ? "preview" : "edit"
+      : "edit",
+    retainOutgoing: displayedCanvasMode === "edit"
+      ? !activeDocumentCanvasFailed
+      : !activePreviewReady && !activePreviewFailed,
+    edit: { target: { surface: "edit", identity: editHandoffKey, continuityKey: editContinuityKey } },
+    preview: { target: { surface: "preview", identity: previewIdentity,
+      ...(historyPreview ? { historical: true } : {}) } },
+  });
+  const displayHandoff = displayHandoffState.decision;
+  // The destination's saved mode is known when navigation starts. Show that
+  // selection before its new Preview session is mounted and finally painted.
+  const headerPresentation = openingCanvasMode === "preview"
+    && displayedCanvasMode !== "preview"
+    && !presentation.review.selected
+    ? {
+        ...presentation,
+        mode: "preview" as const,
+        edit: { ...presentation.edit, selected: false },
+        preview: { ...presentation.preview, selected: true },
+      }
+    : presentation;
+  const activeTabOpening = activeWorkbenchTab?.kind === "document"
+    && !pendingTabId && displayHandoff.phase === "opening";
   // Keep the exact loaded Preview iframe in front while the same document's
   // Edit runtime is preparing. The previous document's Edit frame is never a
   // valid fallback for this transition. In-memory browser documents have no
   // DocumentSession/Runtime acknowledgement to wait for and reuse Edit directly.
-  const carryPreviewIntoEdit = displayedCanvasMode === "edit"
-    && activeWorkbenchTab?.kind === "document"
-    && Boolean(sourcePath)
-    && activePreviewReady
-    && (!activeDocumentDisplayReady || editRevealPreviewIdentity !== previewIdentity)
-    && !activeDocumentCanvasFailed;
+  const carryPreviewIntoEdit = displayHandoffState.roles.carryPreviewIntoEdit;
+  const keepPreviewInEdit = carryPreviewIntoEdit
+    || (displayedCanvasMode === "edit" && displayHandoffState.preview.retain);
   const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
     ? editHandoffGeometry : null;
-  const editPreviewUnderlay = displayedCanvasMode === "preview"
-    && !historyPreview
-    && !presentedReadyReviewSession
-    && Boolean(documentRuntimeTabId);
-  const showEditSurface = displayedCanvasMode === "edit"
-    || editPreviewUnderlay;
+  const editPreviewUnderlay = displayHandoffState.roles.editPreviewUnderlay;
+  const showEditSurface = displayHandoffState.roles.showEditSurface;
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
   const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
     || activeWorkbenchTab?.kind === "history"
@@ -6411,7 +6464,8 @@ export default function Workbench() {
         <WorkbenchHeaderView
           runInProgress={runInProgress}
           presentation={headerPresentation}
-          previewOpening={previewSurfaceMounted && !activePreviewReady && !activePreviewFailed}
+          previewOpening={!pendingTabId && displayHandoff.target?.surface === "preview"
+            && displayHandoff.phase === "opening"}
           recentRunOutcome={recentRunOutcome}
           terminalRun={terminalRun}
           aiConversationVisible={aiConversation.visible}
@@ -6808,8 +6862,12 @@ export default function Workbench() {
               height: heldEditGeometry.height,
             } : undefined}
             hidden={!showEditSurface}
-            aria-hidden={displayedCanvasMode !== "edit" ? true : undefined}
-            inert={displayedCanvasMode !== "edit" ? true : undefined}
+            aria-hidden={!displayHandoffState.roles.editInteractive
+              && !(displayHandoff.phase === "failed" && displayHandoff.target?.surface === "edit")
+              ? true : undefined}
+            inert={!displayHandoffState.roles.editInteractive
+              && !(displayHandoff.phase === "failed" && displayHandoff.target?.surface === "edit")
+              ? true : undefined}
           >
             {!desktopHostReady ? (
               <div className="canvas-loading" role="status">正在识别运行环境…</div>
@@ -6839,11 +6897,13 @@ export default function Workbench() {
                 <WorkbenchActiveDocumentCanvas
                   activeTabId={documentRuntimeTabId}
                   activeSourceSha256={sourceSha256}
-                  activeReady={activeDocumentDisplayReady}
+                  activeReady={editTargetReady}
                   activeFailed={activeDocumentCanvasFailed}
-                  retirePreviousTab={displayedCanvasMode === "preview" && activePreviewReady}
-                  presentationVisible={showEditSurface && (displayedCanvasMode === "edit" || !activePreviewReady)}
-                  foregroundVisible={displayedCanvasMode === "edit" && !carryPreviewIntoEdit}
+                  handoff={displayHandoffState.edit}
+                  onRetainedChange={(target) => displayHandoffState.reportRetained("edit", target)}
+                  presentationVisible={showEditSurface && (displayedCanvasMode === "edit"
+                    || !activePreviewReady || displayHandoffState.edit.retain)}
+                  foregroundVisible={displayHandoffState.roles.editInteractive}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}
@@ -6925,6 +6985,7 @@ export default function Workbench() {
                     || Boolean(projectLoadError)
                     || viewTransitioning
                     || persistState === "conflict"
+                    || Boolean(pendingTabId)
                   }
                   readOnly={viewMode === "history"
                     || runtimeDegradation === "static-preparing"
@@ -6942,7 +7003,7 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {previewSurfaceMounted || carryPreviewIntoEdit ? (
+          {previewSurfaceMounted || keepPreviewInEdit ? (
             <WorkbenchActivePreview
               identity={previewIdentity}
               activeReady={activePreviewReady}
@@ -6950,9 +7011,11 @@ export default function Workbench() {
               activeOutcome={previewAck?.identity === previewIdentity ? previewAck.previewResult : undefined}
               activeDegradationReason={previewAck?.identity === previewIdentity ? previewAck.degradationReason : undefined}
               activeAttemptId={previewAck?.identity === previewIdentity ? previewAck.attemptId : undefined}
-              carryForEdit={carryPreviewIntoEdit}
+              handoff={displayHandoffState.preview}
+              onRetainedChange={(target) => displayHandoffState.reportRetained("preview", target)}
+              carryForEdit={keepPreviewInEdit}
               onRetry={() => interactionPreviewRef.current?.reload()}
-              activeElement={<HtmlInteractionPreview
+              activeElement={previewSurfaceMounted ? <HtmlInteractionPreview
               key={`preview-authority-${previewIdentity}`}
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}
@@ -6975,7 +7038,7 @@ export default function Workbench() {
                   );
                 }
               }}
-              />}
+              /> : null}
             />
           ) : null}
         </section>
