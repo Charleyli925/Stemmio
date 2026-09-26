@@ -799,6 +799,84 @@ test("Electron reuses a live unchanged current-draft Preview across a quick mode
   }
 });
 
+test("a parked Preview cannot publish a late scroll receipt over the active reading position", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("preview-parked-scroll.html", (html) => html.replace(
+    "</body>",
+    '<section style="height:3200px">READING_TAIL</section></body>',
+  ));
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const edit = mode.getByRole("button", { name: "编辑", exact: true });
+    const previewHost = page.getByTestId("workbench-active-preview");
+    const frame = page.frameLocator('iframe[title="HTML 交互预览"]');
+    const captureScroll = () => page.evaluate(() => {
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__ = null;
+      const receive = (event) => {
+        if (event.data?.type !== "stemmio-preview-scroll") return;
+        window.__STEMMIO_E2E_PREVIEW_SCROLL__ = event.data;
+        window.removeEventListener("message", receive);
+      };
+      window.addEventListener("message", receive);
+    });
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 1_200, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(1_100);
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(1_100);
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 1_250, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(1_200);
+
+    await edit.click();
+    await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    await expect(previewHost).toHaveAttribute("data-preview-parked", "true");
+    await page.evaluate(() => {
+      const iframe = document.querySelector('[data-preview-parked="true"] iframe[title="HTML 交互预览"]');
+      if (!iframe?.contentWindow || !window.__STEMMIO_E2E_PREVIEW_SCROLL__) {
+        throw new Error("The parked Preview and its valid scroll receipt must still exist.");
+      }
+      window.dispatchEvent(new MessageEvent("message", {
+        source: iframe.contentWindow,
+        data: { ...window.__STEMMIO_E2E_PREVIEW_SCROLL__, scrollTop: 300 },
+      }));
+    });
+    await expect(page.locator('iframe[title="HTML 交互预览"]'))
+      .toHaveCount(0, { timeout: 10_000 });
+    await preview.click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(1_100);
+
+    await captureScroll();
+    await frame.locator("body").evaluate(() => window.scrollTo({ top: 600, behavior: "auto" }));
+    await expect.poll(() => page.evaluate(() => (
+      window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
+    ))).toBeGreaterThan(500);
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
+      .toBeGreaterThan(500);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron replaces a retained Preview whose Main resource session was revoked", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
@@ -989,6 +1067,93 @@ test("Electron retains the actual surface when a mode handoff is interrupted by 
   }
 });
 
+test("Electron ignores a replaced Preview receipt and requires proof from a new same-source iframe", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const projectA = createSourceFixture("receipt-boundary-a.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 A",
+  ));
+  const projectB = createSourceFixture("receipt-boundary-b.html", (html) => html.replace(
+    "列表项中的文字保持项目符号和缩进。", "回执目标 B",
+  ));
+  const launched = await launchStemmio({ activeSourcePath: projectA.sourcePath,
+    recentSourcePaths: [projectA.sourcePath, projectB.sourcePath] });
+  const releaseHeldSession = async () => launched.electronApp.evaluate(() => {
+    globalThis.__stemmioReleaseHeldPreviewSession?.();
+    globalThis.__stemmioReleaseHeldPreviewSession = null;
+  });
+  try {
+    const page = launched.page;
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await openRecentProject(page, projectB.sourcePath);
+    await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
+    const tabA = tabs.filter({ hasText: "receipt-boundary-a" });
+    const tabB = tabs.filter({ hasText: "receipt-boundary-b" });
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    const preview = mode.getByRole("button", { name: "预览", exact: true });
+    const host = page.getByTestId("workbench-active-preview");
+    const frames = host.locator('iframe[title="HTML 交互预览"]');
+    const frame = host.frameLocator('iframe[title="HTML 交互预览"]');
+    const holdNextSession = async () => launched.electronApp.evaluate(({ ipcMain }) => {
+      const channel = "html-preview:create-session";
+      if (!globalThis.__stemmioOriginalPreviewSessionHandler) {
+        const original = ipcMain._invokeHandlers?.get(channel);
+        if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
+        globalThis.__stemmioOriginalPreviewSessionHandler = original;
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, async (event, payload) => {
+          if (globalThis.__stemmioHoldNextPreviewSession) {
+            globalThis.__stemmioHoldNextPreviewSession = false;
+            await new Promise((resolve) => { globalThis.__stemmioReleaseHeldPreviewSession = resolve; });
+          }
+          return original(event, payload);
+        });
+      }
+      globalThis.__stemmioHoldNextPreviewSession = true;
+    });
+
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await tabA.click();
+    await loadedDiskFrame(page, projectA.sourcePath, "list-item");
+    await preview.click();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+
+    await holdNextSession();
+    await tabB.click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await tabA.click();
+    await expect(tabA).toHaveAttribute("aria-selected", "true");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    await expect(frame.getByText("回执目标 B")).toHaveCount(0);
+
+    const originalSrc = await frames.getAttribute("src");
+    await holdNextSession();
+    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
+      globalThis.__stemmioReleaseHeldPreviewSession,
+    ))).toBe(true);
+    await expect(host).toHaveAttribute("data-preview-ready", "false");
+    await releaseHeldSession();
+    await expect(host).toHaveAttribute("data-preview-ready", "true");
+    await expect(frames).toHaveCount(1);
+    await expect(frame.getByText("回执目标 A")).toBeVisible();
+    expect(await frames.getAttribute("src")).not.toBe(originalSrc);
+  } finally {
+    await releaseHeldSession();
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(projectA.sourceDirectory);
+    removeSourceFixture(projectB.sourceDirectory);
+  }
+});
+
 test("a failed Preview target releases the prior page and a fresh retry loads the target", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
@@ -1007,6 +1172,7 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await loadedDiskFrame(page, projectA.sourcePath, "list-item");
     await openRecentProject(page, projectB.sourcePath);
     await loadedDiskFrame(page, projectB.sourcePath, "list-item");
+    const managedBPath = await managedWorkingCopyPath(page, projectB.sourcePath);
     const tabs = page.getByRole("tablist", { name: "已打开的页面" }).getByRole("tab");
     const tabA = tabs.filter({ hasText: "preview-failure-a" });
     const tabB = tabs.filter({ hasText: "preview-failure-b" });
@@ -1021,20 +1187,20 @@ test("a failed Preview target releases the prior page and a fresh retry loads th
     await expect(page.frameLocator('iframe[title="HTML 交互预览"]')
       .getByText("失败前页面 A")).toBeVisible();
 
-    await launched.electronApp.evaluate(({ ipcMain }) => {
+    await launched.electronApp.evaluate(({ ipcMain }, targetPath) => {
       const channel = "html-preview:create-session";
       const original = ipcMain._invokeHandlers?.get(channel);
       if (typeof original !== "function") throw new Error("Preview IPC handler unavailable");
-      let failNext = true;
+      let failNextTarget = true;
       ipcMain.removeHandler(channel);
       ipcMain.handle(channel, (event, payload) => {
-        if (failNext) {
-          failNext = false;
+        if (failNextTarget && payload?.sourcePath === targetPath) {
+          failNextTarget = false;
           throw new Error("synthetic Preview creation failure");
         }
         return original(event, payload);
       });
-    });
+    }, managedBPath);
     await tabB.click();
     await expect(previewHost.getByRole("status")).toContainText("预览暂时无法显示");
     await expect(previewHost).toHaveAttribute("data-preview-ready", "false");
@@ -2114,7 +2280,9 @@ test("Electron sidebar opens an imported historical version in the existing proj
       .toHaveAttribute("datetime", historicalVersion.modifiedAt);
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     await expect(mode.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
-    const historicalPreview = launched.page.frameLocator('iframe[title="HTML 交互预览"]');
+    const previewHost = launched.page.getByTestId("workbench-active-preview");
+    const historicalFrames = previewHost.locator('iframe[title="HTML 交互预览"]');
+    const historicalPreview = previewHost.frameLocator('iframe[title="HTML 交互预览"]');
     await expect(historicalPreview.locator("body")).toBeVisible();
     await expect.poll(async () => (await launched.page.locator('iframe[title="HTML 交互预览"]').boundingBox())?.height || 0).toBeGreaterThan(400);
     await expect(mode.getByRole("button", { name: "预览", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -2144,6 +2312,12 @@ test("Electron sidebar opens an imported historical version in the existing proj
     await expect(selectedB).toHaveAccessibleName("sidebar-history-b · 历史 V5");
     await expect(importedProject.locator('[data-selected="true"] .sidebar-version-file'))
       .toHaveAccessibleName("V5，历史版本");
+    // The tab label may update while V3 remains as an inert outgoing page.
+    // Read V5 only after its Canvas takes over and that V3 iframe retires.
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "target");
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
+    await expect(historicalFrames).toHaveCount(1);
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V5");
     await launched.page.unroute("**/version-file?*", delayVersionFive);
 
@@ -2165,6 +2339,9 @@ test("Electron sidebar opens an imported historical version in the existing proj
       exact: true,
     }).click();
     await expect(selectedB).toHaveAccessibleName(`sidebar-history-b · 历史 V${historicalVersion.ordinal}`);
+    await expect(previewHost).toHaveAttribute("data-display-handoff-role", "target");
+    await expect(previewHost).not.toHaveAttribute("data-outgoing-preview", "true");
+    await expect(historicalFrames).toHaveCount(1);
     await expect.poll(() => historicalPreview.locator("title").textContent()).toBe("sidebar history V3");
 
     await importedProject.locator(".sidebar-project-current-row").click();

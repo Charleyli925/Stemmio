@@ -113,6 +113,13 @@ export default function WorkbenchActivePreview({
   const activeInteractive = handoff.reveal && !carryForEdit;
   const activeContent = activeElement || (retainedActive ? lastDisplayed?.element : null);
   const hasActiveContent = Boolean(activeContent);
+  // A retained iframe may keep running, but only the revealed foreground
+  // instance may publish the tab's reading position.
+  const presentedContent = activeContent ? cloneElement(activeContent, {
+    onScrollTopChange: activeInteractive && !parked
+      ? activeContent.props.onScrollTopChange
+      : undefined,
+  }) : null;
   useLayoutEffect(() => {
     if (!hasActiveContent) return undefined;
     onPhysicalPresenceChange(identity, true);
@@ -160,8 +167,10 @@ export default function WorkbenchActivePreview({
       data-preview-parked={parked ? "true" : undefined}
     >
       {outgoing ? (
-        <div className={styles.entry} aria-hidden="true" inert key={outgoing.identity}>
-          {cloneElement(outgoing.element, { ref: null })}
+        // A refresh can retain the same document identity while replacing its
+        // physical iframe. Distinct sibling keys let React retire the old one.
+        <div className={styles.entry} aria-hidden="true" inert key={`outgoing:${outgoing.identity}`}>
+          {cloneElement(outgoing.element, { ref: null, onScrollTopChange: undefined })}
         </div>
       ) : null}
       <div
@@ -169,9 +178,9 @@ export default function WorkbenchActivePreview({
         data-handoff-candidate={activeVisible ? undefined : "true"}
         aria-hidden={activeInteractive ? undefined : true}
         inert={activeInteractive ? undefined : true}
-        key={identity}
+        key={`active:${identity}`}
       >
-        {activeContent}
+        {presentedContent}
       </div>
       {activeFailed ? (
         <div className={styles.status} role="status">

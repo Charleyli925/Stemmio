@@ -760,6 +760,11 @@ A creation receipt is permanent evidence, not a permanent recovery task.
 VersionWorkflow suppresses superseded receipts and checks again before opening.
 If hydration has already opened the matching current Working Copy, it verifies
 that Canvas and repairs openedAt without another workspace load or publication.
+If the opened acknowledgement fails, VersionWorkflow keeps the same creation
+operation in `created` so the startup coordinator can retry against the verified
+current Canvas; it reports `opened` only after the durable acknowledgement
+returns. A repeated failure leaves the same operation available for explicit
+recovery without creating another Version.
 
 The retired history activation surface is unsupported. Current UI commands use
 create, query and `openCreatedHistoryVersion`; a current Version transaction
