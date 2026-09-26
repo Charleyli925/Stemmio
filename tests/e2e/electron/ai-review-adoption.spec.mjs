@@ -791,10 +791,11 @@ ${REVIEW_MASK_UNION_BEFORE}
       .toHaveCount(0);
     await expect(afterReviewFrame.locator("[data-stemmio-review-comment-highlight]"))
       .toHaveCount(0);
-    await launched.page.locator('section[data-side="before"] > header').hover();
+    // Leave via fixed chrome so the test does not pan the horizontally scrolled Review viewport.
+    await launched.page.locator(".workbench-header").hover({ position: { x: 24, y: 24 } });
     await reviewCommentMarker.hover();
     await expect(reviewCommentBubble).toBeVisible();
-    await launched.page.locator('section[data-side="before"] > header').hover();
+    await launched.page.locator(".workbench-header").hover({ position: { x: 24, y: 24 } });
     await expect(reviewCommentBubble).toBeHidden();
 
     // 键盘聚焦打开同一个气泡；焦点离开前不消失。气泡绑的是
