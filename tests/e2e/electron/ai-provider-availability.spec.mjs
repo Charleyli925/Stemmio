@@ -152,7 +152,9 @@ test("Qoder ACP Agent Bridge streams public execution text without clipboard or 
     await launched.page.getByRole("textbox", { name: "修改要求草稿" }).focus();
     await launched.page.mouse.move(0, 0);
     await expect(processTime).toHaveCSS("opacity", "0");
-    await processTime.hover();
+    // The timestamp is a narrow target that can move off the pointer while
+    // the activity list settles. Hover the row that owns the CSS affordance.
+    await process.locator("li").first().hover();
     await expect(processTime).toHaveCSS("opacity", "1");
     const agentMessage = narration;
     const copyMetadata = agentMessage.getByRole("button", { name: "复制", exact: true }).locator('..');
