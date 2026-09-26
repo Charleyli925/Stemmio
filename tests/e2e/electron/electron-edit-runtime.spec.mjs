@@ -987,13 +987,19 @@ test("author Script cannot add source authority after Runtime starts or save Run
     expect(readFileSync(sourcePath, "utf8")).not.toContain('<button id="runtime-generated"');
 
     const firstDocumentToken = await documentToken(page);
+    const preparesBeforeStart = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length);
     const tablist = page.getByRole("tablist", { name: "已打开的页面" });
     const documentTab = tablist.getByRole("tab").first();
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
     const reopened = await loadedDiskFrame(page, sourcePath, "runtime-host");
     await expect(reopened.frame.locator("#runtime-generated")).toHaveText("运行时按钮");
-    await expect.poll(() => documentToken(page)).not.toBe(firstDocumentToken);
+    await expect.poll(() => documentToken(page)).toBe(firstDocumentToken);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length)).toBe(preparesBeforeStart);
   });
 });
 
@@ -2301,7 +2307,7 @@ test("copy requested during composition waits for the existing composition bound
   });
 });
 
-test("same-byte tab remount rebinds a Native Edit target before continuing", {
+test("same-byte Start roundtrip retains a Native Edit target before continuing", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
   test.setTimeout(120_000);
@@ -2327,17 +2333,15 @@ test("same-byte tab remount rebinds a Native Edit target before continuing", {
     expect(firstWorkingHash).toBeTruthy();
     expect(firstRenderedHash).toBe(firstWorkingHash);
 
-    // Switching away and back through the existing document tab performs a
-    // workbench-owned same-byte tab remount. The source bytes and stable target
-    // identity must survive, while the physical Document/generation is
-    // replaced and re-authorized.
+    // Start hides the retained document. Returning to its tab keeps the same
+    // physical authority while source bytes and Stable ID remain unchanged.
     const tablist = page.getByRole("tablist", { name: "已打开的页面" });
     const documentTab = tablist.getByRole("tab").first();
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
     frame = (await loadedDiskFrame(page, sourcePath, "authority-target")).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(firstToken);
-    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(firstGeneration);
+    await expect.poll(() => documentToken(page)).toBe(firstToken);
+    await expect.poll(() => activeFrameGeneration(editor)).toBe(firstGeneration);
     await expect(editor).toHaveAttribute("data-working-source-sha256", firstWorkingHash);
     await expect(editor).toHaveAttribute("data-rendered-projection-sha256", firstRenderedHash);
     const reboundId = await frame.locator('[data-native-case="authority-target"]')
@@ -2358,13 +2362,12 @@ test("same-byte tab remount rebinds a Native Edit target before continuing", {
       .toContain("Authority text 已接管");
     expect(readFileSync(sourcePath, "utf8")).toBe(originalHtml);
 
-    // Reopen the same project once more so the saved bytes and Stable ID are
-    // checked on a new authority generation, not only in the live edit frame.
+    // A second Start roundtrip retains the edited instance and saved bytes.
     const secondToken = await documentToken(page);
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
-    frame = (await loadedDiskFrame(page, sourcePath, "authority-target")).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(secondToken);
+    frame = await currentEditorFrame(page);
+    await expect.poll(() => documentToken(page)).toBe(secondToken);
     await expect(frame.locator('[data-native-case="authority-target"]'))
       .toHaveText("Authority text 已接管");
     await expect(frame.locator('[data-native-case="authority-target"]'))
@@ -4325,7 +4328,7 @@ test("Escape checkpoint reload keeps Native Edit exited", {
       sourcePath,
       "runtime-escape-checkpoint-reload",
     )).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(exitedDocument);
+    await expect.poll(() => documentToken(page)).toBe(exitedDocument);
     exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
     await expect(exitedTarget).toContainText("源码由退出操作提交");
     await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
@@ -6036,7 +6039,7 @@ test("Electron Edit renders a source-relative ECharts page in the editable ifram
     await documentTab.click();
     const reopened = await loadedDiskFrame(page, sourcePath, "echarts-runtime");
     await expect(reopened.frame.locator("#chart canvas")).toHaveCount(1);
-    await expect.poll(() => documentToken(page)).not.toBe(firstDocumentToken);
+    await expect.poll(() => documentToken(page)).toBe(firstDocumentToken);
     expect(readFileSync(sourcePath, "utf8")).toBe(html);
   });
 });

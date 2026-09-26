@@ -120,6 +120,25 @@ export default function WorkbenchActivePreview({
       ? activeContent.props.onScrollTopChange
       : undefined,
   }) : null;
+  // A Preview's physical iframe owns its session and author-script lifetime.
+  // Keep the entry keyed by that instance as its role changes; a role-prefixed
+  // key would unmount the verified iframe and create a second Preview session.
+  const entries = [
+    ...(outgoing ? [
+      <div className={styles.entry} aria-hidden="true" inert key={`preview:${outgoing.identity}`}>
+        {cloneElement(outgoing.element, { ref: null, onScrollTopChange: undefined })}
+      </div>,
+    ] : []),
+    <div
+      className={styles.entry}
+      data-handoff-candidate={activeVisible ? undefined : "true"}
+      aria-hidden={activeInteractive ? undefined : true}
+      inert={activeInteractive ? undefined : true}
+      key={`preview:${identity}`}
+    >
+      {presentedContent}
+    </div>,
+  ];
   useLayoutEffect(() => {
     if (!hasActiveContent) return undefined;
     onPhysicalPresenceChange(identity, true);
@@ -166,22 +185,7 @@ export default function WorkbenchActivePreview({
       data-preview-carry={carryForEdit ? "true" : undefined}
       data-preview-parked={parked ? "true" : undefined}
     >
-      {outgoing ? (
-        // A refresh can retain the same document identity while replacing its
-        // physical iframe. Distinct sibling keys let React retire the old one.
-        <div className={styles.entry} aria-hidden="true" inert key={`outgoing:${outgoing.identity}`}>
-          {cloneElement(outgoing.element, { ref: null, onScrollTopChange: undefined })}
-        </div>
-      ) : null}
-      <div
-        className={styles.entry}
-        data-handoff-candidate={activeVisible ? undefined : "true"}
-        aria-hidden={activeInteractive ? undefined : true}
-        inert={activeInteractive ? undefined : true}
-        key={`active:${identity}`}
-      >
-        {presentedContent}
-      </div>
+      {entries}
       {activeFailed ? (
         <div className={styles.status} role="status">
           <span>预览暂时无法显示</span>

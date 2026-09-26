@@ -90,6 +90,7 @@ export function SidebarToggle({
 export function WorkbenchTabBar({
   snapshot,
   presentation,
+  displayedTabId,
   activeTabOpening,
   onSelect,
   onClose,
@@ -97,6 +98,7 @@ export function WorkbenchTabBar({
 }: {
   snapshot: WorkbenchTabsSnapshot;
   presentation: WorkbenchPresentation;
+  displayedTabId: string | null;
   activeTabOpening: boolean;
   onSelect: (tab: WorkbenchTab) => void;
   onClose: (tab: WorkbenchTab) => void;
@@ -106,10 +108,10 @@ export function WorkbenchTabBar({
   const pendingKeyboardFocusRef = useRef<string | null>(null);
   useEffect(() => {
     const pending = pendingKeyboardFocusRef.current;
-    if (!pending || pending !== snapshot.activeTabId) return;
+    if (!pending || pending !== displayedTabId) return;
     pendingKeyboardFocusRef.current = null;
     tabButtonsRef.current.get(pending)?.focus();
-  }, [snapshot.activeTabId]);
+  }, [displayedTabId]);
 
   return (
     <nav className="workbench-tabbar" aria-label="已打开的页面">
@@ -120,14 +122,11 @@ export function WorkbenchTabBar({
         aria-orientation="horizontal"
       >
         {snapshot.tabs.map((tab) => {
-          const selected = snapshot.activeTabId === tab.tabId;
+          const selected = displayedTabId === tab.tabId;
+          const active = snapshot.activeTabId === tab.tabId;
           const pending = snapshot.pendingTabId === tab.tabId;
-          // Navigation keeps the old runtime until the new document is ready.
-          // The tab strip represents the user's destination from the first
-          // pending frame, so the outgoing tab must lose its visual selection.
-          const visuallySelected = snapshot.pendingTabId ? pending : selected;
-          const opening = (pending && !selected) || (selected && activeTabOpening);
-          const projected = selected && presentation.tabId === tab.tabId;
+          const opening = (pending && !selected) || (active && activeTabOpening);
+          const projected = active && presentation.tabId === tab.tabId;
           const title = projected ? presentation.tabTitle : tab.title;
           const viewLabel = projected ? presentation.viewLabel : null;
           const surfaceLabel = tab.kind === "document" ? "当前稿"
@@ -141,7 +140,7 @@ export function WorkbenchTabBar({
               data-kind={tab.kind}
               data-status={tab.status}
               data-view-label={viewLabel || undefined}
-              data-selected={visuallySelected ? "true" : undefined}
+              data-selected={selected ? "true" : undefined}
               data-pending={pending ? "true" : undefined}
               data-opening={opening ? "true" : undefined}
               key={tab.tabId}

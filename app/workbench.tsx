@@ -6349,11 +6349,12 @@ export default function Workbench() {
   const displayTarget: DisplayTarget = {
     surface: displayedCanvasMode,
     identity: displayedCanvasMode === "preview" ? previewIdentity : editHandoffKey,
+    tabId: activeWorkbenchTab?.tabId || null,
     ...(displayedCanvasMode === "edit" ? { continuityKey: editContinuityKey } : {}),
     ...(displayedCanvasMode === "preview" && historyPreview ? { historical: true } : {}),
   };
   const pendingDisplayTarget: DisplayTarget | null = pendingTabId
-    ? { surface: pendingMode, identity: `pending-tab:${pendingTabId}:${pendingMode}` }
+    ? { surface: pendingMode, identity: `pending-tab:${pendingTabId}:${pendingMode}`, tabId: pendingTabId }
     : null;
   const displayTargetReady = displayedCanvasMode === "preview"
     ? activePreviewReady
@@ -6387,17 +6388,23 @@ export default function Workbench() {
     targetFailed: displayTargetFailed,
     targetLifecycle: pendingExit ? "closing" : "active",
     targetMissingEvidence: displayMissingEvidence,
-    retainedSurface: displayedCanvasMode === "edit"
-      ? activePreviewReady && Boolean(sourcePath) ? "preview" : "edit"
-      : "edit",
     retainOutgoing: displayedCanvasMode === "edit"
       ? !activeDocumentCanvasFailed
       : !activePreviewReady && !activePreviewFailed,
-    edit: { target: { surface: "edit", identity: editHandoffKey, continuityKey: editContinuityKey } },
+    edit: { target: { surface: "edit", identity: editHandoffKey, tabId: activeWorkbenchTab?.tabId || null,
+      continuityKey: editContinuityKey } },
     preview: { target: { surface: "preview", identity: previewIdentity,
+      tabId: activeWorkbenchTab?.tabId || null,
       ...(historyPreview ? { historical: true } : {}) } },
   });
   const displayHandoff = displayHandoffState.decision;
+  const displayedTabId = !startPageActive && !settingsPageActive && !projectRulesPageActive
+    && displayHandoff.actual?.tabId
+    && workbenchTabsSnapshot.tabs.some((tab) => tab.tabId === displayHandoff.actual?.tabId)
+    ? displayHandoff.actual.tabId
+    : activeWorkbenchTab?.tabId || null;
+  const showingOutgoingDocument = displayedTabId !== activeWorkbenchTab?.tabId
+    && Boolean(displayHandoff.actual);
   const parkedPreviewLease = Boolean(
     displayedCanvasMode === "edit"
     && allowsPreviewLeaseRetention(displayHandoff)
@@ -6419,16 +6426,17 @@ export default function Workbench() {
     }, PREVIEW_PARK_MS);
     return () => window.clearTimeout(timer);
   }, [displayHandoff.phase, livePreviewLease?.identity, parkedPreviewLease]);
-  // The destination's saved mode is known when navigation starts. Show that
-  // selection before its new Preview session is mounted and finally painted.
-  const headerPresentation = openingCanvasMode === "preview"
-    && displayedCanvasMode !== "preview"
-    && !presentation.review.selected
+  // An opening target must not make the toolbar announce a different document
+  // or mode from the physical surface that is still on screen.
+  const headerPresentation = showingOutgoingDocument && displayHandoff.actual
     ? {
         ...presentation,
-        mode: "preview" as const,
-        edit: { ...presentation.edit, selected: false },
-        preview: { ...presentation.preview, selected: true },
+        mode: displayHandoff.actual.surface,
+        edit: { ...presentation.edit, selected: displayHandoff.actual.surface === "edit",
+          enabled: false, reason: "页面正在切换" },
+        preview: { ...presentation.preview, selected: displayHandoff.actual.surface === "preview" },
+        review: { ...presentation.review, selected: false, enabled: false, reason: "页面正在切换" },
+        refreshAvailable: false,
       }
     : presentation;
   const activeTabOpening = activeWorkbenchTab?.kind === "document"
@@ -6544,6 +6552,7 @@ export default function Workbench() {
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}
         presentation={headerPresentation}
+        displayedTabId={displayedTabId}
         activeTabOpening={activeTabOpening}
         onBeforeSelect={rememberWorkbenchTabPresentation}
         onOutcome={presentWorkbenchTabOutcome}
@@ -6557,32 +6566,44 @@ export default function Workbench() {
           recentRunOutcome={recentRunOutcome}
           terminalRun={terminalRun}
           aiConversationVisible={aiConversation.visible}
-          aiAssistantEntry={aiAssistantEntry}
+          aiAssistantEntry={showingOutgoingDocument ? null : aiAssistantEntry}
           moreMenu={{
             isHistory: presentation.isHistory,
-            canShowInFolder: presentation.actions.showInFolder.enabled,
-            showInFolderUnavailableReason: presentation.actions.showInFolder.reason,
+            canShowInFolder: !showingOutgoingDocument && presentation.actions.showInFolder.enabled,
+            showInFolderUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.showInFolder.reason,
             onShowInFolder: () => void showProjectInFolder(),
-            canOpenInBrowser: presentation.actions.openInBrowser.enabled,
-            openInBrowserUnavailableReason: presentation.actions.openInBrowser.reason,
+            canOpenInBrowser: !showingOutgoingDocument && presentation.actions.openInBrowser.enabled,
+            openInBrowserUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.openInBrowser.reason,
             onOpenInBrowser: () => void openSelectedHtmlInDefaultBrowser(),
-            canExportCurrentHtml: presentation.actions.exportHtml.enabled,
-            exportUnavailableReason: presentation.actions.exportHtml.reason,
+            canExportCurrentHtml: !showingOutgoingDocument && presentation.actions.exportHtml.enabled,
+            exportUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.exportHtml.reason,
             onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),
-            canSaveCurrentVersion: presentation.actions.saveVersion.enabled,
-            saveCurrentVersionUnavailableReason: presentation.actions.saveVersion.reason,
-            exportAndSaveUnavailableReason: presentation.actions.exportAndSave.reason,
+            canSaveCurrentVersion: !showingOutgoingDocument && presentation.actions.saveVersion.enabled,
+            saveCurrentVersionUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.saveVersion.reason,
+            exportAndSaveUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.exportAndSave.reason,
             onSaveCurrentVersion: () => { void workspaceController?.saveCurrentVersion(); },
-            canCreateVersionFromHistory: presentation.actions.createFromHistory.enabled,
-            createVersionFromHistoryUnavailableReason: presentation.actions.createFromHistory.reason,
+            canCreateVersionFromHistory: !showingOutgoingDocument
+              && presentation.actions.createFromHistory.enabled,
+            createVersionFromHistoryUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.createFromHistory.reason,
             onCreateVersionFromHistory: requestHistoryCreation,
-            canOpenPreservedDrafts: presentation.actions.preservedDrafts.enabled,
-            preservedDraftsUnavailableReason: presentation.actions.preservedDrafts.reason,
+            canOpenPreservedDrafts: !showingOutgoingDocument
+              && presentation.actions.preservedDrafts.enabled,
+            preservedDraftsUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.preservedDrafts.reason,
             onOpenPreservedDrafts: () => setPreservedDraftDialogOpen(true),
-            canReloadCurrentSource: presentation.actions.reloadSource.enabled,
-            reloadCurrentSourceUnavailableReason: presentation.actions.reloadSource.reason,
+            canReloadCurrentSource: !showingOutgoingDocument
+              && presentation.actions.reloadSource.enabled,
+            reloadCurrentSourceUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.reloadSource.reason,
             onReloadCurrentSource: () => void reloadCurrentSource(),
-            onRetryDynamicContent: canReloadCurrentSource && editRuntimeSnapshot?.retryAvailable
+            onRetryDynamicContent: !showingOutgoingDocument && canReloadCurrentSource
+              && editRuntimeSnapshot?.retryAvailable
               ? () => {
                   void workspaceControllerRef.current?.retryEditAuthorRuntime().then((started) => {
                     if (!started) setFileStatusNotice("暂时无法重新加载，请稍后重试");
@@ -6916,7 +6937,7 @@ export default function Workbench() {
       <div
         id="workbench-content-outlet"
         role="tabpanel"
-        aria-labelledby={`workbench-tab-${activeWorkbenchTab.tabId}`}
+        aria-labelledby={`workbench-tab-${displayedTabId || activeWorkbenchTab.tabId}`}
         ref={reviewStageRef}
         className="review-scroll-stage"
         onWheelCapture={commentCanvasPort.cancelReveal}

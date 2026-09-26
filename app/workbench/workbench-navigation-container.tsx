@@ -22,12 +22,14 @@ import { WorkbenchTabBar } from "./WorkbenchChrome";
 export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
   capability,
   presentation,
+  displayedTabId,
   activeTabOpening,
   onBeforeSelect,
   onOutcome,
 }: {
   capability: NavigationControllerCapability;
   presentation: WorkbenchPresentation;
+  displayedTabId: string | null;
   activeTabOpening: boolean;
   onBeforeSelect(snapshot: WorkbenchTabsSnapshot): void;
   onOutcome(outcome: unknown, target?: WorkbenchTab): void;
@@ -102,6 +104,7 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
     <WorkbenchTabBar
       snapshot={tabs}
       presentation={presentation}
+      displayedTabId={displayedTabId}
       activeTabOpening={activeTabOpening}
       onSelect={selectTab}
       onClose={closeTab}
