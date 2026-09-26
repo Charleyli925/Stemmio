@@ -44,7 +44,7 @@ import HtmlInteractionPreview, {
   type PreviewOpenReason,
 } from "./components/HtmlInteractionPreview";
 import WorkbenchActivePreview from "./workbench/WorkbenchActivePreview";
-import type { DisplayTarget } from "./workbench/display-handoff-decision";
+import { allowsPreviewLeaseRetention, type DisplayTarget } from "./workbench/display-handoff-decision";
 import { useAiConversation } from "./workbench/use-ai-conversation";
 import { useDisplayHandoff } from "./workbench/use-display-handoff";
 import NoticeBar from "./components/NoticeBar";
@@ -6394,13 +6394,15 @@ export default function Workbench() {
   const displayHandoff = displayHandoffState.decision;
   const parkedPreviewLease = Boolean(
     displayedCanvasMode === "edit"
+    && allowsPreviewLeaseRetention(displayHandoff)
     && previewLeaseEligible
     && livePreviewLease
     && activePreviewReady
     && previewAck?.attemptId === livePreviewLease.attemptId,
   );
   if (previewLease && displayedCanvasMode === "edit"
-    && (!previewLeaseEligible || activePreviewFailed || workbenchTabsSnapshot.pendingTabId)) {
+    && (!previewLeaseEligible || activePreviewFailed || !allowsPreviewLeaseRetention(displayHandoff)
+      || workbenchTabsSnapshot.pendingTabId)) {
     setPreviewLease(null);
   }
   useEffect(() => {
