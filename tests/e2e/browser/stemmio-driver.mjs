@@ -967,6 +967,13 @@ export function keyShortcut(key) {
 
 export async function requestExportCurrentHtml(page, shortcut = keyShortcut("Shift+E")) {
   await page.keyboard.press(shortcut);
+  const dialog = page.getByRole("dialog", { name: "导出当前 HTML", exact: true });
+  await expect(dialog).toBeVisible();
+  // Byte-oracle exports deliberately omit a history snapshot. The default
+  // checked choice and immutable-version behavior have their own native test.
+  const snapshot = dialog.getByRole("checkbox", { name: "同时保存到历史版本", exact: true });
+  if (await snapshot.isEnabled()) await snapshot.uncheck();
+  await dialog.getByRole("button", { name: "选择保存位置…", exact: true }).click();
 }
 
 export async function exportCurrentHtml(page, shortcut) {

@@ -497,21 +497,23 @@ ${REVIEW_MASK_UNION_BEFORE}
     const reviewReloadRevision = Number(
       await reviewWorkspace.getAttribute("data-reload-revision"),
     );
-    const reviewRefreshButton = launched.page.getByRole("button", { name: "刷新本页面" });
-    await expect(reviewRefreshButton).toBeEnabled();
-    await reviewRefreshButton.click();
-    await expect(reviewWorkspace).toHaveAttribute(
-      "data-reload-revision",
-      String(reviewReloadRevision + 1),
-    );
+    const reviewFrameElements = reviewWorkspace.locator("iframe");
+    const reviewFrameSources = await reviewFrameElements.evaluateAll((frames) => frames.map((frame) => frame.src));
+    const workingBeforeRefresh = readFileSync(beforeAdoption.sourcePath, "utf8");
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
     const diskReloadItem = launched.page.getByRole("menuitem", {
-      name: /从磁盘重新载入 HTML/u,
+      name: /刷新/u,
     });
     await expect(diskReloadItem).toHaveAttribute("aria-disabled", "true");
     await expect(diskReloadItem).toContainText(
-      "请先采用或不用这次 AI 修改，再从磁盘重新载入",
+      "请先采用或不用这次 AI 修改，再刷新",
     );
+    await diskReloadItem.focus();
+    await launched.page.keyboard.press("Enter");
+    await expect(reviewWorkspace).toHaveAttribute("data-reload-revision", String(reviewReloadRevision));
+    expect(await reviewFrameElements.evaluateAll((frames) => frames.map((frame) => frame.src))).toEqual(reviewFrameSources);
+    expect(readFileSync(beforeAdoption.sourcePath, "utf8")).toBe(workingBeforeRefresh);
+    await expect(beforeReviewFrame.locator("html")).toHaveAttribute("data-stemmio-review-focus", initialNavigationTarget);
     await launched.page.keyboard.press("Escape");
     const reviewSidebar = reviewWorkspace.getByTestId("ai-conversation-sidebar");
     await expect(launched.page.getByTestId("ai-conversation-sidebar")).toBeVisible();

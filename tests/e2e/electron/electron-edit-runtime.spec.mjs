@@ -2407,7 +2407,7 @@ test("explicit same-byte source reload creates a fresh Runtime authority", {
     expect(beforeId).toMatch(/^sm1_[a-f0-9]{32}$/u);
 
     await page.getByRole("button", { name: "更多", exact: true }).click();
-    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
     await expect(page.locator(".workbench-chrome-status"))
       .toHaveText("页面已重新加载，可以继续编辑");
     await expect.poll(() => documentToken(page)).not.toBe(beforeToken);
@@ -4150,6 +4150,11 @@ test("an explicit B edit intent resumes after A commits through a rebuilt Runtim
       .toBe(true);
 
     const requested = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await requested.click();
+    await expect(first).not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
+    // The exit click is complete. A subsequent explicit double click may
+    // request B even while A's accepted checkpoint is rebuilding the frame.
     await doubleClickRenderedText(requested);
     await page.evaluate(() => {
       window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
@@ -4224,6 +4229,9 @@ test("external comment focus during Candidate positioning retires the earlier B 
     await first.press("End");
     await page.keyboard.insertText(" A_FOCUS_INPUT");
     const second = frame.locator('[data-native-case="runtime-post-edit-focus-b"]');
+    await second.click({ force: true });
+    await expect(first).not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
     await doubleClickRenderedText(second, { force: true });
     await page.evaluate(() => {
       window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;

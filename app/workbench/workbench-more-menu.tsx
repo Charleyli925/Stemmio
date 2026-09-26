@@ -10,8 +10,6 @@ import { DownloadSimpleIcon } from "@phosphor-icons/react/dist/csr/DownloadSimpl
 import { FolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { FloppyDiskIcon } from "@phosphor-icons/react/dist/csr/FloppyDisk";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
-import { CheckSquareIcon } from "@phosphor-icons/react/dist/csr/CheckSquare";
-import { SquareIcon } from "@phosphor-icons/react/dist/csr/Square";
 
 type MoreMenuItem = Readonly<{
   id: string;
@@ -21,11 +19,10 @@ type MoreMenuItem = Readonly<{
   dividerBefore?: boolean;
   disabled?: boolean;
   reason?: string;
-  checked?: boolean;
-  keepOpen?: boolean;
 }>;
 
 export type WorkbenchMoreMenuProps = Readonly<{
+  contextKey: string;
   isHistory?: boolean;
   canShowInFolder: boolean;
   showInFolderUnavailableReason?: string;
@@ -35,17 +32,13 @@ export type WorkbenchMoreMenuProps = Readonly<{
   onOpenInBrowser: () => void;
   canExportCurrentHtml: boolean;
   exportUnavailableReason?: string;
-  onExportCurrentHtml: (saveVersion?: boolean) => void;
+  onExportCurrentHtml: () => void;
   canSaveCurrentVersion?: boolean;
   saveCurrentVersionUnavailableReason?: string;
-  exportAndSaveUnavailableReason?: string;
   onSaveCurrentVersion?: () => void;
   canCreateVersionFromHistory?: boolean;
   createVersionFromHistoryUnavailableReason?: string;
   onCreateVersionFromHistory?: () => void;
-  canOpenPreservedDrafts?: boolean;
-  preservedDraftsUnavailableReason?: string;
-  onOpenPreservedDrafts?: () => void;
   canReloadCurrentSource: boolean;
   reloadCurrentSourceUnavailableReason?: string;
   onReloadCurrentSource: () => void;
@@ -64,7 +57,11 @@ function menuPosition(trigger: HTMLButtonElement) {
   };
 }
 
-export function WorkbenchMoreMenu({
+export function WorkbenchMoreMenu({ contextKey, ...props }: WorkbenchMoreMenuProps) {
+  return <WorkbenchMoreMenuContent key={contextKey} {...props} />;
+}
+
+function WorkbenchMoreMenuContent({
   isHistory = false,
   canShowInFolder,
   showInFolderUnavailableReason,
@@ -77,33 +74,29 @@ export function WorkbenchMoreMenu({
   onExportCurrentHtml,
   canSaveCurrentVersion = false,
   saveCurrentVersionUnavailableReason,
-  exportAndSaveUnavailableReason,
   onSaveCurrentVersion,
   canCreateVersionFromHistory = false,
   createVersionFromHistoryUnavailableReason,
   onCreateVersionFromHistory,
-  canOpenPreservedDrafts = true,
-  preservedDraftsUnavailableReason,
-  onOpenPreservedDrafts,
   canReloadCurrentSource,
   reloadCurrentSourceUnavailableReason,
   onReloadCurrentSource,
   onRetryDynamicContent,
-}: WorkbenchMoreMenuProps) {
+}: Omit<WorkbenchMoreMenuProps, "contextKey">) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
-  const [saveVersionOnExport, setSaveVersionOnExport] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const items = useMemo<readonly MoreMenuItem[]>(() => [
     ...(onSaveCurrentVersion ? [{
-      id: "save-version", label: "保存为新版本",
+      id: "save-version", label: "保存到历史版本",
       icon: <FloppyDiskIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onSaveCurrentVersion,
       disabled: isHistory || !canSaveCurrentVersion,
-      reason: isHistory ? "该操作只针对当前稿" : saveCurrentVersionUnavailableReason,
+      reason: isHistory ? "该操作只针对当前稿" : saveCurrentVersionUnavailableReason
+        || "保留此刻的内容，继续编辑当前稿",
     }] : []),
     ...(onCreateVersionFromHistory ? [{
       id: "create-from-history", label: "基于此版本创建新版本…",
@@ -116,7 +109,7 @@ export function WorkbenchMoreMenu({
     }] : []),
     {
       id: "show-in-folder",
-      label: "在 Finder 中显示工作文件",
+      label: "在 Finder 中显示",
       icon: <FolderOpenIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onShowInFolder,
       disabled: !canShowInFolder,
@@ -124,7 +117,7 @@ export function WorkbenchMoreMenu({
     },
     {
       id: "open-in-browser",
-      label: isHistory ? "在浏览器中打开此版本" : "在浏览器中打开工作文件",
+      label: "在浏览器中打开",
       icon: <ArrowSquareOutIcon aria-hidden="true" size={16} weight="bold" />,
       onSelect: onOpenInBrowser,
       disabled: !canOpenInBrowser,
@@ -134,27 +127,11 @@ export function WorkbenchMoreMenu({
       id: "export-html",
       label: isHistory ? "导出此版本…" : "导出当前 HTML…",
       icon: <DownloadSimpleIcon aria-hidden="true" size={16} weight="duotone" />,
-      onSelect: () => onExportCurrentHtml(!isHistory && saveVersionOnExport),
+      onSelect: onExportCurrentHtml,
       dividerBefore: true,
       disabled: !canExportCurrentHtml,
       reason: exportUnavailableReason,
     },
-    ...(onSaveCurrentVersion ? [{
-      id: "export-save-version", label: "同时保存为新版本",
-      icon: saveVersionOnExport ? <CheckSquareIcon aria-hidden="true" size={16} /> : <SquareIcon aria-hidden="true" size={16} />,
-      onSelect: () => setSaveVersionOnExport((value) => !value),
-      checked: saveVersionOnExport,
-      keepOpen: true,
-      disabled: isHistory || !canSaveCurrentVersion || !canExportCurrentHtml,
-      reason: isHistory ? "历史版本导出不会改变当前稿" : exportAndSaveUnavailableReason,
-    }] : []),
-    ...(onOpenPreservedDrafts ? [{
-      id: "preserved-drafts", label: "找回此前的稿件…",
-      icon: <ClockCounterClockwiseIcon aria-hidden="true" size={16} />,
-      onSelect: onOpenPreservedDrafts,
-      disabled: !canOpenPreservedDrafts,
-      reason: preservedDraftsUnavailableReason,
-    }] : []),
     ...(onRetryDynamicContent ? [{
       id: "retry-dynamic",
       label: "重新加载动态内容",
@@ -163,7 +140,7 @@ export function WorkbenchMoreMenu({
     }] : []),
     {
       id: "reload-source",
-      label: "从磁盘重新载入 HTML",
+      label: "刷新",
       icon: <ArrowClockwiseIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onReloadCurrentSource,
       dividerBefore: true,
@@ -174,27 +151,22 @@ export function WorkbenchMoreMenu({
     canCreateVersionFromHistory,
     canExportCurrentHtml,
     canOpenInBrowser,
-    canOpenPreservedDrafts,
     canReloadCurrentSource,
     canSaveCurrentVersion,
     canShowInFolder,
     createVersionFromHistoryUnavailableReason,
-    exportAndSaveUnavailableReason,
     exportUnavailableReason,
     isHistory,
     onCreateVersionFromHistory,
     onExportCurrentHtml,
     onOpenInBrowser,
-    onOpenPreservedDrafts,
     onReloadCurrentSource,
     reloadCurrentSourceUnavailableReason,
     onRetryDynamicContent,
     onShowInFolder,
     onSaveCurrentVersion,
     openInBrowserUnavailableReason,
-    preservedDraftsUnavailableReason,
     saveCurrentVersionUnavailableReason,
-    saveVersionOnExport,
     showInFolderUnavailableReason,
   ]);
   const visibleItems = items;
@@ -229,13 +201,13 @@ export function WorkbenchMoreMenu({
       if (!menuRef.current?.contains(document.activeElement)) itemRefs.current.get(visibleItems[0]?.id || "")?.focus();
     };
     updatePosition();
-    window.requestAnimationFrame(focusFirst);
+    const focusFrame = window.requestAnimationFrame(focusFirst);
     const onViewportChange = () => updatePosition();
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (trigger.contains(target) || menuRef.current?.contains(target)) return;
-      close();
+      close(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -269,6 +241,7 @@ export function WorkbenchMoreMenu({
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("scroll", onViewportChange, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
@@ -289,12 +262,15 @@ export function WorkbenchMoreMenu({
         data-tooltip="更多"
         onClick={() => {
           if (open) close(false);
-          else { setSaveVersionOnExport(false); setOpen(true); }
+          else setOpen(true);
         }}
       >
         <DotsThreeIcon aria-hidden="true" size={18} weight="bold" />
       </button>
       {open ? createPortal(
+        <>
+        <div className="workbench-more-menu-dismiss" aria-hidden="true" data-html-canvas-preserve-selection="true"
+          onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); close(); }} />
         <div
           ref={menuRef}
           id={menuId}
@@ -312,16 +288,16 @@ export function WorkbenchMoreMenu({
                   else itemRefs.current.delete(item.id);
                 }}
                 type="button"
-                role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+                role="menuitem"
                 aria-label={item.label}
-                aria-checked={item.checked}
                 aria-disabled={item.disabled || undefined}
                 data-menu-item={item.id}
                 tabIndex={-1}
                 aria-describedby={item.reason ? `${menuId}-${item.id}-reason` : undefined}
                 onClick={() => {
                   if (item.disabled) return;
-                  if (!item.keepOpen) close();
+                  close(false);
+                  if (item.id === "export-html") triggerRef.current?.focus();
                   item.onSelect();
                 }}
               >
@@ -335,7 +311,8 @@ export function WorkbenchMoreMenu({
               </button>
             </div>
           ))}
-        </div>,
+        </div>
+        </>,
         document.body,
       ) : null}
     </span>

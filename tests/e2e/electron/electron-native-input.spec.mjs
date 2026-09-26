@@ -219,6 +219,167 @@ test("Electron shows continuous source text immediately without rebuilding the i
   }
 });
 
+const outsideNativeEditHtml = `<!doctype html>
+<html><head><title>Native Edit outside pointer</title><style>
+  main { padding: 32px; font: 20px/1.5 sans-serif; }
+  p { margin: 24px 0; }
+  button, input { margin: 12px; }
+  [data-native-case="outside-blank"] { height: 80px; margin-top: 24px; }
+</style></head><body><main>
+  <p data-native-case="outside-a">原生编辑中的文字</p>
+  <p data-native-case="outside-b">下一次单击才选择这段文字</p>
+  <button data-native-case="outside-disabled" disabled>禁用的作者按钮</button>
+  <input data-native-case="outside-enabled" type="checkbox" aria-label="作者复选框">
+  <div data-native-case="outside-blank"></div>
+</main></body></html>`;
+
+test("Electron consumes the first outside Native Edit click before selecting text, controls or blank content", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("native-outside-click.html", () => outsideNativeEditHtml);
+  const { electronApp, page, isolatedUserData } = await launchStemmio({
+    activeSourcePath: fixture.sourcePath,
+    injectedEnv: { STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1" },
+  });
+  try {
+    const { editor, frame } = await loadedDiskFrame(page, fixture.sourcePath, "outside-a");
+    const initialDocument = await documentToken(frame);
+    const workingCopyPath = await managedWorkingCopyPath(page, fixture.sourcePath);
+    const toolbar = editor.getByRole("toolbar");
+    await page.evaluate(() => {
+      window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = true;
+    });
+    for (const caseId of ["outside-b", "outside-disabled", "outside-enabled", "outside-blank"]) {
+      const active = await activateNativeEdit(frame, "outside-a");
+      await active.click({ position: { x: 18, y: 14 } });
+      await expect(active).toHaveAttribute("contenteditable", "true");
+      await expect(active).toBeFocused();
+      await setTextSelection(frame, "outside-a", 0, 0);
+      const insertedText = `[${caseId}]`;
+      const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+        .getAttribute("data-persisted-revision"));
+      await page.keyboard.insertText(insertedText);
+      expect(await readPublishedWorkingCopy(workingCopyPath, "utf8")).not.toContain(insertedText);
+
+      const outside = frame.locator(caseSelector(caseId));
+      await outside.click({ force: true, position: { x: 6, y: 6 } });
+      await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+      await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
+      await expect(toolbar).toHaveCount(0);
+      await expectCheckpointPersisted(page, revisionBefore);
+      expect(await readPublishedWorkingCopy(workingCopyPath, "utf8")).toContain(insertedText);
+      expect(await documentToken(frame)).toBe(initialDocument);
+      await expect(frame.locator(caseSelector("outside-enabled"))).not.toBeChecked();
+
+      await outside.click({ force: true, position: { x: 6, y: 6 } });
+      await expect(outside).toHaveAttribute("data-html-canvas-selected", /.+/u);
+      await expect(toolbar).toBeVisible();
+      await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+      await expect(frame.locator(caseSelector("outside-enabled"))).not.toBeChecked();
+    }
+
+    // A rapid pair contains one exit gesture and one structural selection;
+    // Chromium's resulting dblclick must not activate B using the exit click.
+    await activateNativeEdit(frame, "outside-a");
+    await frame.locator(caseSelector("outside-b")).dblclick({ position: { x: 18, y: 14 } });
+    await expect(frame.locator(caseSelector("outside-b")))
+      .toHaveAttribute("data-html-canvas-selected", /.+/u);
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+    await activateNativeEdit(frame, "outside-b");
+    expect(await documentToken(frame)).toBe(initialDocument);
+  } finally {
+    await stopStemmio(electronApp, isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("Electron defers an outside Native Edit click until Chromium composition commits once", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("native-outside-ime.html", () => outsideNativeEditHtml);
+  const { electronApp, page, isolatedUserData } = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  let cdp = null;
+  try {
+    const { editor, frame } = await loadedDiskFrame(page, fixture.sourcePath, "outside-a");
+    const initialDocument = await documentToken(frame);
+    const workingCopyPath = await managedWorkingCopyPath(page, fixture.sourcePath);
+    const revisionBefore = Number(await page.locator("[data-persist-state]").first()
+      .getAttribute("data-persisted-revision"));
+    const active = await activateNativeEdit(frame, "outside-a");
+    await installInputRecorder(frame);
+    await setTextSelection(frame, "outside-a", 0, 2);
+    cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", {
+      text: "zhongwen", selectionStart: 8, selectionEnd: 8,
+    });
+    const outside = frame.locator(caseSelector("outside-enabled"));
+    await outside.click({ position: { x: 6, y: 6 } });
+    await expect(active).toBeFocused();
+    await expect(active).toHaveAttribute("contenteditable", "true");
+    await expect(outside).not.toBeChecked();
+    expect((await recordedInputEvents(frame)).filter(({ type }) => type === "compositionend"))
+      .toHaveLength(0);
+    await cdp.send("Input.insertText", { text: "中文" });
+
+    await expect(frame.locator('[contenteditable="true"]')).toHaveCount(0);
+    await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
+    await expect(editor.getByRole("toolbar")).toHaveCount(0);
+    await expectCheckpointPersisted(page, revisionBefore);
+    const source = await readPublishedWorkingCopy(workingCopyPath, "utf8");
+    expect(source).toContain("中文编辑中的文字");
+    expect(source).not.toContain("zhongwen");
+    expect(source.match(/中文/gu)).toHaveLength(1);
+    expect((await recordedInputEvents(frame)).filter(({ type }) => type === "compositionend"))
+      .toHaveLength(1);
+    expect(await documentToken(frame)).toBe(initialDocument);
+    await outside.click({ position: { x: 6, y: 6 } });
+    await expect(outside).toHaveAttribute("data-html-canvas-selected", /.+/u);
+    await expect(outside).not.toBeChecked();
+  } finally {
+    if (cdp) await cdp.detach();
+    await stopStemmio(electronApp, isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
+test("Electron waits for composition before opening export options and returns focus on cancel", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const fixture = createSourceFixture("native-export-ime.html", () => outsideNativeEditHtml);
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  let cdp;
+  try {
+    const { page } = launched;
+    const { frame } = await loadedDiskFrame(page, fixture.sourcePath, "outside-a");
+    const initialDocument = await documentToken(frame);
+    const active = await activateNativeEdit(frame, "outside-a");
+    await setTextSelection(frame, "outside-a", 0, 2);
+    await installInputRecorder(frame);
+    cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", { text: "zhongwen", selectionStart: 8, selectionEnd: 8 });
+    await page.keyboard.press(keyShortcut("Shift+E"));
+    const dialog = page.getByRole("dialog", { name: "导出当前 HTML", exact: true });
+    await expect(dialog).toHaveCount(0);
+    await expect(active).toBeFocused();
+    expect((await recordedInputEvents(frame)).filter(({ type }) => type === "compositionend")).toHaveLength(0);
+    await cdp.send("Input.insertText", { text: "中文" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("checkbox")).toBeChecked();
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(active).toBeFocused();
+    await expect(active).toHaveAttribute("contenteditable", "true");
+    expect((await recordedInputEvents(frame)).filter(({ type }) => type === "compositionend")).toHaveLength(1);
+    expect(await documentToken(frame)).toBe(initialDocument);
+    const working = await managedWorkingCopyPath(page, fixture.sourcePath);
+    await expect.poll(() => readPublishedWorkingCopy(working, "utf8")).toContain("中文编辑中的文字");
+    expect(await readPublishedWorkingCopy(working, "utf8")).not.toContain("zhongwen");
+  } finally {
+    if (cdp) await cdp.detach();
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Runtime handoff settlement samples fixed slots, retires the old document and rejects a live Candidate", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
@@ -431,6 +592,8 @@ test("Electron fixed real-input sample covers mouse, keyboard, deletion and Ente
       .toHaveAttribute("data-frame-generation", initialGeneration);
     await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
 
+    await page.keyboard.press("Escape");
+    await expect(controlledTarget).not.toHaveAttribute("contenteditable", "true");
     const secondProjectionCase = "display-contents-copy";
     await activateNativeEdit(page, secondProjectionCase);
     await expect(editor).toHaveAttribute(

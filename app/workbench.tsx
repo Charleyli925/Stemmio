@@ -35,7 +35,7 @@ import AboutStemmioDialog from "./components/AboutStemmioDialog";
 import SettingsPage from "./components/SettingsPage";
 import { AgentDeliveryButton, type AgentDeliveryMode } from "./components/AgentDeliveryButton";
 import HistoryCreationDialog from "./components/HistoryCreationDialog";
-import PreservedDraftDialog from "./components/PreservedDraftDialog";
+import ExportHtmlDialog from "./components/ExportHtmlDialog";
 import { CurrentDraftStatus } from "./workbench/current-draft-status";
 import CancelAiRunDialog from "./components/CancelAiRunDialog";
 import HtmlInteractionPreview, {
@@ -254,7 +254,7 @@ import { useRuntimeBridgeConnectionReady } from "./workbench/runtime-bridge-conn
 import { WorkbenchTabBarContainer } from "./workbench/workbench-navigation-container";
 import { WorkbenchResizer } from "./workbench/workbench-resizer";
 import { createWorkbenchModeHandlers } from "./workbench/workbench-mode-handlers";
-import { deriveWorkbenchPresentation } from "./workbench/workbench-header-projection";
+import { deriveWorkbenchPresentation, isWorkbenchAiWorking } from "./workbench/workbench-header-projection";
 import {
   activeRunOperationKey,
   fileStem,
@@ -500,6 +500,7 @@ export default function Workbench() {
   const pageViewDocumentKeyRef = useRef("");
   const deferredEditorReplayRef = useRef<{
     exportCurrentHtml?: (saveVersion?: boolean) => void;
+    requestExportCurrentHtml?: () => void;
     reloadCurrentSource?: () => void;
     reloadReview?: () => void;
     requestReviewDecision?: (action: "return" | "accept") => void;
@@ -839,8 +840,6 @@ export default function Workbench() {
   const workspacePreferencesSnapshot = workspacePreferencesController.snapshot;
   const workspacePreferences = workspacePreferencesSnapshot.workspace;
   const [previewAttachment, setPreviewAttachment] = useState<CommentAttachment | null>(null);
-  const [preservedDraftDialogOpen, setPreservedDraftDialogOpen] = useState(false);
-  const loadPreservedDrafts = useCallback(() => workspaceController!.loadPreservedDrafts(), [workspaceController]);
   const [historyCreationConfirmation, setHistoryCreationConfirmation] = useState<string | null>(null);
   const historyCreation = shellSnapshot?.version?.creation;
   const [handoffPreviewOpen, setHandoffPreviewOpen] = useState(false);
@@ -3866,6 +3865,23 @@ export default function Workbench() {
     };
   }, [exportCurrentHtml]);
 
+  const exportContextKey = `${activeWorkbenchTab?.tabId}:${projectId}:${documentId}:${viewingVersionId}`;
+  const [exportDialog, setExportDialog] = useState({ contextKey: exportContextKey, open: false });
+  if (exportDialog.contextKey !== exportContextKey) {
+    setExportDialog({ contextKey: exportContextKey, open: false });
+  }
+  const requestExportCurrentHtml = useCallback((fromDeferred = false) => {
+    if (isViewTransitioning()) return;
+    if (!fromDeferred && deferEditorCommand("export", () => {
+      deferredEditorReplayRef.current.requestExportCurrentHtml?.();
+    })) return;
+    if (viewMode === "history") { void exportCurrentHtml(); return; }
+    setExportDialog({ contextKey: exportContextKey, open: true });
+  }, [deferEditorCommand, exportContextKey, exportCurrentHtml, isViewTransitioning, viewMode]);
+  useEffect(() => {
+    deferredEditorReplayRef.current.requestExportCurrentHtml = () => requestExportCurrentHtml(true);
+  }, [requestExportCurrentHtml]);
+
   // DocumentWorkflow owns the complete disk-source operation. Workbench sends
   // intent, presents its confirmation request, and renders the phased result.
   const reloadCurrentSource = useCallback(async ({
@@ -3904,7 +3920,6 @@ export default function Workbench() {
       if (outcome.status === "stale" || !isCurrentProjectContext(context)) return false;
       if (outcome.status !== "succeeded") throw new Error(outcome.reason);
       setExternalSourcePreview(null);
-      setCanvasMode("edit");
       const restored = outcome.value.page.status === "restored";
       setFileStatusNotice(restored
         ? "页面已重新加载，可以继续编辑"
@@ -4270,7 +4285,7 @@ export default function Workbench() {
       }
       if (event.key.toLowerCase() === "e" && event.shiftKey) {
         event.preventDefault();
-        void exportCurrentHtml();
+        requestExportCurrentHtml();
       } else if (event.key.toLowerCase() === "s" && !event.shiftKey) {
         event.preventDefault();
         requestUserFlush();
@@ -4278,7 +4293,7 @@ export default function Workbench() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [exportCurrentHtml, requestSourceHistoryAction, requestUserFlush]);
+  }, [requestExportCurrentHtml, requestSourceHistoryAction, requestUserFlush]);
 
   const updateFocusedComment = useCallback((commentId: string | null) => {
     commentCanvasPort.setFocusedCommentId(commentId);
@@ -6436,11 +6451,35 @@ export default function Workbench() {
           enabled: false, reason: "页面正在切换" },
         preview: { ...presentation.preview, selected: displayHandoff.actual.surface === "preview" },
         review: { ...presentation.review, selected: false, enabled: false, reason: "页面正在切换" },
-        refreshAvailable: false,
       }
     : presentation;
   const activeTabOpening = activeWorkbenchTab?.kind === "document"
     && !pendingTabId && displayHandoff.phase === "opening";
+  const tabActivity = useMemo(() => {
+    const visibleCurrent = activeWorkbenchTab?.kind === "document"
+      && displayedTabId === activeWorkbenchTab.tabId && !pendingTabId
+      && !showingOutgoingDocument && !projectHydrating && !projectLoadError
+      && (presentation.viewLabel === "当前" || presentation.viewLabel === "审阅");
+    const currentRun = activeRun && activeRun.projectId === projectId
+      && activeRun.documentId === documentId && sameLocalSourcePath(activeRun.sourcePath, sourcePath)
+      ? activeRun : null;
+    const submission = runSnapshot.activeSubmission;
+    return {
+      scopeKey: visibleCurrent
+        ? `${activeWorkbenchTab.tabId}:${projectSnapshot.epoch}:${sourcePath}:${sourceReceipt?.sessionIncarnation}` : null,
+      editRevision,
+      persistedRevision: lastPersistedRevision,
+      commentIds: comments.map((comment) => comment.commentId),
+      busy: persistState === "queued" || persistState === "writing" || isWorkbenchAiWorking({
+        submissionPhase: submission && sameLocalSourcePath(submission.sourcePath, sourcePath) ? submission.phase : undefined,
+        runStatus: currentRun?.status,
+        handoffStatus: currentRun ? currentAgentHandoffStatus : undefined,
+      }),
+    };
+  }, [activeWorkbenchTab, displayedTabId, pendingTabId, showingOutgoingDocument, projectHydrating,
+    projectLoadError, presentation.viewLabel, activeRun, projectId, documentId, sourcePath,
+    runSnapshot.activeSubmission, projectSnapshot.epoch, sourceReceipt?.sessionIncarnation,
+    editRevision, lastPersistedRevision, comments, persistState, currentAgentHandoffStatus]);
   // Keep the exact loaded Preview iframe in front while the same document's
   // Edit runtime is preparing. The previous document's Edit frame is never a
   // valid fallback for this transition. In-memory browser documents have no
@@ -6549,11 +6588,22 @@ export default function Workbench() {
         />
       </div> : null}
       <WorkbenchTooltipHost />
+      {exportDialog.contextKey === exportContextKey && exportDialog.open ? <ExportHtmlDialog
+        canSaveVersion={!showingOutgoingDocument && presentation.actions.exportAndSave.enabled}
+        saveUnavailableReason={showingOutgoingDocument ? "页面正在切换" : presentation.actions.exportAndSave.reason}
+        canExport={!showingOutgoingDocument && presentation.actions.exportHtml.enabled}
+        onClose={() => setExportDialog({ contextKey: exportContextKey, open: false })}
+        onConfirm={(saveVersion) => {
+          setExportDialog({ contextKey: exportContextKey, open: false });
+          void exportCurrentHtml(false, saveVersion);
+        }}
+      /> : null}
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}
         presentation={headerPresentation}
         displayedTabId={displayedTabId}
         activeTabOpening={activeTabOpening}
+        activity={tabActivity}
         onBeforeSelect={rememberWorkbenchTabPresentation}
         onOutcome={presentWorkbenchTabOutcome}
       /> : null}
@@ -6568,6 +6618,7 @@ export default function Workbench() {
           aiConversationVisible={aiConversation.visible}
           aiAssistantEntry={showingOutgoingDocument ? null : aiAssistantEntry}
           moreMenu={{
+            contextKey: exportContextKey,
             isHistory: presentation.isHistory,
             canShowInFolder: !showingOutgoingDocument && presentation.actions.showInFolder.enabled,
             showInFolderUnavailableReason: showingOutgoingDocument ? "页面正在切换"
@@ -6580,23 +6631,16 @@ export default function Workbench() {
             canExportCurrentHtml: !showingOutgoingDocument && presentation.actions.exportHtml.enabled,
             exportUnavailableReason: showingOutgoingDocument ? "页面正在切换"
               : presentation.actions.exportHtml.reason,
-            onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),
+            onExportCurrentHtml: requestExportCurrentHtml,
             canSaveCurrentVersion: !showingOutgoingDocument && presentation.actions.saveVersion.enabled,
             saveCurrentVersionUnavailableReason: showingOutgoingDocument ? "页面正在切换"
               : presentation.actions.saveVersion.reason,
-            exportAndSaveUnavailableReason: showingOutgoingDocument ? "页面正在切换"
-              : presentation.actions.exportAndSave.reason,
             onSaveCurrentVersion: () => { void workspaceController?.saveCurrentVersion(); },
             canCreateVersionFromHistory: !showingOutgoingDocument
               && presentation.actions.createFromHistory.enabled,
             createVersionFromHistoryUnavailableReason: showingOutgoingDocument ? "页面正在切换"
               : presentation.actions.createFromHistory.reason,
             onCreateVersionFromHistory: requestHistoryCreation,
-            canOpenPreservedDrafts: !showingOutgoingDocument
-              && presentation.actions.preservedDrafts.enabled,
-            preservedDraftsUnavailableReason: showingOutgoingDocument ? "页面正在切换"
-              : presentation.actions.preservedDrafts.reason,
-            onOpenPreservedDrafts: () => setPreservedDraftDialogOpen(true),
             canReloadCurrentSource: !showingOutgoingDocument
               && presentation.actions.reloadSource.enabled,
             reloadCurrentSourceUnavailableReason: showingOutgoingDocument ? "页面正在切换"
@@ -6615,13 +6659,6 @@ export default function Workbench() {
           onSelectPreview={onSelectPreview}
           onOpenReview={() => {
             if (reviewAvailable) void reviewReadyResult();
-          }}
-          onRefreshCanvas={() => {
-            if (readyReviewOverlay) {
-              deferredEditorReplayRef.current.reloadReview?.();
-              return;
-            }
-            if (displayedCanvasMode === "preview") interactionPreviewRef.current?.reload();
           }}
           reopenRecentRunOutcome={reopenRecentRunOutcome}
         />
@@ -7067,9 +7104,7 @@ export default function Workbench() {
                   onSelect={handleCanvasSelection}
                   onRequestComment={openCommentComposer}
                   onRequestFlush={requestUserFlush}
-                  onRequestExport={() => {
-                    void exportCurrentHtml();
-                  }}
+                  onRequestExport={requestExportCurrentHtml}
                   onRequestHistory={(direction) => {
                     void requestSourceHistoryAction(direction);
                   }}
@@ -7196,9 +7231,7 @@ export default function Workbench() {
         />
       ) : null}
 
-      {workspaceController && preservedDraftDialogOpen ? <PreservedDraftDialog key={`${projectId}:${documentId}`} open
-        contextKey={`${projectId}:${documentId}`} onClose={() => setPreservedDraftDialogOpen(false)}
-        onLoad={loadPreservedDrafts} onRestore={(recoveryId) => workspaceController.restorePreservedDraft({ recoveryId })} /> : null}
+
       <HistoryCreationDialog
         open={Boolean(historyCreationConfirmation && historyCreationConfirmation === `${activeSurfaceProjectId}:${activeSurfaceDocumentId}:${viewingVersionId}` && viewMode === "history")}
         versionLabel={viewingVersion?.label || "历史版本"}

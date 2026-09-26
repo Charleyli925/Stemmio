@@ -6,6 +6,8 @@ import {
   memo,
   useCallback,
   useEffect,
+  useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
 
@@ -19,11 +21,20 @@ import {
 } from "../application/workbench-tabs-session.js";
 import { WorkbenchTabBar } from "./WorkbenchChrome";
 
+export type WorkbenchTabActivity = Readonly<{
+  scopeKey: string | null;
+  editRevision: number;
+  persistedRevision: number;
+  commentIds: readonly string[];
+  busy: boolean;
+}>;
+
 export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
   capability,
   presentation,
   displayedTabId,
   activeTabOpening,
+  activity,
   onBeforeSelect,
   onOutcome,
 }: {
@@ -31,6 +42,7 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
   presentation: WorkbenchPresentation;
   displayedTabId: string | null;
   activeTabOpening: boolean;
+  activity: WorkbenchTabActivity;
   onBeforeSelect(snapshot: WorkbenchTabsSnapshot): void;
   onOutcome(outcome: unknown, target?: WorkbenchTab): void;
 }) {
@@ -40,6 +52,29 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
     capability.getSnapshot,
   );
   const tabs = navigation.tabs ?? INITIAL_WORKBENCH_TABS_SNAPSHOT;
+  const previousActivity = useRef<WorkbenchTabActivity | null>(null);
+  const [pulse, setPulse] = useState<{ scopeKey: string; sequence: number } | null>(null);
+  useEffect(() => {
+    const previous = previousActivity.current;
+    previousActivity.current = activity;
+    if (!activity.scopeKey || previous?.scopeKey !== activity.scopeKey) {
+      setPulse(null);
+      return;
+    }
+    const knownComments = new Set(previous.commentIds);
+    if (activity.editRevision > previous.editRevision
+      || activity.persistedRevision > previous.persistedRevision
+      || activity.commentIds.some((id) => !knownComments.has(id))) {
+      setPulse((current) => ({ scopeKey: activity.scopeKey!, sequence: (current?.sequence ?? 0) + 1 }));
+    }
+  }, [activity]);
+  useEffect(() => {
+    if (!pulse) return;
+    const timer = window.setTimeout(() => setPulse(null), 1_400);
+    return () => window.clearTimeout(timer);
+  }, [pulse]);
+  const activeTabWorking = Boolean(activity.scopeKey
+    && (activity.busy || pulse?.scopeKey === activity.scopeKey));
 
   const selectTab = useCallback((tab: WorkbenchTab) => {
     onBeforeSelect(tabs);
@@ -106,6 +141,7 @@ export const WorkbenchTabBarContainer = memo(function WorkbenchTabBarContainer({
       presentation={presentation}
       displayedTabId={displayedTabId}
       activeTabOpening={activeTabOpening}
+      activeTabWorking={activeTabWorking}
       onSelect={selectTab}
       onClose={closeTab}
       onNew={createStartTab}

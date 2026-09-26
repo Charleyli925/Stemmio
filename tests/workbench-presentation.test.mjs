@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadWorkbenchModel } from "./helpers/workbench-model-loader.mjs";
-const { deriveWorkbenchPresentation } = await loadWorkbenchModel("workbench-header-projection");
+const { deriveWorkbenchPresentation, isWorkbenchAiWorking } = await loadWorkbenchModel("workbench-header-projection");
 const { orderedProjectVersions } = await loadWorkbenchModel("project-version-tree-model");
 const { isVendorApiKeyPageOpened } = await loadWorkbenchModel("types");
 function input() {
@@ -34,17 +34,14 @@ test("history gives sidebar and tab the viewed Version while retaining distinct 
   });
   assert.deepEqual(p.actions.createFromHistory, { enabled: true, reason: undefined, target: "history" });
   assert.deepEqual(p.actions.showInFolder, {
-    enabled: false, reason: "历史版本没有独立工作文件；请打开当前稿", target: "current",
+    enabled: false, reason: "历史版本没有独立 HTML 文件；请打开当前稿", target: "current",
   });
   assert.deepEqual(p.actions.openInBrowser, {
     enabled: true, reason: undefined, target: "history",
   });
   assert.deepEqual(p.actions.exportHtml, { enabled: true, reason: undefined, target: "history" });
-  assert.deepEqual(p.actions.preservedDrafts, {
-    enabled: false, reason: "请先打开当前稿，再找回以前保留的稿件", target: "current",
-  });
   assert.deepEqual(p.actions.reloadSource, {
-    enabled: false, reason: "历史版本不会从磁盘重载；请打开当前稿", target: "current",
+    enabled: false, reason: "历史版本无需刷新；请打开当前稿", target: "current",
   });
   assert.equal(source.version.currentBasedOnVersionId, "v2");
 });
@@ -107,7 +104,7 @@ test("menu availability explains review, transition and persistence locks withou
   const transitioning = input();
   transitioning.viewTransitioning = true;
   const transition = deriveWorkbenchPresentation(transitioning);
-  for (const key of ["saveVersion", "showInFolder", "openInBrowser", "exportHtml", "preservedDrafts", "reloadSource"]) {
+  for (const key of ["saveVersion", "showInFolder", "openInBrowser", "exportHtml", "reloadSource"]) {
     assert.equal(transition.actions[key].enabled, false, key);
     assert.match(transition.actions[key].reason, /切换/u, key);
   }
@@ -140,7 +137,7 @@ test("document-dependent actions require the same target, even with a ready revi
       assert.equal(action.enabled, false);
       assert.ok(action.reason);
     }
-    for (const key of ["canShowInFinder", "canOpenSelectedHtml", "canExportCurrentHtml", "canReloadCurrentSource", "refreshAvailable"]) {
+    for (const key of ["canShowInFinder", "canOpenSelectedHtml", "canExportCurrentHtml", "canReloadCurrentSource"]) {
       assert.equal(p[key], false, key);
     }
   }
@@ -169,4 +166,19 @@ test("a source-less document is usable only while its tab owns the current runti
   assert.equal(other.edit.enabled, false);
   assert.equal(other.preview.enabled, false);
   assert.equal(other.canExportCurrentHtml, false);
+});
+
+test("tab AI activity stops at decisions and failed handoffs", () => {
+  for (const runStatus of ["submitting", "processing", "validating", "committing"]) {
+    assert.equal(isWorkbenchAiWorking({ runStatus }), true);
+  }
+  for (const runStatus of ["ready-to-open", "awaiting-conflict-resolution", "recovering-transaction", "error", "cancelled", "complete"]) {
+    assert.equal(isWorkbenchAiWorking({ runStatus }), false);
+  }
+  for (const handoffStatus of ["failed", "interrupted", "cancelled"]) {
+    assert.equal(isWorkbenchAiWorking({ runStatus: "processing", handoffStatus }), false);
+  }
+  assert.equal(isWorkbenchAiWorking({ submissionPhase: "preparing" }), true);
+  assert.equal(isWorkbenchAiWorking({ submissionPhase: "frozen" }), true);
+  assert.equal(isWorkbenchAiWorking({ submissionPhase: "uncertain" }), false);
 });

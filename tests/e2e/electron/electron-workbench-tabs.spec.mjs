@@ -6,6 +6,7 @@ import { readPublishedWorkingCopy } from "./helpers/working-copy-publication.mjs
 import {
   ProjectFileRepository,
   activateNativeEdit,
+  addCanvasComment,
   caseSelector,
   setTextSelection,
   keyShortcut,
@@ -42,6 +43,84 @@ function identityPreservingCandidateHtml(target, title) {
 function currentProjectTabName(filePath) {
   return `${path.basename(filePath, path.extname(filePath))} · 当前稿`;
 }
+
+test("Electron dismisses More over the HTML frame and shows brief document activity", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("file-actions-activity.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    const page = launched.page;
+    const { frame } = await loadedDiskFrame(page, fixture.sourcePath, "list-item");
+    const more = page.getByRole("button", { name: "更多", exact: true });
+    const menu = page.getByRole("menu", { name: "更多操作", exact: true });
+    const tab = page.locator('.workbench-tab[data-selected="true"]');
+    await expect(tab).not.toHaveAttribute("data-opening", "true");
+    await expect(tab).not.toHaveAttribute("data-activity", "true");
+    await expect(page.locator(".workbench-refresh-button")).toHaveCount(0);
+    await more.click();
+    await expect(menu.getByRole("menuitem", { name: "刷新", exact: true })).toBeVisible();
+    const target = frame.locator(caseSelector("list-item"));
+    const box = await target.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.click(box.x + 10, box.y + 10);
+    await expect(menu).toHaveCount(0);
+    await more.click();
+    await page.mouse.click(400, 12);
+    await expect(menu).toHaveCount(0);
+    await more.click();
+    await page.keyboard.press("Escape");
+    await expect(more).toBeFocused();
+    await more.click();
+    await menu.getByRole("menuitem", { name: "导出当前 HTML…", exact: true }).click();
+    await page.getByRole("dialog", { name: "导出当前 HTML", exact: true }).getByRole("button", { name: "取消", exact: true }).click();
+    await expect(more).toBeFocused();
+
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await activateNativeEdit(frame, "list-item");
+    await setTextSelection(frame, "list-item", 0, 0);
+    await more.click();
+    await page.mouse.click(box.x + 10, box.y + 10);
+    await expect(menu).toHaveCount(0);
+    await expect(target).toHaveAttribute("contenteditable", "true");
+    await target.click();
+    await setTextSelection(frame, "list-item", 0, 0);
+    await page.keyboard.press("ControlOrMeta+Shift+E");
+    const exportDialog = page.getByRole("dialog", { name: "导出当前 HTML", exact: true });
+    await expect(exportDialog.getByRole("checkbox")).toBeChecked();
+    await exportDialog.getByText("同时保存到历史版本", { exact: true }).click();
+    await expect(target).toHaveAttribute("contenteditable", "true");
+    await exportDialog.getByRole("button", { name: "取消", exact: true }).click();
+    await target.click();
+    await setTextSelection(frame, "list-item", 0, 0);
+    await page.keyboard.insertText("ACTIVITY ");
+    await expect(tab).toHaveAttribute("data-activity", "true");
+    expect(await tab.evaluate((element) => getComputedStyle(element, "::after").animationName))
+      .toBe("stemmio-tab-activity");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await tab.evaluate((element) => getComputedStyle(element, "::after").animationName)).toBe("none");
+    await expect(tab).not.toHaveAttribute("data-activity", "true");
+    await page.keyboard.press("Escape");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await addCanvasComment(page, frame, "list-item", "活动线评论");
+    await expect(tab).toHaveAttribute("data-activity", "true");
+    await page.screenshot({ path: test.info().outputPath("comment-tab-activity.png") });
+    await expect(tab).not.toHaveAttribute("data-activity", "true");
+    const mode = page.getByRole("group", { name: "工作模式", exact: true });
+    await mode.getByRole("button", { name: "预览", exact: true }).click();
+    const preview = page.getByTestId("workbench-active-preview");
+    await expect(preview).toHaveAttribute("data-preview-ready", "true");
+    const previewTarget = preview.frameLocator('iframe[title="HTML 交互预览"]')
+      .locator(caseSelector("list-item"));
+    const previewBox = await previewTarget.boundingBox();
+    await more.click();
+    await page.mouse.click(previewBox.x + 10, previewBox.y + 10);
+    await expect(menu).toHaveCount(0);
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
 
 test("sidebar toggle moves the Start tab without flashing it against the left edge", async () => {
   const fixture = createSourceFixture("sidebar-toggle-motion.html");
@@ -244,7 +323,7 @@ test("Electron leaves the outgoing draft inert until the new Canvas can be displ
     await expect(tabA.locator("xpath=..")).not.toHaveAttribute("data-selected", "true");
     expect(await openingTab.evaluate((element) => (
       getComputedStyle(element, "::after").backgroundColor
-    ))).toBe("rgb(90, 85, 223)");
+    ))).toBe("rgb(156, 150, 227)");
     await expect(launched.page.locator("[data-handoff-candidate='true']"))
       .toHaveCSS("opacity", "0");
     await expect(launched.page.locator("[data-handoff-candidate='true']"))
@@ -899,7 +978,15 @@ test("Electron reuses a live unchanged current-draft Preview across a quick mode
       "stemmio:preview:session-create", "mark",
     ).length)).toBe(sessionCreates);
 
-    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    {
+    const beforeRefreshSrc = await previewHost.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
+    await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    }
     await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
       "stemmio:preview:session-create", "mark",
     ).length)).toBeGreaterThan(sessionCreates);
@@ -966,7 +1053,15 @@ test("a parked Preview cannot publish a late scroll receipt over the active read
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
     ))).toBeGreaterThan(1_100);
-    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    {
+    const beforeRefreshSrc = await previewHost.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
+    await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    }
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
@@ -1002,7 +1097,15 @@ test("a parked Preview cannot publish a late scroll receipt over the active read
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_E2E_PREVIEW_SCROLL__?.scrollTop || 0
     ))).toBeGreaterThan(500);
-    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    {
+    const beforeRefreshSrc = await previewHost.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
+    await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
+    await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
+    await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    }
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
       .toBeGreaterThan(500);
@@ -1350,7 +1453,8 @@ test("Electron ignores a replaced Preview receipt and requires proof from a new 
 
     const originalSrc = await frames.getAttribute("src");
     await holdNextSession();
-    await page.getByRole("button", { name: "刷新预览", exact: true }).click();
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
     await expect.poll(() => launched.electronApp.evaluate(() => Boolean(
       globalThis.__stemmioReleaseHeldPreviewSession,
     ))).toBe(true);
@@ -2644,21 +2748,21 @@ test("Electron sidebar opens an imported historical version in the existing proj
     const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
     await interceptExternalBrowserOpen(launched.electronApp);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
-    const saveHistoryItem = launched.page.getByRole("menuitem", { name: "保存为新版本", exact: true });
+    const saveHistoryItem = launched.page.getByRole("menuitem", { name: "保存到历史版本", exact: true });
     await expect(saveHistoryItem).toHaveAttribute("aria-disabled", "true");
     await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeEnabled();
-    await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toHaveAttribute("aria-disabled", "true");
-    const openHistoryInBrowser = launched.page.getByRole("menuitem", { name: "在浏览器中打开此版本", exact: true });
+    await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示", exact: true })).toHaveAttribute("aria-disabled", "true");
+    const openHistoryInBrowser = launched.page.getByRole("menuitem", { name: "在浏览器中打开", exact: true });
     await expect(openHistoryInBrowser).toBeEnabled();
-    await expect(launched.page.getByRole("menuitemcheckbox", { name: "同时保存为新版本", exact: true })).toHaveAttribute("aria-disabled", "true");
-    await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toHaveAttribute("aria-disabled", "true");
-    await expect(launched.page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true })).toHaveAttribute("aria-disabled", "true");
-    await expect(launched.page.getByText("历史版本没有独立工作文件；请打开当前稿", { exact: true })).toBeVisible();
+    await expect(launched.page.getByRole("menuitemcheckbox")).toHaveCount(0);
+    await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toHaveCount(0);
+    await expect(launched.page.getByRole("menuitem", { name: "刷新", exact: true })).toHaveAttribute("aria-disabled", "true");
+    await expect(launched.page.getByText("历史版本没有独立 HTML 文件；请打开当前稿", { exact: true })).toBeVisible();
     await expect(saveHistoryItem).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
     await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
-    const disabledFinderItem = launched.page.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true });
+    const disabledFinderItem = launched.page.getByRole("menuitem", { name: "在 Finder 中显示", exact: true });
     await expect(disabledFinderItem).toBeFocused();
     await launched.page.keyboard.press("Enter");
     await expect(launched.page.getByRole("menu", { name: "更多操作" })).toBeVisible();
@@ -3321,58 +3425,9 @@ test("Electron local current draft saves immutable versions and exports with an 
     }));
     const identity = await currentIdentity();
     await more.click();
-    await launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true }).click();
-    const recoveryDialog = launched.page.getByRole("dialog", { name: "找回此前的稿件", exact: true });
-    await expect(recoveryDialog).toContainText("暂无需要找回的稿件。");
-    await launched.page.screenshot({ path: test.info().outputPath("preserved-drafts-empty.png") });
-    await launched.page.mouse.click(400, 12);
-    await expect(recoveryDialog).toHaveCount(0);
-
-    const preservedDraft = {
-      recoveryId: "recovery_test_0001",
-      originalWorkingCopyId: initial.workingCopyId,
-      basedOnVersionId: "ver_0001",
-      sourceSha256: initial.sourceSha256,
-      createdAt: "2026-08-12T00:00:00.000Z",
-      reason: "working-copy-replaced",
-      hasComments: true,
-      attachmentCount: 0,
-    };
-    let preservedDraftLoads = 0;
-    let releaseFirstPreservedDraftLoad;
-    await launched.page.route("**/preserved-drafts?*", async (route) => {
-      preservedDraftLoads += 1;
-      if (preservedDraftLoads === 1) {
-        await new Promise((resolve) => { releaseFirstPreservedDraftLoad = resolve; });
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ ok: true, projectId: initial.projectId, drafts: [] }),
-        });
-        return;
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ ok: true, projectId: initial.projectId, drafts: [preservedDraft] }),
-      });
-    });
-    await more.click();
-    await launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true }).click();
-    await expect(recoveryDialog.getByRole("status")).toHaveText("正在读取…");
-    await expect.poll(() => preservedDraftLoads).toBe(1);
-    await recoveryDialog.getByRole("button", { name: "关闭", exact: true }).click();
-    await expect(recoveryDialog).toHaveCount(0);
-    await more.click();
-    await launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true }).click();
-    await expect(recoveryDialog.getByRole("button", { name: "恢复为当前稿", exact: true })).toBeEnabled();
-    releaseFirstPreservedDraftLoad();
-    await launched.page.waitForTimeout(150);
-    await expect(recoveryDialog).toBeVisible();
-    await expect(recoveryDialog.getByRole("button", { name: "恢复为当前稿", exact: true })).toBeEnabled();
-    await expect(recoveryDialog.getByText("暂无需要找回的稿件。", { exact: true })).toHaveCount(0);
-    await recoveryDialog.getByRole("button", { name: "关闭", exact: true }).click();
-    await launched.page.unroute("**/preserved-drafts?*");
+    await expect(launched.page.getByRole("menuitem", { name: "找回此前的稿件…", exact: true })).toHaveCount(0);
+    await expect(launched.page.getByRole("menuitemcheckbox")).toHaveCount(0);
+    await launched.page.keyboard.press("Escape");
     const editCurrent = async (marker) => {
       const { frame } = await loadedStaticDiskFrame(launched.page, currentPath, { expectedCase: "list-item", includeEditor: true });
       const beforeRevision = Number(await launched.page.locator("[data-persist-state]").first().getAttribute("data-edit-revision"));
@@ -3387,7 +3442,7 @@ test("Electron local current draft saves immutable versions and exports with an 
     };
     const firstEdit = await editCurrent("LOCAL_SNAPSHOT_ONE");
     await more.click();
-    await launched.page.getByRole("menuitem", { name: "保存为新版本", exact: true }).click();
+    await launched.page.getByRole("menuitem", { name: "保存到历史版本", exact: true }).click();
     await expect.poll(async () => (await versions()).length).toBe(2);
     await expect(launched.page.locator(".current-draft-result")).toContainText("已保存 V2");
     expect(await currentIdentity()).toEqual(identity);
@@ -3440,7 +3495,7 @@ test("Electron local current draft saves immutable versions and exports with an 
     await launched.page.keyboard.insertText("BROWSER_NATIVE_INPUT");
     await more.click();
     await launched.page.getByRole("menuitem", {
-      name: "在浏览器中打开工作文件",
+      name: "在浏览器中打开",
       exact: true,
     }).click();
     await expect.poll(() => openedExternalUrls(launched.electronApp)).toEqual([
@@ -3455,20 +3510,31 @@ test("Electron local current draft saves immutable versions and exports with an 
     await launched.electronApp.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });
     }, exportPath);
-    const exportCheckbox = launched.page.getByRole("menuitemcheckbox", { name: "同时保存为新版本", exact: true });
+    const exportDialog = launched.page.getByRole("dialog", { name: "导出当前 HTML", exact: true });
+    const exportCheckbox = exportDialog.getByRole("checkbox", { name: "同时保存到历史版本", exact: true });
+    const chooseLocation = exportDialog.getByRole("button", { name: "选择保存位置…", exact: true });
     const exportMenuItem = launched.page.getByRole("menuitem", { name: "导出当前 HTML…", exact: true });
     await more.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "false");
+    await expect(launched.page.getByRole("menuitemcheckbox")).toHaveCount(0);
     await launched.page.screenshot({ path: test.info().outputPath("current-draft-export-menu.png") });
     await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await launched.page.screenshot({ path: test.info().outputPath("current-draft-export-dialog.png") });
+    await exportDialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(exportDialog).toHaveCount(0);
+    expect(await versions()).toHaveLength(2);
+    await more.click();
+    await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await exportCheckbox.uncheck();
+    await chooseLocation.click();
     await expect(workbench).toHaveAttribute("data-html-export-state", "exported");
     await expect.poll(() => { try { return readFileSync(exportPath, "utf8"); } catch { return null; } }).toBe(secondEdit);
     expect(await versions()).toHaveLength(2);
     await more.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "false");
-    await exportCheckbox.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "true");
     await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await chooseLocation.click();
     await expect(workbench).toHaveAttribute("data-html-export-state", "exported");
     await expect.poll(async () => (await versions()).length).toBe(3);
     expect(readFileSync(exportPath, "utf8")).toBe(secondEdit);
@@ -3479,9 +3545,9 @@ test("Electron local current draft saves immutable versions and exports with an 
     expect((await repository.readVersionFile({ target: exportedTarget, versionId: "ver_0002" })).content).toBe(firstEdit);
 
     await more.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "false");
-    await exportCheckbox.click();
     await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await chooseLocation.click();
     await expect(workbench).toHaveAttribute("data-html-export-state", "exported");
     await expect(launched.page.locator(".current-draft-result")).toContainText("HTML 已导出");
     await expect(exportMenuItem).toHaveCount(0);
@@ -3491,9 +3557,9 @@ test("Electron local current draft saves immutable versions and exports with an 
     });
     await editCurrent("LOCAL_CANCEL_THREE");
     await more.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "false");
-    await exportCheckbox.click();
     await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await chooseLocation.click();
     await expect(exportMenuItem).toHaveCount(0);
     await expect(workbench).toHaveAttribute("data-html-export-state", "cancelled");
     expect(await versions()).toHaveLength(3);
@@ -3502,9 +3568,9 @@ test("Electron local current draft saves immutable versions and exports with an 
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });
     }, currentPath);
     await more.click();
-    await expect(exportCheckbox).toHaveAttribute("aria-checked", "false");
-    await exportCheckbox.click();
     await exportMenuItem.click();
+    await expect(exportCheckbox).toBeChecked();
+    await chooseLocation.click();
     await expect(workbench).toHaveAttribute("data-html-export-state", "failed");
     expect(await versions()).toHaveLength(3);
     expect(readFileSync(currentPath, "utf8")).toBe(currentBeforeFailedExport);

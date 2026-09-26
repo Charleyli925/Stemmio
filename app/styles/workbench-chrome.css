@@ -166,11 +166,13 @@ body {
   color: var(--chrome-text);
 }
 
-.workbench-tab[data-opening="true"] {
+.workbench-tab[data-opening="true"],
+.workbench-tab[data-activity="true"] {
   position: relative;
 }
 
-.workbench-tab[data-opening="true"]::after {
+.workbench-tab[data-opening="true"]::after,
+.workbench-tab[data-activity="true"]::after {
   content: "";
   position: absolute;
   right: 10px;
@@ -178,7 +180,8 @@ body {
   left: 10px;
   height: 2px;
   border-radius: 2px;
-  background: var(--chrome-accent);
+  background: rgb(156 150 227);
+  animation: stemmio-tab-activity 1.6s ease-in-out infinite;
   pointer-events: none;
 }
 
@@ -550,3 +553,34 @@ body {
     transition: none;
   }
 }
+
+@keyframes stemmio-tab-activity {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-tab[data-opening="true"]::after,
+  .workbench-tab[data-activity="true"]::after { animation: none; }
+}
+.workbench[data-motion="reduced"] .workbench-tab::after { animation: none; }
+
+/* Consume the dismissing press even when it lands in an isolated HTML frame. */
+.workbench-more-menu-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  -webkit-app-region: no-drag;
+}
+.workbench-more-menu { -webkit-app-region: no-drag; }
+
+.export-html-history-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.export-html-history-option input { accent-color: var(--indigo); }
+.export-html-cancel { border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
