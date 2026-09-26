@@ -39,13 +39,12 @@ export default function ExportHtmlDialog({
 
   return createPortal(
     <dialog ref={dialogRef} className="cancel-ai-run-dialog"
-      data-html-canvas-preserve-selection="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`}
+      data-html-canvas-preserve-selection="true" aria-labelledby={`${id}-title`}
       onCancel={(event) => { event.preventDefault(); dismiss(); }}
       onMouseDown={(event) => { if (event.target === event.currentTarget) dismiss(); }}
     >
       <article className="cancel-ai-run-card export-html-card">
         <h2 id={`${id}-title`}>导出当前 HTML</h2>
-        <p id={`${id}-description`}>将当前内容保存为一份 HTML 文件。</p>
         <label className="export-html-history-option">
           <input type="checkbox" checked={saveVersion && canSaveVersion}
             disabled={!canSaveVersion} aria-describedby={`${id}-history-help`}

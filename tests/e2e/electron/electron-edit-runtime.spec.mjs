@@ -2408,10 +2408,10 @@ test("explicit same-byte source reload creates a fresh Runtime authority", {
 
     await page.getByRole("button", { name: "更多", exact: true }).click();
     await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
-    await expect(page.locator(".workbench-chrome-status"))
-      .toHaveText("页面已重新加载，可以继续编辑");
     await expect.poll(() => documentToken(page)).not.toBe(beforeToken);
     await expect.poll(() => activeFrameGeneration(editor)).not.toBe(beforeGeneration);
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true }))
+      .toHaveCount(0);
     await expect.poll(() => editor.getAttribute("data-runtime-last-known-good-id"))
       .not.toBe(beforeLastKnownGood);
     await expect(editor).toHaveAttribute("data-working-source-sha256", beforeHash);

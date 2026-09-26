@@ -1315,11 +1315,12 @@ test("Canvas shortcuts follow the promoted frame and same-source reload keeps ch
     });
     await page.getByRole("button", { name: "更多", exact: true }).click();
     await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
-    await expect(page.locator(".workbench-chrome-status")).toHaveText("页面已重新加载，可以继续编辑");
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ || 0
     ))).toBe(beforeReloadScriptCount + 1);
     await expect.poll(() => documentToken(page)).not.toBe(beforeReloadDocument);
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true }))
+      .toHaveCount(0);
     await expect.poll(() => activeFrame.evaluate((frame) => Boolean(
       frame.contentDocument
       && frame.contentDocument !== window.__M5_BEFORE_SAME_BYTE_AUTHORITY_CONTENT_DOCUMENT__

@@ -985,7 +985,7 @@ test("Electron reuses a live unchanged current-draft Preview across a quick mode
     await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
-    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toHaveCount(0);
     }
     await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
       "stemmio:preview:session-create", "mark",
@@ -1060,7 +1060,7 @@ test("a parked Preview cannot publish a late scroll receipt over the active read
     await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
-    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toHaveCount(0);
     }
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
@@ -1104,7 +1104,7 @@ test("a parked Preview cannot publish a late scroll receipt over the active read
     await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
-    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toBeVisible();
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toHaveCount(0);
     }
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect.poll(() => frame.locator("body").evaluate(() => window.scrollY))
@@ -2748,7 +2748,7 @@ test("Electron sidebar opens an imported historical version in the existing proj
     const historicalBytes = await repository.readVersionFile({ target, versionId: "ver_0003" });
     await interceptExternalBrowserOpen(launched.electronApp);
     await launched.page.getByRole("button", { name: "更多", exact: true }).click();
-    const saveHistoryItem = launched.page.getByRole("menuitem", { name: "保存到历史版本", exact: true });
+    const saveHistoryItem = launched.page.getByRole("menuitem", { name: "保存为历史版本", exact: true });
     await expect(saveHistoryItem).toHaveAttribute("aria-disabled", "true");
     await expect(launched.page.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeEnabled();
     await expect(launched.page.getByRole("menuitem", { name: "在 Finder 中显示", exact: true })).toHaveAttribute("aria-disabled", "true");
@@ -3442,7 +3442,7 @@ test("Electron local current draft saves immutable versions and exports with an 
     };
     const firstEdit = await editCurrent("LOCAL_SNAPSHOT_ONE");
     await more.click();
-    await launched.page.getByRole("menuitem", { name: "保存到历史版本", exact: true }).click();
+    await launched.page.getByRole("menuitem", { name: "保存为历史版本", exact: true }).click();
     await expect.poll(async () => (await versions()).length).toBe(2);
     await expect(launched.page.locator(".current-draft-result")).toContainText("已保存 V2");
     expect(await currentIdentity()).toEqual(identity);
@@ -3519,6 +3519,18 @@ test("Electron local current draft saves immutable versions and exports with an 
     await launched.page.screenshot({ path: test.info().outputPath("current-draft-export-menu.png") });
     await exportMenuItem.click();
     await expect(exportCheckbox).toBeChecked();
+    await expect(exportDialog).not.toHaveAttribute("aria-describedby");
+    await expect(exportDialog.getByText("将当前内容保存为一份 HTML 文件。", { exact: true })).toHaveCount(0);
+    const exportCardGeometry = await exportDialog.locator(".export-html-card").evaluate((card) => {
+      const cardRect = card.getBoundingClientRect();
+      const primaryButton = card.querySelector(".cancel-ai-run-wait").getBoundingClientRect();
+      return {
+        height: cardRect.height,
+        bottomInset: cardRect.bottom - primaryButton.bottom,
+      };
+    });
+    expect(exportCardGeometry.height).toBeLessThanOrEqual(220);
+    expect(exportCardGeometry.bottomInset).toBeLessThanOrEqual(20);
     await launched.page.screenshot({ path: test.info().outputPath("current-draft-export-dialog.png") });
     await exportDialog.getByRole("button", { name: "取消", exact: true }).click();
     await expect(exportDialog).toHaveCount(0);

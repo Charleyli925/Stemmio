@@ -3800,10 +3800,10 @@ for (const filename of files) {
     try {
       await page.getByRole("button", { name: "更多", exact: true }).click();
       await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
-      await expect(page.locator(".workbench-chrome-status"))
-        .toHaveText("页面已重新加载，可以继续编辑", { timeout: 60_000 });
       await waitUntilEditable(page);
       await waitForRuntimeReloadTerminal(page);
+      await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true }))
+        .toHaveCount(0);
     } finally {
       runtimeObservations = await stopRuntimeLifecycleObservation(page);
     }

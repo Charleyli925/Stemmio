@@ -8,9 +8,9 @@ Two refresh commands exposed an implementation distinction users could not infer
 
 ## Decision
 
-The current interaction and wording owner is [the version PRD](../VERSION_AND_PROJECT_FILES_PRD.md#9-html-导出). “保存到历史版本” stores the current moment and continues the same current draft. Export first shows a dialog with history saving checked by default; confirmation opens the native save picker. This replaces only ADR 0073's menu checkbox and default-off decision. Export still succeeds before history creation consumes the exact exported bytes; cancellation, failure and unchanged content never allocate a duplicate version.
+The current interaction and wording owner is [the version PRD](../VERSION_AND_PROJECT_FILES_PRD.md#9-html-导出). “保存为历史版本” stores the current moment and continues the same current draft. Export first shows a dialog with history saving checked by default; confirmation opens the native save picker. This replaces only ADR 0073's menu checkbox and default-off decision. Export still succeeds before history creation consumes the exact exported bytes; cancellation, failure and unchanged content never allocate a duplicate version.
 
-The regular menu contains one “刷新”, reading the saved current draft through the existing reload owner and preserving Edit/Preview mode. Pending Review and history cannot use it to replace source. There is no separate regular iframe-redraw button.
+The regular menu contains one “刷新”, reading the saved current draft through the existing reload owner and preserving Edit/Preview mode. A successful ordinary refresh stays quiet; failure and read-only recovery continue to use their existing feedback. Pending Review and history cannot use it to replace source. There is no separate regular iframe-redraw button.
 
 Remove the regular “找回此前的稿件” entry and its chooser. Existing preserved records, displaced-draft protection, transaction recovery and backend validation remain; removing the entry never deletes data. Old tests and ADR prose are not authority to restore it.
 

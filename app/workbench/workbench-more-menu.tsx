@@ -91,7 +91,7 @@ function WorkbenchMoreMenuContent({
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const items = useMemo<readonly MoreMenuItem[]>(() => [
     ...(onSaveCurrentVersion ? [{
-      id: "save-version", label: "保存到历史版本",
+      id: "save-version", label: "保存为历史版本",
       icon: <FloppyDiskIcon aria-hidden="true" size={16} weight="duotone" />,
       onSelect: onSaveCurrentVersion,
       disabled: isHistory || !canSaveCurrentVersion,

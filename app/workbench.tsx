@@ -501,7 +501,7 @@ export default function Workbench() {
   const deferredEditorReplayRef = useRef<{
     exportCurrentHtml?: (saveVersion?: boolean) => void;
     requestExportCurrentHtml?: () => void;
-    reloadCurrentSource?: () => void;
+    reloadCurrentSource?: (options?: { announceSuccess?: boolean }) => void;
     reloadReview?: () => void;
     requestReviewDecision?: (action: "return" | "accept") => void;
     requestUserFlush?: () => void;
@@ -3886,7 +3886,11 @@ export default function Workbench() {
   // intent, presents its confirmation request, and renders the phased result.
   const reloadCurrentSource = useCallback(async ({
     fromDeferred = false,
-  }: { fromDeferred?: boolean } = {}) => {
+    announceSuccess = false,
+  }: {
+    fromDeferred?: boolean;
+    announceSuccess?: boolean;
+  } = {}) => {
     const context = captureProjectContext();
     if (!context || projectLoadError || !workspaceController) return false;
     if (requiredWorkspaceController(workspaceController).hasDocumentHistoryAction) return false;
@@ -3894,7 +3898,7 @@ export default function Workbench() {
       !fromDeferred
       && deferEditorCommand(
         "external-refresh",
-        () => deferredEditorReplayRef.current.reloadCurrentSource?.(),
+        () => deferredEditorReplayRef.current.reloadCurrentSource?.({ announceSuccess }),
       )
     ) return false;
     try {
@@ -3922,7 +3926,7 @@ export default function Workbench() {
       setExternalSourcePreview(null);
       const restored = outcome.value.page.status === "restored";
       setFileStatusNotice(restored
-        ? "页面已重新加载，可以继续编辑"
+        ? announceSuccess ? "页面已重新加载，可以继续编辑" : null
         : "文件已重新读取，但页面暂时无法编辑，请重试");
       return restored;
     } catch (cause) {
@@ -4002,8 +4006,8 @@ export default function Workbench() {
     runCapability,
   ]);
   useEffect(() => {
-    deferredEditorReplayRef.current.reloadCurrentSource = () => {
-      void reloadCurrentSource({ fromDeferred: true });
+    deferredEditorReplayRef.current.reloadCurrentSource = ({ announceSuccess = false } = {}) => {
+      void reloadCurrentSource({ fromDeferred: true, announceSuccess });
     };
   }, [reloadCurrentSource]);
 
@@ -7110,7 +7114,7 @@ export default function Workbench() {
                   }}
                   onRequestReload={() => {
                     if (currentProjectSessionSnapshot().sourcePath) {
-                      void reloadCurrentSource();
+                      void reloadCurrentSource({ announceSuccess: true });
                     } else {
                       void openProject();
                     }

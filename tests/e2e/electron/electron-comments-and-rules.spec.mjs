@@ -958,10 +958,24 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示", exact: true })).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开", exact: true })).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "导出当前 HTML…" })).toBeVisible();
-    const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存到历史版本", exact: true });
+    const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存为历史版本", exact: true });
     await expect(saveVersionItem).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }))
       .toHaveAttribute("aria-disabled", "true");
+    const menuHierarchy = await moreMenu.evaluate((element) => {
+      const rect = (id) => element.querySelector(`[data-menu-item="${id}"]`).getBoundingClientRect();
+      const save = element.querySelector('[data-menu-item="save-version"]');
+      const title = save.querySelector(".workbench-more-menu-copy > span");
+      const detail = save.querySelector(".workbench-more-menu-copy > small");
+      return {
+        versionGap: rect("create-from-history").top - rect("save-version").bottom,
+        fileGap: rect("open-in-browser").top - rect("show-in-folder").bottom,
+        titleSize: Number.parseFloat(getComputedStyle(title).fontSize),
+        detailSize: Number.parseFloat(getComputedStyle(detail).fontSize),
+      };
+    });
+    expect(Math.abs(menuHierarchy.versionGap - menuHierarchy.fileGap)).toBeLessThanOrEqual(0.5);
+    expect(menuHierarchy.titleSize).toBeGreaterThan(menuHierarchy.detailSize);
     await expect(saveVersionItem).toBeFocused();
     await launched.page.keyboard.press("Tab");
     await expect(moreMenu).toHaveCount(0);
