@@ -220,6 +220,8 @@
 }
 
 .workbench > .review-scroll-stage[data-inspector="ai"] > .ai-conversation-aside {
+  position: sticky;
+  top: 0;
   align-self: stretch;
   height: 100%;
   overflow: hidden;
