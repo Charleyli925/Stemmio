@@ -876,14 +876,17 @@ export class WorkbenchNavigationWorkflow {
       && currentProject?.projectId === target.projectId
       && currentProject.documentId === target.documentId
     );
+    const retainedRuntimeForTarget = this.#tabs.snapshot.runtimeOwnerTabId === target.tabId;
     const canReuseMountedDocument = Boolean(
       sameProjectDocument
       && (
         current?.kind === "history"
         || (force && current?.kind === "document" && current.tabId === target.tabId)
         || (
-          (current?.kind === "settings" || current?.kind === "project-rules")
-          && this.#tabs.snapshot.runtimeOwnerTabId === target.tabId
+          current
+          && current.kind !== "document"
+          && current.kind !== "history"
+          && retainedRuntimeForTarget
         )
       )
     );

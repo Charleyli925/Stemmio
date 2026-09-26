@@ -44,8 +44,6 @@ export type UseDisplayHandoffInput = Readonly<{
   targetFailed: boolean;
   targetLifecycle?: DisplayLifecycle;
   targetMissingEvidence?: readonly string[];
-  /** Select which retained surface may remain visible during this handoff. */
-  retainedSurface?: "edit" | "preview" | null;
   retainOutgoing: boolean;
   edit: DisplaySurfaceHandoffStateInput;
   preview: DisplaySurfaceHandoffStateInput;
@@ -108,7 +106,6 @@ export function useDisplayHandoff({
   targetFailed,
   targetLifecycle = "active",
   targetMissingEvidence = [],
-  retainedSurface = null,
   retainOutgoing,
   edit,
   preview,
@@ -136,6 +133,10 @@ export function useDisplayHandoff({
     edit: null,
     preview: null,
   });
+  // The last committed display, rather than the destination's current mode,
+  // identifies which retained physical surface may remain in front. A tab
+  // activation can reset currentMode before its new Canvas is ready.
+  const [lastDisplayed, setLastDisplayed] = useState<DisplayTarget | null>(null);
   const releaseHistoricalPreview = Boolean(
     !pending
     && effectiveTarget?.surface === "edit"
@@ -152,24 +153,16 @@ export function useDisplayHandoff({
       return sameTarget(current[surface], next) ? current : { ...current, [surface]: next };
     });
   }, [edit.target, preview.target, targetFailed, targetLifecycle]);
-  const preferredRetained = retainedSurface === "edit"
+  const lastDisplayedRetained = retained.edit && sameTarget(lastDisplayed, retained.edit)
     ? retained.edit
-    : retainedSurface === "preview"
-      ? releaseHistoricalPreview ? null : retained.preview
-      : pending
-        ? retained[intent.currentMode]
-        : effectiveTarget?.surface === "edit" && revealPending
-          ? releaseHistoricalPreview ? null : retained.preview
-          : null;
-  const targetRetained = effectiveTarget?.surface === "edit"
-    ? retained.edit
-    : effectiveTarget?.surface === "preview"
+    : !releaseHistoricalPreview && retained.preview
+      && sameTarget(lastDisplayed, retained.preview)
       ? retained.preview
       : null;
-  const retainedActual = preferredRetained
-    || targetRetained
-    || retained.edit
-    || (releaseHistoricalPreview ? null : retained.preview);
+  // Once a physical surface has been displayed, a different retained entry
+  // cannot stand in for it. If that instance is gone, the target must prepare
+  // without resurrecting another tab's old Edit or Preview.
+  const retainedActual = lastDisplayedRetained;
   const effectiveRetainOutgoing = pending
     ? intent.currentMode === "edit"
       ? !intent.editFailed
@@ -184,6 +177,9 @@ export function useDisplayHandoff({
     lifecycle: targetLifecycle,
     missingEvidence: effectiveMissingEvidence,
   });
+  if (!sameTarget(lastDisplayed, decision.actual)) {
+    setLastDisplayed(decision.actual);
+  }
   const releaseAll = Boolean(!effectiveTarget || effectiveTargetFailed || targetLifecycle !== "active");
   // Retire only the identity the decision used. A ready destination may
   // register during the same commit and must not be erased by old cleanup.

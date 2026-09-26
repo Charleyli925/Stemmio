@@ -17,6 +17,8 @@ export type DisplayLifecycle =
 export type DisplayTarget = Readonly<{
   surface: DisplaySurface;
   identity: string;
+  /** Tab whose physical surface is actually displayed. */
+  tabId?: string | null;
   /** Same mounted Edit authority across an ordinary source revision. */
   continuityKey?: string | null;
   /** A historical Preview must retire when returning to a current Edit tab. */

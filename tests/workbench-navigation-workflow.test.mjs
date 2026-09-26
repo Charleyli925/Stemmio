@@ -766,6 +766,7 @@ for (const failurePhase of ["pre-apply", "post-apply"]) {
 
 test("Start activation and active-tab close keep mounted/runtime ownership invariant", async () => {
   const harness = fixture();
+  const retainedEpoch = harness.controller.getSnapshot().projectSession.epoch;
   const created = await harness.workflow.createStart();
   assert.equal(created.status, "succeeded");
   const startReceipt = harness.navigation.snapshot.lastReceipt;
@@ -776,6 +777,9 @@ test("Start activation and active-tab close keep mounted/runtime ownership invar
 
   const returned = await harness.workflow.activateTab(`document:${A.projectId}:${A.documentId}`);
   assert.equal(returned.status, "succeeded");
+  assert.equal(harness.calls.some((call) => call === `open:registered:${A.projectId}`), false);
+  assert.equal(harness.controller.getSnapshot().projectSession.epoch, retainedEpoch);
+
   const closed = await harness.workflow.closeTab(`document:${A.projectId}:${A.documentId}`);
   assert.equal(closed.status, "succeeded");
   assert.equal(harness.tabs.snapshot.tabs.some((tab) => tab.kind === "document"), false);
@@ -784,6 +788,20 @@ test("Start activation and active-tab close keep mounted/runtime ownership invar
   ).kind, "start");
   assert.equal(harness.tabs.snapshot.mountedDocumentTabId, null);
   assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, null);
+});
+
+test("closing active Start returns to its retained document without reopening the project", async () => {
+  const harness = fixture();
+  const retainedEpoch = harness.controller.getSnapshot().projectSession.epoch;
+  const created = await harness.workflow.createStart();
+  assert.equal(created.status, "succeeded");
+
+  const closed = await harness.workflow.closeTab(created.value.tabId);
+  assert.equal(closed.status, "succeeded");
+  assert.equal(harness.tabs.snapshot.activeTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.tabs.snapshot.runtimeOwnerTabId, `document:${A.projectId}:${A.documentId}`);
+  assert.equal(harness.calls.some((call) => call === `open:registered:${A.projectId}`), false);
+  assert.equal(harness.controller.getSnapshot().projectSession.epoch, retainedEpoch);
 });
 
 test("same-tick new Start tabs focus the last admitted tab without a second document drain", async () => {
