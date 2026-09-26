@@ -92,6 +92,7 @@ export function WorkbenchTabBar({
   presentation,
   displayedTabId,
   activeTabOpening,
+  activeTabWorking = false,
   onSelect,
   onClose,
   onNew,
@@ -100,6 +101,7 @@ export function WorkbenchTabBar({
   presentation: WorkbenchPresentation;
   displayedTabId: string | null;
   activeTabOpening: boolean;
+  activeTabWorking?: boolean;
   onSelect: (tab: WorkbenchTab) => void;
   onClose: (tab: WorkbenchTab) => void;
   onNew: () => void;
@@ -143,6 +145,7 @@ export function WorkbenchTabBar({
               data-selected={selected ? "true" : undefined}
               data-pending={pending ? "true" : undefined}
               data-opening={opening ? "true" : undefined}
+              data-activity={active && selected && activeTabWorking ? "true" : undefined}
               key={tab.tabId}
             >
               <button
@@ -150,7 +153,7 @@ export function WorkbenchTabBar({
                 type="button"
                 role="tab"
                 aria-label={opening && !selected ? `${accessibleTitle}，正在打开` : accessibleTitle}
-                aria-busy={pending || undefined}
+                aria-busy={opening || undefined}
                 aria-selected={selected}
                 aria-controls={tab.kind === "project-rules"
                   ? "workbench-project-rules-outlet"

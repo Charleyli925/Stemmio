@@ -830,7 +830,7 @@
       "patterns": [
         "^bridge/project-file-repository/current-draft\\.mjs$",
         "^tests/current-draft-lifecycle\\.test\\.mjs$",
-        "^app/components/PreservedDraftDialog\\.tsx$",
+        "^app/components/ExportHtmlDialog\\.tsx$",
         "^app/workbench/current-draft-status\\.tsx$",
         "^schemas/(?:current-version-transaction|preserved-draft)\\.v1\\.schema\\.json$"
       ],

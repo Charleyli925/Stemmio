@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { CircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
@@ -27,7 +26,6 @@ export type WorkbenchHeaderToolbarProps = {
   onSelectPreview: () => void;
   previewOpening: boolean;
   onOpenReview: () => void;
-  onRefreshCanvas: () => void;
   reopenRecentRunOutcome: () => void;
 };
 
@@ -43,11 +41,10 @@ export function WorkbenchHeaderToolbar({
   onSelectPreview,
   previewOpening,
   onOpenReview,
-  onRefreshCanvas,
   reopenRecentRunOutcome,
 }: WorkbenchHeaderToolbarProps) {
   const reviewActive = presentation.review.selected;
-  const { reviewAvailable, refreshAvailable } = presentation;
+  const { reviewAvailable } = presentation;
   return (
     <>
       <WorkbenchHeaderActions aria-label="模式、审阅和文件操作">
@@ -114,20 +111,6 @@ export function WorkbenchHeaderToolbar({
             {reviewActive ? <span className="toolbar-section-divider" aria-hidden="true" /> : null}
           </div>
           <div className="workbench-toolbar-actions">
-            <button
-              className="workbench-refresh-button"
-              type="button"
-              aria-label={reviewActive ? "刷新本页面" : presentation.mode === "preview" ? "刷新预览" : "刷新画布"}
-              disabled={!refreshAvailable}
-              data-tooltip={reviewActive
-                ? "刷新本页面"
-                : presentation.mode === "preview"
-                  ? "刷新预览"
-                  : "进入预览或审阅后可刷新"}
-              onClick={onRefreshCanvas}
-            >
-              <ArrowClockwiseIcon aria-hidden="true" size={20} weight="bold" />
-            </button>
             {recentRunOutcome && !runInProgress && !terminalRun ? (
               <button
                 className="recent-run-button"

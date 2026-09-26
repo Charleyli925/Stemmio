@@ -1,5 +1,18 @@
 # Design QA
 
+
+## 2026-09-27 — 文字退出、文件菜单与标签活动
+
+- Mode: DESIGN CHANGE；AI EXPERIENCE LENS 仅检查运行、等待决定和结束时的活动反馈。依据用户三张截图及当前产品行为。
+- Truth: 编辑宿主外的第一次按下仅收口当前文字编辑；下一次才选择对象。更多菜单外的点击仅收菜单，保留原文字选择。刷新统一读取保存的当前稿，保持编辑／预览模式，Review 待决定期间禁用。
+- Copy and flow: 使用“保存到历史版本”“在 Finder 中显示”“在浏览器中打开”。菜单和快捷键导出先呈现默认勾选的历史快照选项，再打开系统保存窗口；说明当前稿仍可继续编辑。常规菜单移除旧稿找回入口，后台保留数据和失败恢复保护；ADR 0078 修订 ADR 0073 的入口与默认值。
+- Visual evidence: 已检查本地忽略输出 `output/design-qa/canvas-menu-activity/export-dialog.png`、`more-menu.png`。标题、操作、说明层级清楚，浅紫活动线不改变标签几何；编辑／评论活动会短暂显示，打开和实际 AI 工作期间持续，减少动态效果时不动画。
+- Behavior evidence: 原生 Electron 已覆盖首次外点（文字、启用／禁用控件、空白、快速双击）、IME 延迟收口、跨 iframe 收菜单、原编辑保持、导出默认值与取消／失败／重复内容、预览刷新后的物理新实例及阅读位置。AI 审阅采用主流程通过，刷新禁用且不改变候选／当前稿字节。完整门禁以本次 task:finish 报告为准。
+- Axes: 正确性以源码与落盘字节校验；信息层级与文案按截图核对；一致性统一入口；效率为首次外点与单一刷新；可发现性保留菜单动作和短说明；可访问性覆盖 Escape、焦点归还与 reduced motion；运动只表达真实活动，无新持久状态 owner。
+- First failures: 门禁中的导出助手最初仍按旧快捷键流程等待下载，已走完选项确认且保留字节断言；组词期间延后显示选项，取消后恢复 iframe 内编辑宿主，由原生测试证明。跨宿主文字用例按新规则先单击退出，再独立进入另一宿主，保留原有字节断言。文字测试漏等异步读盘；预览测试过早接受旧 ready 并在交接双 iframe 期间使用单值 locator，已改为等待旧实例退出和新实例就绪。取消导出后的焦点另以原生回归验证，不能仅依靠浏览器自动恢复。
+- Real page evidence: 固定 T1 目标的选择与 12 项输入、删除、换行、格式、保存、撤销／重做通过，源码／显示 Hash 一致且原件未变；重开在运行态等待中超时，整条专项仍记 FAIL、qualification=false。没有将未归因超时改为通过。
+- Limits: 八页只读能力预检四页待核对、四页 discovery error（点击精确定位或探测超时），不等于八页编辑资格；静态页公共 C 场景亦有既有格式限制。真实页面专项另保留本地版本绑定结果，不提交原稿、截图、私有 manifest 或日志。未打包、安装、合并或发布。
+
 ## 2026-09-24 — 提醒与对话框关闭路径盘点
 
 - Scope: 当前源码的 2 处 `NoticeBar`、1 处动态内容提示、1 处“打开 HTML”菜单、5 处原生 `<dialog>`、1 处审阅确认层、1 处设置页原位确认、5 处受控 `window.confirm` 和 1 处启动异常原生错误框。文件选择器属于用户主动操作，不计为提醒。检查了关闭、`Escape`、遮罩、聚焦、动作实际去向，以及所有覆盖标题栏的固定浮层。
@@ -3964,3 +3977,16 @@ Ready CI 的完整 AI 通道暴露另一条可见问题：恢复卡片内容已�
 DESIGN CHANGE / FLOW AUDIT. 用同一组静态 A／脚本 B 合成夹具、同一 Electron 环境，先打开 B 并保存 Preview 模式，再回 A，随后直接切回 B Preview 和进入 Edit。修复前回到 B Preview 的 `Edit Runtime prepare-start` 增加 1 次；新增回归在修复前实际失败（3→4）。修复后连续三个独立运行在 Preview 阶段均增加 0 次，真正进入 Edit 后均增加 1 次且作者脚本执行 1 次；Preview 会话均增加 1 次，编辑 iframe 均增加 2 次，与基线一致。受限于跨进程采样和窗口调度，Preview 可交互耗时的三次范围从 294–298ms 变为 191–300ms，进程工作集峰值从约 1088–1100MB 变为 1088–1115MB；这组样本只支持“少一次无用准备”，不证明耗时或内存明显改善。临时性能夹具已移除，正式回归保留用户路径和次数断言。
 
 Result: passed for the scoped synthetic Electron flow. `task:finish` 的 9/9 步骤通过，含 Electron 130/130 与 AI 18/18。另用指定真实 HTML 语料的 8 份隔离副本逐一验证已保存 Preview 标签的返回、零新增 Edit Runtime 准备、再进入可写 Edit，8/8 通过；原件及副本的初始 HTML 哈希不变，导入后的受管理工作副本在模式往返期间也不变。官方只读能力预检覆盖全部 8 份原件，结果为 4 `PENDING_REVIEW`、4 `DISCOVERY_ERROR`（探针定位或超时），原件全部未变；因此定向验收不能被表述为完整私有场景矩阵通过。既有安全文字、样式、结构投影和过时导航的正确性仍由相关正式回归与任务门禁验证；跨标签长期保留、安装包与资源峰值优化不在本次结论内。
+
+## 2026-09-27 — PR 623 菜单与导出视觉反馈修正
+
+DESIGN CORRECTION。用户提供的三张当前 PR 截图是本次 source visual truth；红框只标识希望删除的导出说明与底部留白，不扩大为新产品行为。
+
+- 导出对话框：删除“将当前内容保存为一份 HTML 文件”，同时移除指向已删节点的 `aria-describedby`；复选项自身的帮助文字与关联保留。只对 `.export-html-card` 收紧纵向间距和按钮下方留白，不影响其他共享对话框。
+- 更多菜单：独立动作改为“保存为历史版本”；导出复选项仍为“同时保存到历史版本”。所有菜单项共用 4px 外部间距与统一纵向 padding，主标题使用 12px/650，说明使用 9px/400 和次要灰；不用中文斜体。Electron 几何断言证明前两项间距与 Finder／浏览器两项一致，主标题字号大于说明。
+- 刷新反馈：“更多 → 刷新”完成并核对新画布后保持安静，不再显示“页面已重新加载，可以继续编辑”。文件重读后仍不可编辑、刷新失败和只读故障恢复的反馈保留。
+- 视觉与行为证据：重建 Renderer 后，隔离合成项目的 5 条 Electron 用例全部通过，覆盖当前稿菜单、导出默认值／取消／字节与历史不变量、编辑与预览刷新的新实例／新 generation，以及成功提示缺席。截图为 `output/playwright/native-dom-electron/results/electron-workbench-tabs-El-ecc0b-s-with-an-optional-snapshot/current-draft-export-menu.png` 和同目录的 `current-draft-export-dialog.png`。
+- 环境记录：首次受限环境在 `electron.launch` 前 SIGABRT，5 条均未进入产品断言；核对每条用例的独立临时 profile 和动态端口后，授权环境复测 5/5 通过，0 retry/flaky。已存在的手动 Electron 进程未停止、未交互。
+- 边界：这是源码构建、标准桌面视口和合成项目的定向证据；窄窗口截图、安装包、合并和发布不在本次结论内。
+
+Result: passed for the scoped rebuilt-source Electron menu, export-dialog and ordinary-refresh behaviors; no user HTML, package or release artifact was changed.
