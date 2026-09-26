@@ -2595,15 +2595,21 @@ export default function Workbench() {
   };
   const expectedPreviewSha256 = historyPreview
     ? null
-    : externalSourcePreview?.sourceSha256 || sourceSha256;
+    : externalSourcePreview?.sourceSha256
+      || documentSnapshot.workingHtmlSha256
+      || (editRevision === lastPersistedRevision ? sourceSha256 : null);
   const previewSurfaceMounted = displayedCanvasMode === "preview"
     && Boolean(historyPreview || documentRuntimeTabId);
   const previewSourceIdentity = [
     activeWorkbenchTab?.tabId || "none",
     pageViewDocumentKey,
     canvasGeneration,
-    historyPreview?.versionId || "current",
-    expectedPreviewSha256 || "history",
+    historyPreview ? `history:${historyPreview.versionId}`
+      : externalSourcePreview ? `external:${externalSourcePreview.sourceSha256}`
+        : "current",
+    // The edit revision changes with accepted working HTML, before autosave
+    // advances the persisted hash. It also stays stable when that save lands.
+    editRevision,
   ].join("\u0000");
   // A click ordinal is an intent, not a physical iframe identity. Only the
   // exact still-mounted Preview may reuse its earlier display acknowledgement.
