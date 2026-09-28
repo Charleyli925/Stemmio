@@ -1670,6 +1670,9 @@ test("Electron stages a saved Preview mode before the tab page is revealed", {
       .toHaveAttribute("data-selected", "true");
     await expect(previewButton).toHaveAttribute("aria-pressed", "true");
     await expect(previewButton).not.toHaveAttribute("aria-busy", "true");
+    await expect.poll(() => page.evaluate(() => window.__previewOrderFrames.some(
+      (state) => state.selected && state.ready && !state.spinning,
+    ))).toBe(true);
     const frames = await page.evaluate(() => {
       cancelAnimationFrame(window.__previewOrderRaf);
       return window.__previewOrderFrames;
