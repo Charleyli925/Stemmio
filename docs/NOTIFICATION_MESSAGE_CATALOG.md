@@ -53,8 +53,9 @@
 
 源页只回传提醒的稳定编号、tone、disposition、surface、是否有操作按钮
 以及 action/dismiss/auto-dismiss 结果；不会回传标题、正文、动态路径、
-文件名或错误消息。Canvas 提醒使用 `canvas_c01` 与 `canvas_c12` 稳定
-原因码；`canvas_c02_edit_blocked`、`canvas_c05_complex_structure`、
+文件名或错误消息。Canvas 提醒使用 `canvas_c01_source_map`、
+`canvas_c02_style_override`、`canvas_c03_structure_scope`、`canvas_c12_edit_in_progress`
+与 `canvas_c13_comment_target_not_exact` 稳定原因码；`canvas_c02_edit_blocked`、`canvas_c05_complex_structure`、
 `canvas_c06_special_layout`、`canvas_c09_structure_delete`、
 `canvas_c10_ime_incomplete` 与 `canvas_c11_target_drift` 已随编辑受阻
 提示一起移除，`canvas_c03_style_boundary` 与 `canvas_c04_empty_formatting`
@@ -388,7 +389,7 @@ viewport-fixed 定位，不随 HTML 页面滚动，不遮挡右侧评论栏。
 ### G14. 无法打开选中的 HTML
 
 - 用户触发：从文件选择器或最近打开列表打开 HTML。
-- 已登记项目的当前稿打不开时，标题“当前稿未打开”，说明原页面保持不变，不提供会进入新项目选择器的按钮。已经准备的外部打开若确认未完成，按钮“继续打开”只重试同一请求。
+- 已登记项目的当前稿打不开时，导航 outcome 只在工作台顶部呈现一条“无法打开「项目」”横幅，说明原页面保持不变，并提供“重试打开 / 关闭”。同一失败不再生成全局 Toast 或工作台短状态，不提供会进入新项目选择器的按钮。已经准备的外部打开若确认未完成，按钮“继续打开”只重试同一请求。
 - 系统条件：文件移动、删除、损坏、无权限或暂时不可读。
 - 当前文案：标题“无法打开这个 HTML”；正文按来源说明“文件可能已移动……”。
 - 操作按钮：需要重新挑选文件时为“选择 HTML”。

@@ -151,6 +151,8 @@ function fixture({
   confirm,
   cancel,
   acceptExternal,
+  pendingAck = null,
+  retryExternalOpen: onRetryExternalOpen,
   prepareRules: onPrepareRules,
   commitRules: onCommitRules,
   viewHistory: onViewHistory,
@@ -287,8 +289,9 @@ function fixture({
   };
   const projectWorkflow = {
     confirmation: null,
+    pendingAck,
     getSnapshot() {
-      return { openConfirmation: this.confirmation };
+      return { openConfirmation: this.confirmation, pendingExternalAck: this.pendingAck };
     },
     async prepareSwitch() {
       calls.push("prepare");
@@ -335,6 +338,12 @@ function fixture({
     async cancelExternalOpen(input) {
       calls.push(`cancel:${input.requestId}`);
       return cancel ? cancel({ input, publish }) : { status: "succeeded", value: { canceled: true } };
+    },
+    async retryExternalOpen(input) {
+      calls.push(`retry-external:${input.requestId}`);
+      return onRetryExternalOpen
+        ? onRetryExternalOpen({ input, projectWorkflow: this })
+        : { status: "succeeded", value: { acknowledged: true } };
     },
   };
   workflow = new WorkbenchNavigationWorkflow({
@@ -385,6 +394,58 @@ test("ACK-only retry completes without reapplying a project or requiring a new r
   assert.equal(harness.navigation.snapshot.phase, "idle");
   assertAlignedNavigation(harness, A);
   assert.deepEqual(harness.calls, ["confirm:already_committed"]);
+  harness.workflow.dispose();
+});
+
+test("visible direct ACK retry uses the exact pending session instead of a local picker", async () => {
+  const harness = fixture({
+    pendingAck: { requestId: "direct_ack_first" },
+    retryExternalOpen: async ({ projectWorkflow }) => {
+      projectWorkflow.pendingAck = null;
+      return { status: "succeeded", value: { acknowledged: true } };
+    },
+    open: async () => { throw new Error("local picker must not open"); },
+  });
+  const beforeOrdinal = harness.navigation.snapshot.admissionOrdinal;
+  const result = await harness.workflow.retryOpen({ requestId: "direct_ack_first" });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.value.acknowledged, true);
+  assert.equal(harness.navigation.snapshot.admissionOrdinal, beforeOrdinal + 1);
+  assert.equal(harness.navigation.snapshot.phase, "idle");
+  assert.deepEqual(harness.calls, ["retry-external:direct_ack_first"]);
+  assertAlignedNavigation(harness, A);
+  harness.workflow.dispose();
+});
+
+test("direct ACK retry resumes its still-active external admission", async () => {
+  const harness = fixture({
+    acceptExternal: () => ({ status: "succeeded", value: { requestId: "active_ack" } }),
+    retryExternalOpen: async ({ projectWorkflow }) => {
+      projectWorkflow.pendingAck = null;
+      return { status: "succeeded", value: { resumed: true } };
+    },
+    open: async () => { throw new Error("local picker must not open"); },
+  });
+  assert.equal((await harness.workflow.acceptExternalProject({
+    requestId: "active_ack", sourcePath: "/managed/active.html",
+  })).status, "succeeded");
+  harness.projectWorkflow.pendingAck = { requestId: "active_ack" };
+  const admissionOrdinal = harness.navigation.snapshot.admissionOrdinal;
+  const result = await harness.workflow.retryOpen({ requestId: "active_ack" });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.value.resumed, true);
+  assert.equal(harness.navigation.snapshot.admissionOrdinal, admissionOrdinal);
+  assert.equal(harness.navigation.snapshot.phase, "idle");
+  assert.deepEqual(harness.calls, ["external:active_ack", "retry-external:active_ack"]);
+  harness.workflow.dispose();
+});
+
+test("a stale external ACK action cannot turn into a local picker", async () => {
+  const harness = fixture({ pendingAck: { requestId: "newer_ack" } });
+  const result = await harness.workflow.retryOpen({ requestId: "older_ack" });
+  assert.equal(result.status, "rejected");
+  assert.equal(result.code, "EXTERNAL_OPEN_ACK_STALE");
+  assert.deepEqual(harness.calls, []);
   harness.workflow.dispose();
 });
 

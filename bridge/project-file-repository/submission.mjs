@@ -176,14 +176,19 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       const providerId = actor === "agent" ? receipt.snapshot.agentDelivery.selection.providerId : null;
       const fixedCaption = EXECUTION_FACTS[event.kind];
       const captionChanged = priorMessage && event.kind !== "public-summary" && priorMessage.text !== fixedCaption;
+      const legacyPublicSummaryKind = priorMessage?.kind === "result-summary"
+        && event.kind === "public-summary"
+        && messageKind === "process-summary";
+      const replayMessageKind = legacyPublicSummaryKind ? priorMessage.kind : messageKind;
       // Static execution copy is presentation, not the Request or event fact.
-      // Keep the original wording across app upgrades, but never rebind an ID
-      // to another turn, Request, attempt, candidate or event timestamp.
+      // Keep the original wording and the known result-summary -> process-summary
+      // presentation migration across app upgrades, but never rebind an ID to
+      // another turn, Request, attempt, candidate or event timestamp.
       if (priorMessage && (
         priorMessage.turnId !== receipt.turnId
         || priorMessage.actor !== actor
         || (priorMessage.providerId || null) !== providerId
-        || priorMessage.kind !== messageKind
+        || (!legacyPublicSummaryKind && priorMessage.kind !== messageKind)
         || priorMessage.status !== "completed"
         || priorMessage.requestId !== receipt.requestId
         || priorMessage.attemptId !== receipt.attemptId
@@ -196,7 +201,7 @@ export async function projectSubmissionReceipt(loaded, receipt) {
       next = appendConversationTurnMessage(next, { turnId: receipt.turnId, message: {
         messageId, actor,
         ...(providerId ? { providerId } : {}),
-        kind: messageKind, status: "completed",
+        kind: replayMessageKind, status: "completed",
         text: event.kind === "public-summary" ? event.publicSummary : captionChanged ? priorMessage.text : fixedCaption,
         createdAt: event.timestamp, completedAt: event.timestamp,
         requestId: receipt.requestId, attemptId: receipt.attemptId, candidateId: event.candidateId,

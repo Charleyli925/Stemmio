@@ -795,6 +795,9 @@ ${REVIEW_MASK_UNION_BEFORE}
       .toHaveCount(0);
     // Leave via fixed chrome so the test does not pan the horizontally scrolled Review viewport.
     await launched.page.locator(".workbench-header").hover({ position: { x: 24, y: 24 } });
+    await beforeReviewFrame.locator(caseSelector("list-item"))
+      .evaluate((element) => element.scrollIntoView({ block: "center" }));
+    await expect(reviewCommentMarker).toBeInViewport({ ratio: 1 });
     await reviewCommentMarker.hover();
     await expect(reviewCommentBubble).toBeVisible();
     await launched.page.locator(".workbench-header").hover({ position: { x: 24, y: 24 } });

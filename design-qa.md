@@ -1,5 +1,32 @@
 # Design QA
 
+## 2026-09-28 — 外部打开回执的直接路径恢复
+
+- Mode: DESIGN CHANGE；沿用现有全局短提示与工作台原位恢复横幅，不增加第三种提示。已受管项目直接打开、或确认框出现前的终态失败，都以同一 `requestId` 保留恢复责任；文案不再把失败说成 HTML 已打开。
+- First failure: 新增 Node 正反例先在旧实现上失败，暴露无确认框时待 ACK 不进入快照；补投影后进一步核对发现，直接重试 ACK 不能恢复延后的外部打开会话和后续 FIFO，因此重试改由该会话接管。Electron 测试首轮的全部目标界面断言已通过，但末尾额外读取活动项目被待 ACK 队首阻塞而超时；删去这项不属于界面验收、且由 Node 用例覆盖的读取后，原有可见性和点击断言未放宽，重跑通过。Ready 全量 AI 的独立审阅用例曾在关闭评论气泡、将指针移到顶栏后，直接 hover 已滚出视口的标记而失败；测试现在从同一原页面目标重新定位并先断言标记完全回到视口，不强制 hover 或放宽后续气泡断言。
+- CI triage: Ready 原生 Electron 曾在预览刷新及历史版本切换的临时双 iframe 交接期使用单值定位器，导致 strict-mode 错误；两处都先等待过渡收敛到唯一 iframe，仍核对刷新后的新地址和历史版本的正确内容，不接受永久双画布或错误版本。
+- Frame evidence: 另一条 Ready 测试已确认目标预览 DOM 就绪，却在下一次 `requestAnimationFrame` 记录最终可见状态之前取消采样；现在先等实际帧采到“选中且 ready”，再检查原有“等待态先于完成态”顺序，不用单次即时读取代替绘制证据。
+- Evidence: 直接打开、确认前失败及既有确认路径的定向 Node 测试 3/3；合成项目真实 Electron 中，ACK 故障时恰有一条顶部提示，关闭后恰有一条“继续打开”恢复横幅，重复失败不使恢复入口消失，定向用例 1/1。完整门禁以本次最终源码结果为准。
+- Limits: 仅验证合成项目的源码 Electron 与受控 ACK 故障；未改动已安装 Developer Preview 或真实用户项目。既有定时中断被 ACK 提示打断后可能获得新的展示时长，作为独立 P2 记录，不扩展本次 P1 修复。
+
+## 2026-09-28 — 历史当前稿与提示恢复补修
+
+- Mode: DESIGN CHANGE；没有增加新 Toast 种类。冷启动失效当前稿沿用同一条导航恢复横幅；外部 ACK 失败的首个全局提示被关闭后，只转换为一条含原请求“继续打开”的工作台横幅，不同时展示两个面。
+- Identity and lifetime: 全局短提示由业务操作 ID 或独立发布代次确定生命周期，连续同文案复制不会继承旧倒计时；画布重复报告在同一手势、文档与画布代次内共用身份，下一操作重新计时。隐藏、程序清除、替换和组件卸载都会释放 hover/focus 暂停。
+- Evidence: 合成旧项目冷启动失败及导航恢复的 Electron 用例通过；外部 ACK 失败后关闭 Toast、切换标签并从横幅继续重试的 Electron 用例通过；Canvas 真实窗口用例证明悬停提示被成功命令程序清除、下一条正常到期、同操作重复报告不续命以及新操作同文案重新计时。ProjectWorkflow 待 ACK 快照与通知生命周期定向 Node 测试通过；`gate:edit` typecheck 与 1057/1057 定向 Node 通过；新增测试后完整 `task:finish` 8/8 通过（Browser 83/83、Electron 141/141、AI 18/18）。真实语料只读预检处理了全部 8 页：4 页 `PENDING_REVIEW`，4 页 `DISCOVERY_ERROR`（精确命中点或能力探测超时），原件均未变化。预检未形成可执行的完整验收计划，因此不把它记作真实页面通过。
+- First failure: Canvas 专项第一版测试用“成功复制”清理旧提示时，旧拒绝的诊断标记仍按产品规则保留，成功命令不会将其错误吞掉。测试在进入新干净命令前仅释放该诊断标记，再沿真实成功命令检查程序清除与计时；没有修改实现或放宽最终行为断言。
+- Limits: 本轮没有修改真实用户项目、安装包或已安装应用；因此当前已安装 Developer Preview 仍保持旧行为。真实语料完整验收未完成；Draft PR 不应被描述为可直接合并或已覆盖所有历史版本产物。
+
+
+## 2026-09-28 — 历史当前稿兼容与单一失败提示
+
+- Mode: DESIGN CHANGE；用户目标是打开已登记历史项目的当前稿，失败时仍保留原页面且只看到一个可恢复提示。设计判断按 Quiet First、唯一 owner 与就近恢复出口执行。
+- Root cause: 旧版本把 `public-summary` 封存为 `result-summary`，新版本改为 `process-summary`；后续回执强化了类型核对，却没有保留这一已知的展示迁移，因而在已验证当前 HTML 发布之前拒绝打开。修复只兼容这一方向，其他 kind、Turn、Request、Attempt、Candidate、actor、status 和时间错配仍失败关闭。
+- Feedback ownership: 已登记当前稿在应用前失败时，导航 outcome 只在工作台顶部呈现一条横幅，含项目名、真实原因、“重试打开”和“关闭”；同一 project event 不再另发全局 Toast 或 2.5 秒 chrome status。已发布后的 Canvas 核对失败继续由 Canvas 原位恢复面负责，不叠加全局 Toast。
+- Notification mechanism: 全局与 Canvas 短提示共用 `notice-lifetime` 截止时间规则；重复同一稳定事实不重置计时，hover/focus 暂停后只继续剩余时间。Canvas 稳定原因码已与提醒台账对齐。
+- Evidence: 回执与通知定向 Node 28/28 通过；`gate:edit` 的 typecheck 及 targeted Node 749/749 通过（run `2026-09-28T04-26-58-503Z-edit`）；真实 Electron 合成项目同时覆盖已打开标签的 Canvas 失败与左侧当前稿应用前失败，各自只保留合同指定的一个错误面，全局 Toast 与 chrome status 均为 0，重试后打开成功。
+- Limits: 本次没有修改、复制或提交用户真实 HTML、评论、附件或项目路径；用户已安装的 Developer Preview 仍是修复前构建。本条不声称已打包、更新安装、合并或发布。
+
 
 ## 2026-09-27 — 文字退出、文件菜单与标签活动
 

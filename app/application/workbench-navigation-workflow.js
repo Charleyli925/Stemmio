@@ -374,6 +374,27 @@ export class WorkbenchNavigationWorkflow {
   }
 
   async retryOpen(input = {}) {
+    const requestedId = String(input.requestId || "");
+    const pendingAck = this.#projectWorkflow.getSnapshot().pendingExternalAck;
+    if (pendingAck) {
+      if (pendingAck.requestId !== requestedId) return rejected(
+        "EXTERNAL_OPEN_ACK_STALE",
+        "这次外部打开回执已变化，请等待当前请求。",
+      );
+      // The visible retry is an ACK/session continuation, not a fresh picker
+      // intent. Keep it in the navigation admission stream so close and later
+      // tabs cannot overtake the exact FIFO-head recovery.
+      const active = this.#active;
+      if (active?.requestId === requestedId && active.continuation) {
+        return this.#continue(active, async () => ({
+          outcome: await this.#projectWorkflow.retryExternalOpen({ requestId: requestedId }),
+        }));
+      }
+      return this.#admit({ kind: "external-ack-retry", requestId: requestedId }, async (active) => {
+        active.requestId = requestedId;
+        return { outcome: await this.#projectWorkflow.retryExternalOpen({ requestId: requestedId }) };
+      });
+    }
     const confirmation = this.#projectWorkflow.getSnapshot().openConfirmation;
     const outcome = await this.confirmOpen({
       ...input,

@@ -127,7 +127,13 @@ export type WorkspaceEvent =
       type: "workbench-tabs-restore-failed";
       tabId: string;
       committed: boolean;
+      code: string;
       reason: string;
+      target?: Readonly<{
+        projectId: string;
+        documentId: string;
+        title: string;
+      }>;
     }>
   | Readonly<{
       type:

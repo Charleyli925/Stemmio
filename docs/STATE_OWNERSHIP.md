@@ -50,7 +50,7 @@ Canvas contract.
 | Open source locator before first durable action, registered identity, renderer generation and late-query fence | Renderer `ProjectSession` | active-file record before registration; project registry and `project.json` afterwards | Application workflows and the Controller aggregate snapshot |
 | FIFO OS/QoderWork HTML-open requests, the single renderer-delivered head awaiting explicit acknowledgement, committed-exit handoff, plus active/recent-project transitions | Main-process external-file-open mailbox and `ProjectOpenQueue` | in-memory for the current process plus one private, validated `userData` handoff record after close commits; no renderer-supplied path authority | preload lifecycle delivery, startup adoption and trusted project IPC; Main never publishes the next head before renderer accept/cancel/reject acknowledgement |
 | Prepared A/B/C open intent, commit receipt and one-shot original-file trash disposition | Main-process `desktop/prepared-html-open.mjs` store | none; process memory only; delete consent is never persisted | trusted project IPC and `ProjectWorkflow` commit/finalize/rollback |
-| Open-confirmation busy/retry projection and optional delete-original consent | Renderer `ProjectWorkflow` | none; reset per request and cancelled on close | ProjectWorkflow automatically commits ordinary import/reopen in the same operation; Workbench retains only explicit delete-original confirmation; Navigation holds admission through Prepared settlement |
+| Open-confirmation busy/retry projection, pending external ACK completion and exact request ID, and optional delete-original consent | Renderer `ProjectWorkflow` | none; reset per request and cancelled on close | ProjectWorkflow automatically commits ordinary import/reopen in the same operation; Workbench projects pending ACK recovery from its snapshot rather than owning the only request ID in a Toast; Navigation holds admission through Prepared settlement |
 | External HTML request IDs, active/queued/deferred renderer delivery, blocker-transition/manual retry policy and unaccepted-result fence | Renderer `ExternalFileOpenSession` | none; bounded in-memory state only | `ProjectWorkflow` composition and Workbench presentation |
 | Accepted local/external project results, their FIFO renderer publication and deferred final-fence blocker-transition/manual retry policy | Renderer `ProjectApplicationSession` | none; bounded in-memory state only | `ProjectWorkflow` composition and Workbench presentation |
 | Registered mutation context resolution and atomic-replacement source observation | `ProjectFileRepository` (`bridge/project-file-repository.mjs` façade; internals under `bridge/project-file-repository/` do not become a second owner) | v4 `.stemmio-registry.json` plus the owning Project File working copy and `.stemmio` metadata | Bridge mutation routes and `/project/ensure` |
@@ -209,7 +209,10 @@ Rules:
   transition: it records whether `DrainCoordinator.inspect("switch")` has
   observed a relevant blocker, resumes only after that blocker clears, and
   otherwise reports that the explicit retry action remains necessary. Project
-  hydration is an explicit switch obligation rather than a copied Workbench
+  Workflow routes a visible pending-ACK retry by exact request ID; if its
+  session head is still opening, the session holds that one user retry until
+  its first deferred transition, without retrying indefinitely or releasing
+  a queued successor early. Project hydration is an explicit switch obligation rather than a copied Workbench
   boolean. If the final pre-IPC fence itself captures a post-cutoff native
   edit, no external activation starts; that edit returns to normal persistence
   before the session retries.
@@ -762,7 +765,10 @@ If hydration has already opened the matching current Working Copy, it verifies
 that Canvas and repairs openedAt without another workspace load or publication.
 If the opened acknowledgement fails, VersionWorkflow keeps the same creation
 operation in `created` so the startup coordinator can retry against the verified
-current Canvas; it reports `opened` only after the durable acknowledgement
+current Canvas. The startup coordinator makes bounded retries only while the
+same project, document, Working Copy, selected tab and navigation admission
+remain current; each attempt revalidates the receipt and rendered HTML through
+VersionWorkflow. It reports `opened` only after the durable acknowledgement
 returns. A repeated failure leaves the same operation available for explicit
 recovery without creating another Version.
 
@@ -784,7 +790,7 @@ AgentRuntimeCoordinator emits bounded, fixed-category execution facts through it
 
 ProjectFileRepository writes terminal Request state and stable Conversation event IDs together in request.json, then projects those facts through the submission receipt into the fixed Conversation. A crash between these files replays the same event IDs; it never restarts generation. initialize() reconciles only submissions created by this flow: accepted without a Request becomes not-started, and processing Requests receive an interrupted fact while retaining existing Request/lease authority. Missing older submissions never cause invented history. Adoption confirmation remains owned by the completed current Version transaction.
 
-Replay keeps the previously stored wording of fixed Stemmio execution captions when their turn, Request, attempt, candidate and event time still match the receipt. The fixed truncation notice follows the same rule with its receipt and turn identity. This wording is presentation and may change between builds. Submission requirements, public Agent summaries, event identities and their authority remain exact; a reused identity with changed ownership or content is still rejected. A caption-only compatibility difference cannot prevent opening an otherwise verified current Working Copy.
+Replay keeps the previously stored wording of fixed Stemmio execution captions when their turn, Request, attempt, candidate and event time still match the receipt. The fixed truncation notice follows the same rule with its receipt and turn identity. The known `public-summary` presentation migration from `result-summary` to `process-summary` likewise preserves the already stored kind after every other identity field and the public summary content match. Wording and this message kind are presentation and may change between builds. Submission requirements, public Agent summaries, event identities and their authority remain exact; a reused identity with changed ownership, an unrelated kind or changed content is still rejected. A presentation-only compatibility difference cannot prevent opening an otherwise verified current Working Copy.
 
 Coordinator persists progress on phase transitions; repeated tool activity in the same phase does not create another durable progress fact. A return to a previous phase remains a new transition. Submission progress retains at most 64 facts, with one durable truncation update at the limit; further omitted progress does not rewrite the receipt. Start, stop, result, decision and final summary facts retain their existing durability boundaries.
 

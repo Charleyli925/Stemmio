@@ -166,6 +166,36 @@ test("external file session gives every deferred transition a new sequence", asy
   assert.deepEqual(calls, ["external_retry-sequence", "external_retry-sequence"]);
 });
 
+test("an early exact retry runs once after deferral and keeps the FIFO head", async () => {
+  const session = new ExternalFileOpenSession();
+  const calls = [];
+  let releaseFirst;
+  const first = new Promise((resolve) => { releaseFirst = resolve; });
+  const execute = async (value) => {
+    calls.push(value.requestId);
+    if (value.requestId === "external_first" && calls.length === 1) await first;
+    return value.requestId === "external_first" ? "deferred" : "complete";
+  };
+
+  assert.equal(session.enqueue(request("first"), execute), true);
+  assert.equal(session.enqueue(request("second"), execute), true);
+  assert.equal(session.resumeExactOrWhenDeferred("external_second", execute), false);
+  assert.equal(session.resumeExactOrWhenDeferred("external_first", execute), true);
+  assert.equal(session.resumeExactOrWhenDeferred("external_first", execute), true);
+  releaseFirst();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["external_first", "external_first"]);
+  assert.equal(session.snapshot.deferredRequestId, "external_first");
+  assert.equal(session.snapshot.queuedRequestId, "external_second");
+  assert.equal(session.snapshot.deferredSequence, 2);
+
+  assert.equal(session.resumeExactOrWhenDeferred("external_first", execute), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["external_first", "external_first", "external_first"]);
+  session.dispose();
+});
+
 test("external file session resumes immediately when the switch drain is already clear", async () => {
   const session = new ExternalFileOpenSession();
   const calls = [];

@@ -235,6 +235,27 @@ export function registrationContextFromOutcome(outcome) {
   ));
 }
 
+export async function retryUnacknowledgedHistoryCreation({
+  current,
+  waitForIdle,
+  restore,
+  now = Date.now,
+  sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  windowMs = 15_000,
+}) {
+  const deadline = now() + windowMs;
+  let delayMs = 250;
+  while (now() < deadline && current()) {
+    await sleep(Math.min(delayMs, deadline - now()));
+    if (now() >= deadline || !current() || !await waitForIdle({ deadlineAt: deadline })
+      || now() >= deadline) return;
+    const context = current();
+    if (!context) return;
+    await restore(context);
+    delayMs = Math.min(delayMs * 2, 2_000);
+  }
+}
+
 // Runtime composition belongs to the Application boundary. Workbench supplies
 // only pure codecs and narrow desktop host ports; it never constructs
 // mutable Session facts or a Bridge client.
@@ -1479,6 +1500,7 @@ export class WorkspaceController {
       intentKind: "startup-restore",
     });
     if (outcome.status === "succeeded") return;
+    const failedTarget = this.#workbenchTabsSession.resolveTab(pending);
     if (outcome.committed === true) {
       let hydration;
       try {
@@ -1518,7 +1540,13 @@ export class WorkspaceController {
       type: "workbench-tabs-restore-failed",
       tabId: pending,
       committed: outcome.committed === true,
+      code: outcome.code || "WORKBENCH_TABS_RESTORE_FAILED",
       reason: outcome.reason,
+      ...(failedTarget?.kind === "document" ? { target: {
+        projectId: failedTarget.projectId,
+        documentId: failedTarget.documentId,
+        title: failedTarget.title,
+      } } : {}),
     });
   }
 
@@ -2874,38 +2902,54 @@ export class WorkspaceController {
       const navigationWorkflow = this.#workbenchNavigationWorkflow;
       const restoreOpenedReceipt = async (context, recovery = null) => {
         if (!versionWorkflow || !navigationWorkflow) return;
+        const currentContext = () => {
+          if (this.#disposed || (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery))) return null;
+          const live = this.#projectSession.context;
+          return live?.projectId === context?.projectId
+            && live?.documentId === context?.documentId ? live : null;
+        };
+        const unresolvedCreation = () => {
+          const creation = versionWorkflow.getSnapshot().creation;
+          return creation?.operationId === (recovery?.operationId || event.historyCreation.operationId)
+            && creation.result?.status === "created"
+            && creation.result.openedAt === null
+            && creation.result.recoveryState !== "superseded"
+            && ["created", "open-failed"].includes(creation.phase)
+            ? creation : null;
+        };
+        const unresolvedCurrentCreation = () => {
+          const creation = unresolvedCreation();
+          const live = currentContext();
+          return live && creation?.result.workingCopyId === live.workingCopyId ? live : null;
+        };
         // Hydration publishes its supplemental event before the enclosing
         // Workbench navigation transaction has released ownership. Waiting
         // first prevents restoreHistoryCreation() from observing a transient
         // busy phase and silently dropping the only opened-at repair attempt.
         const navigationIdle = await navigationWorkflow.waitForIdle();
-        if (!navigationIdle || this.#disposed
-          || (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery))) return;
-        let liveContext = this.#projectSession.context;
-        if (
-          liveContext?.projectId !== context?.projectId
-          || liveContext?.documentId !== context?.documentId
-        ) return;
-        if (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        if (!navigationIdle) return;
+        let liveContext = currentContext();
+        if (!liveContext) return;
         await versionWorkflow.restoreHistoryCreation({
           operationId: recovery?.operationId || event.historyCreation.operationId,
           context: liveContext,
         });
-        const creation = versionWorkflow.getSnapshot().creation;
-        const needsSettledCanvasRetry = Boolean(
-          creation?.result?.status === "created"
-          && creation.result.openedAt === null
-          && creation.result.recoveryState !== "superseded"
-          && ["created", "open-failed"].includes(creation.phase)
-        );
-        if (!needsSettledCanvasRetry) return;
-        liveContext = this.#projectSession.context;
-        if (
-          liveContext?.projectId !== context?.projectId
-          || liveContext?.documentId !== context?.documentId
-        ) return;
-        if (recovery && !this.#startupHistoryRecoveryIsCurrent(recovery)) return;
+        if (!unresolvedCreation()) return;
+        liveContext = currentContext();
+        if (!liveContext) return;
         await versionWorkflow.returnToCurrent({ context: liveContext });
+        // A settled tab is not proof that its Canvas and durable opened ACK
+        // settled in the same turn. Keep this exact, still-current receipt
+        // retryable for a bounded startup window; every retry revalidates the
+        // current Working Copy and rendered HTML in VersionWorkflow.
+        await retryUnacknowledgedHistoryCreation({
+          current: unresolvedCurrentCreation,
+          waitForIdle: ({ deadlineAt }) => navigationWorkflow.waitForIdle({ deadlineAt }),
+          restore: (current) => versionWorkflow.restoreHistoryCreation({
+            operationId: recovery?.operationId || event.historyCreation.operationId,
+            context: current,
+          }),
+        });
       };
       const navigationSnapshot = this.#workbenchNavigationSession?.snapshot;
       const restoringPersistedTab = navigationSnapshot?.intent?.kind === "startup-restore";

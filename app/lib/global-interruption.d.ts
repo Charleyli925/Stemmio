@@ -18,7 +18,7 @@ export type GlobalInterruptionTarget = {
   commentId: string;
 };
 
-export type GlobalInterruption =
+export type GlobalInterruption = (
   | {
       kind: "import-trash-failed";
       fileName?: string;
@@ -33,7 +33,6 @@ export type GlobalInterruption =
   | {
       kind: "project-open-failed";
       detail?: string;
-      registered?: boolean;
       requestId?: string;
     }
   | {
@@ -54,7 +53,8 @@ export type GlobalInterruption =
   | { kind: "show-in-folder-failed"; detail?: string }
   | { kind: "open-in-browser-failed"; detail?: string }
   | { kind: "export-failed"; detail: string }
-  | { kind: "handoff-recopy"; succeeded: boolean };
+  | { kind: "handoff-recopy"; succeeded: boolean }
+) & { noticeIdentity?: string };
 
 export type GlobalInterruptionPresentation = {
   kind: GlobalInterruptionKind;

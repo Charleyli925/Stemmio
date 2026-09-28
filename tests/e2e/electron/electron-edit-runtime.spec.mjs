@@ -2618,6 +2618,62 @@ test("independent projection groups refuse, recover and keep ordinary copies in-
   });
 });
 
+test("Canvas notice loses its hover pause after a successful command clears it", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const html = `<!doctype html><html><head><title>Notice lifecycle</title></head><body>
+    <main><p data-native-case="notice-target">可以安全复制的段落</p></main>
+    <script>document.body.dataset.runtimeReady = "true";</script>
+  </body></html>`;
+  await withRuntimeProject("stemmio-notice-lifecycle-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let frame = (await loadedDiskFrame(page, sourcePath, "notice-target")).frame;
+    const editor = page.getByTestId("html-canvas-editor");
+    const target = frame.locator('[data-native-case="notice-target"]');
+    await target.click();
+    const targetId = await target.getAttribute("data-stemmio-id");
+    expect(targetId).toBeTruthy();
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: targetId,
+    })).toBe(false);
+    const notice = editor.getByRole("status")
+      .filter({ hasText: "暂不支持这个结构操作" });
+    await expect(notice).toBeVisible();
+    await notice.hover();
+    await expect(notice).toHaveAttribute("data-paused", "true");
+
+    // The diagnostic belongs to the refused command. A later clean command
+    // may retire its notice only after that stale diagnostic is released.
+    await editor.evaluate((element) => element.removeAttribute("data-edit-block-detail"));
+    expect(await invokeStructureCommand(page, "duplicateSelected")).toBe(true);
+    await expect(notice).toHaveCount(0);
+    await page.mouse.move(4, 200);
+    frame = await currentEditorFrame(page);
+    const sameSourceTarget = frame.locator('[data-native-case="notice-target"]').first();
+    await sameSourceTarget.click();
+    const sameSourceId = await sameSourceTarget.getAttribute("data-stemmio-id");
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toBeVisible();
+    await expect(notice).not.toHaveAttribute("data-paused", "true");
+    await page.waitForTimeout(2_200);
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toHaveCount(0, { timeout: 3_600 });
+
+    await sameSourceTarget.click();
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toBeVisible();
+    await page.waitForTimeout(3_300);
+    await expect(notice).toBeVisible();
+  });
+});
+
 for (const sample of [
   {
     name: "paragraph",

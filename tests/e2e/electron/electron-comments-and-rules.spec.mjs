@@ -1133,7 +1133,10 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     const refreshItem = launched.page.getByRole("menuitem", { name: "刷新", exact: true });
     await expect(refreshItem).not.toHaveAttribute("aria-disabled", "true");
     await refreshItem.click();
-    await expect(previewIframe).not.toHaveAttribute("src", previewSrc);
+    await expect.poll(() => previewIframe.evaluateAll((frames, previousSrc) => {
+      const currentSrc = frames.length === 1 ? frames[0].getAttribute("src") : null;
+      return Boolean(currentSrc && currentSrc !== previousSrc);
+    }, previewSrc)).toBe(true);
     await expect(launched.page.getByTestId("workbench-active-preview")).toHaveAttribute("data-preview-ready", "true");
     await expect(stage).toHaveAttribute("data-inspector", "none");
     assertShellGeometry(await readGeometry());

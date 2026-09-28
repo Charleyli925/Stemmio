@@ -70,6 +70,8 @@ export class ExternalFileOpenSession {
 
   #execute = null;
 
+  #resumeWhenDeferredRequestId = null;
+
   #drainPromise = null;
 
   #generation = 0;
@@ -149,8 +151,16 @@ export class ExternalFileOpenSession {
         if (generation !== this.#generation) break;
         // The executor may complete or cancel this Prepared Intent before its
         // promise returns. Its late result cannot resurrect a released head.
-        if (this.#active?.requestId !== request.requestId) continue;
+        if (this.#active?.requestId !== request.requestId) {
+          if (this.#resumeWhenDeferredRequestId === request.requestId) {
+            this.#resumeWhenDeferredRequestId = null;
+          }
+          continue;
+        }
         if (result === "awaiting-confirmation") {
+          if (this.#resumeWhenDeferredRequestId === request.requestId) {
+            this.#resumeWhenDeferredRequestId = null;
+          }
           this.#awaitingConfirmation = true;
           this.#confirmation = request.confirmation || this.#confirmation;
           this.#attention = null;
@@ -164,7 +174,14 @@ export class ExternalFileOpenSession {
           this.#deferredSequence += 1;
           this.#sawSwitchBlocker = false;
           this.#emit();
+          if (this.#resumeWhenDeferredRequestId === request.requestId) {
+            this.#resumeWhenDeferredRequestId = null;
+            this.resume(this.#execute);
+          }
           break;
+        }
+        if (this.#resumeWhenDeferredRequestId === request.requestId) {
+          this.#resumeWhenDeferredRequestId = null;
         }
         this.#emit();
       }
@@ -252,6 +269,19 @@ export class ExternalFileOpenSession {
     return true;
   }
 
+  // An ACK failure can become visible before its executor has returned
+  // "deferred". Preserve that exact user retry once, without advancing a
+  // later FIFO request or repeatedly retrying an unavailable ACK.
+  resumeExactOrWhenDeferred(requestId, execute) {
+    const id = String(requestId || "");
+    if (!id || typeof execute !== "function") return false;
+    if (this.#deferred?.requestId === id) return this.resume(execute);
+    if (this.#active?.requestId !== id || this.#awaitingConfirmation) return false;
+    this.#execute = execute;
+    this.#resumeWhenDeferredRequestId = id;
+    return true;
+  }
+
   // One silent continue when the switch drain is already clear; a second
   // defer of the same request waits for a blocker to appear and clear.
   reconcileDeferredSwitch({ switchBlocked, execute }) {
@@ -292,6 +322,7 @@ export class ExternalFileOpenSession {
     this.#observedDeferredSequence = 0;
     this.#sawSwitchBlocker = false;
     this.#immediateResumeIds.clear();
+    this.#resumeWhenDeferredRequestId = null;
     this.#execute = null;
     this.#emit();
   }

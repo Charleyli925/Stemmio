@@ -3913,10 +3913,14 @@ async function fetchBridgeJson(pathname) {
     headers: { "X-Stemmio-Bridge-Token": bridgeAuthToken },
   });
   const payload = await response.json().catch(() => null);
+  const error = payload?.error && typeof payload.error === "object"
+    ? payload.error
+    : {};
   if (!response.ok || !payload || payload.ok !== true) {
     throw new ProjectFileError(
-      "REGISTERED_PROJECT_BRIDGE_REJECTED",
-      "项目目录暂时无法完成安全核对。",
+      String(error.code || "REGISTERED_PROJECT_BRIDGE_REJECTED"),
+      String(error.message || "项目目录暂时无法完成安全核对。"),
+      error.details && typeof error.details === "object" ? error.details : {},
     );
   }
   return payload;
