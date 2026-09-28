@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { advanceNoticeDeadline } from "../app/lib/notice-lifetime.js";
+import {
+  advanceNoticeDeadline,
+  canvasNoticeIdentity,
+  globalNoticeIdentity,
+  noticePauseActive,
+} from "../app/lib/notice-lifetime.js";
 
 test("an equal notice fact keeps its original deadline", () => {
   const started = advanceNoticeDeadline(null, {
@@ -55,4 +60,38 @@ test("a new operation receives a full lifetime even when its notice code is unch
   });
   assert.equal(next.deadlineAt, 10_500);
   assert.equal(next.remainingMs, 5_000);
+});
+
+test("Canvas identity coalesces repeat reports only within the same gesture and frame", () => {
+  const input = {
+    code: "canvas_c03_structure_scope",
+    projectId: "project-a",
+    documentKey: "document-a",
+    frameGeneration: 4,
+    operationEpoch: 7,
+    title: "暂不支持这个结构操作",
+    message: "请添加评论说明需要的结构调整。",
+  };
+  const first = canvasNoticeIdentity(input);
+  assert.equal(canvasNoticeIdentity({ ...input }), first);
+  assert.notEqual(canvasNoticeIdentity({ ...input, operationEpoch: 8 }), first);
+  assert.notEqual(canvasNoticeIdentity({ ...input, frameGeneration: 5 }), first);
+  assert.notEqual(canvasNoticeIdentity({ ...input, documentKey: "document-b" }), first);
+});
+
+test("pause authority ends when a notice is replaced, cleared, or hidden", () => {
+  const current = { visible: true, identity: "canvas:1", pausedIdentity: "canvas:1" };
+  assert.equal(noticePauseActive(current), true);
+  assert.equal(noticePauseActive({ ...current, identity: "canvas:2" }), false);
+  assert.equal(noticePauseActive({ ...current, identity: null }), false);
+  assert.equal(noticePauseActive({ ...current, visible: false }), false);
+});
+
+test("global notice identity follows the operation, not repeated copy", () => {
+  const recopy = { kind: "handoff-recopy", succeeded: true };
+  assert.equal(globalNoticeIdentity({ interruption: recopy, sequence: 1 }), "interruption:1");
+  assert.equal(globalNoticeIdentity({ interruption: recopy, sequence: 2 }), "interruption:2");
+  const repeatedReport = { ...recopy, noticeIdentity: "run:123:recopy" };
+  assert.equal(globalNoticeIdentity({ interruption: repeatedReport, sequence: 3 }), "run:123:recopy");
+  assert.equal(globalNoticeIdentity({ interruption: repeatedReport, sequence: 4 }), "run:123:recopy");
 });

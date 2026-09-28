@@ -19,6 +19,7 @@ export type NoticeUsageCapture = (
 export type NoticeBarProps = {
   title: string;
   message: string;
+  identity?: string;
   tone?: NoticeTone;
   placement?: "viewport" | "canvas";
   actionLabel?: string;
@@ -53,6 +54,7 @@ function NoticeToneIcon({ tone }: { tone: NoticeTone }) {
 export default function NoticeBar({
   title,
   message,
+  identity,
   tone = "info",
   placement = "viewport",
   actionLabel,
@@ -72,6 +74,21 @@ export default function NoticeBar({
 }: NoticeBarProps) {
   const pointerInsideRef = useRef(false);
   const focusWithinRef = useRef(false);
+  const elementRef = useRef<HTMLElement | null>(null);
+  const onPauseChangeRef = useRef(onPauseChange);
+  useEffect(() => {
+    onPauseChangeRef.current = onPauseChange;
+  }, [onPauseChange]);
+  useEffect(() => () => {
+    onPauseChangeRef.current?.(false);
+  }, []);
+  useEffect(() => {
+    if (!identity || !elementRef.current) return;
+    const element = elementRef.current;
+    pointerInsideRef.current = element.matches(":hover");
+    focusWithinRef.current = element.contains(element.ownerDocument.activeElement);
+    onPauseChangeRef.current?.(pointerInsideRef.current || focusWithinRef.current);
+  }, [identity]);
   const publishPauseState = () => {
     onPauseChange?.(pointerInsideRef.current || focusWithinRef.current);
   };
@@ -116,6 +133,7 @@ export default function NoticeBar({
 
   return (
     <section
+      ref={elementRef}
       className={classes}
       data-tone={tone}
       data-paused={paused ? "true" : undefined}

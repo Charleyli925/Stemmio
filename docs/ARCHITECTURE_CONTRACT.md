@@ -352,6 +352,10 @@ revision, and the ProjectWorkflow close drain. Ready keeps the freeze through
 final exit; blocked or aborted close releases it, including final-exit abort IPC,
 before navigation retry. External FIFO acknowledgement requires a correlated
 terminal navigation outcome and never treats a missing terminal as success.
+When an accepted external open cannot ACK its exact FIFO head, ProjectWorkflow
+keeps the completion and request ID in its pending-ACK operation state and
+projects that identity through its snapshot. Workbench may dismiss or replace
+the notice, but cannot become the sole owner of the retry capability.
 
 An asynchronous result may update state only when its complete identity is
 current:

@@ -61,7 +61,7 @@ import {
   removeAcknowledgedAuditEvents,
 } from "./lib/audit-events";
 import { appendDirectEditEvent } from "./lib/direct-edit-events.js";
-import { advanceNoticeDeadline } from "./lib/notice-lifetime.js";
+import { advanceNoticeDeadline, globalNoticeIdentity } from "./lib/notice-lifetime.js";
 import { productErrorMessage } from "./lib/notification-policy";
 import { workspaceUnavailableFromCode } from "./lib/workspace-safety-state.js";
 import {
@@ -315,6 +315,7 @@ type WorkbenchNavigationFailure =
       documentId: string;
       title: string;
       reason: string;
+      code?: string;
     };
 
 function sameProjectRoute(
@@ -1693,6 +1694,16 @@ export default function Workbench() {
   const [openHtmlError, setOpenHtmlError] = useState<string | null>(null);
   const confirmedOriginalDeletionRef = useRef<string | null>(null);
   const [interruption, setInterruption] = useState<GlobalInterruption | null>(null);
+  const [dismissedExternalAckId, setDismissedExternalAckId] = useState<string | null>(null);
+  const interruptionSequenceRef = useRef(0);
+  const publishInterruption = useCallback((next: GlobalInterruption) => {
+    interruptionSequenceRef.current += 1;
+    setInterruption({
+      ...next,
+      noticeIdentity: next.noticeIdentity
+        || `interruption:${interruptionSequenceRef.current}`,
+    });
+  }, [setInterruption]);
   const [pausedNoticeIdentity, setPausedNoticeIdentity] =
     useState<string | null>(null);
   const noticeDeadlineRef = useRef<{
@@ -1706,10 +1717,25 @@ export default function Workbench() {
     sourceSha256: string;
     receipt: ExternalSourceObservationReceipt;
   } | null>(null);
-  const presentedInterruption = globalInterruptionPresentation(interruption);
-  const noticeIdentity = presentedInterruption
-    ? `${presentedInterruption.usageKey}\n${presentedInterruption.title}\n${presentedInterruption.message}`
-    : "";
+  const pendingExternalAckId = shellSnapshot?.project?.pendingExternalAck?.requestId || null;
+  const externalAckVisible = Boolean(
+    pendingExternalAckId && pendingExternalAckId !== dismissedExternalAckId,
+  );
+  const presentedInterruption = globalInterruptionPresentation(
+    externalAckVisible
+      ? {
+        kind: "project-open-failed",
+        detail: "HTML 已完成打开，但下一个 Finder 请求尚未解锁。",
+        requestId: pendingExternalAckId!,
+      }
+      : interruption,
+  );
+  const noticeIdentity = externalAckVisible
+    ? `external-ack:${pendingExternalAckId}`
+    : globalNoticeIdentity({
+      interruption,
+      sequence: 0,
+    });
   const noticeTimerPaused = Boolean(
     noticeIdentity && pausedNoticeIdentity === noticeIdentity,
   );
@@ -1749,13 +1775,34 @@ export default function Workbench() {
         return;
       }
       if (event.type === "workbench-tabs-restore-failed") {
-        const failure = event as { tabId?: unknown; committed?: unknown; reason?: unknown };
+        const failure = event as {
+          tabId?: unknown;
+          committed?: unknown;
+          code?: unknown;
+          reason?: unknown;
+          target?: { projectId?: unknown; documentId?: unknown; title?: unknown };
+        };
         if (failure.committed === true) return;
         setGlobalSidebarOpen(true);
+        if (typeof failure.target?.projectId === "string"
+          && typeof failure.target.documentId === "string") {
+          setFileStatusNotice(null);
+          setNavigationFailure({
+            kind: "registered-project",
+            projectId: failure.target.projectId,
+            documentId: failure.target.documentId,
+            title: typeof failure.target.title === "string" && failure.target.title
+              ? failure.target.title : "当前稿",
+            code: typeof failure.code === "string" ? failure.code : undefined,
+            reason: typeof failure.reason === "string" && failure.reason
+              ? failure.reason : "上次打开的当前稿没有恢复，请重试打开。",
+          });
+        }
         return;
       }
       if (event.type === "external-open-completed") {
         const openEvent = event as Readonly<{
+          requestId?: string;
           imported?: boolean;
           disposition?: string;
           visibleV1FileName?: string;
@@ -1763,31 +1810,18 @@ export default function Workbench() {
         }>;
         if (!openEvent.imported) return;
         if (openEvent.disposition !== "trash-failed") return;
-        setInterruption({
+        publishInterruption({
           kind: "import-trash-failed",
+          noticeIdentity: openEvent.requestId
+            ? `external-import:${openEvent.requestId}:trash` : undefined,
           fileName: openEvent.visibleV1FileName || "项目内的 V1 文件",
           sourcePath: openEvent.sourcePath || null,
         });
         return;
       }
       if (event.type === "external-open-ack-failed") {
-        const ackEvent = event as Readonly<{
-          confirmation?: boolean;
-          requestId?: unknown;
-          reason?: unknown;
-        }>;
-        const requestId = typeof ackEvent.requestId === "string"
-          ? ackEvent.requestId
-          : "";
-        if (ackEvent.confirmation === true && requestId) {
-          setInterruption({
-            kind: "project-open-failed",
-            detail: String(
-              ackEvent.reason || "HTML 已完成打开，但下一个 Finder 请求尚未解锁。",
-            ),
-            requestId,
-          });
-        }
+        // The workflow snapshot owns the pending ACK and retry capability.
+        // A transient event must not become its only recovery record.
         return;
       }
       if (event.type === "external-open-canvas-failed") {
@@ -1951,8 +1985,10 @@ export default function Workbench() {
           setCanvasMode("edit");
         }
         if (runEvent.agentMayBeRunning && runEvent.run) {
-          setInterruption({
+          publishInterruption({
             kind: "external-agent-may-still-run",
+            noticeIdentity: runEvent.run.requestId
+              ? `agent-cancel:${runEvent.run.requestId}` : undefined,
             current: Boolean(runEvent.current),
             sourcePath: runEvent.run.sourcePath,
           });
@@ -2075,7 +2111,7 @@ export default function Workbench() {
         return;
       }
       if (projectEvent.type === "external-project-open-unavailable") {
-        setInterruption({
+        publishInterruption({
           kind: "external-open-unavailable",
           detail: String(projectEvent.reason || "当前 Stemmio 版本缺少外部文件打开通道。"),
         });
@@ -2092,8 +2128,12 @@ export default function Workbench() {
         // Registered opens are already owned by the navigation outcome and
         // its local retry banner. Do not publish the same fact globally.
         if (projectEvent.kind === "registered") return;
-        setInterruption({
+        publishInterruption({
           kind: "project-open-failed",
+          noticeIdentity: typeof projectEvent.operationId === "string"
+            ? `project-open:${projectEvent.operationId}`
+            : typeof projectEvent.requestId === "string"
+              ? `project-open:${projectEvent.requestId}` : undefined,
           detail: message,
           ...(typeof projectEvent.requestId === "string" && projectEvent.requestId
             ? { requestId: projectEvent.requestId }
@@ -2177,6 +2217,7 @@ export default function Workbench() {
   }, [
     commentCanvasPort,
     currentRunSessionSnapshot,
+    publishInterruption,
     readyReviewSession,
     reviewAnalysisSession,
     revealAiConversation,
@@ -3384,7 +3425,7 @@ export default function Workbench() {
     if (selected.length === 0 && issueNotes.length > 0) {
       const needsRemoval = attachmentPlan.overLimit.length > 0
         && attachmentPlan.available === 0;
-      setInterruption({
+      publishInterruption({
         kind: "attachment-rejected",
         detail: `${issueNotes.join("；")}。${
           needsRemoval
@@ -3447,7 +3488,7 @@ export default function Workbench() {
         : settledComments.editSession?.draftAttachments.length ?? 0;
       const needsRemoval = attachmentPlan.overLimit.length > 0
         && currentAttachmentCount >= MAX_COMMENT_ATTACHMENTS;
-      setInterruption({
+      publishInterruption({
         kind: "attachment-batch-partial",
         detail: `${issueNotes.join("；")}。${
           addedAttachmentCount > 0
@@ -3469,8 +3510,8 @@ export default function Workbench() {
     }
   }, [
     currentCommentSessionSnapshot,
+    publishInterruption,
     rememberAttachmentObjectUrl,
-    setInterruption,
     workspaceController,
   ]);
 
@@ -3763,7 +3804,7 @@ export default function Workbench() {
     await runLocalUserAction({
       kind: "show-source-in-folder",
       invoke: () => showInFolder(activeSourcePath),
-      onFailure: (cause: unknown) => setInterruption({
+      onFailure: (cause: unknown) => publishInterruption({
         kind: "show-in-folder-failed",
         detail: productErrorMessage(
           cause,
@@ -3771,7 +3812,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [currentProjectSessionSnapshot, setInterruption]);
+  }, [currentProjectSessionSnapshot, publishInterruption]);
 
   const openSelectedHtmlInDefaultBrowser = useCallback(async () => {
     if (!workspaceController) return;
@@ -3792,7 +3833,7 @@ export default function Workbench() {
           message: reason,
         });
       },
-      onFailure: (cause: unknown) => setInterruption({
+      onFailure: (cause: unknown) => publishInterruption({
         kind: "open-in-browser-failed",
         detail: productErrorMessage(
           cause,
@@ -3800,7 +3841,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [setInterruption, workspaceController]);
+  }, [publishInterruption, workspaceController]);
 
   const handleCanvasChange = useCallback((
     nextHtml: string,
@@ -5829,6 +5870,9 @@ export default function Workbench() {
     ) {
       const requestId = presentedInterruption.actionRequestId;
       void workspaceController.retryExternalOpen({ requestId }).then((outcome) => {
+        if (outcome?.status === "succeeded") {
+          setDismissedExternalAckId(null);
+        }
         const latest = interruptionRef.current;
         if (
           outcome?.status === "succeeded"
@@ -5995,7 +6039,7 @@ export default function Workbench() {
       // successful re-copy from a dead button.
       void (async () => {
         const outcome = await controller.commands.copyHandoff({ run: activeRun });
-        setInterruption({
+        publishInterruption({
           kind: "handoff-recopy",
           succeeded: Boolean(outcome && outcome.status === "succeeded"),
         });
@@ -6012,10 +6056,10 @@ export default function Workbench() {
     activeRun,
     cancelActiveRun,
     openAgentSettings,
+    publishInterruption,
     requestActiveRunEnd,
     resolveAiConflict,
     reviewReadyResult,
-    setInterruption,
   ]);
 
   const aiAssistantEntry = (
@@ -6730,6 +6774,19 @@ export default function Workbench() {
         <button type="button" onClick={() => setNavigationFailure(null)}>关闭</button>
       </section> : null}
 
+      {pendingExternalAckId && !externalAckVisible && !navigationFailure ? (
+        <section className="workbench-tab-switch-error" role="status">
+          <strong>打开尚未完成</strong>
+          <span>HTML 已完成打开，但下一个 Finder 请求尚未解锁。</span>
+          <button type="button" onClick={() => {
+            void workspaceController?.retryExternalOpen({ requestId: pendingExternalAckId })
+              .then((outcome) => {
+                if (outcome?.status === "succeeded") setDismissedExternalAckId(null);
+              });
+          }}>继续打开</button>
+        </section>
+      ) : null}
+
       {pendingExit || fileStatusNotice ? (
         <section
           className="workbench-chrome-status"
@@ -7310,6 +7367,7 @@ export default function Workbench() {
       {presentedInterruption && !readyReviewSession ? (
         <NoticeBar
           className="toast"
+          identity={noticeIdentity}
           title={presentedInterruption.title}
           message={presentedInterruption.message}
           tone={presentedInterruption.tone}
@@ -7320,7 +7378,13 @@ export default function Workbench() {
           onAction={presentedInterruption.actionId
             ? handleInterruptionAction
             : undefined}
-          onDismiss={() => setInterruption(null)}
+          onDismiss={() => {
+            if (externalAckVisible && pendingExternalAckId) {
+              setDismissedExternalAckId(pendingExternalAckId);
+            } else {
+              setInterruption(null);
+            }
+          }}
           usageCode={noticeUsageCode(presentedInterruption.usageKey)}
           usageDisposition="inform-in-place"
           usageSurface="global"

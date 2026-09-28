@@ -34,3 +34,32 @@ export function advanceNoticeDeadline(current, {
     paused,
   });
 }
+
+/**
+ * Canvas notices belong to a user gesture in one frame, not to each report.
+ * Repeated reports in that operation keep their deadline; another gesture or
+ * frame receives a new lifetime even if the copy is identical.
+ */
+export function canvasNoticeIdentity({
+  code,
+  projectId,
+  documentKey,
+  frameGeneration,
+  operationEpoch,
+  title,
+  message,
+}) {
+  return JSON.stringify([
+    code, projectId || "no-project", documentKey || "no-document",
+    frameGeneration, operationEpoch, title, message,
+  ]);
+}
+
+export function noticePauseActive({ visible, identity, pausedIdentity }) {
+  return Boolean(visible && identity && pausedIdentity === identity);
+}
+
+export function globalNoticeIdentity({ interruption, sequence }) {
+  if (!interruption) return "";
+  return interruption.noticeIdentity || `interruption:${sequence}`;
+}

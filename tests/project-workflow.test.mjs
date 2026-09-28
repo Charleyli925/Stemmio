@@ -3028,6 +3028,9 @@ test("confirmed external open retries only its failed ack and never commits twic
   )));
   assert.equal(commitCount, 1);
   assert.equal(harness.workflow.getSnapshot().externalOpen.status, "awaiting-confirmation");
+  assert.deepEqual(harness.workflow.getSnapshot().pendingExternalAck, {
+    requestId: "external_confirm_ack",
+  });
   const committedEpoch = harness.projectSession.epoch;
   assert.equal(await harness.workflow.retryExternalOpen({
     requestId: "external_confirm_ack",
@@ -3048,6 +3051,7 @@ test("confirmed external open retries only its failed ack and never commits twic
   assert.equal(ackCount, 5);
   assert.equal(harness.workflow.getSnapshot().externalOpen.status, "idle");
   assert.equal(harness.workflow.getSnapshot().openConfirmation, null);
+  assert.equal(harness.workflow.getSnapshot().pendingExternalAck, null);
 });
 
 test("structured reclassification DTO automatically converges the same prepared request", async (t) => {

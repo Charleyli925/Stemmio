@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { rmdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import sharp from "sharp";
 import { loadedDiskFrame as loadedStaticDiskFrame } from "./helpers/stemmio-app-fixture.mjs";
@@ -1902,10 +1903,18 @@ test("Electron keeps navigation failures recoverable without duplicating or clea
       .filter({ hasText: "打开尚未完成" });
     await expect(externalAckFailure).toHaveCount(1);
     await expect(externalAckFailure.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await externalAckFailure.getByRole("button", { name: "关闭提醒" }).click();
+    await expect(externalAckFailure).toHaveCount(0);
+    const ackRecovery = launched.page.locator(".workbench-tab-switch-error")
+      .filter({ hasText: "下一个 Finder 请求尚未解锁" });
+    await expect(ackRecovery).toHaveCount(1);
+    await expect(ackRecovery.getByRole("button", { name: "继续打开" })).toBeVisible();
     await tabs.getByRole("tab").filter({ hasText: "retry-switch-b" }).click();
     await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
-    await expect(externalAckFailure).toHaveCount(1);
-    await expect(externalAckFailure.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await expect(externalAckFailure).toHaveCount(0);
+    await expect(ackRecovery.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await ackRecovery.getByRole("button", { name: "继续打开" }).click();
+    await expect(ackRecovery.getByRole("button", { name: "继续打开" })).toBeVisible();
   } finally {
     await launched.electronApp.evaluate(() => globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__?.())
       .catch(() => {});
@@ -2477,6 +2486,54 @@ test("Electron restores multiple Registry tabs, the persisted active document, a
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
     removeSourceFixture(projectC.sourceDirectory);
+  }
+});
+
+test("Electron cold restore keeps one retryable failure after a registered project open is rejected", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  test.setTimeout(180_000);
+  const fixture = createSourceFixture("cold-restore-retry.html");
+  const first = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  let firstClosed = false;
+  let reopened = null;
+  let unsupportedJournal = null;
+  try {
+    await loadedDiskFrame(first.page, fixture.sourcePath, "list-item");
+    const registered = await first.page.evaluate(() => window.stemmioProjects.listRegisteredProjects());
+    expect(registered).toHaveLength(1);
+    unsupportedJournal = path.join(
+      registered[0].registeredProjectRootPath,
+      ".stemmio", "transactions", "history_legacy_e2e",
+    );
+    await closeStemmioGracefully(first.electronApp, first.page);
+    firstClosed = true;
+    mkdirSync(unsupportedJournal, { recursive: true });
+
+    reopened = await launchStemmio({ isolatedUserData: first.isolatedUserData });
+    const failure = reopened.page.locator(".workbench-tab-switch-error");
+    await expect(failure).toHaveCount(1);
+    await expect(failure).toContainText("cold-restore-retry");
+    await expect(failure).toContainText("项目目录或工作文件在打开前发生变化");
+    await expect(failure.getByRole("button", { name: "重试打开" })).toBeVisible();
+    await expect(reopened.page.locator(".toast.show")).toHaveCount(0);
+    await expect(reopened.page.locator(".workbench-chrome-status")).toHaveCount(0);
+
+    rmdirSync(unsupportedJournal);
+    unsupportedJournal = null;
+    await failure.getByRole("button", { name: "重试打开" }).click();
+    await loadedDiskFrame(reopened.page, fixture.sourcePath, "list-item");
+    await expect(failure).toHaveCount(0);
+  } finally {
+    if (unsupportedJournal) rmdirSync(unsupportedJournal);
+    if (reopened) {
+      await stopStemmio(reopened.electronApp, reopened.isolatedUserData);
+    } else if (!firstClosed) {
+      await stopStemmio(first.electronApp, first.isolatedUserData);
+    } else {
+      removeIsolatedUserData(first.isolatedUserData);
+    }
+    removeSourceFixture(fixture.sourceDirectory);
   }
 });
 

@@ -1479,6 +1479,7 @@ export class WorkspaceController {
       intentKind: "startup-restore",
     });
     if (outcome.status === "succeeded") return;
+    const failedTarget = this.#workbenchTabsSession.resolveTab(pending);
     if (outcome.committed === true) {
       let hydration;
       try {
@@ -1518,7 +1519,13 @@ export class WorkspaceController {
       type: "workbench-tabs-restore-failed",
       tabId: pending,
       committed: outcome.committed === true,
+      code: outcome.code || "WORKBENCH_TABS_RESTORE_FAILED",
       reason: outcome.reason,
+      ...(failedTarget?.kind === "document" ? { target: {
+        projectId: failedTarget.projectId,
+        documentId: failedTarget.documentId,
+        title: failedTarget.title,
+      } } : {}),
     });
   }
 

@@ -229,7 +229,11 @@ import {
   type HtmlCanvasCommentMarker,
   type HtmlCanvasEditFeedback,
 } from "./html-canvas-selection-chrome";
-import { advanceNoticeDeadline } from "../lib/notice-lifetime.js";
+import {
+  advanceNoticeDeadline,
+  canvasNoticeIdentity,
+  noticePauseActive,
+} from "../lib/notice-lifetime.js";
 import {
   deriveCapabilityHoverState,
   deriveSelectionOverlay,
@@ -1845,8 +1849,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const [isEditing, setIsEditing] = useState(false);
   const [commentMarkers, setCommentMarkers] = useState<HtmlCanvasCommentMarker[]>([]);
   const [editFeedback, setEditFeedback] = useState<HtmlCanvasEditFeedback | null>(null);
-  const [editFeedbackPaused, setEditFeedbackPaused] = useState(false);
-  const editFeedbackSequenceRef = useRef(0);
+  const [pausedEditFeedbackIdentity, setPausedEditFeedbackIdentity] = useState<string | null>(null);
+  const editFeedbackOperationEpochRef = useRef(0);
   const editFeedbackDeadlineRef = useRef<{
     identity: string;
     deadlineAt: number;
@@ -1856,19 +1860,36 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const publishEditFeedback = useCallback((
     feedback: Omit<HtmlCanvasEditFeedback, "noticeIdentity">,
   ) => {
-    editFeedbackSequenceRef.current += 1;
     setEditFeedback({
       ...feedback,
-      noticeIdentity: [
-        feedback.code,
-        usageProjectId || "no-project",
-        pageViewDocumentKey || "no-document",
-        frameLoadGenerationRef.current,
-        editFeedbackSequenceRef.current,
-      ].join(":"),
+      noticeIdentity: canvasNoticeIdentity({
+        code: feedback.code,
+        projectId: usageProjectId,
+        documentKey: pageViewDocumentKey,
+        frameGeneration: frameLoadGenerationRef.current,
+        operationEpoch: editFeedbackOperationEpochRef.current,
+        title: feedback.title,
+        message: feedback.message,
+      }),
     });
   }, [pageViewDocumentKey, usageProjectId]);
   const [spacingMenuOpen, setSpacingMenuOpen] = useState(false);
+  const editFeedbackPaused = noticePauseActive({
+    visible: Boolean(editFeedback && !interactionLocked),
+    identity: editFeedback?.noticeIdentity,
+    pausedIdentity: pausedEditFeedbackIdentity,
+  });
+  const editFeedbackIdentity = editFeedback?.noticeIdentity ?? null;
+
+  useEffect(() => {
+    if (!editFeedbackIdentity || interactionLocked) {
+      setPausedEditFeedbackIdentity(null);
+    } else {
+      setPausedEditFeedbackIdentity((current) => (
+        current === editFeedbackIdentity ? current : null
+      ));
+    }
+  }, [editFeedbackIdentity, interactionLocked]);
 
   toolbarVisibleRef.current = toolbarVisible;
 
@@ -9413,7 +9434,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     if (documentNode.body) layoutObserver?.observe(documentNode.body);
     // Input inside the iframe does not bubble to the outer reading stage.
     const handleReadingIntent = () => onReadingIntentRef.current?.();
+    const beginFeedbackOperation = () => { editFeedbackOperationEpochRef.current += 1; };
     documentNode.addEventListener("wheel", handleReadingIntent, { capture: true, passive: true });
+    documentNode.addEventListener("pointerdown", beginFeedbackOperation, true);
+    documentNode.addEventListener("keydown", beginFeedbackOperation, true);
     documentNode.addEventListener("pointerdown", handleReadingIntent, true);
     documentNode.addEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
     documentNode.addEventListener("keydown", handleReadingIntent, true);
@@ -9564,6 +9588,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     cleanupFrameRef.current = () => {
       cancelPendingHoverResolution();
       documentNode.removeEventListener("wheel", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", beginFeedbackOperation, true);
+      documentNode.removeEventListener("keydown", beginFeedbackOperation, true);
       documentNode.removeEventListener("pointerdown", handleReadingIntent, true);
       documentNode.removeEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
       documentNode.removeEventListener("keydown", handleReadingIntent, true);
@@ -10740,7 +10766,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const handleEditFeedbackAction = useCallback(() => {
     const recovery = editFeedback?.recovery;
     setEditFeedback(null);
-    setEditFeedbackPaused(false);
+    setPausedEditFeedbackIdentity(null);
     if (recovery === "reload") {
       onRequestReload?.();
     }
@@ -10786,8 +10812,15 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [hoverChrome.capability, interactionLocked, selectResolvedTarget]);
   const dismissEditFeedback = useCallback(() => {
     setEditFeedback(null);
-    setEditFeedbackPaused(false);
+    setPausedEditFeedbackIdentity(null);
   }, []);
+  const pauseEditFeedback = useCallback((paused: boolean) => {
+    const identity = editFeedback?.noticeIdentity;
+    if (!identity) return;
+    setPausedEditFeedbackIdentity((current) => (
+      paused ? identity : current === identity ? null : current
+    ));
+  }, [editFeedback?.noticeIdentity]);
   const handleSelectCommentMarker = useCallback((markerSelection: HtmlCanvasSelection) => {
     if (lockedRef.current) return;
     nativeEditRecoveryRef.current.cancel();
@@ -10957,6 +10990,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     interactionLocked,
     hoverHintMeasureRef,
     editFeedback,
+    editFeedbackPaused,
     reloadActionLabel,
     editFeedbackActionAvailable,
     renderedMode,
@@ -10990,6 +11024,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     deleteCommentCount,
     deleteCommentDraftIncluded,
     editFeedback,
+    editFeedbackPaused,
     editFeedbackActionAvailable,
     elementCopyAvailability,
     elementDeleteAvailability,
@@ -11025,7 +11060,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     onHoverHintClick: handleHoverHintClick,
     onEditFeedbackAction: handleEditFeedbackAction,
     onDismissEditFeedback: dismissEditFeedback,
-    onPauseEditFeedback: setEditFeedbackPaused,
+    onPauseEditFeedback: pauseEditFeedback,
     onSelectCommentMarker: handleSelectCommentMarker,
     onToolbarKeyDown: handleToolbarKeyDown,
     onToolbarPointerDownCapture: handleToolbarPointerDownCapture,
@@ -11055,6 +11090,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     handleToolbarMouseDownCapture,
     handleToolbarPointerDownCapture,
     moveSelected,
+    pauseEditFeedback,
     startEditingSelection,
     toggleSpacingMenu,
   ]);
@@ -11167,6 +11203,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       className={[styles.editor, className].filter(Boolean).join(" ")}
       style={containerStyle}
       data-testid="html-canvas-editor"
+      onPointerDownCapture={() => { editFeedbackOperationEpochRef.current += 1; }}
+      onKeyDownCapture={() => { editFeedbackOperationEpochRef.current += 1; }}
       data-locked={interactionLocked ? "true" : undefined}
       data-runtime-degradation={runtimeDegradation === "none" ? undefined : runtimeDegradation}
       data-element-copy-availability={elementCopyAssessment.availability}

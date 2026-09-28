@@ -71,6 +71,7 @@ export type SelectionChromeModel = {
   interactionLocked: boolean;
   hoverHintMeasureRef: RefObject<HTMLDivElement | null>;
   editFeedback: HtmlCanvasEditFeedback | null;
+  editFeedbackPaused: boolean;
   reloadActionLabel: string;
   editFeedbackActionAvailable: boolean;
   renderedMode: HtmlCanvasInteractionMode;

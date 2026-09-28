@@ -265,6 +265,7 @@ function initialSnapshot(externalFileOpenSession, projectApplicationSession) {
     open: Object.freeze({ phase: "idle", operationId: null, pendingKind: null }),
     close: Object.freeze({ phase: "idle", requestId: null }),
     openConfirmation: null,
+    pendingExternalAck: null,
     externalOpen: externalFileOpenSession.snapshot,
     projectApplication: projectApplicationSession.snapshot,
   });
@@ -3301,9 +3302,11 @@ export class ProjectWorkflow {
   async #ackWithCompletion(requestId, completion) {
     if (!await this.#ackExternalOpen(requestId)) {
       this.#externalAckPending.set(requestId, Object.freeze({ ...completion }));
+      this.#publishSnapshot();
       return null;
     }
     this.#externalAckPending.delete(requestId);
+    this.#publishSnapshot();
     return this.#applyExternalAckCompletion(requestId, completion);
   }
 
@@ -5161,9 +5164,12 @@ export class ProjectWorkflow {
   }
 
   #publishSnapshot() {
+    const pendingRequestId = this.#openConfirmation?.requestId;
     this.#snapshot = Object.freeze({
       ...this.#snapshot,
       openConfirmation: this.#openConfirmation,
+      pendingExternalAck: pendingRequestId && this.#externalAckPending.has(pendingRequestId)
+        ? Object.freeze({ requestId: pendingRequestId }) : null,
       externalOpen: this.#externalFileOpenSession.snapshot,
       projectApplication: this.#projectApplicationSession.snapshot,
     });
