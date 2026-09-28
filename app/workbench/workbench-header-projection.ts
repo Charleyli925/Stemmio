@@ -73,7 +73,7 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     && !input.projectLoadError && !input.viewTransitioning;
   const canReloadCurrentSource = Boolean(sameDocument && project.sourcePath && version.viewMode === "current"
     && input.persistState === "idle" && input.editRevision === input.lastPersistedRevision
-    && !runInProgress && !input.projectHydrating && !input.projectLoadError
+    && !runInProgress && !reviewActive && !input.projectHydrating && !input.projectLoadError
     && !input.workspaceIssue && !input.externalSourcePreview && !input.viewTransitioning
     && !input.hasDocumentHistoryAction);
   const switching = input.projectHydrating || input.viewTransitioning;
@@ -92,10 +92,10 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
         : input.projectLoadError || input.workspaceIssue ? "历史版本尚未恢复到可操作状态"
           : input.hasDocumentHistoryAction ? "上一次版本操作完成后可以继续"
             : undefined;
-  const showInFolderReason = isHistory ? "历史版本没有独立工作文件；请打开当前稿"
+  const showInFolderReason = isHistory ? "历史版本没有独立 HTML 文件；请打开当前稿"
     : switching ? "页面正在切换，完成后可以在 Finder 中显示"
-      : !sameDocument || !project.sourcePath ? "当前页面没有可在 Finder 中显示的工作文件"
-        : !input.canShowCurrentFileInFolder ? "当前系统暂时无法在 Finder 中显示工作文件"
+      : !sameDocument || !project.sourcePath ? "当前页面没有可在 Finder 中显示的HTML 文件"
+        : !input.canShowCurrentFileInFolder ? "当前系统暂时无法在 Finder 中显示HTML 文件"
           : undefined;
   const openInBrowserReason = switching ? "页面正在切换，完成后可以在浏览器中打开"
     : input.projectLoadError ? "当前页面加载失败，恢复后可以在浏览器中打开"
@@ -108,23 +108,16 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
     : switching ? "页面正在切换，完成后可以导出"
       : input.projectLoadError ? "当前页面加载失败，恢复后可以导出"
         : undefined;
-  const preservedDraftsReason = isHistory ? "请先打开当前稿，再找回以前保留的稿件"
-    : !hasDocumentTarget ? "请先打开当前稿"
+  const reloadReason = isHistory ? "历史版本无需刷新；请打开当前稿"
+    : reviewActive ? "请先采用或不用这次 AI 修改，再刷新"
       : runInProgress ? "请先完成当前 AI 任务或候选处理"
-        : switching ? "页面正在切换，完成后可以找回稿件"
-          : input.projectLoadError || input.workspaceIssue ? "当前稿恢复后可以找回稿件"
-            : input.hasDocumentHistoryAction ? "版本操作完成后可以找回稿件"
-              : undefined;
-  const reloadReason = isHistory ? "历史版本不会从磁盘重载；请打开当前稿"
-    : reviewActive ? "请先采用或不用这次 AI 修改，再从磁盘重新载入"
-      : runInProgress ? "请先完成当前 AI 任务或候选处理"
-        : switching ? "页面正在切换，完成后可以从磁盘重新载入"
+        : switching ? "页面正在切换，完成后可以刷新"
           : input.persistState !== "idle" || input.editRevision !== input.lastPersistedRevision
-            ? "当前修改保存完成后可以从磁盘重新载入"
-            : input.projectLoadError || input.workspaceIssue ? "当前稿尚未恢复到可重载状态"
+            ? "当前修改保存完成后可以刷新"
+            : input.projectLoadError || input.workspaceIssue ? "当前稿尚未恢复到可刷新状态"
               : input.externalSourcePreview ? "请先完成当前外部文件处理"
-                : input.hasDocumentHistoryAction ? "版本操作完成后可以从磁盘重新载入"
-                  : !sameDocument || !project.sourcePath ? "当前页面没有可重新载入的工作文件"
+                : input.hasDocumentHistoryAction ? "版本操作完成后可以刷新"
+                  : !sameDocument || !project.sourcePath ? "当前页面没有可重新载入的HTML 文件"
                     : undefined;
   return {
     projectId: sameDocument ? project.projectId : null,
@@ -163,12 +156,19 @@ export function deriveWorkbenchPresentation(input: PresentationInput) {
         exportReason || currentActionReason,
         "current",
       ),
-      preservedDrafts: actionAvailability(!preservedDraftsReason, preservedDraftsReason, "current"),
       reloadSource: actionAvailability(canReloadCurrentSource, reloadReason, "current"),
     }),
-    refreshAvailable: Boolean(hasDocumentTarget && (input.canvasMode === "preview" || reviewActive)
-      && !input.projectHydrating && !input.projectLoadError && !input.viewTransitioning),
+
   };
 }
 
 export type WorkbenchPresentation = ReturnType<typeof deriveWorkbenchPresentation>;
+
+/** Waiting for a review decision is not ongoing AI work. */
+export function isWorkbenchAiWorking({ submissionPhase, runStatus, handoffStatus }: {
+  submissionPhase?: string; runStatus?: string; handoffStatus?: string;
+}) {
+  if (submissionPhase === "preparing" || submissionPhase === "frozen") return true;
+  if (runStatus === "processing" && ["failed", "interrupted", "cancelled"].includes(handoffStatus || "")) return false;
+  return ["submitting", "processing", "validating", "committing"].includes(runStatus || "");
+}

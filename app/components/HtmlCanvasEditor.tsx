@@ -8689,7 +8689,37 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       && iframe.contentDocument === documentNode
       && frameLoadGenerationRef.current === connectedFrameGeneration
     );
+    let nativeExitPointerConsumed = false;
+    let nativeExitInClickSequence = false;
+    const consumeNativeExitEvent = (event: MouseEvent): boolean => {
+      if (!nativeExitPointerConsumed) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    };
+    const handleNativeEditOutsidePointerDown = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      nativeExitPointerConsumed = false;
+      if (event.button !== 0) return;
+      if (!isAuthoritativeConnectedDocument()) return;
+      const active = activeNativeEditRef.current;
+      if (!active || active.rootElement.contains(event.target as Node)) return;
+      nativeExitPointerConsumed = true;
+      nativeExitInClickSequence = true;
+      disabledButtonPointer = null;
+      // Capture before Chromium moves focus or completes/cancels composition.
+      // The existing clear path owns its pending-text checkpoint and queues
+      // the exit while IME is active. This gesture must not also select B.
+      consumeNativeExitEvent(event);
+      nativeEditRecoveryRef.current.cancel();
+      cancelPendingHoverResolution();
+      hoverControllerRef.current?.hide();
+      onInteractionRef.current?.();
+      clearSelection(true);
+    };
     const handleClick = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (event.detail === 1) nativeExitInClickSequence = false;
       if (!isAuthoritativeConnectedDocument()) return;
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
@@ -8957,6 +8987,13 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (nativeExitInClickSequence) {
+        nativeExitInClickSequence = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const authoritativeDocument = isAuthoritativeConnectedDocument();
       const handoffPhase = containerRef.current?.getAttribute("data-runtime-handoff");
       const canCaptureDeferredIntent = Boolean(
@@ -9049,6 +9086,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       | { target: Element; timeStamp: number; x: number; y: number }
       | null = null;
     const handleDisabledButtonPointerDown = (event: PointerEvent) => {
+      if (consumeNativeExitEvent(event)) return;
       const eventElement = event.target as Element | null;
       const disabledControl = eventElement?.closest?.(
         "button:disabled, input:disabled, select:disabled, textarea:disabled",
@@ -9057,6 +9095,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         disabledButtonPointer = null;
         return;
       }
+      // Disabled controls count their own presses below; the consumed exit
+      // press was excluded and cannot be part of this activation sequence.
+      nativeExitInClickSequence = false;
       // Chromium suppresses click for disabled form controls. Treat the
       // primary pointer press as the missing Canvas click so the authored
       // control remains selectable without enabling its native action.
@@ -9206,6 +9247,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (event.detail === 1) nativeExitInClickSequence = false;
       nativeEditRecoveryRef.current.cancel();
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
@@ -9282,7 +9325,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
       if (!lockedRef.current) captureTextRange();
     };
 
@@ -9337,6 +9381,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     const handleReadingIntent = () => onReadingIntentRef.current?.();
     documentNode.addEventListener("wheel", handleReadingIntent, { capture: true, passive: true });
     documentNode.addEventListener("pointerdown", handleReadingIntent, true);
+    documentNode.addEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
     documentNode.addEventListener("keydown", handleReadingIntent, true);
     documentNode.addEventListener("click", handleClick, true);
     documentNode.addEventListener("mousedown", handleMouseDown, true);
@@ -9486,6 +9531,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       cancelPendingHoverResolution();
       documentNode.removeEventListener("wheel", handleReadingIntent, true);
       documentNode.removeEventListener("pointerdown", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
       documentNode.removeEventListener("keydown", handleReadingIntent, true);
       documentNode.removeEventListener("click", handleClick, true);
       documentNode.removeEventListener("mousedown", handleMouseDown, true);

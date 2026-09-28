@@ -166,11 +166,13 @@ body {
   color: var(--chrome-text);
 }
 
-.workbench-tab[data-opening="true"] {
+.workbench-tab[data-opening="true"],
+.workbench-tab[data-activity="true"] {
   position: relative;
 }
 
-.workbench-tab[data-opening="true"]::after {
+.workbench-tab[data-opening="true"]::after,
+.workbench-tab[data-activity="true"]::after {
   content: "";
   position: absolute;
   right: 10px;
@@ -178,7 +180,8 @@ body {
   left: 10px;
   height: 2px;
   border-radius: 2px;
-  background: var(--chrome-accent);
+  background: rgb(156 150 227);
+  animation: stemmio-tab-activity 1.6s ease-in-out infinite;
   pointer-events: none;
 }
 
@@ -401,8 +404,8 @@ body {
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   display: grid;
-  gap: 2px;
-  padding: 6px;
+  gap: 4px;
+  padding: 7px;
   border: 1px solid var(--chrome-divider);
   border-radius: 10px;
   background: var(--paper);
@@ -413,7 +416,7 @@ body {
 
 .workbench-more-menu-entry {
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 
 .workbench-more-menu-divider {
@@ -424,17 +427,18 @@ body {
 
 .workbench-more-menu-entry > button {
   min-width: 0;
-  min-height: 32px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 9px;
+  padding: 7px 9px;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--chrome-text);
-  font-size: 11px;
-  font-weight: 590;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
   text-align: left;
   white-space: nowrap;
 }
@@ -464,15 +468,15 @@ body {
 .workbench-more-menu-copy {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 
 .workbench-more-menu-copy small {
   max-width: 176px;
   color: var(--chrome-muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 400;
-  line-height: 1.35;
+  line-height: 1.45;
   white-space: normal;
 }
 
@@ -550,3 +554,41 @@ body {
     transition: none;
   }
 }
+
+@keyframes stemmio-tab-activity {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-tab[data-opening="true"]::after,
+  .workbench-tab[data-activity="true"]::after { animation: none; }
+}
+.workbench[data-motion="reduced"] .workbench-tab::after { animation: none; }
+
+/* Consume the dismissing press even when it lands in an isolated HTML frame. */
+.workbench-more-menu-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  -webkit-app-region: no-drag;
+}
+.workbench-more-menu { -webkit-app-region: no-drag; }
+
+.export-html-card {
+  padding: 24px 26px 18px;
+}
+.export-html-card footer {
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.export-html-history-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.export-html-history-option input { accent-color: var(--indigo); }
+.export-html-cancel { border: 1px solid var(--line); background: var(--paper); color: var(--ink); }

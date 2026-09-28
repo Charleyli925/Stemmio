@@ -1,6 +1,6 @@
 # ADR 0073: One editable current draft and immutable history
 
-Status: Accepted.
+Status: Accepted; export option presentation/default amended by [ADR 0078](0078-current-draft-file-actions.md).
 
 ## Decision
 

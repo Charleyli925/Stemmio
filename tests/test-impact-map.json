@@ -2758,7 +2758,7 @@
     {
       "id": "current-draft-ui",
       "patterns": [
-        "^app/components/PreservedDraftDialog\\.tsx$",
+        "^app/components/ExportHtmlDialog\\.tsx$",
         "^app/workbench/current-draft-status\\.tsx$"
       ],
       "suites": [

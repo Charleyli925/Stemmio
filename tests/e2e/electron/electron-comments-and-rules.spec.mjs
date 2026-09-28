@@ -955,13 +955,27 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     const moreMenu = launched.page.getByRole("menu", { name: "更多操作" });
     await expect(moreMenu).toBeVisible();
     expect(await moreMenu.evaluate((element) => element.parentElement === document.body)).toBe(true);
-    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeVisible();
-    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeVisible();
+    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示", exact: true })).toBeVisible();
+    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开", exact: true })).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "导出当前 HTML…" })).toBeVisible();
-    const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存为新版本", exact: true });
+    const saveVersionItem = moreMenu.getByRole("menuitem", { name: "保存为历史版本", exact: true });
     await expect(saveVersionItem).toBeVisible();
     await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true }))
       .toHaveAttribute("aria-disabled", "true");
+    const menuHierarchy = await moreMenu.evaluate((element) => {
+      const rect = (id) => element.querySelector(`[data-menu-item="${id}"]`).getBoundingClientRect();
+      const save = element.querySelector('[data-menu-item="save-version"]');
+      const title = save.querySelector(".workbench-more-menu-copy > span");
+      const detail = save.querySelector(".workbench-more-menu-copy > small");
+      return {
+        versionGap: rect("create-from-history").top - rect("save-version").bottom,
+        fileGap: rect("open-in-browser").top - rect("show-in-folder").bottom,
+        titleSize: Number.parseFloat(getComputedStyle(title).fontSize),
+        detailSize: Number.parseFloat(getComputedStyle(detail).fontSize),
+      };
+    });
+    expect(Math.abs(menuHierarchy.versionGap - menuHierarchy.fileGap)).toBeLessThanOrEqual(0.5);
+    expect(menuHierarchy.titleSize).toBeGreaterThan(menuHierarchy.detailSize);
     await expect(saveVersionItem).toBeFocused();
     await launched.page.keyboard.press("Tab");
     await expect(moreMenu).toHaveCount(0);
@@ -973,9 +987,9 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     await launched.page.keyboard.press("ArrowDown");
     await expect(moreMenu.getByRole("menuitem", { name: "基于此版本创建新版本…", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
-    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示工作文件", exact: true })).toBeFocused();
+    await expect(moreMenu.getByRole("menuitem", { name: "在 Finder 中显示", exact: true })).toBeFocused();
     await launched.page.keyboard.press("ArrowDown");
-    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开工作文件", exact: true })).toBeFocused();
+    await expect(moreMenu.getByRole("menuitem", { name: "在浏览器中打开", exact: true })).toBeFocused();
     await launched.page.keyboard.press("Escape");
     await expect(moreMenu).toHaveCount(0);
     await expect(moreButton).toBeFocused();
@@ -1113,15 +1127,17 @@ test("Electron shell keeps the global rail fixed while the context inspector swa
     const previewGeometry = await readGeometry();
     assertShellGeometry(previewGeometry);
     assertLeftRailStable(previewGeometry, editGeometry);
-    const previewSurface = launched.page.getByTestId("html-interaction-preview");
-    const previewReloadRevision = Number(await previewSurface.getAttribute("data-reload-revision"));
-    const refreshButton = launched.page.getByRole("button", { name: "刷新预览" });
-    await expect(refreshButton).toBeEnabled();
-    await refreshButton.click();
-    await expect(previewSurface).toHaveAttribute(
-      "data-reload-revision",
-      String(previewReloadRevision + 1),
-    );
+    const previewIframe = launched.page.locator('iframe[title="HTML 交互预览"]');
+    const previewSrc = await previewIframe.getAttribute("src");
+    await moreButton.click();
+    const refreshItem = launched.page.getByRole("menuitem", { name: "刷新", exact: true });
+    await expect(refreshItem).not.toHaveAttribute("aria-disabled", "true");
+    await refreshItem.click();
+    await expect(previewIframe).not.toHaveAttribute("src", previewSrc);
+    await expect(launched.page.getByTestId("workbench-active-preview")).toHaveAttribute("data-preview-ready", "true");
+    await expect(stage).toHaveAttribute("data-inspector", "none");
+    assertShellGeometry(await readGeometry());
+    assertLeftRailStable(await readGeometry(), editGeometry);
     expect(Math.abs(
       previewGeometry.canvas.width - editGeometry.canvas.width - editGeometry.inspectorWidth,
     )).toBeLessThanOrEqual(2);

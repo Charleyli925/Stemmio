@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-<!-- adr-history-max: 0077 -->
+<!-- adr-history-max: 0078 -->
 <!-- adr-history-gaps: 0020 -->
 
 This is the default reading path for decisions that still constrain PageRoot.
@@ -10,7 +10,7 @@ Historical and superseded decisions remain available from the archive index.
 
 The repository has one historical gap, `0020`, which is intentionally never
 reused. The four collisions found in the first curation pass were assigned
-`0055` through `0058`; future ADRs must use the next number above `0077`.
+`0055` through `0058`; future ADRs must use the next number above `0078`.
 
 ## Active decisions
 
@@ -68,10 +68,11 @@ reused. The four collisions found in the first curation pass were assigned
 | 0071 | [Stemmio trusted modification loop](0071-stemmio-trusted-modification-loop.md) | Accepted contract; implementation tracked separately |
 | 0072 | [Source receipts fence Canvas authority](0072-source-receipts-fence-canvas-authority.md) | Accepted contract |
 
-| 0073 | [One current draft and immutable history](0073-single-current-draft.md) | Living |
+| 0073 | [One current draft and immutable history](0073-single-current-draft.md) | Living; export presentation/default amended by ADR 0078 |
 | 0074 | [Proven in-place structural editing](0074-proven-in-place-structural-editing.md) | Accepted contract |
 | 0075 | [Stemmio identity and local-storage boundary](0075-stemmio-identity-and-storage-boundary.md) | Accepted |
 | 0077 | [Current draft switches keep the outgoing canvas until the incoming canvas is verified](0077-current-draft-live-canvas-handoff.md) | Accepted |
+| 0078 | [Current draft file actions](0078-current-draft-file-actions.md) | Accepted |
 
 ## Reading guide
 

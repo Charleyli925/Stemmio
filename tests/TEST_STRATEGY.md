@@ -481,7 +481,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   目录选择原子写入 group 与两侧 region、关闭后焦点回到 summary、目录先消费 Escape、再次点击保持激活、
   Escape/手动滚出/手动换 Tab 返回总览、单侧新增/删除另一侧无 mask/scroll、评论态优先并
   在点击、移出或 Escape 后恢复变化 focus，marker 和自适应气泡优先避开目标、可连续 hover 且跟随横纵滚动，以及每个文档标签分别恢复页面、focus、Tab/折叠、双页滚动、横向位置
-  与缩放。顶栏“刷新本页面”必须在同一 Review 身份下恢复这些状态；“从磁盘重新载入 HTML”在待决定
+  与缩放。更多菜单“刷新”读取当前稿；在待决定
   Review 中可见但禁用。50%–200% 缩放、resize 与字体变化后，前后页保持同一 group/region；mask 与
   可选 outline 各自遵守每侧一个的预算，outline 存在时才与 mask 复用 canonical path。
   评论、Tab、同步/独立滚动、缩放和采纳闭环继续运行。真实 Electron 像素
@@ -790,7 +790,7 @@ VersionWorkflow and ProjectWorkflow tests cover frozen export bytes, no Version
 on plain/cancelled/failed export, partial export/version reconciliation, stale
 project-switch completion and same-path complete OpenTarget publication.
 Electron project lifecycle exercises local editing, explicit V2 save, immutable
-V1/V2 viewing, current return, default export and optional V3 creation with no
+V1/V2 viewing, current return, export-dialog cancellation, unchecked plain export and default-checked V3 creation with no
 duplicate on unchanged content. Shared sidebar helpers select the current row
 or explicitly expand and select historical Vn; first-row selectors cannot stand
 in for current identity.
@@ -837,3 +837,7 @@ Electron may restore a synthetic Key only for an isolated profile with explicit
 key only for isolated AES-GCM ciphertext and must prove restart restoration and
 no plaintext on disk or in logs. Packaged builds always use Electron
 `safeStorage`. Default E2E launches still suppress restoration.
+
+### Current draft file actions and activity feedback
+
+Electron covers menu dismissal over both shell and HTML iframe, native-edit first-press exit and second-press selection, and retained pending text/composition. Current export asks before the native save picker, starts with history saving checked, and preserves no-version-on-cancel/failure and exact exported bytes. Regular menus must not reintroduce preserved-draft recovery; Repository recovery tests remain. Preview refresh must retain Preview and await a new physical session; pending Review cannot refresh its source. Tab activity is scoped to the visible document, ends after work, and becomes static with either reduced-motion setting.
