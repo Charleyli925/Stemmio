@@ -2960,6 +2960,87 @@ test("direct external ack rejection defers the head and retry never accepts or e
   assert.equal(harness.projectSession.context?.sourcePath, B_PATH);
 });
 
+test("direct external ACK stays visible and manual retry releases the deferred FIFO head", async (t) => {
+  const accepted = [];
+  const acknowledgements = [];
+  let ackUnavailable = true;
+  const harness = createHarness({
+    projectOpen: {
+      async acceptExternal(requestId) {
+        accepted.push(requestId);
+        return requestId === "direct_ack_first"
+          ? { name: "A", sourcePath: A_PATH, html: A_HTML, sha256: sha256(A_HTML) }
+          : { name: "B", sourcePath: B_PATH, html: B_HTML, sha256: sha256(B_HTML) };
+      },
+      async ackExternal(requestId) {
+        acknowledgements.push(requestId);
+        if (requestId === "direct_ack_first" && ackUnavailable) {
+          throw new Error("ack unavailable");
+        }
+        return { acknowledged: true, requestId };
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  harness.workflow.acceptExternalProject({ requestId: "direct_ack_first", sourcePath: A_PATH });
+  harness.workflow.acceptExternalProject({ requestId: "direct_ack_second", sourcePath: B_PATH });
+  await waitFor(() => harness.workflow.getSnapshot().externalOpen.status === "deferred");
+  assert.equal(harness.workflow.getSnapshot().openConfirmation, null);
+  assert.deepEqual(harness.workflow.getSnapshot().pendingExternalAck, {
+    requestId: "direct_ack_first",
+  });
+  assert.deepEqual(accepted, ["direct_ack_first"]);
+
+  ackUnavailable = false;
+  assert.equal((await harness.workflow.retryExternalOpen({ requestId: "direct_ack_first" })).status,
+    "succeeded");
+  await waitFor(() => (
+    harness.workflow.getSnapshot().externalOpen.status === "idle"
+    && accepted.length === 2
+  ));
+  assert.deepEqual(accepted, ["direct_ack_first", "direct_ack_second"]);
+  assert.deepEqual(acknowledgements.slice(-2), ["direct_ack_first", "direct_ack_second"]);
+  assert.equal(harness.projectSession.context?.sourcePath, B_PATH);
+  assert.equal(harness.workflow.getSnapshot().pendingExternalAck, null);
+});
+
+test("terminal external failure retains its ACK-only retry without reopening", async (t) => {
+  let acceptCount = 0;
+  let ackCount = 0;
+  let ackUnavailable = true;
+  const harness = createHarness({
+    projectOpen: {
+      async acceptExternal() {
+        acceptCount += 1;
+        return { invalid: true };
+      },
+      async ackExternal(requestId) {
+        ackCount += 1;
+        if (ackUnavailable) throw new Error("ack unavailable");
+        return { acknowledged: true, requestId };
+      },
+    },
+  });
+  t.after(() => harness.workflow.dispose());
+
+  harness.workflow.acceptExternalProject({ requestId: "terminal_ack_retry", sourcePath: A_PATH });
+  await waitFor(() => harness.workflow.getSnapshot().externalOpen.status === "deferred");
+  assert.equal(harness.workflow.getSnapshot().openConfirmation, null);
+  assert.deepEqual(harness.workflow.getSnapshot().pendingExternalAck, {
+    requestId: "terminal_ack_retry",
+  });
+  const beforeRetry = ackCount;
+  ackUnavailable = false;
+  assert.equal((await harness.workflow.retryExternalOpen({ requestId: "terminal_ack_retry" })).status,
+    "succeeded");
+  await waitFor(() => harness.workflow.getSnapshot().externalOpen.status === "idle");
+  assert.equal(acceptCount, 1);
+  assert.equal(ackCount, beforeRetry + 1);
+  assert.equal(harness.projectSession.context?.sourcePath, OLD_PATH);
+  assert.equal(harness.workflow.getSnapshot().pendingExternalAck, null);
+});
+
 test("terminal external failure retries ack once without reopening", async (t) => {
   let acceptCount = 0;
   let ackCount = 0;

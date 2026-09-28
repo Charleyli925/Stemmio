@@ -1925,6 +1925,41 @@ test("Electron keeps navigation failures recoverable without duplicating or clea
   }
 });
 
+test("Electron keeps direct managed-project ACK recovery after its notice is dismissed", {
+  tag: ["@gate-smoke", "@smoke-project-lifecycle"],
+}, async () => {
+  const fixture = createSourceFixture("direct-managed-ack-retry.html");
+  const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
+  try {
+    await loadedDiskFrame(launched.page, fixture.sourcePath, "list-item");
+    const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
+    expect(active.sourcePath).not.toBe(fixture.sourcePath);
+    await launched.electronApp.evaluate(({ app, ipcMain }, sourcePath) => {
+      ipcMain.removeHandler("html-projects:ack-external-open");
+      ipcMain.handle("html-projects:ack-external-open", () => {
+        throw new Error("TEST_DIRECT_EXTERNAL_ACK_FAILED");
+      });
+      app.emit("open-file", { preventDefault() {} }, sourcePath);
+    }, active.sourcePath);
+
+    const notice = launched.page.locator(".toast.show").filter({ hasText: "打开尚未完成" });
+    await expect(notice).toHaveCount(1);
+    await expect(notice).toContainText("外部 HTML 已处理");
+    await expect(notice.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await expect(launched.page.locator(".workbench-tab-switch-error")).toHaveCount(0);
+    await notice.getByRole("button", { name: "关闭提醒" }).click();
+    await expect(notice).toHaveCount(0);
+    const recovery = launched.page.locator(".workbench-tab-switch-error")
+      .filter({ hasText: "下一个 Finder 请求尚未解锁" });
+    await expect(recovery).toHaveCount(1);
+    await recovery.getByRole("button", { name: "继续打开" }).click();
+    await expect(recovery.getByRole("button", { name: "继续打开" })).toBeVisible();
+  } finally {
+    await stopStemmio(launched.electronApp, launched.isolatedUserData);
+    removeSourceFixture(fixture.sourceDirectory);
+  }
+});
+
 test("Electron keeps the comment lane width stable across current-draft tab switches", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {

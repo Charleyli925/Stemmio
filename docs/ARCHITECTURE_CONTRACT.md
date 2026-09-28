@@ -354,8 +354,12 @@ before navigation retry. External FIFO acknowledgement requires a correlated
 terminal navigation outcome and never treats a missing terminal as success.
 When an accepted external open cannot ACK its exact FIFO head, ProjectWorkflow
 keeps the completion and request ID in its pending-ACK operation state and
-projects that identity through its snapshot. Workbench may dismiss or replace
-the notice, but cannot become the sole owner of the retry capability.
+projects that identity through its snapshot, whether or not an open-confirmation
+dialog exists. For a direct managed-project open or a terminal pre-confirmation
+failure, retry resumes the deferred external-open session so the ACK completion
+and FIFO successor both advance; a confirmation-pending ACK retries only its
+stored completion. Workbench may dismiss or replace the notice, but cannot
+become the sole owner of the retry capability.
 
 An asynchronous result may update state only when its complete identity is
 current:

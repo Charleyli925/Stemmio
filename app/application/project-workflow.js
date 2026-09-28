@@ -3674,11 +3674,22 @@ export class ProjectWorkflow {
   }
 
   retryExternalOpen({ requestId } = {}) {
-    const pending = this.#externalAckPending.get(String(requestId || ""));
-    if (pending) return this.#retryPendingExternalAck(String(requestId || ""));
+    const requestedId = String(requestId || "");
+    const pending = this.#externalAckPending.get(requestedId);
+    if (pending?.kind === "session") {
+      const externalOpen = this.#externalFileOpenSession.snapshot;
+      if (externalOpen.deferredRequestId === requestedId) {
+        return Promise.resolve(this.resumeDeferredExternalProject());
+      }
+      return Promise.resolve(blocked(
+        "EXTERNAL_OPEN_ACK_BUSY",
+        "这次外部打开仍在收口，请稍候再试。",
+      ));
+    }
+    if (pending) return this.#retryPendingExternalAck(requestedId);
     const confirmation = this.#openConfirmation;
-    if (!confirmation || confirmation.requestId !== String(requestId || "")) {
-      return Promise.resolve(stale({ requestId: String(requestId || "") }));
+    if (!confirmation || confirmation.requestId !== requestedId) {
+      return Promise.resolve(stale({ requestId: requestedId }));
     }
     return this.confirmExternalOpen({
       requestId: confirmation.requestId,
@@ -5164,11 +5175,11 @@ export class ProjectWorkflow {
   }
 
   #publishSnapshot() {
-    const pendingRequestId = this.#openConfirmation?.requestId;
+    const pendingRequestId = this.#externalAckPending.keys().next().value || null;
     this.#snapshot = Object.freeze({
       ...this.#snapshot,
       openConfirmation: this.#openConfirmation,
-      pendingExternalAck: pendingRequestId && this.#externalAckPending.has(pendingRequestId)
+      pendingExternalAck: pendingRequestId
         ? Object.freeze({ requestId: pendingRequestId }) : null,
       externalOpen: this.#externalFileOpenSession.snapshot,
       projectApplication: this.#projectApplicationSession.snapshot,

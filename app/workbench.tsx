@@ -1725,7 +1725,7 @@ export default function Workbench() {
     externalAckVisible
       ? {
         kind: "project-open-failed",
-        detail: "HTML 已完成打开，但下一个 Finder 请求尚未解锁。",
+        detail: "外部 HTML 已处理，但下一个 Finder 请求尚未解锁。",
         requestId: pendingExternalAckId!,
       }
       : interruption,
@@ -6777,7 +6777,7 @@ export default function Workbench() {
       {pendingExternalAckId && !externalAckVisible && !navigationFailure ? (
         <section className="workbench-tab-switch-error" role="status">
           <strong>打开尚未完成</strong>
-          <span>HTML 已完成打开，但下一个 Finder 请求尚未解锁。</span>
+          <span>外部 HTML 已处理，但下一个 Finder 请求尚未解锁。</span>
           <button type="button" onClick={() => {
             void workspaceController?.retryExternalOpen({ requestId: pendingExternalAckId })
               .then((outcome) => {
