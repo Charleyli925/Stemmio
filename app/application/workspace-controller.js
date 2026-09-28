@@ -247,7 +247,8 @@ export async function retryUnacknowledgedHistoryCreation({
   let delayMs = 250;
   while (now() < deadline && current()) {
     await sleep(Math.min(delayMs, deadline - now()));
-    if (now() >= deadline || !current() || !await waitForIdle()) return;
+    if (now() >= deadline || !current() || !await waitForIdle({ deadlineAt: deadline })
+      || now() >= deadline) return;
     const context = current();
     if (!context) return;
     await restore(context);
@@ -2943,7 +2944,7 @@ export class WorkspaceController {
         // current Working Copy and rendered HTML in VersionWorkflow.
         await retryUnacknowledgedHistoryCreation({
           current: unresolvedCurrentCreation,
-          waitForIdle: () => navigationWorkflow.waitForIdle(),
+          waitForIdle: ({ deadlineAt }) => navigationWorkflow.waitForIdle({ deadlineAt }),
           restore: (current) => versionWorkflow.restoreHistoryCreation({
             operationId: recovery?.operationId || event.historyCreation.operationId,
             context: current,

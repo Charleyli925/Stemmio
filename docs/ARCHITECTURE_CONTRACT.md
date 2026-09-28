@@ -358,7 +358,11 @@ projects that identity through its snapshot, whether or not an open-confirmation
 dialog exists. For a direct managed-project open or a terminal pre-confirmation
 failure, retry resumes the deferred external-open session so the ACK completion
 and FIFO successor both advance; a confirmation-pending ACK retries only its
-stored completion. Workbench may dismiss or replace the notice, but cannot
+stored completion. If the user retries after pending ACK becomes visible but
+before the external-open executor enters `deferred`, the session retains that
+exact request's retry once and runs it at the deferred transition. A second
+defer does not silently loop, and a queued successor cannot overtake it.
+Workbench may dismiss or replace the notice, but cannot
 become the sole owner of the retry capability.
 
 An asynchronous result may update state only when its complete identity is

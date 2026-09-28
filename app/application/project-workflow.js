@@ -3677,14 +3677,13 @@ export class ProjectWorkflow {
     const requestedId = String(requestId || "");
     const pending = this.#externalAckPending.get(requestedId);
     if (pending?.kind === "session") {
-      const externalOpen = this.#externalFileOpenSession.snapshot;
-      if (externalOpen.deferredRequestId === requestedId) {
-        return Promise.resolve(this.resumeDeferredExternalProject());
-      }
-      return Promise.resolve(blocked(
-        "EXTERNAL_OPEN_ACK_BUSY",
-        "这次外部打开仍在收口，请稍候再试。",
-      ));
+      const resumed = this.#externalFileOpenSession.resumeExactOrWhenDeferred(
+        requestedId,
+        (request, options) => this.#openExternalProject(request, options),
+      );
+      return Promise.resolve(resumed
+        ? succeeded({ resumed: true })
+        : blocked("EXTERNAL_OPEN_ACK_BUSY", "这次外部打开仍在收口，请稍候再试。"));
     }
     if (pending) return this.#retryPendingExternalAck(requestedId);
     const confirmation = this.#openConfirmation;

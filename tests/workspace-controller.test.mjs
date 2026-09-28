@@ -61,6 +61,22 @@ test("startup history receipt retries only while the exact current creation rema
   assert.equal(attempts, 0);
 
   current = { workingCopyId: "work_ver_0009" };
+  const idleDeadline = time + 500;
+  await retryUnacknowledgedHistoryCreation({
+    current: () => current,
+    waitForIdle: async ({ deadlineAt }) => {
+      assert.equal(deadlineAt, idleDeadline);
+      time = deadlineAt;
+      return true;
+    },
+    restore: async () => { attempts += 1; },
+    now: () => time,
+    sleep: async (delayMs) => { time += delayMs; },
+    windowMs: 500,
+  });
+  assert.equal(attempts, 0);
+
+  current = { workingCopyId: "work_ver_0009" };
   await retryUnacknowledgedHistoryCreation({
     current: () => current,
     waitForIdle: async () => true,

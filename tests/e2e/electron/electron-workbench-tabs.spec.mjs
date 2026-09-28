@@ -1917,7 +1917,8 @@ test("Electron keeps navigation failures recoverable without duplicating or clea
     await expect(externalAckFailure).toHaveCount(0);
     await expect(ackRecovery.getByRole("button", { name: "继续打开" })).toBeVisible();
     await ackRecovery.getByRole("button", { name: "继续打开" }).click();
-    await expect(ackRecovery.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await expect(externalAckFailure).toHaveCount(1);
+    await expect(ackRecovery).toHaveCount(0);
   } finally {
     await launched.electronApp.evaluate(() => globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__?.())
       .catch(() => {});
@@ -1937,9 +1938,17 @@ test("Electron keeps direct managed-project ACK recovery after its notice is dis
     await loadedDiskFrame(launched.page, fixture.sourcePath, "list-item");
     const active = await launched.page.evaluate(() => window.stemmioProjects.getActiveProject());
     expect(active.sourcePath).not.toBe(fixture.sourcePath);
-    await launched.electronApp.evaluate(({ app, ipcMain }, sourcePath) => {
+    await launched.electronApp.evaluate(({ app, dialog, ipcMain }, sourcePath) => {
+      globalThis.__STEMMIO_EXTERNAL_ACK_ATTEMPTS__ = 0;
+      globalThis.__STEMMIO_EXTERNAL_RETRY_PICKER_OPENS__ = 0;
+      globalThis.__STEMMIO_EXTERNAL_RETRY_ORIGINAL_DIALOG__ = dialog.showOpenDialog;
+      dialog.showOpenDialog = async () => {
+        globalThis.__STEMMIO_EXTERNAL_RETRY_PICKER_OPENS__ += 1;
+        return { canceled: true, filePaths: [] };
+      };
       ipcMain.removeHandler("html-projects:ack-external-open");
       ipcMain.handle("html-projects:ack-external-open", () => {
+        globalThis.__STEMMIO_EXTERNAL_ACK_ATTEMPTS__ += 1;
         throw new Error("TEST_DIRECT_EXTERNAL_ACK_FAILED");
       });
       app.emit("open-file", { preventDefault() {} }, sourcePath);
@@ -1955,9 +1964,28 @@ test("Electron keeps direct managed-project ACK recovery after its notice is dis
     const recovery = launched.page.locator(".workbench-tab-switch-error")
       .filter({ hasText: "下一个 Finder 请求尚未解锁" });
     await expect(recovery).toHaveCount(1);
+    const acknowledgementsBeforeRetry = await launched.electronApp.evaluate(() => (
+      globalThis.__STEMMIO_EXTERNAL_ACK_ATTEMPTS__
+    ));
     await recovery.getByRole("button", { name: "继续打开" }).click();
-    await expect(recovery.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await expect.poll(() => launched.electronApp.evaluate(() => (
+      globalThis.__STEMMIO_EXTERNAL_ACK_ATTEMPTS__
+    ))).toBeGreaterThan(acknowledgementsBeforeRetry);
+    expect(await launched.electronApp.evaluate(() => (
+      globalThis.__STEMMIO_EXTERNAL_RETRY_PICKER_OPENS__
+    ))).toBe(0);
+    await expect(launched.page.locator(".toast.show").filter({ hasText: "打开尚未完成" }))
+      .toHaveCount(1);
+    await expect(recovery).toHaveCount(0);
   } finally {
+    await launched.electronApp.evaluate(({ dialog }) => {
+      if (globalThis.__STEMMIO_EXTERNAL_RETRY_ORIGINAL_DIALOG__) {
+        dialog.showOpenDialog = globalThis.__STEMMIO_EXTERNAL_RETRY_ORIGINAL_DIALOG__;
+      }
+      delete globalThis.__STEMMIO_EXTERNAL_RETRY_ORIGINAL_DIALOG__;
+      delete globalThis.__STEMMIO_EXTERNAL_ACK_ATTEMPTS__;
+      delete globalThis.__STEMMIO_EXTERNAL_RETRY_PICKER_OPENS__;
+    }).catch(() => {});
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(fixture.sourceDirectory);
   }

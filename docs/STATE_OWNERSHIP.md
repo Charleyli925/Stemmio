@@ -209,7 +209,10 @@ Rules:
   transition: it records whether `DrainCoordinator.inspect("switch")` has
   observed a relevant blocker, resumes only after that blocker clears, and
   otherwise reports that the explicit retry action remains necessary. Project
-  hydration is an explicit switch obligation rather than a copied Workbench
+  Workflow routes a visible pending-ACK retry by exact request ID; if its
+  session head is still opening, the session holds that one user retry until
+  its first deferred transition, without retrying indefinitely or releasing
+  a queued successor early. Project hydration is an explicit switch obligation rather than a copied Workbench
   boolean. If the final pre-IPC fence itself captures a post-cutoff native
   edit, no external activation starts; that edit returns to normal persistence
   before the session retries.
