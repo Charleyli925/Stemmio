@@ -3629,9 +3629,16 @@ test("Electron local current draft saves immutable versions and exports with an 
     await project.getByRole("button", { name: "V1，历史版本", exact: true }).click();
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     const preview = launched.page.frameLocator('iframe[title="HTML 交互预览"]');
+    await expect(launched.page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(preview.locator(caseSelector("list-item"))).not.toContainText("LOCAL_SNAPSHOT_ONE");
+    const versionOnePreviewSrc = await launched.page.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
     await expect(current).not.toHaveAttribute("aria-current", "page");
     await project.getByRole("button", { name: "V2，历史版本", exact: true }).click();
+    await expect.poll(() => launched.page.locator('iframe[title="HTML 交互预览"]')
+      .evaluateAll((frames, previousSrc) => {
+        const currentSrc = frames.length === 1 ? frames[0].getAttribute("src") : null;
+        return Boolean(currentSrc && currentSrc !== previousSrc);
+      }, versionOnePreviewSrc)).toBe(true);
     await expect(preview.locator(caseSelector("list-item"))).toContainText("LOCAL_SNAPSHOT_ONE");
     await expect(mode).toHaveAttribute("data-view-label", "历史");
     expect(readFileSync(currentPath, "utf8")).toBe(firstEdit);
