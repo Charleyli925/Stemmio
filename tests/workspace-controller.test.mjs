@@ -15,10 +15,61 @@ import { VersionSession } from "../app/application/version-session.js";
 import {
   WorkspaceController,
   registrationContextFromOutcome,
+  retryUnacknowledgedHistoryCreation,
 } from "../app/application/workspace-controller.js";
 
 const SOURCE_PATH = "/tmp/workspace-controller.html";
 const NEXT_SOURCE_PATH = "/tmp/workspace-controller-next.html";
+
+test("startup history receipt retries only while the exact current creation remains unresolved", async () => {
+  let time = 0;
+  let attempts = 0;
+  let current = { workingCopyId: "work_ver_0009" };
+  await retryUnacknowledgedHistoryCreation({
+    current: () => current,
+    waitForIdle: async () => true,
+    restore: async (context) => {
+      assert.equal(context.workingCopyId, "work_ver_0009");
+      if (++attempts === 3) current = null;
+    },
+    now: () => time,
+    sleep: async (delayMs) => { time += delayMs; },
+  });
+  assert.equal(attempts, 3);
+  assert.equal(time, 1_750);
+
+  attempts = 0;
+  current = { workingCopyId: "work_ver_0009" };
+  await retryUnacknowledgedHistoryCreation({
+    current: () => current,
+    waitForIdle: async () => true,
+    restore: async () => { attempts += 1; },
+    now: () => time,
+    sleep: async (delayMs) => { time += delayMs; },
+    windowMs: 250,
+  });
+  assert.equal(attempts, 0);
+
+  attempts = 0;
+  await retryUnacknowledgedHistoryCreation({
+    current: () => current,
+    waitForIdle: async () => false,
+    restore: async () => { attempts += 1; },
+    now: () => time,
+    sleep: async (delayMs) => { time += delayMs; },
+  });
+  assert.equal(attempts, 0);
+
+  current = { workingCopyId: "work_ver_0009" };
+  await retryUnacknowledgedHistoryCreation({
+    current: () => current,
+    waitForIdle: async () => true,
+    restore: async () => { attempts += 1; },
+    now: () => time,
+    sleep: async (delayMs) => { time += delayMs; current = null; },
+  });
+  assert.equal(attempts, 0);
+});
 
 test("Agent access actions stay on the generic workflow", () => {
   const source = readFileSync(

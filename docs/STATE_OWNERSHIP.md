@@ -762,7 +762,10 @@ If hydration has already opened the matching current Working Copy, it verifies
 that Canvas and repairs openedAt without another workspace load or publication.
 If the opened acknowledgement fails, VersionWorkflow keeps the same creation
 operation in `created` so the startup coordinator can retry against the verified
-current Canvas; it reports `opened` only after the durable acknowledgement
+current Canvas. The startup coordinator makes bounded retries only while the
+same project, document, Working Copy, selected tab and navigation admission
+remain current; each attempt revalidates the receipt and rendered HTML through
+VersionWorkflow. It reports `opened` only after the durable acknowledgement
 returns. A repeated failure leaves the same operation available for explicit
 recovery without creating another Version.
 
