@@ -1661,6 +1661,18 @@
       ]
     },
     {
+      "id": "notice-lifetime",
+      "patterns": [
+        "^app/lib/notice-lifetime\\.js$"
+      ],
+      "suites": [
+        "typecheck"
+      ],
+      "nodeTests": [
+        "tests/notice-lifetime.test.mjs"
+      ]
+    },
+    {
       "id": "workspace-safety-state",
       "patterns": [
         "^app/lib/workspace-safety-state\\.(?:js|d\\.ts)$"

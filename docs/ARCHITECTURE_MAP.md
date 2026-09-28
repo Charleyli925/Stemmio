@@ -244,6 +244,9 @@ The gate must enforce responsibility, not private field names:
   Generic `setToast` is retired. Remaining interruptions are closed
   `GlobalInterruption` kinds; lasting content-safety states use
   `WorkspaceSafetyState` on existing workspace banners.
+- `app/lib/notice-lifetime.js` owns the shared deadline rule for short-lived
+  global and Canvas notices. An equal fact retains its original deadline;
+  hover or focus pauses and resumes only the remaining duration.
 - Internal reliability failures log through `reportInternalFailure()`; they must not create Notice.
 
 Do not add checks for `#privateField`, private method names, or “this call

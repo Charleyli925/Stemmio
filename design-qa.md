@@ -1,6 +1,16 @@
 # Design QA
 
 
+## 2026-09-28 — 历史当前稿兼容与单一失败提示
+
+- Mode: DESIGN CHANGE；用户目标是打开已登记历史项目的当前稿，失败时仍保留原页面且只看到一个可恢复提示。设计判断按 Quiet First、唯一 owner 与就近恢复出口执行。
+- Root cause: 旧版本把 `public-summary` 封存为 `result-summary`，新版本改为 `process-summary`；后续回执强化了类型核对，却没有保留这一已知的展示迁移，因而在已验证当前 HTML 发布之前拒绝打开。修复只兼容这一方向，其他 kind、Turn、Request、Attempt、Candidate、actor、status 和时间错配仍失败关闭。
+- Feedback ownership: 已登记当前稿在应用前失败时，导航 outcome 只在工作台顶部呈现一条横幅，含项目名、真实原因、“重试打开”和“关闭”；同一 project event 不再另发全局 Toast 或 2.5 秒 chrome status。已发布后的 Canvas 核对失败继续由 Canvas 原位恢复面负责，不叠加全局 Toast。
+- Notification mechanism: 全局与 Canvas 短提示共用 `notice-lifetime` 截止时间规则；重复同一稳定事实不重置计时，hover/focus 暂停后只继续剩余时间。Canvas 稳定原因码已与提醒台账对齐。
+- Evidence: 回执与通知定向 Node 28/28 通过；`gate:edit` 的 typecheck 及 targeted Node 749/749 通过（run `2026-09-28T04-26-58-503Z-edit`）；真实 Electron 合成项目同时覆盖已打开标签的 Canvas 失败与左侧当前稿应用前失败，各自只保留合同指定的一个错误面，全局 Toast 与 chrome status 均为 0，重试后打开成功。
+- Limits: 本次没有修改、复制或提交用户真实 HTML、评论、附件或项目路径；用户已安装的 Developer Preview 仍是修复前构建。本条不声称已打包、更新安装、合并或发布。
+
+
 ## 2026-09-27 — 文字退出、文件菜单与标签活动
 
 - Mode: DESIGN CHANGE；AI EXPERIENCE LENS 仅检查运行、等待决定和结束时的活动反馈。依据用户三张截图及当前产品行为。

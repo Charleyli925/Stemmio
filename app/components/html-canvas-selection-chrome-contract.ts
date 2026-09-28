@@ -34,6 +34,7 @@ export type HtmlCanvasCommentMarker = {
 };
 
 export type HtmlCanvasEditFeedback = {
+  noticeIdentity: string;
   code: string;
   title: string;
   message: string;

@@ -229,6 +229,7 @@ import {
   type HtmlCanvasCommentMarker,
   type HtmlCanvasEditFeedback,
 } from "./html-canvas-selection-chrome";
+import { advanceNoticeDeadline } from "../lib/notice-lifetime.js";
 import {
   deriveCapabilityHoverState,
   deriveSelectionOverlay,
@@ -1845,6 +1846,28 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const [commentMarkers, setCommentMarkers] = useState<HtmlCanvasCommentMarker[]>([]);
   const [editFeedback, setEditFeedback] = useState<HtmlCanvasEditFeedback | null>(null);
   const [editFeedbackPaused, setEditFeedbackPaused] = useState(false);
+  const editFeedbackSequenceRef = useRef(0);
+  const editFeedbackDeadlineRef = useRef<{
+    identity: string;
+    deadlineAt: number;
+    remainingMs: number;
+    paused: boolean;
+  } | null>(null);
+  const publishEditFeedback = useCallback((
+    feedback: Omit<HtmlCanvasEditFeedback, "noticeIdentity">,
+  ) => {
+    editFeedbackSequenceRef.current += 1;
+    setEditFeedback({
+      ...feedback,
+      noticeIdentity: [
+        feedback.code,
+        usageProjectId || "no-project",
+        pageViewDocumentKey || "no-document",
+        frameLoadGenerationRef.current,
+        editFeedbackSequenceRef.current,
+      ].join(":"),
+    });
+  }, [pageViewDocumentKey, usageProjectId]);
   const [spacingMenuOpen, setSpacingMenuOpen] = useState(false);
 
   toolbarVisibleRef.current = toolbarVisible;
@@ -1932,16 +1955,25 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, []);
 
   useEffect(() => {
-    setEditFeedbackPaused(false);
-  }, [editFeedback?.title, editFeedback?.message]);
-
-  useEffect(() => {
-    if (!editFeedback || editFeedback.sticky || editFeedbackPaused) return undefined;
+    if (!editFeedback || editFeedback.sticky) {
+      editFeedbackDeadlineRef.current = null;
+      return undefined;
+    }
+    const deadline = advanceNoticeDeadline(editFeedbackDeadlineRef.current, {
+      identity: editFeedback.noticeIdentity,
+      dismissMs: 5_000,
+      paused: editFeedbackPaused,
+      now: Date.now(),
+    });
+    editFeedbackDeadlineRef.current = deadline;
+    if (!deadline || deadline.paused) return undefined;
     const timer = window.setTimeout(() => {
-      setEditFeedback((current) => current === editFeedback ? null : current);
-    }, 5_000);
+      setEditFeedback((current) => (
+        current?.noticeIdentity === editFeedback.noticeIdentity ? null : current
+      ));
+    }, deadline.remainingMs);
     return () => window.clearTimeout(timer);
-  }, [editFeedback, editFeedbackPaused]);
+  }, [editFeedback?.noticeIdentity, editFeedback?.sticky, editFeedbackPaused]);
 
   const syncRuntimeRefreshDiagnostics = useCallback(() => {
     const root = containerRef.current;
@@ -2388,7 +2420,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       latestSourceProjectionRef.current = { source, sourceIndex: null };
       void cause;
       const message = "页面仍可正常浏览。请重新载入后再试，或添加评论说明要改什么。";
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: "暂时不能直接编辑这个页面",
         message,
@@ -2462,6 +2494,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [
     completeRuntimeAttempt,
     editRuntimeGrant,
+    publishEditFeedback,
     scheduleDynamicRuntimeRefresh,
     staticAssetBaseHref,
   ]);
@@ -2628,7 +2661,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       }
     } catch (cause) {
       latestSourceProjectionRef.current = { source, sourceIndex: null };
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: "暂时不能直接编辑这个页面",
         message: "页面仍可正常浏览。请重新载入后再试，或添加评论说明要改什么。",
@@ -2767,7 +2800,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       pendingSelectionRef.current = previousPendingSelection;
       pendingToolbarVisibleRef.current = previousPendingToolbarVisible;
       containerRef.current?.removeAttribute("data-runtime-handoff");
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: staticDisabled ? "静态页面也没有完成" : "页面预览没有完成",
         message: staticDisabled
@@ -3027,6 +3060,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     documentBaseHref,
     editRuntimeGrant,
     frameRender.elementGeneration,
+    publishEditFeedback,
     publishRuntimeDegradation,
     selectionForPostNativeEditIntent,
     runtimeDocumentAnalysis,
@@ -4260,7 +4294,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     // prompt is reserved for an explicit, known product-scope refusal.
     if (decision.status !== "unsupported") return;
     const message = directStructureBlockedMessage(decision);
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c03_structure_scope",
       title: "暂不支持这个结构操作",
       message,
@@ -4269,11 +4303,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       recovery: "none",
     });
     onEditBlockedRef.current?.(message);
-  }, []);
+  }, [publishEditFeedback]);
 
   const reportInlineStyleOverrideFailure = useCallback(() => {
     const message = "这个样式无法通过当前元素的局部修改可靠生效。可以把修改要求交给 Agent，由 Agent 调整页面样式结构。";
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c02_style_override",
       title: "暂时不能直接修改这个样式",
       message,
@@ -4282,7 +4316,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       recovery: "none",
     });
     onEditBlockedRef.current?.(message);
-  }, []);
+  }, [publishEditFeedback]);
 
   const advanceLastKnownGoodRuntimeProjection = useCallback((
     source: string,
@@ -6061,7 +6095,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       || (!validPageAnchor && !validStableAnchor)
       || !authorityVerified
     ) {
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c13_comment_target_not_exact",
         title: "暂时无法建立评论位置",
         message: "当前内容暂时无法建立安全的评论位置，请稍后重试。",
@@ -6090,7 +6124,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ...(textLocator ? { textLocator } : {}),
     });
     return true;
-  }, [currentRuntimeSourceProof]);
+  }, [currentRuntimeSourceProof, publishEditFeedback]);
 
   const startEditing = useCallback((
     caretPoint?: NativeEditCaretPoint,
@@ -8050,7 +8084,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [updateOverlayPosition]);
 
   const showCommitBlocked = useCallback((reason?: string) => {
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c12_edit_in_progress",
       title: "当前文字还在处理中",
       message: reason
@@ -8059,7 +8093,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       sticky: false,
       recovery: "none",
     });
-  }, []);
+  }, [publishEditFeedback]);
 
   const applyPageViewContextNow = useCallback((
     nextContext: PageViewContext | null,
@@ -10752,6 +10786,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [hoverChrome.capability, interactionLocked, selectResolvedTarget]);
   const dismissEditFeedback = useCallback(() => {
     setEditFeedback(null);
+    setEditFeedbackPaused(false);
   }, []);
   const handleSelectCommentMarker = useCallback((markerSelection: HtmlCanvasSelection) => {
     if (lockedRef.current) return;

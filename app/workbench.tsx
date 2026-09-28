@@ -61,6 +61,7 @@ import {
   removeAcknowledgedAuditEvents,
 } from "./lib/audit-events";
 import { appendDirectEditEvent } from "./lib/direct-edit-events.js";
+import { advanceNoticeDeadline } from "./lib/notice-lifetime.js";
 import { productErrorMessage } from "./lib/notification-policy";
 import { workspaceUnavailableFromCode } from "./lib/workspace-safety-state.js";
 import {
@@ -300,6 +301,21 @@ const PUBLIC_RELEASES_REPOSITORY_URL =
   "https://github.com/Charleyli925/Stemmio-Releases";
 const LATEST_RELEASE_PAGE_URL =
   "https://github.com/Charleyli925/Stemmio-Releases/releases/latest";
+
+type WorkbenchNavigationFailure =
+  | {
+      kind: "tab";
+      tabId: string;
+      title: string;
+      reason: string;
+    }
+  | {
+      kind: "registered-project";
+      projectId: string;
+      documentId: string;
+      title: string;
+      reason: string;
+    };
 
 function sameProjectRoute(
   left: ProjectContext | null,
@@ -1672,11 +1688,8 @@ export default function Workbench() {
   const [userNoticeOpenFailed, setUserNoticeOpenFailed] = useState(false);
   const [pendingExit, setPendingExit] = useState(false);
   const [fileStatusNotice, setFileStatusNotice] = useState<string | null>(null);
-  const [tabSwitchError, setTabSwitchError] = useState<{
-    tabId: string;
-    title: string;
-    reason: string;
-  } | null>(null);
+  const [navigationFailure, setNavigationFailure] =
+    useState<WorkbenchNavigationFailure | null>(null);
   const [openHtmlError, setOpenHtmlError] = useState<string | null>(null);
   const confirmedOriginalDeletionRef = useRef<string | null>(null);
   const [interruption, setInterruption] = useState<GlobalInterruption | null>(null);
@@ -2076,10 +2089,12 @@ export default function Workbench() {
           setOpenHtmlError(message);
           return;
         }
+        // Registered opens are already owned by the navigation outcome and
+        // its local retry banner. Do not publish the same fact globally.
+        if (projectEvent.kind === "registered") return;
         setInterruption({
           kind: "project-open-failed",
           detail: message,
-          registered: projectEvent.kind === "registered",
           ...(typeof projectEvent.requestId === "string" && projectEvent.requestId
             ? { requestId: projectEvent.requestId }
             : {}),
@@ -3230,28 +3245,14 @@ export default function Workbench() {
       noticeDeadlineRef.current = null;
       return;
     }
-    const now = Date.now();
-    const existing = noticeDeadlineRef.current;
-    const remaining = existing?.identity === noticeIdentity
-      ? existing.paused
-        ? existing.remainingMs
-        : Math.max(0, existing.deadlineAt - now)
-      : dismissAfter;
-    if (noticeTimerPaused) {
-      noticeDeadlineRef.current = {
-        identity: noticeIdentity,
-        deadlineAt: now + remaining,
-        remainingMs: remaining,
-        paused: true,
-      };
-      return;
-    }
-    noticeDeadlineRef.current = {
+    const deadline = advanceNoticeDeadline(noticeDeadlineRef.current, {
       identity: noticeIdentity,
-      deadlineAt: now + remaining,
-      remainingMs: remaining,
-      paused: false,
-    };
+      dismissMs: dismissAfter,
+      paused: noticeTimerPaused,
+      now: Date.now(),
+    });
+    noticeDeadlineRef.current = deadline;
+    if (!deadline || deadline.paused) return;
     const timeout = window.setTimeout(() => {
       captureUsageEvent("notification_interacted", {
         notice_code: noticeUsageCode(presentedInterruption.usageKey),
@@ -3259,7 +3260,7 @@ export default function Workbench() {
         surface: "global",
       }, currentProjectSessionSnapshot().projectId || undefined);
       setInterruption(null);
-    }, remaining);
+    }, deadline.remainingMs);
     return () => window.clearTimeout(timeout);
   }, [currentProjectSessionSnapshot, noticeIdentity, noticeTimerPaused, presentedInterruption]);
 
@@ -3594,15 +3595,30 @@ export default function Workbench() {
       sourcePath: recentPath || null,
     });
   }, [workspaceController]);
-  const presentWorkbenchTabOutcome = useCallback((outcome: unknown, target?: WorkbenchTab) => {
+  const presentWorkbenchTabOutcome = useCallback((
+    outcome: unknown,
+    target?: WorkbenchTab,
+    retryTarget?: WorkbenchNavigationFailure,
+  ) => {
     if (!outcome || typeof outcome !== "object") return;
     if ((outcome as { status?: string }).status === "succeeded") {
-      setTabSwitchError(null);
+      setNavigationFailure(null);
+      if (retryTarget || target?.kind === "document") {
+        setFileStatusNotice(null);
+      }
       return;
     }
     const result = outcome as { reason?: string; code?: string };
-    if (target?.kind === "document") {
-      setTabSwitchError({
+    if (retryTarget) {
+      setFileStatusNotice(null);
+      setNavigationFailure({
+        ...retryTarget,
+        reason: result.reason || "页面没有打开，原页面仍保留。",
+      });
+    } else if (target?.kind === "document") {
+      setFileStatusNotice(null);
+      setNavigationFailure({
+        kind: "tab",
         tabId: target.tabId,
         title: target.title,
         reason: result.reason || "页面没有打开，原页面仍保留。",
@@ -3651,12 +3667,21 @@ export default function Workbench() {
   ]);
   const openRegisteredWorkbenchProject = useCallback(async (project: RegisteredProject) => {
     if (!navigationCapability || !project.documentId || project.availability !== "ready") return null;
+    const retryTarget: WorkbenchNavigationFailure = {
+      kind: "registered-project",
+      projectId: project.projectId,
+      documentId: project.documentId,
+      title: project.projectName,
+      reason: "",
+    };
+    setNavigationFailure(null);
+    setFileStatusNotice(null);
     const outcome = await navigationCapability.commands.openRegisteredProject({
       projectId: project.projectId,
       documentId: project.documentId,
       title: project.projectName,
     });
-    presentWorkbenchTabOutcome(outcome);
+    presentWorkbenchTabOutcome(outcome, undefined, retryTarget);
     return outcome;
   }, [navigationCapability, presentWorkbenchTabOutcome]);
 
@@ -6671,26 +6696,38 @@ export default function Workbench() {
           onShowFile={(path) => { void showProjectInFolder(path); }} />
       </> : null}
 
-      {tabSwitchError ? <section className="workbench-tab-switch-error" role="alert">
-        <strong>无法打开「{tabSwitchError.title}」</strong>
-        <span>{tabSwitchError.reason}</span>
+      {navigationFailure ? <section className="workbench-tab-switch-error" role="alert">
+        <strong>无法打开「{navigationFailure.title}」</strong>
+        <span>{navigationFailure.reason}</span>
         <button type="button" onClick={() => {
-          const target = navigationCapability?.getSnapshot().tabs?.tabs.find(
-            (tab) => tab.tabId === tabSwitchError.tabId,
-          );
-          if (!target || !navigationCapability) {
-            setTabSwitchError(null);
+          if (!navigationCapability) {
+            setNavigationFailure(null);
             return;
           }
+          const retryTarget = navigationFailure;
+          setNavigationFailure(null);
+          if (retryTarget.kind === "registered-project") {
+            void navigationCapability.commands.openRegisteredProject({
+              projectId: retryTarget.projectId,
+              documentId: retryTarget.documentId,
+              title: retryTarget.title,
+            }).then((outcome) => {
+              presentWorkbenchTabOutcome(outcome, undefined, retryTarget);
+            });
+            return;
+          }
+          const target = navigationCapability.getSnapshot().tabs?.tabs.find(
+            (tab) => tab.tabId === retryTarget.tabId,
+          );
+          if (!target) return;
           rememberWorkbenchTabPresentation(
             navigationCapability.getSnapshot().tabs ?? INITIAL_WORKBENCH_TABS_SNAPSHOT,
           );
-          setTabSwitchError(null);
           void navigationCapability.commands.activateTab(target.tabId).then((outcome) => {
             presentWorkbenchTabOutcome(outcome, target);
           });
         }}>重试打开</button>
-        <button type="button" onClick={() => setTabSwitchError(null)}>关闭</button>
+        <button type="button" onClick={() => setNavigationFailure(null)}>关闭</button>
       </section> : null}
 
       {pendingExit || fileStatusNotice ? (

@@ -386,6 +386,44 @@ test("sealed public summary is sanitized, bounded and restored once after failur
   assert.doesNotMatch(JSON.stringify(conversation), /sk-synthetic|private-source|hidden-synthetic|raw-synthetic/);
 });
 
+test("legacy public summary presentation kind cannot block the verified current HTML", async (t) => {
+  const value = await setup(t);
+  value.input.agentDelivery = { ...defaultManagedAgentDelivery(), configuration: {
+    providerId: "qoder", runtimeId: "acp", modelId: null, reasoning: "auto",
+    configurationDigest: `sha256:${"a".repeat(64)}` } };
+  const receipt = await prepareRecordedRequest(value);
+  const event = { eventId: "event_legacy_public_summary_0001", kind: "public-summary",
+    timestamp: "2026-09-08T00:00:00.000Z", publicSummary: "已检查标题。" };
+  await value.repository.recordExecutionFact({ target: value.target, requestId: receipt.requestId,
+    attemptId: receipt.attemptId, event });
+  const context = { projectRoot: path.join(value.target.projectRootPath, ".stemmio"),
+    projectId: value.target.projectId, documentId: value.target.documentId };
+  const conversation = await ensureCurrentConversation(context);
+  const summary = conversation.messages.find((message) => (
+    message.messageId === "message_event_legacy_public_summary_0001"
+  ));
+  assert.equal(summary?.kind, "process-summary");
+  const legacyConversation = { ...conversation, messages: conversation.messages.map((message) => (
+    message.messageId === summary.messageId ? { ...message, kind: "result-summary" } : message
+  )) };
+  await writeConversation(context, legacyConversation);
+
+  const restarted = new ProjectFileRepository({ projectsRoot: value.projects });
+  const opened = await restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId });
+  assert.equal(opened.html, await readFile(value.target.exactSourcePath, "utf8"));
+  const replayed = await readConversation(context, conversation.conversationId);
+  assert.equal(replayed.messages.find((message) => message.messageId === summary.messageId)?.kind,
+    "result-summary");
+
+  await writeConversation(context, { ...replayed, messages: replayed.messages.map((message) => (
+    message.messageId === summary.messageId ? { ...message, kind: "progress" } : message
+  )) });
+  await assert.rejects(
+    restarted.resolveRegisteredProjectOpenTarget({ projectId: value.target.projectId }),
+    { code: "SUBMISSION_IDENTITY_MISMATCH" },
+  );
+});
+
 test("execution tools belong to the Agent while preparation and validation belong to Stemmio", async (t) => {
   const value = await setup(t);
   value.input.agentDelivery = { ...defaultManagedAgentDelivery(), configuration: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { InfoIcon } from "@phosphor-icons/react/dist/csr/Info";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
@@ -70,6 +70,11 @@ export default function NoticeBar({
   usageProjectId,
   usageCapture,
 }: NoticeBarProps) {
+  const pointerInsideRef = useRef(false);
+  const focusWithinRef = useRef(false);
+  const publishPauseState = () => {
+    onPauseChange?.(pointerInsideRef.current || focusWithinRef.current);
+  };
   const classes = [
     styles.notice,
     styles[placement],
@@ -119,13 +124,23 @@ export default function NoticeBar({
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      onMouseEnter={() => onPauseChange?.(true)}
-      onMouseLeave={() => onPauseChange?.(false)}
-      onFocusCapture={() => onPauseChange?.(true)}
+      onMouseEnter={() => {
+        pointerInsideRef.current = true;
+        publishPauseState();
+      }}
+      onMouseLeave={() => {
+        pointerInsideRef.current = false;
+        publishPauseState();
+      }}
+      onFocusCapture={() => {
+        focusWithinRef.current = true;
+        publishPauseState();
+      }}
       onBlurCapture={(event) => {
         const next = event.relatedTarget;
         if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
-          onPauseChange?.(false);
+          focusWithinRef.current = false;
+          publishPauseState();
         }
       }}
     >

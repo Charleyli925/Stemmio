@@ -1804,12 +1804,13 @@ test("Electron restores the bounded legacy tab toolbar action without running au
   }
 });
 
-test("Electron keeps a failed tab switch recoverable until the user retries", {
+test("Electron keeps navigation failures recoverable without duplicating or clearing notices", {
   tag: ["@gate-smoke", "@smoke-project-lifecycle"],
 }, async () => {
   test.setTimeout(180_000);
   const projectA = createSourceFixture("retry-switch-a.html");
   const projectB = createSourceFixture("retry-switch-b.html");
+  const projectC = createSourceFixture("retry-switch-external-ack.html");
   const launched = await launchStemmio({
     activeSourcePath: projectA.sourcePath,
     recentSourcePaths: [projectA.sourcePath, projectB.sourcePath],
@@ -1820,7 +1821,7 @@ test("Electron keeps a failed tab switch recoverable until the user retries", {
     await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
     let failOpen = true;
     let failedRequests = 0;
-    await launched.page.route("**/workspace?*", async (route) => {
+    const failWorkspaceOpen = async (route) => {
       const source = new URL(route.request().url()).searchParams.get("sourcePath");
       if (failOpen && source && path.basename(source) === path.basename(projectA.sourcePath)) {
         failedRequests += 1;
@@ -1832,21 +1833,86 @@ test("Electron keeps a failed tab switch recoverable until the user retries", {
         return;
       }
       await route.continue();
-    });
+    };
+    await launched.page.route("**/workspace?*", failWorkspaceOpen);
     const tabs = launched.page.getByRole("tablist", { name: "已打开的页面" });
     await tabs.getByRole("tab").filter({ hasText: "retry-switch-a" }).click();
     await expect.poll(() => failedRequests).toBeGreaterThan(0);
-    const failure = launched.page.getByRole("alert").filter({ hasText: /无法打开|暂时无法显示/u });
-    await expect(failure).toBeVisible();
-    await expect(failure.getByRole("button", { name: "重试打开" })).toBeVisible();
+    const canvasFailure = launched.page.getByRole("alert", { name: "当前稿打开失败" });
+    await expect(canvasFailure).toBeVisible();
+    await expect(canvasFailure.getByRole("button", { name: "重试打开" })).toBeVisible();
+    await expect(launched.page.locator(".workbench-tab-switch-error")).toHaveCount(0);
+    await expect(launched.page.locator(".toast.show")).toHaveCount(0);
+    await expect(launched.page.locator(".workbench-chrome-status")).toHaveCount(0);
     failOpen = false;
+    await canvasFailure.getByRole("button", { name: "重试打开" }).click();
+    await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
+    await expect(canvasFailure).toHaveCount(0);
+
+    await tabs.getByRole("tab").filter({ hasText: "retry-switch-b" }).click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await launched.page.getByRole("button", {
+      name: `关闭 ${currentProjectTabName(projectA.sourcePath)}`,
+    }).click();
+    await launched.page.unroute("**/workspace?*", failWorkspaceOpen);
+    const expandSidebar = launched.page.getByRole("button", { name: "展开左侧边栏" });
+    if (await expandSidebar.count()) await expandSidebar.click();
+    const sidebarProjectA = launched.page.locator(".sidebar-project-item")
+      .filter({ hasText: path.basename(projectA.sourcePath, path.extname(projectA.sourcePath)) });
+    if (!await sidebarProjectA.locator(".sidebar-project-current-row").count()) {
+      await sidebarProjectA.locator(".sidebar-project-row").click();
+    }
+    await launched.electronApp.evaluate(({ net }) => {
+      const originalFetch = net.fetch.bind(net);
+      globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__ = () => {
+        net.fetch = originalFetch;
+        delete globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__;
+      };
+      net.fetch = async (input, options) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/registered-project/open") {
+          return new Response(JSON.stringify({ error: {
+            code: "TEST_REGISTERED_OPEN_FAILED",
+            message: "测试当前稿打开失败",
+          } }), { status: 503, headers: { "Content-Type": "application/json" } });
+        }
+        return originalFetch(input, options);
+      };
+    });
+    await sidebarProjectA.locator(".sidebar-project-current-row").click();
+    const failure = launched.page.locator(".workbench-tab-switch-error");
+    await expect(failure).toContainText("测试当前稿打开失败");
+    await expect(launched.page.locator(".workbench-tab-switch-error")).toHaveCount(1);
+    await expect(launched.page.locator(".toast.show")).toHaveCount(0);
+    await expect(launched.page.locator(".workbench-chrome-status")).toHaveCount(0);
+    await launched.electronApp.evaluate(() => globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__?.());
     await failure.getByRole("button", { name: "重试打开" }).click();
     await loadedDiskFrame(launched.page, projectA.sourcePath, "list-item");
     await expect(failure).toHaveCount(0);
+
+    await launched.electronApp.evaluate(({ app, ipcMain }, sourcePath) => {
+      ipcMain.removeHandler("html-projects:ack-external-open");
+      ipcMain.handle("html-projects:ack-external-open", () => {
+        throw new Error("TEST_EXTERNAL_ACK_FAILED");
+      });
+      app.emit("open-file", { preventDefault() {} }, sourcePath);
+    }, projectC.sourcePath);
+    await loadedDiskFrame(launched.page, projectC.sourcePath, "list-item");
+    const externalAckFailure = launched.page.locator(".toast.show")
+      .filter({ hasText: "打开尚未完成" });
+    await expect(externalAckFailure).toHaveCount(1);
+    await expect(externalAckFailure.getByRole("button", { name: "继续打开" })).toBeVisible();
+    await tabs.getByRole("tab").filter({ hasText: "retry-switch-b" }).click();
+    await loadedDiskFrame(launched.page, projectB.sourcePath, "list-item");
+    await expect(externalAckFailure).toHaveCount(1);
+    await expect(externalAckFailure.getByRole("button", { name: "继续打开" })).toBeVisible();
   } finally {
+    await launched.electronApp.evaluate(() => globalThis.__STEMMIO_RESTORE_REGISTERED_OPEN_FETCH__?.())
+      .catch(() => {});
     await stopStemmio(launched.electronApp, launched.isolatedUserData);
     removeSourceFixture(projectA.sourceDirectory);
     removeSourceFixture(projectB.sourceDirectory);
+    removeSourceFixture(projectC.sourceDirectory);
   }
 });
 
