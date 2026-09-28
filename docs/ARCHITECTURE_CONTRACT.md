@@ -524,6 +524,15 @@ directory. The project Finder entry opens the validated project root; the
 Version Finder entry opens the validated visible Working Copy rather than the
 hidden immutable snapshot.
 
+`CommentWorkflow` binds every attachment read or delete to the current owning
+comment and its canonical `draft/attachments/<commentId>/<attachmentId>-<fileName>`
+path. A read returns bytes only when their byte length and SHA-256 match the
+comment record; an invalid or historical unbound path fails closed. Before a
+Request is published, and again during freeze recovery, the generated
+`instruction_<commentId suffix>` attachment references must exactly match that
+comment's attachment IDs, and every frozen attachment's `commentId` must match
+the same comment.
+
 Comment attachment bytes cross the Draft-to-AI boundary only during
 `ProjectFileRepository.#prepareRequest()`. The repository validates every
 comment/attachment identity, project-relative path, regular-file status, size
