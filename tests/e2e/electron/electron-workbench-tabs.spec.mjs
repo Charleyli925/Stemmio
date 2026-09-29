@@ -1709,8 +1709,12 @@ test("Electron waits for Preview paint evidence or its bounded fallback", {
       .toHaveAttribute("data-render-verified", "true");
     await page.evaluate(() => {
       window.__syntheticVisualRequestObserved = false;
+      window.__syntheticVisualRequestReadyAtMessage = null;
       window.addEventListener("message", (event) => {
         if (event.data?.type === "synthetic-visual-request-observed") {
+          window.__syntheticVisualRequestReadyAtMessage = document
+            .querySelector('[data-testid="workbench-active-preview"]')
+            ?.getAttribute("data-preview-ready");
           window.__syntheticVisualRequestObserved = true;
         }
       });
@@ -1720,7 +1724,8 @@ test("Electron waits for Preview paint evidence or its bounded fallback", {
     await expect.poll(() => page.evaluate(() => window.__syntheticVisualRequestObserved))
       .toBe(true);
     const preview = page.getByTestId("workbench-active-preview");
-    await expect(preview).toHaveAttribute("data-preview-ready", "false");
+    expect(await page.evaluate(() => window.__syntheticVisualRequestReadyAtMessage))
+      .toBe("false");
     await page.frameLocator('iframe[title="HTML 交互预览"]').locator("body")
       .evaluate((body) => {
         const heading = document.createElement("h1");
