@@ -390,6 +390,103 @@ test("project recovery publishes a verified staged Request after a process-like 
   assert.equal(await lstat(markerlessRoot).then(() => true, () => false), false);
 });
 
+test("request recovery rejects a frozen Task Spec with swapped comment refs", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "swapped-recovery-refs.html");
+  const attachmentCases = [
+    {
+      commentId: "comment_recovery_first",
+      attachmentId: "attachment_recovery_first",
+      fileName: "first.txt",
+      targetId: "target_recovery_first",
+      bytes: Buffer.from("first recovery bytes", "utf8"),
+    },
+    {
+      commentId: "comment_recovery_second",
+      attachmentId: "attachment_recovery_second",
+      fileName: "second.txt",
+      targetId: "target_recovery_second",
+      bytes: Buffer.from("second recovery bytes", "utf8"),
+    },
+  ];
+  const comments = [];
+  for (const item of attachmentCases) {
+    const relativePath = `draft/attachments/${item.commentId}/${item.attachmentId}-${item.fileName}`;
+    const sourcePath = path.join(imported.target.projectRootPath, ...relativePath.split("/"));
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, item.bytes);
+    comments.push({
+      commentId: item.commentId,
+      text: "",
+      target: { targetId: item.targetId },
+      attachments: [{
+        attachmentId: item.attachmentId,
+        kind: "file",
+        fileName: item.fileName,
+        mediaType: "text/plain",
+        byteLength: item.bytes.byteLength,
+        sha256: sha256(item.bytes),
+        relativePath,
+      }],
+    });
+  }
+  const targets = comments.map((comment) => comment.target);
+  const requestId = "req_swapped_recovery_refs";
+  const request = {
+    freezeCutoffRevision: 0,
+    summary: "恢复时拒绝错配的评论附件引用",
+    comments,
+    targets,
+    taskSpec: compileTaskSpec({
+      comments,
+      targets,
+      attachments: comments.flatMap((comment) => comment.attachments),
+    }),
+  };
+  const interrupted = new ProjectFileRepository({
+    projectsRoot: value.projects,
+    failpoint: async (name) => name === "request-published",
+  });
+  await assert.rejects(
+    interrupted.prepareRequest({
+      target: imported.target,
+      requestId,
+      attemptId: "attempt_001",
+      expectedSourceSha256: imported.target.sourceSha256,
+      request,
+      prompt: "# swapped recovery refs\n",
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "INJECTED_FAILPOINT",
+  );
+
+  const controlRoot = path.join(imported.target.projectRootPath, ".stemmio");
+  const requestPath = path.join(controlRoot, "requests", requestId, "request.json");
+  const markerPath = path.join(controlRoot, "recovery", "request-freeze", `${requestId}.json`);
+  const record = await json(requestPath);
+  [
+    record.request.taskSpec.instructions[0].attachmentRefs,
+    record.request.taskSpec.instructions[1].attachmentRefs,
+  ] = [
+    record.request.taskSpec.instructions[1].attachmentRefs,
+    record.request.taskSpec.instructions[0].attachmentRefs,
+  ];
+  const requestText = `${JSON.stringify(record, null, 2)}\n`;
+  await writeFile(requestPath, requestText, "utf8");
+  const marker = await json(markerPath);
+  marker.requestRecordSha256 = sha256(Buffer.from(requestText, "utf8"));
+  await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    new ProjectFileRepository({ projectsRoot: value.projects }).recoverProject({
+      projectRootPath: imported.target.projectRootPath,
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "REQUEST_FREEZE_RECOVERY_INVALID",
+  );
+  assert.equal((await json(path.join(controlRoot, "runtime-state.json"))).activeRequest, null);
+});
+
 test("request recovery keeps the original runtime input-manifest anchor", async (t) => {
   const value = await fixture(t);
   const imported = await importSource(value, "runtime-anchor.html");
@@ -805,6 +902,64 @@ test("attachments-only comments freeze every byte before Request authority is pu
   const prompt = await readFile(path.join(requestRoot, "PROMPT.md"), "utf8");
   assert.match(prompt, /attachmentRefs/iu);
   assert.match(prompt, /requestRelativePath/iu);
+});
+
+test("Request freeze rejects attachment refs swapped between comments before publication", async (t) => {
+  const value = await fixture(t);
+  const imported = await importSource(value, "swapped-comment-refs.html");
+  const comments = [
+    {
+      commentId: "comment_first",
+      text: "第一条附件要求",
+      target: { targetId: "target_first" },
+      attachments: [{ attachmentId: "attachment_first" }],
+    },
+    {
+      commentId: "comment_second",
+      text: "第二条附件要求",
+      target: { targetId: "target_second" },
+      attachments: [{ attachmentId: "attachment_second" }],
+    },
+  ];
+  const targets = comments.map((comment) => comment.target);
+  const taskSpec = structuredClone(compileTaskSpec({ comments, targets }));
+  [taskSpec.instructions[0].attachmentRefs, taskSpec.instructions[1].attachmentRefs] = [
+    taskSpec.instructions[1].attachmentRefs,
+    taskSpec.instructions[0].attachmentRefs,
+  ];
+
+  await assert.rejects(
+    value.repository.prepareRequest({
+      target: imported.target,
+      requestId: "req_swapped_comment_refs",
+      attemptId: "attempt_001",
+      expectedSourceSha256: imported.target.sourceSha256,
+      request: {
+        freezeCutoffRevision: 0,
+        summary: "拒绝错配的评论附件引用",
+        comments,
+        targets,
+        taskSpec,
+      },
+      prompt: "# swapped refs\n",
+    }),
+    (error) => error instanceof ProjectFileRepositoryError
+      && error.code === "TASK_SPEC_INVALID",
+  );
+  await assert.rejects(
+    readFile(path.join(
+      imported.target.projectRootPath,
+      ".stemmio",
+      "requests",
+      "req_swapped_comment_refs",
+      "request.json",
+    )),
+    (error) => error?.code === "ENOENT",
+  );
+  assert.equal(
+    (await json(path.join(imported.target.projectRootPath, ".stemmio", "runtime-state.json"))).activeRequest,
+    null,
+  );
 });
 
 test("invalid comment attachments stop before request.json and Runtime authority", async (t) => {

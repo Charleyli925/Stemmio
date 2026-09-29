@@ -1156,6 +1156,102 @@ test("v4 attachments and absent conflicts stay bound to the project root", async
   assert.equal(sourceStat.body.sha256, sourcePreview.body.sha256);
 });
 
+test("Bridge keeps two comment attachments distinct across image reads, restart and delete", async (t) => {
+  const environment = await createBridgeTestEnvironment(t, {
+    prefix: "stemmio-v4-attachment-identity-",
+  });
+  const sourcePath = await environment.createSource("attachment-identity.html", html("attachment identity"));
+  const firstBridge = await environment.start();
+  const ensured = await environment.ensureProject(sourcePath);
+  assert.equal(ensured.response.status, 200, JSON.stringify(ensured.body));
+  const workingPath = ensured.body.sourcePath;
+  const pngA = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc000000301010018dd8db40000000049454e44ae426082",
+    "hex",
+  );
+  const pngB = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cff01f00040101ff71eb47e50000000049454e44ae426082",
+    "hex",
+  );
+  const uploads = [
+    {
+      commentId: "comment_image_a",
+      attachmentId: "attachment_image_a",
+      fileName: "first.png",
+      payload: pngA,
+    },
+    {
+      commentId: "comment_image_b",
+      attachmentId: "attachment_image_b",
+      fileName: "second.png",
+      payload: pngB,
+    },
+  ];
+  const saved = [];
+  for (const upload of uploads) {
+    const result = await firstBridge.postJson("/attachment", {
+      sourcePath: workingPath,
+      projectId: ensured.body.projectId,
+      documentId: ensured.body.documentId,
+      commentId: upload.commentId,
+      attachmentId: upload.attachmentId,
+      fileName: upload.fileName,
+      mediaType: "image/png",
+      dataBase64: upload.payload.toString("base64"),
+      byteLength: upload.payload.byteLength,
+    });
+    assert.equal(result.response.status, 201, JSON.stringify(result.body));
+    assert.equal(result.body.attachment.mediaType, "image/png");
+    assert.equal(result.body.attachment.kind, "image");
+    assert.equal(
+      result.body.attachment.relativePath,
+      `draft/attachments/${upload.commentId}/${upload.attachmentId}-${upload.fileName}`,
+    );
+    saved.push({ ...upload, record: result.body.attachment });
+  }
+
+  for (const upload of saved) {
+    const response = await fetch(
+      `${firstBridge.baseUrl}/attachment?sourcePath=${encodeURIComponent(workingPath)}&relativePath=${encodeURIComponent(upload.record.relativePath)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-disposition"), `inline; filename="${upload.fileName}"`);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), upload.payload);
+  }
+
+  await firstBridge.stop();
+  const reopenedBridge = await environment.start();
+  const reopenedWorkspace = await reopenedBridge.requestJson(
+    `/workspace?sourcePath=${encodeURIComponent(workingPath)}`,
+  );
+  assert.equal(reopenedWorkspace.response.status, 200, JSON.stringify(reopenedWorkspace.body));
+  for (const upload of saved) {
+    const response = await fetch(
+      `${reopenedBridge.baseUrl}/attachment?sourcePath=${encodeURIComponent(workingPath)}&relativePath=${encodeURIComponent(upload.record.relativePath)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), upload.payload);
+  }
+
+  const removedFirst = await reopenedBridge.postJson("/attachment/delete", {
+    sourcePath: workingPath,
+    projectId: ensured.body.projectId,
+    documentId: ensured.body.documentId,
+    relativePath: saved[0].record.relativePath,
+  });
+  assert.equal(removedFirst.response.status, 200, JSON.stringify(removedFirst.body));
+  assert.equal(removedFirst.body.removed, true);
+  const retainedSecond = await fetch(
+    `${reopenedBridge.baseUrl}/attachment?sourcePath=${encodeURIComponent(workingPath)}&relativePath=${encodeURIComponent(saved[1].record.relativePath)}`,
+  );
+  assert.equal(retainedSecond.status, 200);
+  assert.deepEqual(Buffer.from(await retainedSecond.arrayBuffer()), saved[1].payload);
+  const missingFirst = await fetch(
+    `${reopenedBridge.baseUrl}/attachment?sourcePath=${encodeURIComponent(workingPath)}&relativePath=${encodeURIComponent(saved[0].record.relativePath)}`,
+  );
+  assert.equal(missingFirst.status, 404);
+});
+
 test("Bridge POST /managed-working-copy/reconcile rebinds a Finder rename by stable IDs", async (t) => {
   const environment = await createBridgeTestEnvironment(t, {
     prefix: "stemmio-managed-reconcile-",
