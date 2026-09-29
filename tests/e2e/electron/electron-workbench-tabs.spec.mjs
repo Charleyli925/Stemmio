@@ -983,17 +983,17 @@ test("Electron reuses a live unchanged current-draft Preview across a quick mode
     const beforeRefreshSrc = await previewHost.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
     await page.getByRole("button", { name: "更多", exact: true }).click();
     await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length), {
+      message: "reloading the current source starts one new Preview session",
+      timeout: 20_000,
+    }).toBe(sessionCreates + 1);
     await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toHaveCount(0);
     }
-    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
-      "stemmio:preview:session-create", "mark",
-    ).length)).toBeGreaterThan(sessionCreates);
-    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
-      "stemmio:preview:session-create", "mark",
-    ).length)).toBe(sessionCreates + 1);
     await expect.poll(() => frame.locator("body").getAttribute("data-preview-boot"))
       .not.toBe(boot);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
