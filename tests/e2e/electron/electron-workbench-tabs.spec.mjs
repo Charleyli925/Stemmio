@@ -983,17 +983,17 @@ test("Electron reuses a live unchanged current-draft Preview across a quick mode
     const beforeRefreshSrc = await previewHost.locator('iframe[title="HTML 交互预览"]').getAttribute("src");
     await page.getByRole("button", { name: "更多", exact: true }).click();
     await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
+      "stemmio:preview:session-create", "mark",
+    ).length), {
+      message: "reloading the current source starts one new Preview session",
+      timeout: 20_000,
+    }).toBe(sessionCreates + 1);
     await expect(previewHost.locator(`iframe[src="${beforeRefreshSrc}"]`)).toHaveCount(0);
     await expect(page.locator('iframe[title="HTML 交互预览"]')).toHaveCount(1);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
     await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true })).toHaveCount(0);
     }
-    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
-      "stemmio:preview:session-create", "mark",
-    ).length)).toBeGreaterThan(sessionCreates);
-    await expect.poll(() => page.evaluate(() => performance.getEntriesByName(
-      "stemmio:preview:session-create", "mark",
-    ).length)).toBe(sessionCreates + 1);
     await expect.poll(() => frame.locator("body").getAttribute("data-preview-boot"))
       .not.toBe(boot);
     await expect(previewHost).toHaveAttribute("data-preview-ready", "true");
@@ -1709,8 +1709,12 @@ test("Electron waits for Preview paint evidence or its bounded fallback", {
       .toHaveAttribute("data-render-verified", "true");
     await page.evaluate(() => {
       window.__syntheticVisualRequestObserved = false;
+      window.__syntheticVisualRequestReadyAtMessage = null;
       window.addEventListener("message", (event) => {
         if (event.data?.type === "synthetic-visual-request-observed") {
+          window.__syntheticVisualRequestReadyAtMessage = document
+            .querySelector('[data-testid="workbench-active-preview"]')
+            ?.getAttribute("data-preview-ready");
           window.__syntheticVisualRequestObserved = true;
         }
       });
@@ -1720,7 +1724,8 @@ test("Electron waits for Preview paint evidence or its bounded fallback", {
     await expect.poll(() => page.evaluate(() => window.__syntheticVisualRequestObserved))
       .toBe(true);
     const preview = page.getByTestId("workbench-active-preview");
-    await expect(preview).toHaveAttribute("data-preview-ready", "false");
+    expect(await page.evaluate(() => window.__syntheticVisualRequestReadyAtMessage))
+      .toBe("false");
     await page.frameLocator('iframe[title="HTML 交互预览"]').locator("body")
       .evaluate((body) => {
         const heading = document.createElement("h1");

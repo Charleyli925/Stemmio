@@ -3317,6 +3317,9 @@ test("Runtime text and style edits stay in one document across selection and sav
     );
     await expect(editor).toHaveAttribute("data-history-adopt-path", "editable-island-in-place");
     await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
+    await expect(editor).toHaveAttribute("data-render-verified", "true");
+    await expect(editor).toHaveAttribute("data-rendered-projection-stale", "false");
+    await expect(editor).not.toHaveAttribute("data-runtime-refresh-pending", "");
 
     await clickEditHistoryMenu(electronApp, page, "redo");
     await expectCheckpointPersisted(page, undoRevision);

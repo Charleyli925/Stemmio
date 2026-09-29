@@ -19,6 +19,12 @@ reachability.
 
 ## Reviewed fixes
 
+The 2026-09-29 audit remediation updates the existing same-major overrides
+for `fast-uri` from 3.1.6 to 3.1.7 and for `undici` from 7.29.0/6.28.0 to
+7.29.1/6.28.1. These patch releases address GHSA-qw65-cvwx-89v3,
+GHSA-58mr-gqgx-xq4g and GHSA-3wwx-pv8p-q78v without adding an exception or
+changing the packaged runtime allowlist.
+
 The 2026-09-09 merge gate remediation updates the single hoisted `js-yaml`
 closure from 4.3.1 to 4.3.2 and applies a patch-level `sharp` 0.35.4 override
 for both Next and Miniflare. This removes
