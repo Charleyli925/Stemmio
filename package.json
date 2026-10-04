@@ -97,7 +97,7 @@
     "echarts-5-4-3": "npm:echarts@5.4.3",
     "electron-updater": "6.8.9",
     "entities": "8.0.0",
-    "next": "16.3.3",
+    "next": "16.3.8",
     "parse5": "8.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
