@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,13 +38,37 @@ export type HtmlInteractionPreviewHandle = {
   reload: () => void;
 };
 
-type HtmlInteractionPreviewProps = {
+export type PreviewDisplayResult =
+  | Readonly<{ status: "pending"; attemptId: string }>
+  | Readonly<{ status: "cancelled"; attemptId: string }>
+  | Readonly<{ status: "verified"; attemptId: string; sourceSha256: string; sessionId?: string }>
+  | Readonly<{
+    status: "degraded";
+    attemptId: string;
+    sourceSha256: string;
+    reason: "paint-timeout" | "host-timeout" | "history-static";
+  }>
+  | Readonly<{
+    status: "failed";
+    attemptId: string;
+    reason: "session-unavailable" | "session-create-failed" | "frame-unavailable" | "frame-error";
+  }>;
+
+export type PreviewOpenReason =
+  | "initial-open"
+  | "mode-switch"
+  | "tab-switch"
+  | "source-change"
+  | "history-open";
+
+export type HtmlInteractionPreviewProps = {
   html: string;
   documentKey: string;
   sourcePath?: string;
   height?: string;
   transport?: "independent-url" | "srcdoc";
   staticFallbackOnFailure?: boolean;
+  openReason?: PreviewOpenReason;
   /**
    * Saved comments for this document. The preview renders each resolvable
    * target as a read-only marker; an ambiguous or orphaned target produces no
@@ -51,8 +76,7 @@ type HtmlInteractionPreviewProps = {
    */
   comments?: readonly unknown[];
   onInteraction?: () => void;
-  onReady?: (sourceSha256: string | null) => void;
-  presentationCovered?: boolean;
+  onDisplayResult?: (result: PreviewDisplayResult) => void;
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
 };
@@ -71,6 +95,7 @@ type DesktopPreviewApi = {
     sessionId?: string;
   }) => Promise<DesktopPreviewSession>;
   revokeSession: (sessionId: string) => Promise<{ revoked: boolean }>;
+  inspectSession?: (sessionId: string) => Promise<{ active: boolean }>;
 };
 
 declare global {
@@ -88,7 +113,10 @@ const COMMENT_MEASURE_REQUEST_TYPE = "stemmio-preview-comment-measure-request";
 const COMMENT_LAYOUT_RESPONSE_TYPE = "stemmio-preview-comment-layout";
 const SCROLL_REQUEST_TYPE = "stemmio-preview-scroll-request";
 const SCROLL_EVENT_TYPE = "stemmio-preview-scroll";
+const VISUAL_READY_REQUEST_TYPE = "stemmio-preview-visual-ready-request";
+const VISUAL_READY_RESPONSE_TYPE = "stemmio-preview-visual-ready-response";
 const CAPTURE_TIMEOUT_MS = 1_200;
+const VISUAL_READY_TIMEOUT_MS = 900;
 const MAX_CAPTURED_ELEMENTS = 512;
 const INDEPENDENT_PREVIEW_SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads";
@@ -114,6 +142,8 @@ function previewBootstrapJavaScript({
     commentLayoutType: COMMENT_LAYOUT_RESPONSE_TYPE,
     scrollRequestType: SCROLL_REQUEST_TYPE,
     scrollEventType: SCROLL_EVENT_TYPE,
+    visualReadyRequestType: VISUAL_READY_REQUEST_TYPE,
+    visualReadyResponseType: VISUAL_READY_RESPONSE_TYPE,
     maxElements: MAX_CAPTURED_ELEMENTS,
     maxCommentTargets: MAX_PREVIEW_COMMENT_GROUPS,
   }).replace(/</gu, "\\u003c");
@@ -208,6 +238,51 @@ function previewBootstrapJavaScript({
       requestId: payload.requestId,
       snapshot: capture(),
     }, "*");
+  });
+
+  // The outer iframe load event can precede the first composited content.
+  // Reply only after this document has reported a contentful paint and has
+  // passed through its own animation frames. Blank documents use a bounded
+  // fallback so Preview still opens.
+  window.addEventListener("message", (event) => {
+    const payload = event.data;
+    if (
+      event.source !== window.parent
+      || !payload
+      || payload.type !== config.visualReadyRequestType
+      || payload.channelToken !== config.channelToken
+      || typeof payload.requestId !== "string"
+    ) return;
+    let finished = false;
+    let observer = null;
+    let timeoutId = 0;
+    const finish = (evidence) => {
+      if (finished) return;
+      finished = true;
+      observer?.disconnect();
+      window.clearTimeout(timeoutId);
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        window.setTimeout(() => window.parent.postMessage({
+          type: config.visualReadyResponseType,
+          channelToken: config.channelToken,
+          requestId: payload.requestId,
+          evidence,
+        }, "*"), 0);
+      }));
+    };
+    if (performance.getEntriesByType("paint").some((entry) => entry.name === "first-contentful-paint")) {
+      finish("first-contentful-paint");
+      return;
+    }
+    try {
+      observer = new PerformanceObserver((list) => {
+        if (list.getEntries().some((entry) => entry.name === "first-contentful-paint")) finish("first-contentful-paint");
+      });
+      observer.observe({ type: "paint", buffered: true });
+    } catch {
+      // Older or restricted pages still receive the bounded fallback.
+    }
+    timeoutId = window.setTimeout(() => finish("bounded-no-paint"), 350);
   });
 
   window.addEventListener("message", (event) => {
@@ -434,33 +509,63 @@ const HtmlInteractionPreview = forwardRef<
   height = "100%",
   transport = "srcdoc",
   staticFallbackOnFailure = false,
+  openReason = "initial-open",
   comments,
   onInteraction,
-  onReady,
-  presentationCovered = false,
+  onDisplayResult,
   initialScrollTop,
   onScrollTopChange,
 }, forwardedRef) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const onScrollTopChangeRef = useRef(onScrollTopChange);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onScrollTopChangeRef.current = onScrollTopChange;
   }, [onScrollTopChange]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const sessionGenerationRef = useRef(0);
+  const loadCompletionSequenceRef = useRef(0);
+  const visualReadyCleanupRef = useRef<(() => void) | null>(null);
   const [reloadRevision, setReloadRevision] = useState(0);
   const [desktopSession, setDesktopSession] = useState<DesktopPreviewSession | null>(null);
   const [frameReady, setFrameReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const terminalAttemptRef = useRef<string | null>(null);
+  const reloadAttemptRef = useRef<{
+    current: string;
+    next: string;
+    startedAt: number;
+    targetType: string;
+    actionReason: PreviewOpenReason | "retry";
+  } | null>(null);
   const [commentLayouts, setCommentLayouts] = useState<PreviewCommentLayout[]>([]);
   const independentTransport = transport === "independent-url";
   const reload = useCallback(() => {
+    visualReadyCleanupRef.current?.();
+    loadCompletionSequenceRef.current += 1;
+    const attempt = reloadAttemptRef.current;
+    if (attempt) {
+      if (terminalAttemptRef.current !== attempt.current) {
+        performance.mark("stemmio:preview:display-result", {
+          detail: Object.freeze({
+            attemptId: attempt.current,
+            targetType: attempt.targetType,
+            actionReason: attempt.actionReason,
+            status: "cancelled",
+            cancelReason: "retry",
+            elapsedMs: Math.max(0, Math.round(performance.now() - attempt.startedAt)),
+          }),
+        });
+        onDisplayResult?.({ status: "cancelled", attemptId: attempt.current });
+      }
+      terminalAttemptRef.current = attempt.current;
+      // Fence old callbacks before React mounts the retry iframe.
+      onDisplayResult?.({ status: "pending", attemptId: attempt.next });
+    }
     setFrameReady(false);
     setLoadFailed(false);
     setCommentLayouts([]);
-    onReady?.(null);
     setReloadRevision((revision) => revision + 1);
-  }, [onReady]);
+  }, [onDisplayResult]);
   const prepared = useMemo(
     () => preparePreviewDocument(html, {
       baseUrl: independentTransport
@@ -470,11 +575,60 @@ const HtmlInteractionPreview = forwardRef<
     }),
     [html, independentTransport, sourcePath],
   );
+  const attemptId = `${prepared.channelToken}:${reloadRevision}`;
+  useLayoutEffect(() => {
+    reloadAttemptRef.current = {
+      current: attemptId,
+      next: `${prepared.channelToken}:${reloadRevision + 1}`,
+      startedAt: attemptMetadataRef.current.startedAt,
+      targetType: attemptMetadataRef.current.targetType,
+      actionReason: attemptMetadataRef.current.actionReason,
+    };
+  }, [attemptId, prepared.channelToken, reloadRevision]);
+  const attemptMetadataRef = useRef<{
+    attemptId: string;
+    targetType: string;
+    actionReason: PreviewOpenReason | "retry";
+    startedAt: number;
+  }>({
+    attemptId,
+    targetType: staticFallbackOnFailure ? "history" : independentTransport ? "current" : "browser",
+    actionReason: reloadRevision > 0 ? "retry" : openReason,
+    startedAt: performance.now(),
+  });
+  if (attemptMetadataRef.current.attemptId !== attemptId) {
+    attemptMetadataRef.current = {
+      attemptId,
+      targetType: staticFallbackOnFailure ? "history" : independentTransport ? "current" : "browser",
+      actionReason: reloadRevision > 0 ? "retry" : openReason,
+      startedAt: performance.now(),
+    };
+  }
+  const attemptMetadata = attemptMetadataRef.current;
+  const recordPreviewStage = useCallback((stage: string, detail: Record<string, unknown> = {}) => {
+    performance.mark(`stemmio:preview:${stage}`, {
+      detail: Object.freeze({
+        attemptId,
+        targetType: attemptMetadata.targetType,
+        actionReason: attemptMetadata.actionReason,
+        elapsedMs: Math.max(0, Math.round(performance.now() - attemptMetadata.startedAt)),
+        ...detail,
+      }),
+    });
+  }, [attemptId, attemptMetadata]);
 
   useEffect(() => {
-    onReady?.(null);
-    return () => onReady?.(null);
-  }, [onReady, prepared.sourceSha256]);
+    terminalAttemptRef.current = null;
+    recordPreviewStage("attempt-start");
+    onDisplayResult?.({ status: "pending", attemptId });
+    return () => {
+      visualReadyCleanupRef.current?.();
+      if (terminalAttemptRef.current !== attemptId) {
+        recordPreviewStage("display-result", { status: "cancelled" });
+        onDisplayResult?.({ status: "cancelled", attemptId });
+      }
+    };
+  }, [attemptId, onDisplayResult, recordPreviewStage]);
 
   // Comment markers are derived in this trusted host. The page receives only
   // marker keys and source-node identities; comment text never crosses into it.
@@ -543,30 +697,48 @@ const HtmlInteractionPreview = forwardRef<
     sessionGenerationRef.current += 1;
     if (!previewApi) {
       setLoadFailed(true);
-      onReady?.(null);
+      if (!staticFallbackOnFailure) {
+        terminalAttemptRef.current = attemptId;
+        recordPreviewStage("display-result", { status: "failed", reason: "session-unavailable" });
+        onDisplayResult?.({ status: "failed", attemptId, reason: "session-unavailable" });
+      }
       return undefined;
     }
+    const releaseSession = (sessionId: string) => {
+      void previewApi.revokeSession(sessionId).then((result) => {
+        recordPreviewStage("session-released", { released: result.revoked === true });
+      }).catch(() => {
+        recordPreviewStage("session-released", { released: false });
+      });
+    };
+    recordPreviewStage("session-create");
     void previewApi.createSession({
       html: prepared.html,
       bootstrapJavaScript: prepared.bootstrapJavaScript,
       ...(sourcePath ? { sourcePath } : {}),
     }).then((session) => {
       createdSession = session;
+      recordPreviewStage("session-created");
       if (cancelled) {
-        void previewApi.revokeSession(session.sessionId);
+        releaseSession(session.sessionId);
         return;
       }
       setDesktopSession(session);
     }).catch(() => {
       if (!cancelled) {
+        recordPreviewStage("session-create-failed");
         setLoadFailed(true);
-        onReady?.(null);
+        if (!staticFallbackOnFailure) {
+          terminalAttemptRef.current = attemptId;
+          recordPreviewStage("display-result", { status: "failed", reason: "session-create-failed" });
+          onDisplayResult?.({ status: "failed", attemptId, reason: "session-create-failed" });
+        }
       }
     });
     return () => {
       cancelled = true;
       if (createdSession) {
-        void previewApi.revokeSession(createdSession.sessionId);
+        releaseSession(createdSession.sessionId);
       }
     };
   }, [
@@ -575,7 +747,10 @@ const HtmlInteractionPreview = forwardRef<
     prepared.html,
     reloadRevision,
     sourcePath,
-    onReady,
+    attemptId,
+    onDisplayResult,
+    recordPreviewStage,
+    staticFallbackOnFailure,
   ]);
 
   useImperativeHandle(forwardedRef, () => ({
@@ -668,8 +843,6 @@ const HtmlInteractionPreview = forwardRef<
       data-testid="html-interaction-preview"
       style={{ "--preview-height": height } as CSSProperties}
       onPointerDown={onInteraction}
-      aria-hidden={presentationCovered || undefined}
-      inert={presentationCovered || undefined}
     >
       {staticFallback ? <p role="status">动态内容暂时不可用，正在显示只读静态内容。可刷新重试。</p> : null}
       <div className={styles.viewport} ref={viewportRef}>
@@ -686,17 +859,103 @@ const HtmlInteractionPreview = forwardRef<
           sandbox={staticFallback ? "" : frameSandbox}
           allow="autoplay; clipboard-write; fullscreen; picture-in-picture"
           referrerPolicy="no-referrer"
-          onLoad={() => {
-            if (staticFallback) { onReady?.(prepared.sourceSha256); return; }
-            if (independentTransport && !desktopSession) return;
-            setFrameReady(true);
-            setLoadFailed(false);
-            onReady?.(prepared.sourceSha256);
+          onLoad={(event) => {
+            const loadedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== loadedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && loadedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
+            if (independentTransport && !desktopSession && !staticFallback) return;
+            recordPreviewStage("iframe-loaded");
+            visualReadyCleanupRef.current?.();
+            const sessionGeneration = sessionGenerationRef.current;
+            const loadSequence = ++loadCompletionSequenceRef.current;
+            let completed = false;
+            const finish = (result: "verified" | "paint-timeout" | "host-timeout" | "history-static") => {
+              if (completed) return;
+              completed = true;
+              visualReadyCleanupRef.current?.();
+              window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+                if (
+                  !loadedFrame?.isConnected
+                  || iframeRef.current !== loadedFrame
+                  || sessionGenerationRef.current !== sessionGeneration
+                  || loadCompletionSequenceRef.current !== loadSequence
+                  || terminalAttemptRef.current === attemptId
+                ) return;
+                setFrameReady(true);
+                // A failed desktop session may deliberately serve the
+                // script-disabled historical srcDoc. Keep that failure state
+                // until an explicit reload starts a fresh session.
+                if (!staticFallback) setLoadFailed(false);
+                terminalAttemptRef.current = attemptId;
+                recordPreviewStage("display-result", {
+                  status: result === "verified" ? "verified" : "degraded",
+                  ...(result === "verified" ? {} : { reason: result }),
+                });
+                onDisplayResult?.(result === "verified"
+                  ? { status: "verified", attemptId, sourceSha256: prepared.sourceSha256,
+                    ...(desktopSession?.sessionId ? { sessionId: desktopSession.sessionId } : {}) }
+                  : { status: "degraded", attemptId, sourceSha256: prepared.sourceSha256, reason: result });
+              }));
+            };
+            if (staticFallback) {
+              finish("history-static");
+              return;
+            }
+            if (!loadedFrame?.contentWindow) {
+              setLoadFailed(true);
+              if (!staticFallbackOnFailure) {
+                terminalAttemptRef.current = attemptId;
+                recordPreviewStage("display-result", { status: "failed", reason: "frame-unavailable" });
+                onDisplayResult?.({ status: "failed", attemptId, reason: "frame-unavailable" });
+              }
+              return;
+            }
+            const frameWindow = loadedFrame.contentWindow;
+            const requestId = randomToken();
+            const handleVisualReady = (event: MessageEvent) => {
+              const payload = event.data;
+              if (
+                event.source !== frameWindow
+                || payload?.type !== VISUAL_READY_RESPONSE_TYPE
+                || payload.channelToken !== prepared.channelToken
+                || payload.requestId !== requestId
+              ) return;
+              if (payload.evidence === "first-contentful-paint") finish("verified");
+              else if (payload.evidence === "bounded-no-paint") finish("paint-timeout");
+            };
+            window.addEventListener("message", handleVisualReady);
+            const timeoutId = window.setTimeout(() => finish("host-timeout"), VISUAL_READY_TIMEOUT_MS);
+            visualReadyCleanupRef.current = () => {
+              window.removeEventListener("message", handleVisualReady);
+              window.clearTimeout(timeoutId);
+              visualReadyCleanupRef.current = null;
+            };
+            recordPreviewStage("visual-ready-request");
+            frameWindow.postMessage({
+              type: VISUAL_READY_REQUEST_TYPE,
+              channelToken: prepared.channelToken,
+              requestId,
+            }, "*");
           }}
-          onError={() => {
+          onError={(event) => {
+            const failedFrame = event.currentTarget;
+            if (
+              iframeRef.current !== failedFrame
+              || (independentTransport && !staticFallback && desktopSession
+                && failedFrame.getAttribute("src") !== desktopSession.url)
+            ) return;
+            visualReadyCleanupRef.current?.();
+            loadCompletionSequenceRef.current += 1;
             setFrameReady(false);
             setLoadFailed(true);
-            onReady?.(null);
+            if (!staticFallbackOnFailure && terminalAttemptRef.current !== attemptId) {
+              terminalAttemptRef.current = attemptId;
+              recordPreviewStage("display-result", { status: "failed", reason: "frame-error" });
+              onDisplayResult?.({ status: "failed", attemptId, reason: "frame-error" });
+            }
           }}
         />
         {/*

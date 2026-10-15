@@ -255,10 +255,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   Hash 完全一致的 verified Canvas 必须证明不会重复 render fence。
   Electron 通过暂停 B 的真实规则文件读取后点击 C/D，证明相邻待执行激活只执行 B/D、被替代的 C 及其余命令都到达终态；插入创建或关闭操作时必须仍执行 C。最终活动页、挂载文档和 Runtime owner 要与可见规则页一致，未保存和 IME 围栏沿用原导航场景。
   `DocumentSurfaceCacheSession` 另以 Node 证明只接纳已持久化且 Canvas Hash 一致的投影、
-  20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；Electron
-  标签页用例证明启动恢复无投影预热，普通静置标签为零缓存 iframe，命中切换只短暂挂载交接面、完成后回到零，且仍进入正常项目打开链路。缓存交接的受控暂停必须阻断新 Canvas 文档的可用性，
-  不得在真实连接完成后改写 `data-render-verified`；释放后必须由真实连接流程启动 Runtime 并退掉缓存。
-  保存的旧 ready 回调和 same-Hash 新交接仍须验证身份隔离。Registry-before-hydrate 与
+  20 项 / 32 MiB 源码 LRU、HTML 淘汰后轻量滚动/模式/PageViewContext 仍保留、源码 Hash 变化时旧上下文不恢复，以及淘汰不关闭标签；缓存只保留数据，不挂载 Document、iframe 或 Runtime。
+  Electron 标签页用例证明启动恢复不预热投影，当前稿切换始终沿真实 Canvas 打开链路进行；暂停 incoming Canvas 时，outgoing Canvas 保持可见且 inert，释放后由真实连接完成切换并只保留一个编辑器。
+  Preview 模式的页面与滚动状态仍须在 HTML 淘汰后按同一 tab、Project、Document 和 source Hash 恢复。Registry-before-hydrate 与
   hydrate-before-Registry 都必须得到相同标题/缺失项结果。持久化测试拒绝 title/path/HTML/Hash
   和未知字段，验证 `activeTabId:null`、原子替换与无效文件 fail-closed；Electron 证明 Left/Right/
   Home/End 的 roving focus、键盘关闭后的活动标签焦点、Start 冷重启抑制 activePath、Start→Registry 原位打开、Registry 标题恢复及 unmounted outlet 安全关闭。
@@ -334,11 +333,11 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   入口，保存或明确删除才会移除，且草稿不增加主评论数或 `评N`。
   高密度短页面用例还必须证明 Canvas 自然底边保持不变，评论队列不会撑长
   共享页面；页面到底后可继续向下把底部卡片拉入，反向滚动可恢复自然位置。
-- 编辑模式安全内容切换：Node 证明语义 ARIA Tab/details/disclosure 白名单，
-  以及 `data-p` / `data-tab`、固定索引处理器、链接、弹窗、分组 details
-  和歧义标记保持无动作；Browser 证明 ARIA 页签可通过工具条和
-  `Option + 单击` 切换且共享滚动位置不变、作者处理器未运行且导出字节不变，
-  旧式页签不再出现切换动作；Electron 独立重读真实源文件，证明作者事件未运行
+- 编辑模式安全内容切换：Node 证明语义 ARIA Tab/details/disclosure 及有界
+  `data-p` / `data-tab`、固定索引页签动作，链接、弹窗、分组 details
+  和歧义标记保持无动作；Browser 证明匹配页签可通过工具条和
+  `Option + 单击` 切换且共享滚动位置不变、作者处理器未运行且导出字节不变；
+  Electron 独立重读真实源文件，证明作者事件未运行
   且磁盘字节不变。
 - 编辑画布指针提示与命中：Node 证明指针能力只按进入文字编辑的证明分三档，
   可编辑优先于「像按钮」；Hover 快划不闪、400ms 才出文案，且与单击同一命中。
@@ -404,7 +403,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   | rapid switch/close | `tests/e2e/electron/electron-project-lifecycle.spec.mjs` |
   | workbench tabs / Start / Registry restore | `tests/e2e/electron/electron-workbench-tabs.spec.mjs` |
 
-  当前稿标签切换的宽度回归由同一 Electron 文件在缓存交接面确实可见时核对：交接页必须与画布列同宽，评论栏持续存在；逐帧采样覆盖交接结束和反向切换。修复前该断言实测交接页比画布宽 376px，恰为评论栏宽度。
+  当前稿标签切换的宽度回归由同一 Electron 文件在 outgoing Canvas 保持 inert 时核对：画布列宽度保持稳定，评论栏持续存在；逐帧采样覆盖 incoming Canvas 就绪和反向切换。
 
   叶子 owner 收敛后，下列重复 oracle 已删除。每行删除都保留：故障注入时主
   oracle 仍失败、至少一条 Browser/Electron/AI canary 证明产品接线、Ready 完整
@@ -484,7 +483,7 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   目录选择原子写入 group 与两侧 region、关闭后焦点回到 summary、目录先消费 Escape、再次点击保持激活、
   Escape/手动滚出/手动换 Tab 返回总览、单侧新增/删除另一侧无 mask/scroll、评论态优先并
   在点击、移出或 Escape 后恢复变化 focus，marker 和自适应气泡优先避开目标、可连续 hover 且跟随横纵滚动，以及每个文档标签分别恢复页面、focus、Tab/折叠、双页滚动、横向位置
-  与缩放。顶栏“刷新本页面”必须在同一 Review 身份下恢复这些状态；“从磁盘重新载入 HTML”在待决定
+  与缩放。更多菜单“刷新”读取当前稿；在待决定
   Review 中可见但禁用。50%–200% 缩放、resize 与字体变化后，前后页保持同一 group/region；mask 与
   可选 outline 各自遵守每侧一个的预算，outline 存在时才与 mask 复用 canonical path。
   评论、Tab、同步/独立滚动、缩放和采纳闭环继续运行。真实 Electron 像素
@@ -793,7 +792,7 @@ VersionWorkflow and ProjectWorkflow tests cover frozen export bytes, no Version
 on plain/cancelled/failed export, partial export/version reconciliation, stale
 project-switch completion and same-path complete OpenTarget publication.
 Electron project lifecycle exercises local editing, explicit V2 save, immutable
-V1/V2 viewing, current return, default export and optional V3 creation with no
+V1/V2 viewing, current return, export-dialog cancellation, unchecked plain export and default-checked V3 creation with no
 duplicate on unchanged content. Shared sidebar helpers select the current row
 or explicitly expand and select historical Vn; first-row selectors cannot stand
 in for current identity.
@@ -840,3 +839,7 @@ Electron may restore a synthetic Key only for an isolated profile with explicit
 key only for isolated AES-GCM ciphertext and must prove restart restoration and
 no plaintext on disk or in logs. Packaged builds always use Electron
 `safeStorage`. Default E2E launches still suppress restoration.
+
+### Current draft file actions and activity feedback
+
+Electron covers menu dismissal over both shell and HTML iframe, native-edit first-press exit and second-press selection, and retained pending text/composition. Current export asks before the native save picker, starts with history saving checked, and preserves no-version-on-cancel/failure and exact exported bytes. Regular menus must not reintroduce preserved-draft recovery; Repository recovery tests remain. Preview refresh must retain Preview and await a new physical session; pending Review cannot refresh its source. Tab activity is scoped to the visible document, ends after work, and becomes static with either reduced-motion setting.

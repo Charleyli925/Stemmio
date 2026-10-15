@@ -987,13 +987,19 @@ test("author Script cannot add source authority after Runtime starts or save Run
     expect(readFileSync(sourcePath, "utf8")).not.toContain('<button id="runtime-generated"');
 
     const firstDocumentToken = await documentToken(page);
+    const preparesBeforeStart = await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length);
     const tablist = page.getByRole("tablist", { name: "已打开的页面" });
     const documentTab = tablist.getByRole("tab").first();
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
     const reopened = await loadedDiskFrame(page, sourcePath, "runtime-host");
     await expect(reopened.frame.locator("#runtime-generated")).toHaveText("运行时按钮");
-    await expect.poll(() => documentToken(page)).not.toBe(firstDocumentToken);
+    await expect.poll(() => documentToken(page)).toBe(firstDocumentToken);
+    expect(await page.evaluate(() => performance.getEntriesByName(
+      "stemmio:edit-runtime:prepare-start", "mark",
+    ).length)).toBe(preparesBeforeStart);
   });
 });
 
@@ -1157,7 +1163,7 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
       if (selector.startsWith("#runtime-page-table")) {
         await expect(nextComposer).toContainText("页面级数据表");
         await expect(nextComposer.getByRole("textbox", { name: "评论内容" }))
-          .toHaveAttribute("placeholder", "输入对这部分内容的修改要求…");
+          .toHaveAttribute("placeholder", "写下修改要求…");
       }
       await nextComposer.getByRole("textbox", { name: "评论内容" }).fill(text);
       await nextComposer.getByRole("button", { name: "评论", exact: true }).click();
@@ -1285,9 +1291,9 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
 
     await page.getByRole("button", { name: "全局评论" }).click();
     const globalComposer = page.getByRole("region", { name: "添加评论" });
-    await expect(globalComposer).toContainText("全局评论");
+    await expect(globalComposer).toContainText("整个页面");
     await expect(globalComposer.getByRole("textbox", { name: "评论内容" }))
-      .toHaveAttribute("placeholder", "输入对整个页面的修改要求…");
+      .toHaveAttribute("placeholder", "写下修改要求…");
     await globalComposer.getByRole("button", { name: "关闭评论编辑器" }).click();
 
     await reopenedFrame.locator("#runtime-page-table caption").click();
@@ -1310,7 +1316,7 @@ test("runtime tables, SVG and Canvas keep visual comments source-anchored", {
     const restoredDraftComposer = page.getByRole("region", { name: "添加评论" });
     await expect(restoredDraftComposer).toContainText("表格");
     await expect(restoredDraftComposer.getByRole("textbox", { name: "评论内容" }))
-      .toHaveAttribute("placeholder", "输入对这部分内容的修改要求…");
+      .toHaveAttribute("placeholder", "写下修改要求…");
     await restoredDraftComposer.getByRole("button", { name: "删除未保存评论" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "删除这条未保存评论" }))
       .toBeVisible();
@@ -2301,7 +2307,7 @@ test("copy requested during composition waits for the existing composition bound
   });
 });
 
-test("same-byte tab remount rebinds a Native Edit target before continuing", {
+test("same-byte Start roundtrip retains a Native Edit target before continuing", {
   tag: ["@gate-smoke", "@smoke-editing"],
 }, async () => {
   test.setTimeout(120_000);
@@ -2327,17 +2333,15 @@ test("same-byte tab remount rebinds a Native Edit target before continuing", {
     expect(firstWorkingHash).toBeTruthy();
     expect(firstRenderedHash).toBe(firstWorkingHash);
 
-    // Switching away and back through the existing document tab performs a
-    // workbench-owned same-byte tab remount. The source bytes and stable target
-    // identity must survive, while the physical Document/generation is
-    // replaced and re-authorized.
+    // Start hides the retained document. Returning to its tab keeps the same
+    // physical authority while source bytes and Stable ID remain unchanged.
     const tablist = page.getByRole("tablist", { name: "已打开的页面" });
     const documentTab = tablist.getByRole("tab").first();
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
     frame = (await loadedDiskFrame(page, sourcePath, "authority-target")).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(firstToken);
-    await expect.poll(() => activeFrameGeneration(editor)).not.toBe(firstGeneration);
+    await expect.poll(() => documentToken(page)).toBe(firstToken);
+    await expect.poll(() => activeFrameGeneration(editor)).toBe(firstGeneration);
     await expect(editor).toHaveAttribute("data-working-source-sha256", firstWorkingHash);
     await expect(editor).toHaveAttribute("data-rendered-projection-sha256", firstRenderedHash);
     const reboundId = await frame.locator('[data-native-case="authority-target"]')
@@ -2358,13 +2362,12 @@ test("same-byte tab remount rebinds a Native Edit target before continuing", {
       .toContain("Authority text 已接管");
     expect(readFileSync(sourcePath, "utf8")).toBe(originalHtml);
 
-    // Reopen the same project once more so the saved bytes and Stable ID are
-    // checked on a new authority generation, not only in the live edit frame.
+    // A second Start roundtrip retains the edited instance and saved bytes.
     const secondToken = await documentToken(page);
     await page.getByRole("button", { name: "新标签页" }).click();
     await documentTab.click();
-    frame = (await loadedDiskFrame(page, sourcePath, "authority-target")).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(secondToken);
+    frame = await currentEditorFrame(page);
+    await expect.poll(() => documentToken(page)).toBe(secondToken);
     await expect(frame.locator('[data-native-case="authority-target"]'))
       .toHaveText("Authority text 已接管");
     await expect(frame.locator('[data-native-case="authority-target"]'))
@@ -2404,11 +2407,11 @@ test("explicit same-byte source reload creates a fresh Runtime authority", {
     expect(beforeId).toMatch(/^sm1_[a-f0-9]{32}$/u);
 
     await page.getByRole("button", { name: "更多", exact: true }).click();
-    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
-    await expect(page.locator(".workbench-chrome-status"))
-      .toHaveText("页面已重新加载，可以继续编辑");
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
     await expect.poll(() => documentToken(page)).not.toBe(beforeToken);
     await expect.poll(() => activeFrameGeneration(editor)).not.toBe(beforeGeneration);
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true }))
+      .toHaveCount(0);
     await expect.poll(() => editor.getAttribute("data-runtime-last-known-good-id"))
       .not.toBe(beforeLastKnownGood);
     await expect(editor).toHaveAttribute("data-working-source-sha256", beforeHash);
@@ -2612,6 +2615,62 @@ test("independent projection groups refuse, recover and keep ordinary copies in-
     injectedEnv: {
       STEMMIO_E2E_RUNTIME_COMMIT_HOOKS: "1",
     },
+  });
+});
+
+test("Canvas notice loses its hover pause after a successful command clears it", {
+  tag: ["@gate-smoke", "@smoke-editing"],
+}, async () => {
+  const html = `<!doctype html><html><head><title>Notice lifecycle</title></head><body>
+    <main><p data-native-case="notice-target">可以安全复制的段落</p></main>
+    <script>document.body.dataset.runtimeReady = "true";</script>
+  </body></html>`;
+  await withRuntimeProject("stemmio-notice-lifecycle-e2e-", {
+    "runtime-report.html": html,
+  }, async ({ page, sourcePath }) => {
+    let frame = (await loadedDiskFrame(page, sourcePath, "notice-target")).frame;
+    const editor = page.getByTestId("html-canvas-editor");
+    const target = frame.locator('[data-native-case="notice-target"]');
+    await target.click();
+    const targetId = await target.getAttribute("data-stemmio-id");
+    expect(targetId).toBeTruthy();
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: targetId,
+    })).toBe(false);
+    const notice = editor.getByRole("status")
+      .filter({ hasText: "暂不支持这个结构操作" });
+    await expect(notice).toBeVisible();
+    await notice.hover();
+    await expect(notice).toHaveAttribute("data-paused", "true");
+
+    // The diagnostic belongs to the refused command. A later clean command
+    // may retire its notice only after that stale diagnostic is released.
+    await editor.evaluate((element) => element.removeAttribute("data-edit-block-detail"));
+    expect(await invokeStructureCommand(page, "duplicateSelected")).toBe(true);
+    await expect(notice).toHaveCount(0);
+    await page.mouse.move(4, 200);
+    frame = await currentEditorFrame(page);
+    const sameSourceTarget = frame.locator('[data-native-case="notice-target"]').first();
+    await sameSourceTarget.click();
+    const sameSourceId = await sameSourceTarget.getAttribute("data-stemmio-id");
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toBeVisible();
+    await expect(notice).not.toHaveAttribute("data-paused", "true");
+    await page.waitForTimeout(2_200);
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toHaveCount(0, { timeout: 3_600 });
+
+    await sameSourceTarget.click();
+    expect(await invokeStructureCommand(page, "moveSelectedTo", {
+      parentElementId: sameSourceId,
+    })).toBe(false);
+    await expect(notice).toBeVisible();
+    await page.waitForTimeout(3_300);
+    await expect(notice).toBeVisible();
   });
 });
 
@@ -3258,6 +3317,9 @@ test("Runtime text and style edits stay in one document across selection and sav
     );
     await expect(editor).toHaveAttribute("data-history-adopt-path", "editable-island-in-place");
     await expect(editor.locator('iframe[data-frame-role="runtime-candidate"]')).toHaveCount(0);
+    await expect(editor).toHaveAttribute("data-render-verified", "true");
+    await expect(editor).toHaveAttribute("data-rendered-projection-stale", "false");
+    await expect(editor).not.toHaveAttribute("data-runtime-refresh-pending", "");
 
     await clickEditHistoryMenu(electronApp, page, "redo");
     await expectCheckpointPersisted(page, undoRevision);
@@ -4147,6 +4209,11 @@ test("an explicit B edit intent resumes after A commits through a rebuilt Runtim
       .toBe(true);
 
     const requested = frame.locator('[data-native-case="runtime-post-edit-b"]');
+    await requested.click();
+    await expect(first).not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
+    // The exit click is complete. A subsequent explicit double click may
+    // request B even while A's accepted checkpoint is rebuilding the frame.
     await doubleClickRenderedText(requested);
     await page.evaluate(() => {
       window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
@@ -4221,6 +4288,9 @@ test("external comment focus during Candidate positioning retires the earlier B 
     await first.press("End");
     await page.keyboard.insertText(" A_FOCUS_INPUT");
     const second = frame.locator('[data-native-case="runtime-post-edit-focus-b"]');
+    await second.click({ force: true });
+    await expect(first).not.toHaveAttribute("contenteditable", "true");
+    await expect(frame.locator("[data-html-canvas-selected]")).toHaveCount(0);
     await doubleClickRenderedText(second, { force: true });
     await page.evaluate(() => {
       window.__STEMMIO_E2E_HOLD_AUTOMATIC_NATIVE_CHECKPOINT__ = false;
@@ -4325,7 +4395,7 @@ test("Escape checkpoint reload keeps Native Edit exited", {
       sourcePath,
       "runtime-escape-checkpoint-reload",
     )).frame;
-    await expect.poll(() => documentToken(page)).not.toBe(exitedDocument);
+    await expect.poll(() => documentToken(page)).toBe(exitedDocument);
     exitedTarget = frame.locator('[data-native-case="runtime-escape-checkpoint-reload"]');
     await expect(exitedTarget).toContainText("源码由退出操作提交");
     await expect(exitedTarget).not.toHaveAttribute("contenteditable", "true");
@@ -5687,6 +5757,113 @@ test("unsupported Script programs enter an explicit static Edit state", async ()
   });
 });
 
+for (const scenario of ["static", "scripted", "unsupported-script"]) {
+  test(`ordinary edits keep the ${scenario} current draft usable after Preview`, {
+    tag: ["@gate-smoke", "@smoke-editing", "@smoke-project-lifecycle"],
+  }, async () => {
+    test.setTimeout(120_000);
+    const program = scenario === "scripted"
+      ? `<script>window.__modeContinuityStarts = (window.__modeContinuityStarts || 0) + 1;
+          document.body.dataset.authorStarts = String(window.__modeContinuityStarts);</script>`
+      : scenario === "unsupported-script"
+        ? `<script type="module">import { marker } from './unsupported-module.js';
+            document.body.dataset.authorStarts = marker;</script>`
+        : "";
+    const originalHtml = `<!doctype html><html><head><title>Mode continuity ${scenario}</title></head><body>
+      <main><p data-native-case="mode-continuity">Alpha</p></main>${program}</body></html>`;
+    await withRuntimeProject(`stemmio-mode-continuity-${scenario}-`, {
+      "runtime-report.html": originalHtml,
+      ...(scenario === "unsupported-script" ? {
+        "unsupported-module.js": "export const marker = 'unexpected';",
+      } : {}),
+    }, async ({ page, sourcePath }) => {
+      const workingCopyPath = await managedWorkingCopyPath(page, sourcePath);
+      const editor = page.getByTestId("html-canvas-editor").filter({ visible: true }).first();
+      let frame = (await loadedDiskFrame(page, sourcePath, "mode-continuity")).frame;
+      const physicalDocument = await documentToken(frame);
+      const expectedPhase = scenario === "scripted" ? "settled"
+        : scenario === "unsupported-script" ? "static-fallback" : "static";
+      const editSurface = page.locator(".canvas-edit-surface");
+      await expect(editSurface).toHaveAttribute("data-edit-runtime-phase", expectedPhase);
+      if (scenario === "scripted") {
+        await expect(frame.locator("body")).toHaveAttribute("data-author-starts", "1");
+      }
+
+      // A same-activation source revision refreshes its proof asynchronously.
+      // Observe the whole interval so a transient candidate/inert frame is
+      // caught even if the final content and save both succeed.
+      await page.evaluate(() => {
+        window.__modeContinuityPresentationInterruptions = [];
+        const surface = document.querySelector(".canvas-edit-surface");
+        const record = () => {
+          const host = surface?.querySelector('[data-testid="workbench-active-document-canvas-host"]');
+          const active = host?.querySelector(':scope > [data-runtime-hot-active]:last-of-type');
+          if (surface?.hasAttribute("inert") || active?.hasAttribute("inert")
+            || active?.hasAttribute("data-handoff-candidate")) {
+            window.__modeContinuityPresentationInterruptions.push({
+              surfaceInert: surface?.hasAttribute("inert"),
+              activeInert: active?.hasAttribute("inert"),
+              candidate: active?.hasAttribute("data-handoff-candidate"),
+            });
+          }
+        };
+        window.__modeContinuityPresentationObserver = new MutationObserver(record);
+        window.__modeContinuityPresentationObserver.observe(surface, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+          attributeFilter: ["inert", "data-handoff-candidate", "data-runtime-hot-active"],
+        });
+      });
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", 0, "Alpha".length);
+      await page.keyboard.insertText("Beta");
+      await page.locator(".comments-panel.comment-rail").click({ position: { x: 4, y: 4 } });
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toContain("Beta");
+      await expect(editor).toHaveAttribute("data-render-verified", "true");
+      expect(await page.evaluate(() => {
+        window.__modeContinuityPresentationObserver.disconnect();
+        return window.__modeContinuityPresentationInterruptions;
+      })).toEqual([]);
+      frame = await currentEditorFrame(page);
+      expect(await documentToken(frame)).toBe(physicalDocument);
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", 0, "Beta".length);
+      await editor.getByRole("button", { name: "加粗", exact: true }).click();
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toMatch(/font-weight:\s*700/u);
+      expect(await documentToken(await currentEditorFrame(page))).toBe(physicalDocument);
+
+      const mode = page.getByRole("group", { name: "工作模式" });
+      await mode.getByRole("button", { name: "预览", exact: true }).click();
+      await expect(page.getByTestId("workbench-active-preview"))
+        .toHaveAttribute("data-preview-ready", "true");
+      await mode.getByRole("button", { name: "编辑", exact: true }).click();
+      await expect(page.getByTestId("workbench-active-preview")).toHaveCount(0);
+      await expect(page.locator('.workbench-tab[data-selected="true"]'))
+        .not.toHaveAttribute("data-opening", "true");
+      await expect(page.locator("[data-outgoing-draft]")).toHaveCount(0);
+      await expect(editor).toHaveAttribute("data-render-verified", "true");
+      await expect(editor).toHaveAttribute("aria-readonly", "false");
+      frame = await currentEditorFrame(page);
+      expect(await documentToken(frame)).toBe(physicalDocument);
+      if (scenario === "scripted") {
+        await expect(frame.locator("body")).toHaveAttribute("data-author-starts", "1");
+      }
+
+      await activateNativeEdit(frame, "mode-continuity");
+      await setTextSelection(frame, "mode-continuity", "Beta".length);
+      await page.keyboard.insertText(" again");
+      await page.keyboard.press(keyShortcut("S"));
+      await expect.poll(() => readPublishedWorkingCopy(workingCopyPath, "utf8"))
+        .toContain("Beta again");
+    });
+  });
+}
+
 test("static fallback can reload dynamic content and dismiss itself after success", async ({}, testInfo) => {
   const html = `<!doctype html>
 <html><head><title>Runtime retry</title></head><body>
@@ -5929,7 +6106,7 @@ test("Electron Edit renders a source-relative ECharts page in the editable ifram
     await documentTab.click();
     const reopened = await loadedDiskFrame(page, sourcePath, "echarts-runtime");
     await expect(reopened.frame.locator("#chart canvas")).toHaveCount(1);
-    await expect.poll(() => documentToken(page)).not.toBe(firstDocumentToken);
+    await expect.poll(() => documentToken(page)).toBe(firstDocumentToken);
     expect(readFileSync(sourcePath, "utf8")).toBe(html);
   });
 });

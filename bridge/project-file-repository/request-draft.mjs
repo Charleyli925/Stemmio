@@ -69,6 +69,8 @@ export const FROZEN_REQUEST_RULES = `# Stemmio HTML Candidate Rules
 
 - Confirm that every required instruction and acceptance criterion is addressed.
 - Confirm that the document is complete and usable.
+- Compare the proposed complete HTML with the frozen base, including code inside surviving scripts. Account for removed or replaced chart initialization calls, event handlers, data and resource references; restore omissions that are neither requested nor necessary to implement the request.
+- Do not treat preserved Stable IDs, surviving containers or valid HTML as proof that source-generated content still works.
 - Confirm that surviving Stable IDs are preserved and new elements have no IDs.
 - Confirm that no unrelated page-wide change was introduced.
 - If writing or finalizing reports a source identity error, correct only the identity mistakes against the frozen base, preserving the requested changes, then retry the same output and finalizer. Allow at most two correction attempts. Never modify frozen inputs or completion records. Stop if correction is exhausted or the task is cancelled.

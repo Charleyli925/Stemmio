@@ -27,13 +27,15 @@ export function useEditRuntimePreparation({
     const sourceSha256 = editRuntimeSnapshot?.sourceSha256;
     const canvasGeneration = editRuntimeSnapshot?.canvasGeneration;
     if (
-      runtimePhase !== "preparing"
+      canvasMode !== "edit"
+      || runtimePhase !== "preparing"
       || !sourceSha256
       || typeof canvasGeneration !== "number"
       || !Number.isSafeInteger(canvasGeneration)
     ) return;
     startPreparation({ sourceSha256, canvasGeneration });
   }, [
+    canvasMode,
     editRuntimeSnapshot?.canvasGeneration,
     editRuntimeSnapshot?.sourcePath,
     editRuntimeSnapshot?.sourceSha256,

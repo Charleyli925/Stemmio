@@ -1314,12 +1314,13 @@ test("Canvas shortcuts follow the promoted frame and same-source reload keeps ch
       window.__M5_BEFORE_SAME_BYTE_AUTHORITY_CONTENT_DOCUMENT__ = frame.contentDocument;
     });
     await page.getByRole("button", { name: "更多", exact: true }).click();
-    await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
-    await expect(page.locator(".workbench-chrome-status")).toHaveText("页面已重新加载，可以继续编辑");
+    await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
     await expect.poll(() => page.evaluate(() => (
       window.__STEMMIO_DELAYED_CHART_RUNTIME_COUNT__ || 0
     ))).toBe(beforeReloadScriptCount + 1);
     await expect.poll(() => documentToken(page)).not.toBe(beforeReloadDocument);
+    await expect(page.getByText("页面已重新加载，可以继续编辑", { exact: true }))
+      .toHaveCount(0);
     await expect.poll(() => activeFrame.evaluate((frame) => Boolean(
       frame.contentDocument
       && frame.contentDocument !== window.__M5_BEFORE_SAME_BYTE_AUTHORITY_CONTENT_DOCUMENT__
@@ -1734,7 +1735,7 @@ for (const input of ["wheel-up", "wheel-down", "keyboard-home", "scrollbar"]) {
       await page.screenshot({ path: testInfo.outputPath("upward-before-reload.png") });
       const token = await documentToken(page);
       await page.getByRole("button", { name: "更多", exact: true }).click();
-      await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+      await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
       await expect.poll(() => documentToken(page)).not.toBe(token);
       await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
       await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeCloseTo(before, 0);
@@ -1815,7 +1816,7 @@ for (const delayedHeaderResize of [false, true]) {
         expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
         const token = await documentToken(page);
         await page.getByRole("button", { name: "更多", exact: true }).click();
-        await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+        await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
         await expect.poll(() => documentToken(page)).not.toBe(token);
         await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
         await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
@@ -1899,7 +1900,7 @@ for (const input of ["outer-wheel", "iframe-wheel", "keyboard-home", "scrollbar"
         expect(await stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);
         const token = await documentToken(page);
         await page.getByRole("button", { name: "更多", exact: true }).click();
-        await page.getByRole("menuitem", { name: "从磁盘重新载入 HTML", exact: true }).click();
+        await page.getByRole("menuitem", { name: "刷新", exact: true }).click();
         await expect.poll(() => documentToken(page)).not.toBe(token);
         await expect(page.getByTestId("html-canvas-editor")).toHaveAttribute("data-render-verified", "true");
         await expect.poll(() => stage.evaluate(element => element.scrollTop)).toBeCloseTo(before, 0);

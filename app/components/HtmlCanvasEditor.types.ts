@@ -260,6 +260,11 @@ export type HtmlCanvasEditorHandle = {
   getRenderedFrameGeneration: () => number | null;
   /** Returns the physical iframe Document for identity fencing. */
   getRenderedFrameDocument: () => Document | null;
+  /** Physical frame proof for the current, fully projected source. */
+  getCurrentDisplayRuntime: () => {
+    kind: "runtime" | "static";
+    grant: EditRuntimeGrant | null;
+  } | null;
   /** Readiness only; semantic commits still validate their own source target. */
   isCurrentProjectionEditable: () => boolean;
   /**
@@ -353,6 +358,8 @@ export type HtmlCanvasEditorProps = {
   html: string;
   /** Source-owner receipt for this exact HTML projection. */
   sourceReceipt: DocumentSourceReceipt | null;
+  /** Opaque, in-memory tab activation identifier for performance marks only. */
+  diagnosticActivationId?: string;
   /** Host-owned edit revision used as the semantic operation base revision. */
   semanticRevision?: number;
   /** Called with the exact next source; returns the source-owner receipt synchronously. */

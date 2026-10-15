@@ -76,6 +76,7 @@ export type ProjectWorkflowSnapshot = Readonly<{
     deleteOriginal?: boolean;
     busy?: boolean;
   }> | null;
+  pendingExternalAck: Readonly<{ requestId: string }> | null;
   externalOpen: ExternalFileOpenSnapshot;
   projectApplication: ProjectApplicationSnapshot;
 }>;

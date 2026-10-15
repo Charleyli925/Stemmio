@@ -352,6 +352,18 @@ revision, and the ProjectWorkflow close drain. Ready keeps the freeze through
 final exit; blocked or aborted close releases it, including final-exit abort IPC,
 before navigation retry. External FIFO acknowledgement requires a correlated
 terminal navigation outcome and never treats a missing terminal as success.
+When an accepted external open cannot ACK its exact FIFO head, ProjectWorkflow
+keeps the completion and request ID in its pending-ACK operation state and
+projects that identity through its snapshot, whether or not an open-confirmation
+dialog exists. For a direct managed-project open or a terminal pre-confirmation
+failure, retry resumes the deferred external-open session so the ACK completion
+and FIFO successor both advance; a confirmation-pending ACK retries only its
+stored completion. If the user retries after pending ACK becomes visible but
+before the external-open executor enters `deferred`, the session retains that
+exact request's retry once and runs it at the deferred transition. A second
+defer does not silently loop, and a queued successor cannot overtake it.
+Workbench may dismiss or replace the notice, but cannot
+become the sole owner of the retry capability.
 
 An asynchronous result may update state only when its complete identity is
 current:
@@ -988,12 +1000,15 @@ document cache immediately. Unmounting the Review workspace then releases its
 paired preview sessions and iframes. Settled Workbench has exactly one active
 Edit Canvas; script refresh stays inside that editor's bounded A/B Runtime
 slots. During a current-draft switch, Workbench may briefly retain the prior
-Canvas as an inert, callback-free visual surface while the incoming final Canvas
-verifies exact generation and source SHA. Verification releases the old surface
-and reveals the new one in the same commit; failure reveals a retryable error.
+  Canvas as an inert, callback-free visual surface while the incoming final Canvas
+  verifies exact generation and latest source SHA, and its physical frame proves
+  a settled runtime or script-free static result. A safely projected edit may
+  retain the runtime's original startup SHA. Verification releases the old surface
+  and reveals the new one in the same commit; failure reveals a retryable error.
 Inactive document tabs retain only bounded data projections and never retain an
-editor or Runtime DOM. Normal tab switches do not mount a static display cover;
-only the explicit E2E diagnostic opt-in may do so.
+editor, Runtime DOM or display iframe. Normal tab switches use the outgoing
+Canvas handoff and reveal the incoming Canvas only after exact generation and
+source verification.
 
 Formal Review has no runtime-snapshot supplement. The trusted
 `AiReviewWorkspace` begins with the immutable static document pair and keeps
@@ -1038,8 +1053,9 @@ from historical geometry.
 
 Edit-mode content reveal is another transition of that same projection, not a
 new owner. `HtmlCanvasEditor` may propose only an allowlisted source-backed
-presentation action: the strict ARIA/HTML semantic adapter, native details and
-local disclosures. Workbench accepts it only for the current document key and
+presentation action: the strict ARIA/HTML semantic adapter, bounded data-linked
+and constant-index active-class tab adapters, native details and local
+disclosures. Workbench accepts it only for the current document key and
 preserves the shared page scroll position. The Canvas then applies the accepted
 context without calling `onChange`, SourcePatch, authored handlers or
 persistence. No React view may keep a second copy of this state for shortcut

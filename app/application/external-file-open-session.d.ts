@@ -64,6 +64,7 @@ export class ExternalFileOpenSession {
   cancelConfirmation(requestId: string): boolean;
   setAttention(requestId: string, attention: Record<string, unknown> | null): boolean;
   resume(execute: ExternalFileOpenExecution): boolean;
+  resumeExactOrWhenDeferred(requestId: string, execute: ExternalFileOpenExecution): boolean;
   reconcileDeferredSwitch(options: {
     switchBlocked: boolean;
     execute: ExternalFileOpenExecution;

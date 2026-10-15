@@ -230,6 +230,11 @@ import {
   type HtmlCanvasEditFeedback,
 } from "./html-canvas-selection-chrome";
 import {
+  advanceNoticeDeadline,
+  canvasNoticeIdentity,
+  noticePauseActive,
+} from "../lib/notice-lifetime.js";
+import {
   deriveCapabilityHoverState,
   deriveSelectionOverlay,
   stabilizeSelectionChromeProjection,
@@ -762,7 +767,10 @@ function rememberVisibleCanvasViewport({
   sourceIndex: SourceIndexValue | null;
   destination: { current: RuntimePresentationAnchor | null };
 }) {
-  if (!container?.getClientRects().length || !iframe) return;
+  // A retained outgoing Canvas is visible during Preview handoff but inert.
+  // Layout clamping can emit a stage scroll event while it is covered; that
+  // transient position must not replace the last editable reading anchor.
+  if (!container?.getClientRects().length || !iframe || container.closest("[inert]")) return;
   const next = captureRuntimePresentationAnchor({
     iframe,
     outerScrollElement: container.closest(".review-scroll-stage"),
@@ -1058,6 +1066,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   {
     html,
     sourceReceipt,
+    diagnosticActivationId,
     semanticRevision = 0,
     onChange,
     onSelect,
@@ -1108,6 +1117,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const runtimeSlotARef = useRef<HTMLIFrameElement | null>(null);
   const runtimeSlotBRef = useRef<HTMLIFrameElement | null>(null);
+  const createdEditFramesRef = useRef<WeakSet<HTMLIFrameElement>>(new WeakSet());
   const hoverHintMeasureRef = useRef<HTMLDivElement>(null);
   const selectionChromeProjectionRef = useRef<SelectionChromeProjection | null>(null);
   const pagePresentationActionCacheRef = useRef<PagePresentationActionCache | null>(null);
@@ -1839,8 +1849,47 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const [isEditing, setIsEditing] = useState(false);
   const [commentMarkers, setCommentMarkers] = useState<HtmlCanvasCommentMarker[]>([]);
   const [editFeedback, setEditFeedback] = useState<HtmlCanvasEditFeedback | null>(null);
-  const [editFeedbackPaused, setEditFeedbackPaused] = useState(false);
+  const [pausedEditFeedbackIdentity, setPausedEditFeedbackIdentity] = useState<string | null>(null);
+  const editFeedbackOperationEpochRef = useRef(0);
+  const editFeedbackDeadlineRef = useRef<{
+    identity: string;
+    deadlineAt: number;
+    remainingMs: number;
+    paused: boolean;
+  } | null>(null);
+  const publishEditFeedback = useCallback((
+    feedback: Omit<HtmlCanvasEditFeedback, "noticeIdentity">,
+  ) => {
+    setEditFeedback({
+      ...feedback,
+      noticeIdentity: canvasNoticeIdentity({
+        code: feedback.code,
+        projectId: usageProjectId,
+        documentKey: pageViewDocumentKey,
+        frameGeneration: frameLoadGenerationRef.current,
+        operationEpoch: editFeedbackOperationEpochRef.current,
+        title: feedback.title,
+        message: feedback.message,
+      }),
+    });
+  }, [pageViewDocumentKey, usageProjectId]);
   const [spacingMenuOpen, setSpacingMenuOpen] = useState(false);
+  const editFeedbackPaused = noticePauseActive({
+    visible: Boolean(editFeedback && !interactionLocked),
+    identity: editFeedback?.noticeIdentity,
+    pausedIdentity: pausedEditFeedbackIdentity,
+  });
+  const editFeedbackIdentity = editFeedback?.noticeIdentity ?? null;
+
+  useEffect(() => {
+    if (!editFeedbackIdentity || interactionLocked) {
+      setPausedEditFeedbackIdentity(null);
+    } else {
+      setPausedEditFeedbackIdentity((current) => (
+        current === editFeedbackIdentity ? current : null
+      ));
+    }
+  }, [editFeedbackIdentity, interactionLocked]);
 
   toolbarVisibleRef.current = toolbarVisible;
 
@@ -1927,16 +1976,25 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, []);
 
   useEffect(() => {
-    setEditFeedbackPaused(false);
-  }, [editFeedback?.title, editFeedback?.message]);
-
-  useEffect(() => {
-    if (!editFeedback || editFeedback.sticky || editFeedbackPaused) return undefined;
+    if (!editFeedback || editFeedback.sticky) {
+      editFeedbackDeadlineRef.current = null;
+      return undefined;
+    }
+    const deadline = advanceNoticeDeadline(editFeedbackDeadlineRef.current, {
+      identity: editFeedback.noticeIdentity,
+      dismissMs: 5_000,
+      paused: editFeedbackPaused,
+      now: Date.now(),
+    });
+    editFeedbackDeadlineRef.current = deadline;
+    if (!deadline || deadline.paused) return undefined;
     const timer = window.setTimeout(() => {
-      setEditFeedback((current) => current === editFeedback ? null : current);
-    }, 5_000);
+      setEditFeedback((current) => (
+        current?.noticeIdentity === editFeedback.noticeIdentity ? null : current
+      ));
+    }, deadline.remainingMs);
     return () => window.clearTimeout(timer);
-  }, [editFeedback, editFeedbackPaused]);
+  }, [editFeedback?.noticeIdentity, editFeedback?.sticky, editFeedbackPaused]);
 
   const syncRuntimeRefreshDiagnostics = useCallback(() => {
     const root = containerRef.current;
@@ -2067,9 +2125,18 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       sourceRevision,
       kind,
     });
+    performance.mark("stemmio:edit-canvas:candidate-create", {
+      detail: Object.freeze({
+        attemptId: identity.candidateId,
+        activationId: diagnosticActivationId,
+        targetType: "edit-canvas",
+        actionReason: kind === "static-disabled" ? "static-fallback" : "runtime-candidate",
+        generation,
+      }),
+    });
     syncRuntimeCandidateDiagnostics();
     return identity;
-  }, [syncRuntimeCandidateDiagnostics]);
+  }, [diagnosticActivationId, syncRuntimeCandidateDiagnostics]);
 
   const endRuntimeNativeEdit = useCallback(() => {
     runtimeFrameCoordinatorRef.current!.endNativeEdit();
@@ -2374,7 +2441,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       latestSourceProjectionRef.current = { source, sourceIndex: null };
       void cause;
       const message = "页面仍可正常浏览。请重新载入后再试，或添加评论说明要改什么。";
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: "暂时不能直接编辑这个页面",
         message,
@@ -2448,6 +2515,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [
     completeRuntimeAttempt,
     editRuntimeGrant,
+    publishEditFeedback,
     scheduleDynamicRuntimeRefresh,
     staticAssetBaseHref,
   ]);
@@ -2614,7 +2682,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       }
     } catch (cause) {
       latestSourceProjectionRef.current = { source, sourceIndex: null };
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: "暂时不能直接编辑这个页面",
         message: "页面仍可正常浏览。请重新载入后再试，或添加评论说明要改什么。",
@@ -2753,7 +2821,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       pendingSelectionRef.current = previousPendingSelection;
       pendingToolbarVisibleRef.current = previousPendingToolbarVisible;
       containerRef.current?.removeAttribute("data-runtime-handoff");
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c01_source_map",
         title: staticDisabled ? "静态页面也没有完成" : "页面预览没有完成",
         message: staticDisabled
@@ -2899,6 +2967,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
             const status = detail.status;
             const authorErrorCount = detail.authorErrorCount;
             const resourceFailureCount = detail.resourceFailureCount;
+            const attemptedScriptCount = detail.attemptedScriptCount;
             const elapsedMs = detail.elapsedMs;
             if (
               ![
@@ -2912,6 +2981,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
               || !Number.isSafeInteger(resourceFailureCount)
               || Number(resourceFailureCount) < 0
               || Number(resourceFailureCount) > 10_000
+              || !Number.isSafeInteger(attemptedScriptCount)
+              || Number(attemptedScriptCount) < 0
+              || Number(attemptedScriptCount) > 10_000
               || !Number.isSafeInteger(elapsedMs)
               || Number(elapsedMs) < 0
               || (status === "activation-ready"
@@ -2934,6 +3006,18 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
               String(resourceFailureCount),
             );
             containerRef.current?.setAttribute("data-runtime-activation-ms", String(elapsedMs));
+            performance.mark("stemmio:edit-runtime:author-scripts", {
+              detail: Object.freeze({
+                attemptId: candidate.attempt.candidateId,
+                activationId: diagnosticActivationId,
+                runtimeSessionId: runtimeFrame.grant.sessionId,
+                targetType: "edit-runtime",
+                actionReason: candidate.attempt.kind,
+                attemptedScriptCount: Number(attemptedScriptCount),
+                outcome: String(status),
+                elapsedMs: Number(elapsedMs),
+              }),
+            });
             const activationExceededBudget = Number(elapsedMs)
               >= EDIT_AUTHOR_RUNTIME_BUDGET.runtimeDeadlineMs;
             if (activationExceededBudget) {
@@ -2997,6 +3081,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     documentBaseHref,
     editRuntimeGrant,
     frameRender.elementGeneration,
+    publishEditFeedback,
     publishRuntimeDegradation,
     selectionForPostNativeEditIntent,
     runtimeDocumentAnalysis,
@@ -4230,7 +4315,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     // prompt is reserved for an explicit, known product-scope refusal.
     if (decision.status !== "unsupported") return;
     const message = directStructureBlockedMessage(decision);
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c03_structure_scope",
       title: "暂不支持这个结构操作",
       message,
@@ -4239,11 +4324,11 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       recovery: "none",
     });
     onEditBlockedRef.current?.(message);
-  }, []);
+  }, [publishEditFeedback]);
 
   const reportInlineStyleOverrideFailure = useCallback(() => {
     const message = "这个样式无法通过当前元素的局部修改可靠生效。可以把修改要求交给 Agent，由 Agent 调整页面样式结构。";
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c02_style_override",
       title: "暂时不能直接修改这个样式",
       message,
@@ -4252,7 +4337,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       recovery: "none",
     });
     onEditBlockedRef.current?.(message);
-  }, []);
+  }, [publishEditFeedback]);
 
   const advanceLastKnownGoodRuntimeProjection = useCallback((
     source: string,
@@ -6031,7 +6116,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       || (!validPageAnchor && !validStableAnchor)
       || !authorityVerified
     ) {
-      setEditFeedback({
+      publishEditFeedback({
         code: "canvas_c13_comment_target_not_exact",
         title: "暂时无法建立评论位置",
         message: "当前内容暂时无法建立安全的评论位置，请稍后重试。",
@@ -6060,7 +6145,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       ...(textLocator ? { textLocator } : {}),
     });
     return true;
-  }, [currentRuntimeSourceProof]);
+  }, [currentRuntimeSourceProof, publishEditFeedback]);
 
   const startEditing = useCallback((
     caretPoint?: NativeEditCaretPoint,
@@ -8020,7 +8105,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [updateOverlayPosition]);
 
   const showCommitBlocked = useCallback((reason?: string) => {
-    setEditFeedback({
+    publishEditFeedback({
       code: "canvas_c12_edit_in_progress",
       title: "当前文字还在处理中",
       message: reason
@@ -8029,7 +8114,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       sticky: false,
       recovery: "none",
     });
-  }, []);
+  }, [publishEditFeedback]);
 
   const applyPageViewContextNow = useCallback((
     nextContext: PageViewContext | null,
@@ -8166,6 +8251,33 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       getRenderedFrameDocument: () => containerRef.current?.getAttribute("data-render-verified") === "true"
         ? iframeRef.current?.contentDocument || null
         : null,
+      getCurrentDisplayRuntime: () => {
+        const frameDocument = iframeRef.current?.contentDocument;
+        const source = frameSourceHtmlRef.current;
+        const sourceIndex = sourceIndexRef.current;
+        if (
+          !frameDocument
+          || containerRef.current?.getAttribute("data-render-verified") !== "true"
+          || renderedSourceHtmlRef.current !== source
+          || !sourceIndex
+          || renderedProjectionSha256Ref.current !== sourceIndex.sourceSha256
+          || runtimeCandidateRef.current
+          || runtimeRefreshPendingRef.current
+          || nativeEditNeedsReloadRef.current
+        ) return null;
+        const analysis = runtimeDocumentAnalysis(source);
+        const runtime = runtimeFrameRef.current;
+        if (runtime) {
+          if (
+            !runtime.settled
+            || runtime.elementGeneration !== frameLoadGenerationRef.current
+            || analysis.programIdentity !== runtime.grant.programIdentity
+          ) return null;
+          return { kind: "runtime", grant: runtime.grant };
+        }
+        if (analysis.unsupportedReason || analysis.executableScripts.length > 0) return null;
+        return { kind: "static", grant: null };
+      },
       isCurrentProjectionEditable: () => !readOnlyRef.current
         && !lockedRef.current
         && renderedSourceHtmlRef.current === frameSourceHtmlRef.current
@@ -8632,7 +8744,37 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       && iframe.contentDocument === documentNode
       && frameLoadGenerationRef.current === connectedFrameGeneration
     );
+    let nativeExitPointerConsumed = false;
+    let nativeExitInClickSequence = false;
+    const consumeNativeExitEvent = (event: MouseEvent): boolean => {
+      if (!nativeExitPointerConsumed) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    };
+    const handleNativeEditOutsidePointerDown = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      nativeExitPointerConsumed = false;
+      if (event.button !== 0) return;
+      if (!isAuthoritativeConnectedDocument()) return;
+      const active = activeNativeEditRef.current;
+      if (!active || active.rootElement.contains(event.target as Node)) return;
+      nativeExitPointerConsumed = true;
+      nativeExitInClickSequence = true;
+      disabledButtonPointer = null;
+      // Capture before Chromium moves focus or completes/cancels composition.
+      // The existing clear path owns its pending-text checkpoint and queues
+      // the exit while IME is active. This gesture must not also select B.
+      consumeNativeExitEvent(event);
+      nativeEditRecoveryRef.current.cancel();
+      cancelPendingHoverResolution();
+      hoverControllerRef.current?.hide();
+      onInteractionRef.current?.();
+      clearSelection(true);
+    };
     const handleClick = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (event.detail === 1) nativeExitInClickSequence = false;
       if (!isAuthoritativeConnectedDocument()) return;
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
@@ -8900,6 +9042,13 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (nativeExitInClickSequence) {
+        nativeExitInClickSequence = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const authoritativeDocument = isAuthoritativeConnectedDocument();
       const handoffPhase = containerRef.current?.getAttribute("data-runtime-handoff");
       const canCaptureDeferredIntent = Boolean(
@@ -8992,6 +9141,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       | { target: Element; timeStamp: number; x: number; y: number }
       | null = null;
     const handleDisabledButtonPointerDown = (event: PointerEvent) => {
+      if (consumeNativeExitEvent(event)) return;
       const eventElement = event.target as Element | null;
       const disabledControl = eventElement?.closest?.(
         "button:disabled, input:disabled, select:disabled, textarea:disabled",
@@ -9000,6 +9150,9 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
         disabledButtonPointer = null;
         return;
       }
+      // Disabled controls count their own presses below; the consumed exit
+      // press was excluded and cannot be part of this activation sequence.
+      nativeExitInClickSequence = false;
       // Chromium suppresses click for disabled form controls. Treat the
       // primary pointer press as the missing Canvas click so the authored
       // control remains selectable without enabling its native action.
@@ -9149,6 +9302,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
+      if (event.detail === 1) nativeExitInClickSequence = false;
       nativeEditRecoveryRef.current.cancel();
       cancelPendingHoverResolution();
       hoverControllerRef.current?.hide();
@@ -9225,7 +9380,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (event: MouseEvent) => {
+      if (consumeNativeExitEvent(event)) return;
       if (!lockedRef.current) captureTextRange();
     };
 
@@ -9278,8 +9434,12 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     if (documentNode.body) layoutObserver?.observe(documentNode.body);
     // Input inside the iframe does not bubble to the outer reading stage.
     const handleReadingIntent = () => onReadingIntentRef.current?.();
+    const beginFeedbackOperation = () => { editFeedbackOperationEpochRef.current += 1; };
     documentNode.addEventListener("wheel", handleReadingIntent, { capture: true, passive: true });
+    documentNode.addEventListener("pointerdown", beginFeedbackOperation, true);
+    documentNode.addEventListener("keydown", beginFeedbackOperation, true);
     documentNode.addEventListener("pointerdown", handleReadingIntent, true);
+    documentNode.addEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
     documentNode.addEventListener("keydown", handleReadingIntent, true);
     documentNode.addEventListener("click", handleClick, true);
     documentNode.addEventListener("mousedown", handleMouseDown, true);
@@ -9428,7 +9588,10 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     cleanupFrameRef.current = () => {
       cancelPendingHoverResolution();
       documentNode.removeEventListener("wheel", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", beginFeedbackOperation, true);
+      documentNode.removeEventListener("keydown", beginFeedbackOperation, true);
       documentNode.removeEventListener("pointerdown", handleReadingIntent, true);
+      documentNode.removeEventListener("pointerdown", handleNativeEditOutsidePointerDown, true);
       documentNode.removeEventListener("keydown", handleReadingIntent, true);
       documentNode.removeEventListener("click", handleClick, true);
       documentNode.removeEventListener("mousedown", handleMouseDown, true);
@@ -10603,7 +10766,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   const handleEditFeedbackAction = useCallback(() => {
     const recovery = editFeedback?.recovery;
     setEditFeedback(null);
-    setEditFeedbackPaused(false);
+    setPausedEditFeedbackIdentity(null);
     if (recovery === "reload") {
       onRequestReload?.();
     }
@@ -10649,7 +10812,15 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
   }, [hoverChrome.capability, interactionLocked, selectResolvedTarget]);
   const dismissEditFeedback = useCallback(() => {
     setEditFeedback(null);
+    setPausedEditFeedbackIdentity(null);
   }, []);
+  const pauseEditFeedback = useCallback((paused: boolean) => {
+    const identity = editFeedback?.noticeIdentity;
+    if (!identity) return;
+    setPausedEditFeedbackIdentity((current) => (
+      paused ? identity : current === identity ? null : current
+    ));
+  }, [editFeedback?.noticeIdentity]);
   const handleSelectCommentMarker = useCallback((markerSelection: HtmlCanvasSelection) => {
     if (lockedRef.current) return;
     nativeEditRecoveryRef.current.cancel();
@@ -10819,6 +10990,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     interactionLocked,
     hoverHintMeasureRef,
     editFeedback,
+    editFeedbackPaused,
     reloadActionLabel,
     editFeedbackActionAvailable,
     renderedMode,
@@ -10852,6 +11024,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     deleteCommentCount,
     deleteCommentDraftIncluded,
     editFeedback,
+    editFeedbackPaused,
     editFeedbackActionAvailable,
     elementCopyAvailability,
     elementDeleteAvailability,
@@ -10887,7 +11060,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     onHoverHintClick: handleHoverHintClick,
     onEditFeedbackAction: handleEditFeedbackAction,
     onDismissEditFeedback: dismissEditFeedback,
-    onPauseEditFeedback: setEditFeedbackPaused,
+    onPauseEditFeedback: pauseEditFeedback,
     onSelectCommentMarker: handleSelectCommentMarker,
     onToolbarKeyDown: handleToolbarKeyDown,
     onToolbarPointerDownCapture: handleToolbarPointerDownCapture,
@@ -10917,6 +11090,7 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
     handleToolbarMouseDownCapture,
     handleToolbarPointerDownCapture,
     moveSelected,
+    pauseEditFeedback,
     startEditingSelection,
     toggleSpacingMenu,
   ]);
@@ -10958,6 +11132,17 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       <iframe
         key={`runtime-slot-${slotId}`}
         ref={(node) => {
+          if (node && !createdEditFramesRef.current.has(node)) {
+            createdEditFramesRef.current.add(node);
+            performance.mark("stemmio:edit-canvas:iframe-create", {
+              detail: Object.freeze({
+                activationId: diagnosticActivationId,
+                targetType: "edit-canvas",
+                actionReason: "editor-mount",
+                slotId,
+              }),
+            });
+          }
           if (slotId === "a") runtimeSlotARef.current = node;
           else runtimeSlotBRef.current = node;
           if (node && isActive) iframeRef.current = node;
@@ -11018,6 +11203,8 @@ const HtmlCanvasEditor = forwardRef<HtmlCanvasEditorHandle, HtmlCanvasEditorProp
       className={[styles.editor, className].filter(Boolean).join(" ")}
       style={containerStyle}
       data-testid="html-canvas-editor"
+      onPointerDownCapture={() => { editFeedbackOperationEpochRef.current += 1; }}
+      onKeyDownCapture={() => { editFeedbackOperationEpochRef.current += 1; }}
       data-locked={interactionLocked ? "true" : undefined}
       data-runtime-degradation={runtimeDegradation === "none" ? undefined : runtimeDegradation}
       data-element-copy-availability={elementCopyAssessment.availability}

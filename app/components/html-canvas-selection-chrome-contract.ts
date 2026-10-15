@@ -34,6 +34,7 @@ export type HtmlCanvasCommentMarker = {
 };
 
 export type HtmlCanvasEditFeedback = {
+  noticeIdentity: string;
   code: string;
   title: string;
   message: string;
@@ -70,6 +71,7 @@ export type SelectionChromeModel = {
   interactionLocked: boolean;
   hoverHintMeasureRef: RefObject<HTMLDivElement | null>;
   editFeedback: HtmlCanvasEditFeedback | null;
+  editFeedbackPaused: boolean;
   reloadActionLabel: string;
   editFeedbackActionAvailable: boolean;
   renderedMode: HtmlCanvasInteractionMode;

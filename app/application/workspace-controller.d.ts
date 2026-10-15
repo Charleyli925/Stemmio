@@ -127,7 +127,13 @@ export type WorkspaceEvent =
       type: "workbench-tabs-restore-failed";
       tabId: string;
       committed: boolean;
+      code: string;
       reason: string;
+      target?: Readonly<{
+        projectId: string;
+        documentId: string;
+        title: string;
+      }>;
     }>
   | Readonly<{
       type:
@@ -489,10 +495,6 @@ export class WorkspaceController {
   ): WorkbenchTabsSnapshot | null;
   updateDocumentSurfacePresentation(
     tabId: string,
-    presentation?: Readonly<Record<string, unknown>>,
-  ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
-  updateDocumentSurfacePresentationForToken(
-    token: import("./document-surface-cache-session.js").DocumentSurfaceCacheToken,
     presentation?: Readonly<Record<string, unknown>>,
   ): import("./document-surface-cache-session.js").DocumentSurfacePresentation | null;
   subscribe(

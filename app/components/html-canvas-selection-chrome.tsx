@@ -37,6 +37,7 @@ export const HtmlCanvasSelectionChrome = memo(function HtmlCanvasSelectionChrome
     interactionLocked,
     hoverHintMeasureRef,
     editFeedback,
+    editFeedbackPaused,
     reloadActionLabel,
     editFeedbackActionAvailable,
     renderedMode,
@@ -158,6 +159,7 @@ export const HtmlCanvasSelectionChrome = memo(function HtmlCanvasSelectionChrome
       {editFeedback && !interactionLocked ? (
         <NoticeBar
           placement="viewport"
+          identity={editFeedback.noticeIdentity}
           title={editFeedback.title}
           message={editFeedback.message}
           tone={editFeedback.tone}
@@ -167,6 +169,7 @@ export const HtmlCanvasSelectionChrome = memo(function HtmlCanvasSelectionChrome
           onAction={editFeedbackActionAvailable ? onEditFeedbackAction : undefined}
           onDismiss={onDismissEditFeedback}
           onPauseChange={onPauseEditFeedback}
+          paused={editFeedbackPaused}
           dismissLabel="关闭修改提示"
           usageCode={editFeedback.code}
           usageDisposition={editFeedback.recovery === "none"

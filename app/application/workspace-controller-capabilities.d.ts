@@ -5,7 +5,6 @@ import type {
 import type {
   DocumentSurfaceCacheSnapshot,
   DocumentSurfacePresentation,
-  DocumentSurfaceCacheToken,
 } from "./document-surface-cache-session.js";
 import type { CommentSessionSnapshot } from "./comment-session.js";
 import type {
@@ -379,10 +378,6 @@ export interface RunSubmissionControllerCapability {
 export interface DocumentSurfaceControllerCapability extends WorkspaceSnapshotReader {
   updateDocumentSurfacePresentation(
     tabId: string,
-    presentation?: Readonly<Record<string, unknown>>,
-  ): DocumentSurfacePresentation | null;
-  updateDocumentSurfacePresentationForToken(
-    token: DocumentSurfaceCacheToken,
     presentation?: Readonly<Record<string, unknown>>,
   ): DocumentSurfacePresentation | null;
 }

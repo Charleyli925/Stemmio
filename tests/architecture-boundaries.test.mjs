@@ -530,13 +530,6 @@ test("retired production modules and imports stay outside the graph", () => {
   );
   assert.match(
     retiredArtifactViolations({
-      file: "app/lib/page-view-context.js",
-      source: 'const name = "data-p";',
-    }).join("\n"),
-    /retired page-view tab adapters/u,
-  );
-  assert.match(
-    retiredArtifactViolations({
       file: "app/workbench/review-document.ts",
       source: 'export const attr = "data-stemmio-review-source-node-id";',
     }).join("\n"),
@@ -583,13 +576,6 @@ test("retired production modules and imports stay outside the graph", () => {
       source: 'this.#recoveryStore.write("stemmio-recovery:doc", {});',
     }).join("\n"),
     /document HTML recovery is Main journal only/u,
-  );
-  assert.match(
-    retiredArtifactViolations({
-      file: "app/workbench.tsx",
-      source: "export function Surface() { return HtmlDisplaySurface({}); }",
-    }).join("\n"),
-    /cannot replace the live editor with HtmlDisplaySurface/u,
   );
   assert.match(
     retiredArtifactViolations({

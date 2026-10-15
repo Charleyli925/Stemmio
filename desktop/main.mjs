@@ -355,6 +355,7 @@ const UI_PREFERENCE_CHANNELS = Object.freeze({
 const PREVIEW_CHANNELS = Object.freeze({
   createSession: "html-preview:create-session",
   revokeSession: "html-preview:revoke-session",
+  inspectSession: "html-preview:inspect-session",
 });
 const EDIT_RUNTIME_CHANNELS = Object.freeze({
   prepare: "html-edit-runtime:prepare",
@@ -3912,10 +3913,14 @@ async function fetchBridgeJson(pathname) {
     headers: { "X-Stemmio-Bridge-Token": bridgeAuthToken },
   });
   const payload = await response.json().catch(() => null);
+  const error = payload?.error && typeof payload.error === "object"
+    ? payload.error
+    : {};
   if (!response.ok || !payload || payload.ok !== true) {
     throw new ProjectFileError(
-      "REGISTERED_PROJECT_BRIDGE_REJECTED",
-      "项目目录暂时无法完成安全核对。",
+      String(error.code || "REGISTERED_PROJECT_BRIDGE_REJECTED"),
+      String(error.message || "项目目录暂时无法完成安全核对。"),
+      error.details && typeof error.details === "object" ? error.details : {},
     );
   }
   return payload;
@@ -4355,6 +4360,9 @@ function registerProjectIpc() {
       createPreviewSession,
       revokePreviewSession: (sessionId) => (
         ensurePreviewProtocolController().revokeSession(sessionId)
+      ),
+      inspectPreviewSession: (sessionId) => (
+        ensurePreviewProtocolController().inspectSession(sessionId)
       ),
       prepareEditAuthorRuntime,
       revokeEditAuthorRuntime,

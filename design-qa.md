@@ -1,5 +1,45 @@
 # Design QA
 
+## 2026-09-28 — 外部打开回执的直接路径恢复
+
+- Mode: DESIGN CHANGE；沿用现有全局短提示与工作台原位恢复横幅，不增加第三种提示。已受管项目直接打开、或确认框出现前的终态失败，都以同一 `requestId` 保留恢复责任；文案不再把失败说成 HTML 已打开。
+- First failure: 新增 Node 正反例先在旧实现上失败，暴露无确认框时待 ACK 不进入快照；补投影后进一步核对发现，直接重试 ACK 不能恢复延后的外部打开会话和后续 FIFO，因此重试改由该会话接管。Electron 测试首轮的全部目标界面断言已通过，但末尾额外读取活动项目被待 ACK 队首阻塞而超时；删去这项不属于界面验收、且由 Node 用例覆盖的读取后，原有可见性和点击断言未放宽，重跑通过。Ready 全量 AI 的独立审阅用例曾在关闭评论气泡、将指针移到顶栏后，直接 hover 已滚出视口的标记而失败；测试现在从同一原页面目标重新定位并先断言标记完全回到视口，不强制 hover 或放宽后续气泡断言。
+- CI triage: Ready 原生 Electron 曾在预览刷新及历史版本切换的临时双 iframe 交接期使用单值定位器，导致 strict-mode 错误；两处都先等待过渡收敛到唯一 iframe，仍核对刷新后的新地址和历史版本的正确内容，不接受永久双画布或错误版本。
+- Frame evidence: 另一条 Ready 测试已确认目标预览 DOM 就绪，却在下一次 `requestAnimationFrame` 记录最终可见状态之前取消采样；现在先等实际帧采到“选中且 ready”，再检查原有“等待态先于完成态”顺序，不用单次即时读取代替绘制证据。
+- Evidence: 直接打开、确认前失败及既有确认路径的定向 Node 测试 3/3；合成项目真实 Electron 中，ACK 故障时恰有一条顶部提示，关闭后恰有一条“继续打开”恢复横幅，重复失败不使恢复入口消失，定向用例 1/1。完整门禁以本次最终源码结果为准。
+- Limits: 仅验证合成项目的源码 Electron 与受控 ACK 故障；未改动已安装 Developer Preview 或真实用户项目。既有定时中断被 ACK 提示打断后可能获得新的展示时长，作为独立 P2 记录，不扩展本次 P1 修复。
+
+## 2026-09-28 — 历史当前稿与提示恢复补修
+
+- Mode: DESIGN CHANGE；没有增加新 Toast 种类。冷启动失效当前稿沿用同一条导航恢复横幅；外部 ACK 失败的首个全局提示被关闭后，只转换为一条含原请求“继续打开”的工作台横幅，不同时展示两个面。
+- Identity and lifetime: 全局短提示由业务操作 ID 或独立发布代次确定生命周期，连续同文案复制不会继承旧倒计时；画布重复报告在同一手势、文档与画布代次内共用身份，下一操作重新计时。隐藏、程序清除、替换和组件卸载都会释放 hover/focus 暂停。
+- Evidence: 合成旧项目冷启动失败及导航恢复的 Electron 用例通过；外部 ACK 失败后关闭 Toast、切换标签并从横幅继续重试的 Electron 用例通过；Canvas 真实窗口用例证明悬停提示被成功命令程序清除、下一条正常到期、同操作重复报告不续命以及新操作同文案重新计时。ProjectWorkflow 待 ACK 快照与通知生命周期定向 Node 测试通过；`gate:edit` typecheck 与 1057/1057 定向 Node 通过；新增测试后完整 `task:finish` 8/8 通过（Browser 83/83、Electron 141/141、AI 18/18）。真实语料只读预检处理了全部 8 页：4 页 `PENDING_REVIEW`，4 页 `DISCOVERY_ERROR`（精确命中点或能力探测超时），原件均未变化。预检未形成可执行的完整验收计划，因此不把它记作真实页面通过。
+- First failure: Canvas 专项第一版测试用“成功复制”清理旧提示时，旧拒绝的诊断标记仍按产品规则保留，成功命令不会将其错误吞掉。测试在进入新干净命令前仅释放该诊断标记，再沿真实成功命令检查程序清除与计时；没有修改实现或放宽最终行为断言。
+- Limits: 本轮没有修改真实用户项目、安装包或已安装应用；因此当前已安装 Developer Preview 仍保持旧行为。真实语料完整验收未完成；Draft PR 不应被描述为可直接合并或已覆盖所有历史版本产物。
+
+
+## 2026-09-28 — 历史当前稿兼容与单一失败提示
+
+- Mode: DESIGN CHANGE；用户目标是打开已登记历史项目的当前稿，失败时仍保留原页面且只看到一个可恢复提示。设计判断按 Quiet First、唯一 owner 与就近恢复出口执行。
+- Root cause: 旧版本把 `public-summary` 封存为 `result-summary`，新版本改为 `process-summary`；后续回执强化了类型核对，却没有保留这一已知的展示迁移，因而在已验证当前 HTML 发布之前拒绝打开。修复只兼容这一方向，其他 kind、Turn、Request、Attempt、Candidate、actor、status 和时间错配仍失败关闭。
+- Feedback ownership: 已登记当前稿在应用前失败时，导航 outcome 只在工作台顶部呈现一条横幅，含项目名、真实原因、“重试打开”和“关闭”；同一 project event 不再另发全局 Toast 或 2.5 秒 chrome status。已发布后的 Canvas 核对失败继续由 Canvas 原位恢复面负责，不叠加全局 Toast。
+- Notification mechanism: 全局与 Canvas 短提示共用 `notice-lifetime` 截止时间规则；重复同一稳定事实不重置计时，hover/focus 暂停后只继续剩余时间。Canvas 稳定原因码已与提醒台账对齐。
+- Evidence: 回执与通知定向 Node 28/28 通过；`gate:edit` 的 typecheck 及 targeted Node 749/749 通过（run `2026-09-28T04-26-58-503Z-edit`）；真实 Electron 合成项目同时覆盖已打开标签的 Canvas 失败与左侧当前稿应用前失败，各自只保留合同指定的一个错误面，全局 Toast 与 chrome status 均为 0，重试后打开成功。
+- Limits: 本次没有修改、复制或提交用户真实 HTML、评论、附件或项目路径；用户已安装的 Developer Preview 仍是修复前构建。本条不声称已打包、更新安装、合并或发布。
+
+
+## 2026-09-27 — 文字退出、文件菜单与标签活动
+
+- Mode: DESIGN CHANGE；AI EXPERIENCE LENS 仅检查运行、等待决定和结束时的活动反馈。依据用户三张截图及当前产品行为。
+- Truth: 编辑宿主外的第一次按下仅收口当前文字编辑；下一次才选择对象。更多菜单外的点击仅收菜单，保留原文字选择。刷新统一读取保存的当前稿，保持编辑／预览模式，Review 待决定期间禁用。
+- Copy and flow: 使用“保存到历史版本”“在 Finder 中显示”“在浏览器中打开”。菜单和快捷键导出先呈现默认勾选的历史快照选项，再打开系统保存窗口；说明当前稿仍可继续编辑。常规菜单移除旧稿找回入口，后台保留数据和失败恢复保护；ADR 0078 修订 ADR 0073 的入口与默认值。
+- Visual evidence: 已检查本地忽略输出 `output/design-qa/canvas-menu-activity/export-dialog.png`、`more-menu.png`。标题、操作、说明层级清楚，浅紫活动线不改变标签几何；编辑／评论活动会短暂显示，打开和实际 AI 工作期间持续，减少动态效果时不动画。
+- Behavior evidence: 原生 Electron 已覆盖首次外点（文字、启用／禁用控件、空白、快速双击）、IME 延迟收口、跨 iframe 收菜单、原编辑保持、导出默认值与取消／失败／重复内容、预览刷新后的物理新实例及阅读位置。AI 审阅采用主流程通过，刷新禁用且不改变候选／当前稿字节。完整门禁以本次 task:finish 报告为准。
+- Axes: 正确性以源码与落盘字节校验；信息层级与文案按截图核对；一致性统一入口；效率为首次外点与单一刷新；可发现性保留菜单动作和短说明；可访问性覆盖 Escape、焦点归还与 reduced motion；运动只表达真实活动，无新持久状态 owner。
+- First failures: 门禁中的导出助手最初仍按旧快捷键流程等待下载，已走完选项确认且保留字节断言；组词期间延后显示选项，取消后恢复 iframe 内编辑宿主，由原生测试证明。跨宿主文字用例按新规则先单击退出，再独立进入另一宿主，保留原有字节断言。文字测试漏等异步读盘；预览测试过早接受旧 ready 并在交接双 iframe 期间使用单值 locator，已改为等待旧实例退出和新实例就绪。取消导出后的焦点另以原生回归验证，不能仅依靠浏览器自动恢复。
+- Real page evidence: 固定 T1 目标的选择与 12 项输入、删除、换行、格式、保存、撤销／重做通过，源码／显示 Hash 一致且原件未变；重开在运行态等待中超时，整条专项仍记 FAIL、qualification=false。没有将未归因超时改为通过。
+- Limits: 八页只读能力预检四页待核对、四页 discovery error（点击精确定位或探测超时），不等于八页编辑资格；静态页公共 C 场景亦有既有格式限制。真实页面专项另保留本地版本绑定结果，不提交原稿、截图、私有 manifest 或日志。未打包、安装、合并或发布。
+
 ## 2026-09-24 — 提醒与对话框关闭路径盘点
 
 - Scope: 当前源码的 2 处 `NoticeBar`、1 处动态内容提示、1 处“打开 HTML”菜单、5 处原生 `<dialog>`、1 处审阅确认层、1 处设置页原位确认、5 处受控 `window.confirm` 和 1 处启动异常原生错误框。文件选择器属于用户主动操作，不计为提醒。检查了关闭、`Escape`、遮罩、聚焦、动作实际去向，以及所有覆盖标题栏的固定浮层。
@@ -3912,3 +3952,68 @@ DESIGN CHANGE. 输入区仅移除重复提示，草稿保存与发送边界保�
 - 第二次完整门禁通过了 305/305 Node、80/80 Browser、89/89 Electron，但 AI 50/52：两条测试仍要求展示本次刻意移除的机械进度和非处理态进度条。改为断言公开模型文字保留、机械活动不显示、未知 Request 仍 fail-closed 并自动核对后，两条定向 Electron 测试通过。新增底部用例首跑把帮助函数自动添加的基准评论漏算为 2 条，校正为 3 条且只对目标两条检查可达性后通过；该失败是测试计数错误。
 
 Result: passed for the scoped rebuilt-source Electron interactions and read-only private-source anchor diagnosis. 这不代表已安装 Developer Preview、真实外部模型生成质量或正式发布已更新；任务门禁结果由本次交付流程单独记录。
+
+## 2026-09-24 — 模式交接、页签操作与 AI 助手入口
+
+DESIGN CHANGE / FLOW AUDIT. 对编辑→预览、两个预览标签页之间、预览→编辑以及审阅→编辑的可见表面做有界交接检查；旧式页签工具条动作与顶栏 AI 助手的点击状态单独验收。评论输入卡片提供三个静态方案供选择，尚未改变正式界面。
+
+- 预览交接：真实 Electron 用例以延迟图片请求保持新 Preview 未 ready，确认已核对的编辑画布或上一份 Preview 持续可见且 inert，新 iframe 隐藏；新会话完成后按当前标签、generation、源 Hash 与进入代次切换为唯一可见预览。预览→编辑→同源预览的慢加载复现也通过，新实例不会复用旧就绪回执。输出见 `output/playwright/electron-smoke/`。已有审阅返回用例通过。
+- 审阅采纳首轮验证发现阅读位置回到顶部。同一用例在未修改的 `447da691` 通过，定位为交接期保留的 inert 画布接收了外层滚动收缩事件，覆盖原先的阅读锚点。画布现不从 inert 表面记录阅读位置；修复后审阅采纳用例通过，锚点仍在视口，且编辑在动态 Runtime 准备前解锁。
+- 编辑页签：有界 `data-p` / `data-tab` 和固定索引 `onclick` 页签在工具条显示“切换到此页签”；Browser 与 Electron 用例均验证一次工具条点击完成切换，页面处理器未运行，工作副本及外部 HTML 字节不变。歧义结构的 Node 负例保持无动作。截图对应的原始 HTML 尚未提供，因此该特定页面的命中情况未验收。
+- 顶栏 AI 助手：在未保存的评论输入卡片仍打开时，Electron 实际点击顶栏按钮后侧栏可见，草稿保留；按钮中心命中和 `no-drag` 检查通过。
+- 评论输入卡片 A/B/C 三个方案位于忽略的 `output/comment-composer-variants.html` 与 `output/comment-composer-variants.png`。用户选择 A 的轻标题并加入 C 的紫色定位线。正式卡片改为“添加评论”主标题和单行、可截断的目标说明；“评论内容”保留为屏幕阅读器标签，输入区只留细分隔线，焦点由卡片边缘轻微强调。真实 Electron 用例在页面元素评论输入、附件操作可见的状态下截图核对，位于 `output/design-qa/comment-composer-selected.png`，并确认草稿与顶栏 AI 助手交互通过。
+
+Result: passed for the named rebuilt-source Electron and Browser interactions and the selected comment-card composition; the exact HTML shown in the tab screenshot is still unverified. 附件与 AI 引用完整性由单独的聚焦验证记录，不由上述 UI 证据推断。
+
+## 2026-09-24 — T1 页签与预览加载时序复核
+
+DESIGN CHANGE / FLOW AUDIT. 以用户三张真实桌面截图作为问题证据；当前源码的隔离 Electron 窗口以本地 T1 和欢迎页副本重放，原文件未修改，诊断输出保存在忽略目录 `output/t1-diagnostics/`。
+
+- 当前稿互切：旧画布在目标运行态完成之前保持原节点和尺寸；T1 进入目标时，候选从静态帧经历 preparing/running，直到 settled 且 15 个图表画布存在才交接。候选画布在等待中正常布局、以透明度遮住，避免揭示时才开始绘制。窗口画布区域逐帧截图采样在两个切换方向都没有全白帧；欢迎页与 T1 各只出现一次最终画面转换。这个证据针对所测窗口、两份本地 HTML 和本轮交互。
+- 跨标签进入 T1 预览：真实 T1 时序记录依次出现目标预览模式选中、预览按钮加载状态、预览 ready；正式页就绪前仍显示旧页。目标标签被选中但新页尚未就绪时，紫色下划线持续显示，到 ready 才撤下。合成 Electron 回归用慢资源保持加载阶段，核对这三个状态的顺序、转圈图标、旧画布连续可见和无浮动“正在打开预览”文案。
+- 加载状态截图：合成 Electron 页面见 `output/design-qa/preview-opening-order.png`，紫色线分别贴在目标标签和“预览”按钮，转圈图标占据原眼睛图标的位置；旧页面仍完整可见。
+- 视觉规则：转圈图标占用原眼睛图标的位置，按钮文字和尺寸不变；系统减少动态效果时停止旋转，保留静态加载图标。失败时保留就近重试入口。
+- 首次完整任务门禁的 134 条 Electron 中有两条失败：提前投影目标模式一度覆盖了用户在后台画布核对时主动点选“预览”的状态；选中标签的加载后缀又改变了历史/重启流程依赖的稳定无障碍名称。模式提前投影现只用于尚未进入预览的已保存预览目标，选中标签保持原无障碍名称并用 `aria-busy` 表示加载。两个原失败用例与新增的跨标签时序用例定向重跑 3/3 通过；完整门禁以修复后的独立结果为准。
+
+Result: passed for the focused source Electron flows and real T1/欢迎页 reproduction; no installer or release artifact was produced.
+
+### 2026-09-24 追加：紫线、快速切换白帧与跨文档残影
+
+DESIGN CORRECTION. 用户补充截图及实际操作表明，上段的 DOM 就绪与抽样不足以证明每次画面交接都无白帧。已用真实欢迎页副本在 Electron 主进程连续截图，修复前 12 次编辑／预览往返的 58 帧中抓到 4 帧纯白；同一时刻 DOM 仍报告编辑 iframe 存在、尺寸正常，说明仅靠 DOM ready 会漏掉合成层交接。逐帧数据保存在忽略的 `output/t1-diagnostics/rapid-baseline.jsonl`。
+
+- 等待目标标签从 `pendingTabId` 出现起取得紫色线，旧标签同时取消视觉选中态；语义 `aria-selected` 与页面权威仍保持原标签，直到导航提交。紫线不再做透明度脉冲，提交后持续到目标画布或预览就绪。
+- 预览 iframe 的 `load` 后加入带 token、requestId 和 frame 身份核对的可见绘制回执：内容页首个内容绘制后给子页与宿主合成机会，脚本受限或空白页采用有界回退。预览→编辑保留原生预览 iframe，直到同一文档的编辑运行态就绪并经过绘制交接；目标预览就绪时退役上一文档的编辑画面。
+- 最终源码下，真实欢迎页 5 轮各 12 次往返共采样 497 帧，未见纯白（忽略输出 `output/t1-diagnostics/exact-final-paint-{1..5}.jsonl`）；真实欢迎页多次切换后转 T1 预览→编辑的逐帧记录只显示 T1 自身预览与编辑画面，旧欢迎页 iframe 不再出现。交接时 T1 预览 iframe 始终为 872px 高，编辑容器在遮盖下准备到 2294px，直到运行态 settled 后才揭示。合成 Electron 用例覆盖目标紫线与旧紫线互斥、首个内容绘制回执、跨文档残影退役、预览原尺寸保留到脚本编辑画布就绪。结果仅覆盖所测窗口、两份本地 HTML 和这些操作，原始 HTML 未修改也未入库。
+
+## 2026-09-26 — 当前稿短时预览实例复用
+
+DESIGN CHANGE / FLOW AUDIT. 原有编辑与预览模式控件、加载反馈和失败重试位置保持一致；本次核对的是切换后的真实页面身份、就绪时机与交互权限。合成 Electron 走 Preview→Edit→Preview，验证同一物理 iframe 和脚本启动标记、零新增 Preview 会话，编辑返回后画布可操作；显式刷新、源码修改、隐藏超过 3 秒及 Main 资源会话撤销分别验证新加载和新回执。完整任务门禁 8/8 步骤通过，含 Browser 选中测试、Electron 129/129 和 AI 18/18。另以 8 份真实 HTML 的隔离副本逐一运行相同快速往返，8/8 得到 verified 显示并复用，原文件哈希均不变；此项是聚焦复用验收，不代替完整私有 HTML 场景矩阵。
+
+Result: passed for the scoped source-build Electron flow. 查询 Main 会话后到实际交接之间仍存在极短的并发撤销窗口；后续资源请求保持原有失败关闭行为。未验证安装包或长期跨标签保留。
+
+### 2026-09-26 追加：失败交接与滚动中的恢复入口
+
+DESIGN CORRECTION. 合并前审查发现 Edit 交接失败时，隐藏的 Preview 实例会绕过三秒释放计时；终止交接现在立即撤销复用资格并卸载旧 iframe，正常已就绪 Edit 的短时复用不变。显示决定测试覆盖 opening、settled、failed、closed 的保留资格。
+
+Ready CI 的完整 AI 通道暴露另一条可见问题：恢复卡片内容已出现，但画布所在外层容器滚动时，AI 侧栏跟着页面内容上移，卡片只有部分进入窗口。真实 Electron 几何记录显示侧栏顶部从 88px 移到 -712px，恢复卡片移到窗口上方；旧布局下主动滚动画布 800px 的回归用例明确失败。侧栏在原滚动容器中改为 sticky 后，同一用例重复 3 次均确认卡片和“重试恢复页面”按钮完整可见，点击后恢复链路继续完成。此证据来自 1440×960 的源码构建 Electron 窗口；最终完整门禁另行核对。
+
+最终审查又发现自动保存尚未确认时，旧 Preview 资格只绑定已保存 Hash；新增真实 Electron 回归在编辑已接受、保存请求被控制性延迟时，旧实现能收到新 iframe 的 verified 回执，却因继续核对旧 Hash 而让 Preview 保持 opening（旧代码定向失败）。现在以已接受编辑修订即时区分实例，并以工作 HTML Hash 核对当前画面；保存完成后同一新 iframe 和脚本启动标记不变。该回归与未修改的快速复用、已保存编辑失效用例在修改后合计 3/3 通过。最终任务门禁与 Ready 门禁须针对新的提交重新运行。
+
+## 2026-09-26 — 仅进入预览时延后编辑运行态准备
+
+DESIGN CHANGE / FLOW AUDIT. 用同一组静态 A／脚本 B 合成夹具、同一 Electron 环境，先打开 B 并保存 Preview 模式，再回 A，随后直接切回 B Preview 和进入 Edit。修复前回到 B Preview 的 `Edit Runtime prepare-start` 增加 1 次；新增回归在修复前实际失败（3→4）。修复后连续三个独立运行在 Preview 阶段均增加 0 次，真正进入 Edit 后均增加 1 次且作者脚本执行 1 次；Preview 会话均增加 1 次，编辑 iframe 均增加 2 次，与基线一致。受限于跨进程采样和窗口调度，Preview 可交互耗时的三次范围从 294–298ms 变为 191–300ms，进程工作集峰值从约 1088–1100MB 变为 1088–1115MB；这组样本只支持“少一次无用准备”，不证明耗时或内存明显改善。临时性能夹具已移除，正式回归保留用户路径和次数断言。
+
+Result: passed for the scoped synthetic Electron flow. `task:finish` 的 9/9 步骤通过，含 Electron 130/130 与 AI 18/18。另用指定真实 HTML 语料的 8 份隔离副本逐一验证已保存 Preview 标签的返回、零新增 Edit Runtime 准备、再进入可写 Edit，8/8 通过；原件及副本的初始 HTML 哈希不变，导入后的受管理工作副本在模式往返期间也不变。官方只读能力预检覆盖全部 8 份原件，结果为 4 `PENDING_REVIEW`、4 `DISCOVERY_ERROR`（探针定位或超时），原件全部未变；因此定向验收不能被表述为完整私有场景矩阵通过。既有安全文字、样式、结构投影和过时导航的正确性仍由相关正式回归与任务门禁验证；跨标签长期保留、安装包与资源峰值优化不在本次结论内。
+
+## 2026-09-27 — PR 623 菜单与导出视觉反馈修正
+
+DESIGN CORRECTION。用户提供的三张当前 PR 截图是本次 source visual truth；红框只标识希望删除的导出说明与底部留白，不扩大为新产品行为。
+
+- 导出对话框：删除“将当前内容保存为一份 HTML 文件”，同时移除指向已删节点的 `aria-describedby`；复选项自身的帮助文字与关联保留。只对 `.export-html-card` 收紧纵向间距和按钮下方留白，不影响其他共享对话框。
+- 更多菜单：独立动作改为“保存为历史版本”；导出复选项仍为“同时保存到历史版本”。所有菜单项共用 4px 外部间距与统一纵向 padding，主标题使用 12px/650，说明使用 9px/400 和次要灰；不用中文斜体。Electron 几何断言证明前两项间距与 Finder／浏览器两项一致，主标题字号大于说明。
+- 刷新反馈：“更多 → 刷新”完成并核对新画布后保持安静，不再显示“页面已重新加载，可以继续编辑”。文件重读后仍不可编辑、刷新失败和只读故障恢复的反馈保留。
+- 视觉与行为证据：重建 Renderer 后，隔离合成项目的 5 条 Electron 用例全部通过，覆盖当前稿菜单、导出默认值／取消／字节与历史不变量、编辑与预览刷新的新实例／新 generation，以及成功提示缺席。截图为 `output/playwright/native-dom-electron/results/electron-workbench-tabs-El-ecc0b-s-with-an-optional-snapshot/current-draft-export-menu.png` 和同目录的 `current-draft-export-dialog.png`。
+- 环境记录：首次受限环境在 `electron.launch` 前 SIGABRT，5 条均未进入产品断言；核对每条用例的独立临时 profile 和动态端口后，授权环境复测 5/5 通过，0 retry/flaky。已存在的手动 Electron 进程未停止、未交互。
+- 边界：这是源码构建、标准桌面视口和合成项目的定向证据；窄窗口截图、安装包、合并和发布不在本次结论内。
+
+Result: passed for the scoped rebuilt-source Electron menu, export-dialog and ordinary-refresh behaviors; no user HTML, package or release artifact was changed.

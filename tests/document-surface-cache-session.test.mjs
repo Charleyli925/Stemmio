@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  documentSurfaceCacheEntryMatchesToken,
-  documentSurfaceCacheToken,
   DocumentSurfaceCacheSession,
-  sameDocumentSurfaceCacheToken,
 } from "../app/application/document-surface-cache-session.js";
 
 const hash = (digit) => `sha256:${String(digit).slice(-1).repeat(64)}`;
@@ -39,18 +36,6 @@ function fixture(id, html = `<p>${id}</p>`, sourceSha256 = hash(id)) {
 function capture(session, id, html = `<p>${id}</p>`) {
   return session.capture(fixture(id, html));
 }
-
-test("cache readiness is fenced by the exact tab and source token", () => {
-  const token = documentSurfaceCacheToken({ tabId: "tab_a", sourceSha256: hash("a") });
-  const same = documentSurfaceCacheToken({ tabId: "tab_a", sourceSha256: hash("a") });
-  const changed = documentSurfaceCacheToken({ tabId: "tab_a", sourceSha256: hash("b") });
-  const entry = { tabId: "tab_a", sourceSha256: hash("a") };
-  assert.equal(Object.isFrozen(token), true);
-  assert.equal(sameDocumentSurfaceCacheToken(token, same), true);
-  assert.equal(sameDocumentSurfaceCacheToken(token, changed), false);
-  assert.equal(documentSurfaceCacheEntryMatchesToken(entry, token), true);
-  assert.equal(documentSurfaceCacheEntryMatchesToken({ ...entry, sourceSha256: hash("b") }, token), false);
-});
 
 test("surface cache admits only exact persisted and Canvas-verified projections", () => {
   const session = new DocumentSurfaceCacheSession();
@@ -138,36 +123,6 @@ test("light presentation state survives HTML eviction and rejects stale source c
   assert.equal(changed.canvasMode, "edit");
   assert.equal(changed.scrollTop, 0);
   assert.equal(changed.pageViewContext, null);
-});
-
-test("a delayed display callback cannot relabel old-version scroll as the new source", () => {
-  const session = new DocumentSurfaceCacheSession();
-  const tabId = fixture("a").tab.tabId;
-  capture(session, "a", "<p>first</p>");
-  const firstToken = { tabId, sourceSha256: hash("a") };
-  assert.equal(
-    session.updatePresentationForToken(firstToken, { scrollTop: 420 })?.scrollTop,
-    420,
-  );
-
-  session.capture(fixture("a", "<p>second</p>", hash("b")));
-  assert.equal(
-    session.updatePresentationForToken(firstToken, { scrollTop: 840 }),
-    null,
-  );
-  assert.deepEqual(
-    session.snapshot.presentations.find((entry) => entry.tabId === tabId),
-    {
-      tabId,
-      projectId: "project_a",
-      documentId: "doc_a",
-      sourceSha256: hash("b"),
-      canvasMode: "edit",
-      pageViewContext: null,
-      scrollTop: 0,
-      byteLength: 0,
-    },
-  );
 });
 
 test("surface cache eviction makes old tabs cold without changing tab identity", () => {

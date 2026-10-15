@@ -1676,7 +1676,7 @@ test("created history opens through verified workspace and lost opened acknowled
   assert.ok(harness.calls.order.indexOf("current-surface") < harness.calls.order.indexOf("render"));
   assert.equal(harness.calls.currentSurface[0].context.workingCopyId, "work_ver_0002");
   assert.equal(harness.calls.drain.length, 0);
-  assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "created");
   assert.equal(harness.calls.createHistory.length, 0);
 });
 
@@ -1833,13 +1833,16 @@ test("restart restores an unacknowledged creation and leaves acknowledged operat
   assert.equal(harness.calls.createHistory.length, 0);
 });
 
-test("restart acknowledges a created Version after the hydrated current Canvas settles", async () => {
+test("restart retries a lost opened acknowledgement after the hydrated current Canvas settles", async () => {
   let acknowledgements = 0;
   const operationId = "history_open_0001";
   const harness = createHarness({
     currentDraft: true,
     queryCreation: async () => historyCreatedResult(operationId),
-    confirmCreation: async () => { acknowledgements += 1; },
+    confirmCreation: async () => {
+      acknowledgements += 1;
+      if (acknowledgements === 1) throw new Error("opened acknowledgement unavailable once");
+    },
   });
   const locator = harness.projectSession.openLocator(HISTORY_WORKING_COPY_PATH);
   const context = harness.projectSession.register({
@@ -1873,9 +1876,11 @@ test("restart acknowledges a created Version after the hydrated current Canvas s
 
   await harness.workflow.restoreHistoryCreation({ operationId, context });
 
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "created");
+  assert.equal((await harness.workflow.returnToCurrent({ context })).status, "succeeded");
   assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
-  assert.equal(acknowledgements, 1);
-  assert.equal(harness.calls.render.length, 1);
+  assert.equal(acknowledgements, 2);
+  assert.equal(harness.calls.render.length, 2);
 });
 
 test("return-current reconciles committed creation rather than re-exposing the old working file", async () => {
@@ -1917,7 +1922,7 @@ test("later iteration while reading the created workspace stops publication", as
 });
 
 
-test("repairing an opened acknowledgement verifies current Canvas without reopening its workspace", async () => {
+test("a lost opened acknowledgement stays retryable without reopening its workspace", async () => {
   let reads = 0;
   let acknowledgements = 0;
   const harness = createHarness({ queryCreation: async () => historyCreatedResult("history_open_0001"),
@@ -1929,7 +1934,7 @@ test("repairing an opened acknowledgement verifies current Canvas without reopen
   await harness.workflow.queryHistoryCreation({ operationId: "history_open_0001", context: createdContext });
   const commits = harness.calls.commit.length;
   assert.equal((await harness.workflow.returnToCurrent({ context: createdContext })).status, "succeeded");
-  assert.equal(harness.workflow.getSnapshot().creation.phase, "opened");
+  assert.equal(harness.workflow.getSnapshot().creation.phase, "created");
   assert.equal(reads, 1);
   assert.equal(harness.calls.commit.length, commits);
   assert.equal(acknowledgements, 2);

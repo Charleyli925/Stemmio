@@ -377,8 +377,12 @@ export const CommentRailView = memo(function CommentRailView({
               >
                 <header>
                   <div className="composer-target" data-empty={!draftTarget ? "true" : "false"}>
-                    <strong>{draftTargetScope}</strong>
-                    <span>“{insertionLabel(draftTarget)}”</span>
+                    <strong>添加评论</strong>
+                    <span title={insertionLabel(draftTarget)}>
+                      {isExplicitGlobalCommentTarget(draftTarget)
+                        ? "整个页面"
+                        : `${draftTargetScope} · ${insertionLabel(draftTarget)}`}
+                    </span>
                   </div>
                   <button
                     className="comment-tool-button"
@@ -389,7 +393,7 @@ export const CommentRailView = memo(function CommentRailView({
                     onClick={closeCommentComposer}
                   ><XIcon aria-hidden="true" size={17} weight="bold" /></button>
                 </header>
-                <label htmlFor="round-comment-draft">评论内容</label>
+                <label className="sr-only" htmlFor="round-comment-draft">评论内容</label>
                 {!draftTargetCanSave ? (
                   <div className="comment-target-recovery" role="status">
                     <span>
@@ -410,9 +414,7 @@ export const CommentRailView = memo(function CommentRailView({
                   ref={composerRef}
                   value={draft}
                   disabled={!draftTargetCanSave || interactionLocked}
-                  placeholder={isExplicitGlobalCommentTarget(draftTarget)
-                    ? "输入对整个页面的修改要求…"
-                    : "输入对这部分内容的修改要求…"}
+                  placeholder="写下修改要求…"
                   onChange={(event) => {
                     onComposerDraftChange(event.target.value);
                   }}

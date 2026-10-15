@@ -168,42 +168,6 @@ test("project version lists retain compact unweighted rows", async () => {
   assert.doesNotMatch(css, /sidebar-project-rules-copy|<small>PROJECT\.md/u);
 });
 
-test("cache mounts only explicit ready handoff surfaces on live canvas geometry", async () => {
-  const css = await readWorkbenchCascadeCss();
-  const moduleCss = await readFile(new URL(
-    "../app/workbench/workbench-document-surface-cache.module.css",
-    import.meta.url,
-  ), "utf8");
-  const cacheComponent = await readFile(new URL(
-    "../app/workbench/WorkbenchDocumentSurfaceCache.tsx",
-    import.meta.url,
-  ), "utf8");
-
-  assert.match(moduleCss, /\.cache\s*\{[\s\S]*?position:\s*absolute/u);
-  assert.match(css, /\.workbench > \.review-scroll-stage > \.canvas-column\s*\{[\s\S]*?position:\s*relative/u);
-  assert.match(moduleCss, /\.cache\[data-visible="true"\]\s*\{[\s\S]*?padding:\s*0/u);
-  assert.doesNotMatch(cacheComponent, /activeTabId/u);
-  assert.match(cacheComponent, /candidateTabId/u);
-  assert.match(cacheComponent, /candidateHandoffId/u);
-  assert.match(cacheComponent, /visibleHandoffId/u);
-  assert.match(cacheComponent, /acceptDisplayReady/u);
-  assert.match(cacheComponent, /sameDocumentSurfaceHandoffToken/u);
-  assert.match(cacheComponent, /presentationKey.*handoffId/u);
-  assert.match(cacheComponent, /handoffSurfaces/u);
-  assert.match(cacheComponent, /visibleHandoffToken/u);
-  assert.match(cacheComponent, /data-visible-handoff-id/u);
-  assert.match(cacheComponent, /data-surface-role/u);
-  assert.match(cacheComponent, /onDisplayReady=\{displayReadyToken \? reportDisplayReady : undefined\}/u);
-  assert.match(cacheComponent, /onScrollableReady=\{displayReadyToken \? reportScrollableReady : undefined\}/u);
-  assert.doesNotMatch(cacheComponent, /MutationObserver|querySelector|data-display-ready|presentedToken/u);
-  assert.doesNotMatch(cacheComponent, /sameDocumentSurfaceCacheToken\(visibleToken, candidateToken\)/u);
-  assert.doesNotMatch(cacheComponent, /\|\| "presented"/u);
-  assert.match(cacheComponent, /data-mounted-count=\{handoffSurfaces\.length\}/u);
-  assert.match(cacheComponent, /hidden=\{!isPresented\}/u);
-  assert.match(cacheComponent, /key=\{presentationKey\}/u);
-  assert.match(cacheComponent, /data-source-sha256=\{entry\.sourceSha256\}/u);
-});
-
 test("settings stays a flat 780px canvas with one bordered row container", async () => {
   const css = await readWorkbenchCascadeCss();
   assert.match(css, /\.workbench-settings-page\s*\{[\s\S]*?background:\s*#fff/u);

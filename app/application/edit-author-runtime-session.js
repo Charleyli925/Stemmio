@@ -179,6 +179,8 @@ function normalizedGrant(value, request) {
  * accepted Finder/source authority changes publish a new receipt and generation
  * and therefore rebuild the physical Canvas instead of using this capability.
  */
+let editRuntimeDiagnosticSequence = 0;
+
 export class EditAuthorRuntimeSession {
   #port;
   #listeners = new Set();
@@ -191,6 +193,8 @@ export class EditAuthorRuntimeSession {
   #runtimeAttempt = null;
   #attemptGeneration = 0;
   #requestSequence = 0;
+  #diagnosticSessionId = `edit-runtime-${++editRuntimeDiagnosticSequence}`;
+  #retryRequested = false;
   #disposed = false;
 
   constructor({ port = null } = {}) {
@@ -231,13 +235,28 @@ export class EditAuthorRuntimeSession {
     }
   }
 
-  #revoke(grant) {
+  #revoke(grant, actionReason = "session-replaced") {
     if (!grant?.sessionId || !this.#port) return;
-    void Promise.resolve(this.#port.revoke(grant.sessionId)).catch(() => undefined);
+    const startedAt = globalThis.performance?.now?.() ?? 0;
+    const markRelease = (outcome) => {
+      globalThis.performance?.mark?.("stemmio:edit-runtime:grant-released", {
+        detail: Object.freeze({
+          runtimeSessionId: grant.sessionId,
+          canvasGeneration: grant.canvasGeneration,
+          targetType: "edit-runtime",
+          actionReason,
+          outcome,
+          elapsedMs: Math.round((globalThis.performance?.now?.() ?? startedAt) - startedAt),
+        }),
+      });
+    };
+    void Promise.resolve(this.#port.revoke(grant.sessionId)).then(() => {
+      markRelease("released");
+    }).catch(() => markRelease("failed"));
   }
 
-  #revokeActiveGrants() {
-    this.#revoke(this.#snapshot.grant);
+  #revokeActiveGrants(actionReason = "session-replaced") {
+    this.#revoke(this.#snapshot.grant, actionReason);
   }
 
   #transitionToStatic(
@@ -250,7 +269,7 @@ export class EditAuthorRuntimeSession {
     this.#pendingPreparation = null;
     this.#activeRequest = null;
     this.#runtimeAttempt = null;
-    this.#revokeActiveGrants();
+    this.#revokeActiveGrants("static-fallback");
     this.#emit({
       phase,
       sourceSha256: identity?.sourceSha256 || null,
@@ -355,6 +374,16 @@ export class EditAuthorRuntimeSession {
       return this.#snapshot;
     }
 
+    const preparationReason = this.#retryRequested
+      ? "explicit-retry"
+      : authorityJustBecameAvailable
+        ? "source-authority"
+        : !this.#identity
+          ? "initial-open"
+          : this.#identity.sourcePath !== identity.sourcePath
+            ? "document-change"
+            : "canvas-generation";
+    this.#retryRequested = false;
     this.#attemptGeneration += 1;
     this.#pendingPreparation = null;
     this.#activeRequest = null;
@@ -430,6 +459,8 @@ export class EditAuthorRuntimeSession {
       attemptGeneration,
       identity,
       request,
+      reason: preparationReason,
+      scriptCount: scriptContract.executableScripts.length,
       started: false,
     });
     this.#emit({
@@ -459,21 +490,47 @@ export class EditAuthorRuntimeSession {
     ) return false;
     this.#pendingPreparation = Object.freeze({ ...pending, started: true });
     const { attemptGeneration, identity, request } = pending;
+    const startedAt = globalThis.performance?.now?.() ?? 0;
+    const diagnosticAttemptId = `${this.#diagnosticSessionId}:${attemptGeneration}`;
+    const markPreparation = (outcome, runtimeSessionId = undefined) => globalThis.performance?.mark?.("stemmio:edit-runtime:prepare-result", {
+      detail: Object.freeze({
+        attemptId: diagnosticAttemptId,
+        canvasGeneration: identity.canvasGeneration,
+        ...(runtimeSessionId ? { runtimeSessionId } : {}),
+        targetType: "edit-runtime",
+        actionReason: pending.reason,
+        plannedScriptCount: pending.scriptCount,
+        outcome,
+        elapsedMs: Math.max(0, Math.round((globalThis.performance?.now?.() ?? startedAt) - startedAt)),
+      }),
+    });
+    globalThis.performance?.mark?.("stemmio:edit-runtime:prepare-start", {
+      detail: Object.freeze({
+        attemptId: diagnosticAttemptId,
+        canvasGeneration: identity.canvasGeneration,
+        targetType: "edit-runtime",
+        actionReason: pending.reason,
+        plannedScriptCount: pending.scriptCount,
+      }),
+    });
     void Promise.resolve(this.#port.prepare(request)).then((result) => {
       if (
         this.#disposed
         || attemptGeneration !== this.#attemptGeneration
         || !sameExactIdentity(this.#identity, identity)
       ) {
-        this.#revoke(result);
+        markPreparation("cancelled");
+        this.#revoke(result, "preparation-cancelled");
         return;
       }
       this.#pendingPreparation = null;
       const grant = normalizedGrant(result, request);
       if (!grant) {
+        markPreparation("failed");
         this.#transitionToStatic("static-fallback", "prepare-failed", identity);
         return;
       }
+      markPreparation("ready", grant.sessionId);
       this.#emit({
         phase: "ready",
         sourceSha256: identity.sourceSha256,
@@ -486,7 +543,11 @@ export class EditAuthorRuntimeSession {
         this.#disposed
         || attemptGeneration !== this.#attemptGeneration
         || !sameExactIdentity(this.#identity, identity)
-      ) return;
+      ) {
+        markPreparation("cancelled");
+        return;
+      }
+      markPreparation("failed");
       this.#transitionToStatic("static-fallback", "prepare-failed", identity);
     });
     return true;
@@ -519,6 +580,15 @@ export class EditAuthorRuntimeSession {
       && sameRuntimeAttempt(this.#runtimeAttempt, attempt)
     ) return true;
     this.#runtimeAttempt = attempt;
+    globalThis.performance?.mark?.("stemmio:edit-runtime:execute-start", {
+      detail: Object.freeze({
+        attemptId: attempt.candidateId,
+        runtimeSessionId: grant.sessionId,
+        canvasGeneration: grant.canvasGeneration,
+        targetType: "edit-runtime",
+        actionReason: "candidate-activation",
+      }),
+    });
     this.#emit({
       phase: "running",
       sourceSha256: grant.sourceSha256,
@@ -555,6 +625,15 @@ export class EditAuthorRuntimeSession {
       || grant.canvasGeneration !== canvasGeneration
     ) return false;
     this.#runtimeAttempt = null;
+    globalThis.performance?.mark?.("stemmio:edit-runtime:execute-result", {
+      detail: Object.freeze({
+        attemptId: attempt.candidateId,
+        runtimeSessionId: grant.sessionId,
+        canvasGeneration: grant.canvasGeneration,
+        targetType: "edit-runtime",
+        outcome,
+      }),
+    });
     // Replacing a disposable iframe is coordination, never authored-program
     // failure. Return the shared grant to the last truthful usable phase so a
     // successor attempt can begin without revocation or static degradation.
@@ -604,6 +683,7 @@ export class EditAuthorRuntimeSession {
       || !this.#snapshot.retryAvailable
     ) return false;
     this.#identity = null;
+    this.#retryRequested = true;
     const snapshot = this.refresh({
       html: identity.html,
       sourceSha256: identity.sourceSha256,
@@ -618,7 +698,7 @@ export class EditAuthorRuntimeSession {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#attemptGeneration += 1;
-    this.#revokeActiveGrants();
+    this.#revokeActiveGrants("session-disposed");
     this.#identity = null;
     this.#latestSourceIdentity = null;
     this.#latestSourceAuthoritative = false;

@@ -42,7 +42,6 @@ export type UseAiConversationOptions = {
   }>[];
   selectedReasoningId?: string | null;
   reviewing?: boolean;
-  commentComposerOpen?: boolean;
   draftReadOnly?: boolean;
   canvasMode: "edit" | "preview";
   /** False while a Start/Settings/project-rules tab owns the window. */
@@ -82,7 +81,6 @@ export function useAiConversation({
   reasoningChoices = [],
   selectedReasoningId = null,
   reviewing = false,
-  commentComposerOpen = false,
   draftReadOnly = false,
   canvasMode,
   documentPresented = true,
@@ -104,8 +102,10 @@ export function useAiConversation({
   const active = documentPresented
     && Boolean(sourcePath)
     && (canvasMode === "preview" || reviewing);
-  const visible = active && open && !commentComposerOpen;
-  // Edit, Start, Settings and comment composition temporarily hide the dock.
+  const visible = active && open;
+  // Edit, Start and Settings temporarily hide the dock. An open comment
+  // composer belongs to Edit and must not suppress the assistant after the
+  // user explicitly opens it in Preview or Review.
   // They do not rewrite the Document's presentation preference: an explicit
   // hide/toggle owns that decision, and a restored Review can reopen in place.
 

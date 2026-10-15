@@ -279,6 +279,9 @@ test("mixed block parents edit as one frozen-subtree island", {
 
   const ordinary = frame.locator(caseSelector("ordinary-inline"));
   const ordinaryChild = frame.locator(caseSelector("ordinary-inline-child"));
+  await ordinaryChild.click({ force: true });
+  await expect(mixedParent).not.toHaveAttribute("contenteditable", "true");
+  await expect(ordinary).not.toHaveAttribute("contenteditable", "true");
   await ordinaryChild.dblclick({ force: true });
   await expect(ordinary).toHaveAttribute("contenteditable", "true");
   await expect(ordinaryChild).not.toHaveAttribute("contenteditable", "true");

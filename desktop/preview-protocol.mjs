@@ -700,6 +700,17 @@ export function createPreviewProtocolController({
     });
   };
 
+  const inspectSession = (sessionIdInput) => {
+    const sessionId = normalizeSessionId(sessionIdInput);
+    const session = sessionId ? sessions.get(sessionId) : null;
+    if (!session) return Object.freeze({ active: false });
+    if (session.lastAccessedAt < now() - sessionTtlMs) {
+      sessions.delete(sessionId);
+      return Object.freeze({ active: false });
+    }
+    return Object.freeze({ active: true });
+  };
+
   const activateNavigationFallback = (sessionUrlInput) => {
     let sessionUrl;
     try {
@@ -818,6 +829,7 @@ export function createPreviewProtocolController({
     installFor,
     createSession,
     revokeSession,
+    inspectSession,
     activateNavigationFallback,
     dispose,
     sessionCount: () => sessions.size,

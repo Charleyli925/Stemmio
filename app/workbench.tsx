@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,6 +16,7 @@ import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
 import AttachmentLightbox from "./components/AttachmentLightbox";
 import EditRuntimeStaticFallbackNotice from "./components/EditRuntimeStaticFallbackNotice";
 import HtmlCanvasEditor from "./components/HtmlCanvasEditor";
+import { sameRuntimeGrant } from "./components/html-canvas-frame.js";
 import type {
   HtmlCanvasEditRuntimeLoadOutcome,
   HtmlCanvasCommentLayoutTarget,
@@ -33,13 +35,18 @@ import AboutStemmioDialog from "./components/AboutStemmioDialog";
 import SettingsPage from "./components/SettingsPage";
 import { AgentDeliveryButton, type AgentDeliveryMode } from "./components/AgentDeliveryButton";
 import HistoryCreationDialog from "./components/HistoryCreationDialog";
-import PreservedDraftDialog from "./components/PreservedDraftDialog";
+import ExportHtmlDialog from "./components/ExportHtmlDialog";
 import { CurrentDraftStatus } from "./workbench/current-draft-status";
 import CancelAiRunDialog from "./components/CancelAiRunDialog";
 import HtmlInteractionPreview, {
   type HtmlInteractionPreviewHandle,
+  type PreviewDisplayResult,
+  type PreviewOpenReason,
 } from "./components/HtmlInteractionPreview";
+import WorkbenchActivePreview from "./workbench/WorkbenchActivePreview";
+import { allowsPreviewLeaseRetention, type DisplayTarget } from "./workbench/display-handoff-decision";
 import { useAiConversation } from "./workbench/use-ai-conversation";
+import { useDisplayHandoff } from "./workbench/use-display-handoff";
 import NoticeBar from "./components/NoticeBar";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -54,6 +61,7 @@ import {
   removeAcknowledgedAuditEvents,
 } from "./lib/audit-events";
 import { appendDirectEditEvent } from "./lib/direct-edit-events.js";
+import { advanceNoticeDeadline, globalNoticeIdentity } from "./lib/notice-lifetime.js";
 import { productErrorMessage } from "./lib/notification-policy";
 import { workspaceUnavailableFromCode } from "./lib/workspace-safety-state.js";
 import {
@@ -226,7 +234,6 @@ import {
 } from "./workbench/run-conversation-outlet";
 import { WorkbenchReviewOverlay } from "./workbench/workbench-review-overlay";
 import WorkbenchActiveDocumentCanvas from "./workbench/WorkbenchActiveDocumentCanvas";
-import WorkbenchDocumentSurfaceCache from "./workbench/WorkbenchDocumentSurfaceCache";
 import ProjectRulesEditorPage from "./workbench/project-rules-editor";
 import { useEditRuntimePreparation } from "./workbench/use-edit-runtime-preparation";
 import {
@@ -238,7 +245,6 @@ import {
   rememberActiveDocumentPresentation,
   readyVersionPublicationMatches,
   restoreCachedDocumentPresentation,
-  useDocumentSurfaceHandoff,
 } from "./workbench/document-surface-presentation";
 import { markProjectApplied, markProjectHydrationStage, RendererStartupPerformance } from "./workbench/performance-timeline";
 import {
@@ -249,7 +255,7 @@ import { useRuntimeBridgeConnectionReady } from "./workbench/runtime-bridge-conn
 import { WorkbenchTabBarContainer } from "./workbench/workbench-navigation-container";
 import { WorkbenchResizer } from "./workbench/workbench-resizer";
 import { createWorkbenchModeHandlers } from "./workbench/workbench-mode-handlers";
-import { deriveWorkbenchPresentation } from "./workbench/workbench-header-projection";
+import { deriveWorkbenchPresentation, isWorkbenchAiWorking } from "./workbench/workbench-header-projection";
 import {
   activeRunOperationKey,
   fileStem,
@@ -296,6 +302,22 @@ const PUBLIC_RELEASES_REPOSITORY_URL =
 const LATEST_RELEASE_PAGE_URL =
   "https://github.com/Charleyli925/Stemmio-Releases/releases/latest";
 
+type WorkbenchNavigationFailure =
+  | {
+      kind: "tab";
+      tabId: string;
+      title: string;
+      reason: string;
+    }
+  | {
+      kind: "registered-project";
+      projectId: string;
+      documentId: string;
+      title: string;
+      reason: string;
+      code?: string;
+    };
+
 function sameProjectRoute(
   left: ProjectContext | null,
   right: ProjectContext | null,
@@ -331,6 +353,12 @@ class DeferredEditorCommandDiscardedError extends Error {
 type CanvasRenderAck = Readonly<{
   generation: number;
   sha256: string;
+  identity?: string;
+  failed?: boolean;
+  previewResult?: "verified" | "degraded" | "failed";
+  degradationReason?: "paint-timeout" | "host-timeout" | "history-static";
+  attemptId?: string;
+  sessionId?: string;
 }>;
 
 type CanvasRenderAcks = Readonly<Record<CanvasMode, CanvasRenderAck | null>>;
@@ -406,6 +434,9 @@ const EDIT_RUNTIME_PENDING_PHASES = new Set([
   "ready",
   "running",
 ]);
+// A Preview can stay physically mounted only for a quick same-document return.
+// Its authored timers and network activity continue while hidden.
+const PREVIEW_PARK_MS = 3_000;
 const INITIAL_COMMENT_SNAPSHOT: CommentSessionSnapshot<
   CommentItem,
   DirectEditEvent,
@@ -486,7 +517,8 @@ export default function Workbench() {
   const pageViewDocumentKeyRef = useRef("");
   const deferredEditorReplayRef = useRef<{
     exportCurrentHtml?: (saveVersion?: boolean) => void;
-    reloadCurrentSource?: () => void;
+    requestExportCurrentHtml?: () => void;
+    reloadCurrentSource?: (options?: { announceSuccess?: boolean }) => void;
     reloadReview?: () => void;
     requestReviewDecision?: (action: "return" | "accept") => void;
     requestUserFlush?: () => void;
@@ -825,8 +857,6 @@ export default function Workbench() {
   const workspacePreferencesSnapshot = workspacePreferencesController.snapshot;
   const workspacePreferences = workspacePreferencesSnapshot.workspace;
   const [previewAttachment, setPreviewAttachment] = useState<CommentAttachment | null>(null);
-  const [preservedDraftDialogOpen, setPreservedDraftDialogOpen] = useState(false);
-  const loadPreservedDrafts = useCallback(() => workspaceController!.loadPreservedDrafts(), [workspaceController]);
   const [historyCreationConfirmation, setHistoryCreationConfirmation] = useState<string | null>(null);
   const historyCreation = shellSnapshot?.version?.creation;
   const [handoffPreviewOpen, setHandoffPreviewOpen] = useState(false);
@@ -839,7 +869,30 @@ export default function Workbench() {
   const currentBasedOnVersionId =
     versionSnapshot.currentBasedOnVersionId;
   const viewMode = versionSnapshot.viewMode;
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>("edit");
+  const [{ mode: canvasMode, previewEntryOrdinal }, setCanvasMode] = useReducer(
+    (current: { mode: CanvasMode; previewEntryOrdinal: number }, next: CanvasMode) => ({
+      mode: next,
+      previewEntryOrdinal: current.previewEntryOrdinal + (next === "preview" ? 1 : 0),
+    }),
+    { mode: "edit", previewEntryOrdinal: 0 },
+  );
+  const [previewLease, setPreviewLease] = useState<{
+    sourceIdentity: string;
+    identity: string;
+    attemptId: string;
+    sessionId: string;
+    validated: boolean;
+  } | null>(null);
+  const [mountedPreviewIdentity, setMountedPreviewIdentity] = useState<string | null>(null);
+  const onPreviewPhysicalPresenceChange = useCallback((identity: string, mounted: boolean) => {
+    setMountedPreviewIdentity((current) => mounted ? identity : current === identity ? null : current);
+  }, []);
+  const editSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const [editHandoffGeometry, setEditHandoffGeometry] = useState<{
+    key: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const aiSourceFileName = localFileNameFromSourcePath(sourcePath) || projectName;
   // The AI conversation sidebar. All of its React state lives in this hook, so
   // the Workbench gains one hook call and no extra budget.
@@ -886,7 +939,6 @@ export default function Workbench() {
     // Review is the same workbench with a different Canvas: the thread stays
     // docked and read-only instead of disappearing and coming back.
     reviewing: Boolean(presentedReadyReviewSession),
-    commentComposerOpen: commentCanvasPort.getSnapshot().composerOpen,
     canvasMode,
     documentPresented: activeWorkbenchTab?.kind === "document",
     projectId: projectId ?? "",
@@ -1593,12 +1645,6 @@ export default function Workbench() {
     canvasRenderAcks.edit?.generation === canvasGeneration
       ? canvasRenderAcks.edit.sha256
       : null;
-  const handlePreviewReady = useCallback((sha256: string | null) => {
-    setCanvasRenderAcks((current) => ({
-      ...current,
-      preview: sha256 ? { generation: canvasGeneration, sha256 } : null,
-    }));
-  }, [canvasGeneration]);
   const activeRun = runSnapshot.activeRun;
   const recentRunOutcome = runSnapshot.recentOutcome;
   const projectLocked = runSnapshot.activeLocked;
@@ -1643,14 +1689,21 @@ export default function Workbench() {
   const [userNoticeOpenFailed, setUserNoticeOpenFailed] = useState(false);
   const [pendingExit, setPendingExit] = useState(false);
   const [fileStatusNotice, setFileStatusNotice] = useState<string | null>(null);
-  const [tabSwitchError, setTabSwitchError] = useState<{
-    tabId: string;
-    title: string;
-    reason: string;
-  } | null>(null);
+  const [navigationFailure, setNavigationFailure] =
+    useState<WorkbenchNavigationFailure | null>(null);
   const [openHtmlError, setOpenHtmlError] = useState<string | null>(null);
   const confirmedOriginalDeletionRef = useRef<string | null>(null);
   const [interruption, setInterruption] = useState<GlobalInterruption | null>(null);
+  const [dismissedExternalAckId, setDismissedExternalAckId] = useState<string | null>(null);
+  const interruptionSequenceRef = useRef(0);
+  const publishInterruption = useCallback((next: GlobalInterruption) => {
+    interruptionSequenceRef.current += 1;
+    setInterruption({
+      ...next,
+      noticeIdentity: next.noticeIdentity
+        || `interruption:${interruptionSequenceRef.current}`,
+    });
+  }, [setInterruption]);
   const [pausedNoticeIdentity, setPausedNoticeIdentity] =
     useState<string | null>(null);
   const noticeDeadlineRef = useRef<{
@@ -1664,10 +1717,25 @@ export default function Workbench() {
     sourceSha256: string;
     receipt: ExternalSourceObservationReceipt;
   } | null>(null);
-  const presentedInterruption = globalInterruptionPresentation(interruption);
-  const noticeIdentity = presentedInterruption
-    ? `${presentedInterruption.usageKey}\n${presentedInterruption.title}\n${presentedInterruption.message}`
-    : "";
+  const pendingExternalAckId = shellSnapshot?.project?.pendingExternalAck?.requestId || null;
+  const externalAckVisible = Boolean(
+    pendingExternalAckId && pendingExternalAckId !== dismissedExternalAckId,
+  );
+  const presentedInterruption = globalInterruptionPresentation(
+    externalAckVisible
+      ? {
+        kind: "project-open-failed",
+        detail: "外部 HTML 已处理，但下一个 Finder 请求尚未解锁。",
+        requestId: pendingExternalAckId!,
+      }
+      : interruption,
+  );
+  const noticeIdentity = externalAckVisible
+    ? `external-ack:${pendingExternalAckId}`
+    : globalNoticeIdentity({
+      interruption,
+      sequence: 0,
+    });
   const noticeTimerPaused = Boolean(
     noticeIdentity && pausedNoticeIdentity === noticeIdentity,
   );
@@ -1707,13 +1775,34 @@ export default function Workbench() {
         return;
       }
       if (event.type === "workbench-tabs-restore-failed") {
-        const failure = event as { tabId?: unknown; committed?: unknown; reason?: unknown };
+        const failure = event as {
+          tabId?: unknown;
+          committed?: unknown;
+          code?: unknown;
+          reason?: unknown;
+          target?: { projectId?: unknown; documentId?: unknown; title?: unknown };
+        };
         if (failure.committed === true) return;
         setGlobalSidebarOpen(true);
+        if (typeof failure.target?.projectId === "string"
+          && typeof failure.target.documentId === "string") {
+          setFileStatusNotice(null);
+          setNavigationFailure({
+            kind: "registered-project",
+            projectId: failure.target.projectId,
+            documentId: failure.target.documentId,
+            title: typeof failure.target.title === "string" && failure.target.title
+              ? failure.target.title : "当前稿",
+            code: typeof failure.code === "string" ? failure.code : undefined,
+            reason: typeof failure.reason === "string" && failure.reason
+              ? failure.reason : "上次打开的当前稿没有恢复，请重试打开。",
+          });
+        }
         return;
       }
       if (event.type === "external-open-completed") {
         const openEvent = event as Readonly<{
+          requestId?: string;
           imported?: boolean;
           disposition?: string;
           visibleV1FileName?: string;
@@ -1721,31 +1810,18 @@ export default function Workbench() {
         }>;
         if (!openEvent.imported) return;
         if (openEvent.disposition !== "trash-failed") return;
-        setInterruption({
+        publishInterruption({
           kind: "import-trash-failed",
+          noticeIdentity: openEvent.requestId
+            ? `external-import:${openEvent.requestId}:trash` : undefined,
           fileName: openEvent.visibleV1FileName || "项目内的 V1 文件",
           sourcePath: openEvent.sourcePath || null,
         });
         return;
       }
       if (event.type === "external-open-ack-failed") {
-        const ackEvent = event as Readonly<{
-          confirmation?: boolean;
-          requestId?: unknown;
-          reason?: unknown;
-        }>;
-        const requestId = typeof ackEvent.requestId === "string"
-          ? ackEvent.requestId
-          : "";
-        if (ackEvent.confirmation === true && requestId) {
-          setInterruption({
-            kind: "project-open-failed",
-            detail: String(
-              ackEvent.reason || "HTML 已完成打开，但下一个 Finder 请求尚未解锁。",
-            ),
-            requestId,
-          });
-        }
+        // The workflow snapshot owns the pending ACK and retry capability.
+        // A transient event must not become its only recovery record.
         return;
       }
       if (event.type === "external-open-canvas-failed") {
@@ -1909,8 +1985,10 @@ export default function Workbench() {
           setCanvasMode("edit");
         }
         if (runEvent.agentMayBeRunning && runEvent.run) {
-          setInterruption({
+          publishInterruption({
             kind: "external-agent-may-still-run",
+            noticeIdentity: runEvent.run.requestId
+              ? `agent-cancel:${runEvent.run.requestId}` : undefined,
             current: Boolean(runEvent.current),
             sourcePath: runEvent.run.sourcePath,
           });
@@ -2033,7 +2111,7 @@ export default function Workbench() {
         return;
       }
       if (projectEvent.type === "external-project-open-unavailable") {
-        setInterruption({
+        publishInterruption({
           kind: "external-open-unavailable",
           detail: String(projectEvent.reason || "当前 Stemmio 版本缺少外部文件打开通道。"),
         });
@@ -2047,10 +2125,16 @@ export default function Workbench() {
           setOpenHtmlError(message);
           return;
         }
-        setInterruption({
+        // Registered opens are already owned by the navigation outcome and
+        // its local retry banner. Do not publish the same fact globally.
+        if (projectEvent.kind === "registered") return;
+        publishInterruption({
           kind: "project-open-failed",
+          noticeIdentity: typeof projectEvent.operationId === "string"
+            ? `project-open:${projectEvent.operationId}`
+            : typeof projectEvent.requestId === "string"
+              ? `project-open:${projectEvent.requestId}` : undefined,
           detail: message,
-          registered: projectEvent.kind === "registered",
           ...(typeof projectEvent.requestId === "string" && projectEvent.requestId
             ? { requestId: projectEvent.requestId }
             : {}),
@@ -2133,6 +2217,7 @@ export default function Workbench() {
   }, [
     commentCanvasPort,
     currentRunSessionSnapshot,
+    publishInterruption,
     readyReviewSession,
     reviewAnalysisSession,
     revealAiConversation,
@@ -2552,6 +2637,161 @@ export default function Workbench() {
     viewMode,
     historyPreview?.sourcePath || sourcePath || activeSurfaceDocumentId || activeSurfaceProjectId || "memory",
   ].join(":");
+  const editHandoffKey = `${activeWorkbenchTab?.tabId || "none"}:${canvasGeneration}:${sourceSha256 || "none"}`;
+  const captureEditPresentation = () => {
+    const bounds = editSurfaceRef.current?.getBoundingClientRect();
+    if (bounds?.width && bounds.height) {
+      setEditHandoffGeometry({
+        key: editHandoffKey,
+        width: bounds.width,
+        height: bounds.height,
+      });
+    }
+  };
+  const expectedPreviewSha256 = historyPreview
+    ? null
+    : externalSourcePreview?.sourceSha256
+      || documentSnapshot.workingHtmlSha256
+      || (editRevision === lastPersistedRevision ? sourceSha256 : null);
+  const previewSurfaceMounted = displayedCanvasMode === "preview"
+    && Boolean(historyPreview || documentRuntimeTabId);
+  const previewSourceIdentity = [
+    activeWorkbenchTab?.tabId || "none",
+    pageViewDocumentKey,
+    canvasGeneration,
+    historyPreview ? `history:${historyPreview.versionId}`
+      : externalSourcePreview ? `external:${externalSourcePreview.sourceSha256}`
+        : "current",
+    // The edit revision changes with accepted working HTML, before autosave
+    // advances the persisted hash. It also stays stable when that save lands.
+    editRevision,
+  ].join("\u0000");
+  // A click ordinal is an intent, not a physical iframe identity. Only the
+  // exact still-mounted Preview may reuse its earlier display acknowledgement.
+  const livePreviewLease = previewLease?.sourceIdentity === previewSourceIdentity
+    && mountedPreviewIdentity === previewLease.identity ? previewLease : null;
+  const previewIdentity = livePreviewLease?.identity
+    || `${previewSourceIdentity}\u0000${previewEntryOrdinal}`;
+  const [previewTargetState, setPreviewTargetState] = useState<{
+    identity: string;
+    tabId: string | null;
+    mode: CanvasMode;
+    sourceIdentity: string;
+    reason: PreviewOpenReason;
+  }>(() => ({
+    identity: previewIdentity,
+    tabId: activeWorkbenchTab?.tabId || null,
+    mode: displayedCanvasMode,
+    sourceIdentity: previewSourceIdentity,
+    reason: historyPreview ? "history-open" : "initial-open",
+  }));
+  const previewTargetChanged = previewTargetState.identity !== previewIdentity
+    || previewTargetState.tabId !== (activeWorkbenchTab?.tabId || null)
+    || previewTargetState.mode !== displayedCanvasMode
+    || previewTargetState.sourceIdentity !== previewSourceIdentity;
+  const previewOpenReason: PreviewOpenReason = !previewTargetChanged
+    ? previewTargetState.reason
+    : historyPreview
+      ? "history-open"
+      : previewTargetState.tabId !== (activeWorkbenchTab?.tabId || null)
+        ? "tab-switch"
+        : previewTargetState.mode !== displayedCanvasMode
+          ? "mode-switch"
+          : "source-change";
+  if (previewTargetChanged) {
+    setPreviewTargetState({
+      identity: previewIdentity,
+      tabId: activeWorkbenchTab?.tabId || null,
+      mode: displayedCanvasMode,
+      sourceIdentity: previewSourceIdentity,
+      reason: previewOpenReason,
+    });
+  }
+  const previewIdentityRef = useRef(previewIdentity);
+  const previewAttemptRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    previewIdentityRef.current = previewIdentity;
+  }, [previewIdentity]);
+  const handlePreviewDisplayResult = useCallback((result: PreviewDisplayResult) => {
+    if (previewIdentityRef.current !== previewIdentity) return;
+    if (result.status === "pending") {
+      previewAttemptRef.current = result.attemptId;
+      setCanvasRenderAcks((current) => ({ ...current, preview: null }));
+      return;
+    }
+    if (previewAttemptRef.current !== result.attemptId) return;
+    if (result.status === "cancelled") {
+      previewAttemptRef.current = null;
+      setCanvasRenderAcks((current) => ({ ...current, preview: null }));
+      return;
+    }
+    setCanvasRenderAcks((current) => ({
+      ...current,
+      preview: {
+        generation: canvasGeneration,
+        sha256: result.status === "failed" ? "" : result.sourceSha256,
+        identity: previewIdentity,
+        failed: result.status === "failed",
+        previewResult: result.status,
+        attemptId: result.attemptId,
+        ...(result.status === "verified" && result.sessionId ? { sessionId: result.sessionId } : {}),
+        ...(result.status === "degraded" ? { degradationReason: result.reason } : {}),
+      },
+    }));
+  }, [canvasGeneration, previewIdentity]);
+  const previewAck = canvasRenderAcks.preview;
+  const activePreviewReady = Boolean(
+    previewAck
+    && previewAck.identity === previewIdentity
+    && previewAck.generation === canvasGeneration
+    && (previewAck.previewResult === "verified" || previewAck.previewResult === "degraded")
+    && (displayedCanvasMode !== "preview" || !livePreviewLease || livePreviewLease.validated)
+    && previewAck.sha256
+    && (!expectedPreviewSha256 || previewAck.sha256 === expectedPreviewSha256)
+  );
+  const activePreviewFailed = Boolean(
+    previewAck?.identity === previewIdentity && previewAck.previewResult === "failed"
+  );
+  const previewLeaseEligible = Boolean(
+    sourcePath && documentRuntimeTabId
+    && activeWorkbenchTab?.kind === "document"
+    && !historyPreview && !externalSourcePreview
+    && !workbenchTabsSnapshot.pendingTabId
+    && !presentedReadyReviewSession && !pendingExit,
+  );
+  const verifiedPreviewAttemptId = previewAck?.attemptId;
+  if (previewLease && previewLease.sourceIdentity !== previewSourceIdentity) {
+    setPreviewLease(null);
+  } else if (displayedCanvasMode === "preview" && activePreviewReady
+    && previewAck?.previewResult === "verified"
+    && previewLeaseEligible && verifiedPreviewAttemptId && previewAck.sessionId
+    && mountedPreviewIdentity === previewIdentity
+    && (previewLease?.identity !== previewIdentity
+      || previewLease.attemptId !== verifiedPreviewAttemptId)) {
+    setPreviewLease({ sourceIdentity: previewSourceIdentity, identity: previewIdentity,
+      attemptId: verifiedPreviewAttemptId, sessionId: previewAck.sessionId, validated: true });
+  } else if (previewLease && displayedCanvasMode === "edit" && previewLease.validated) {
+    setPreviewLease({ ...previewLease, validated: false });
+  }
+  useEffect(() => {
+    if (displayedCanvasMode !== "preview" || !previewLeaseEligible
+      || !livePreviewLease || livePreviewLease.validated) return undefined;
+    let cancelled = false;
+    const { identity, attemptId, sessionId } = livePreviewLease;
+    const inspectSession = window.stemmioPreview?.inspectSession;
+    void Promise.resolve().then(() => inspectSession?.(sessionId) ?? { active: false }).then((result) => {
+      if (cancelled) return;
+      setPreviewLease((current) => current?.identity === identity && current.attemptId === attemptId
+        && current.sessionId === sessionId
+        ? result.active === true ? { ...current, validated: true } : null
+        : current);
+    }).catch(() => {
+      if (cancelled) return;
+      setPreviewLease((current) => current?.identity === identity && current.attemptId === attemptId
+        && current.sessionId === sessionId ? null : current);
+    });
+    return () => { cancelled = true; };
+  }, [displayedCanvasMode, livePreviewLease, previewLeaseEligible]);
   const activePageViewContext = (
     pageViewContext?.documentKey === pageViewDocumentKey
   ) ? pageViewContext : null;
@@ -3046,28 +3286,14 @@ export default function Workbench() {
       noticeDeadlineRef.current = null;
       return;
     }
-    const now = Date.now();
-    const existing = noticeDeadlineRef.current;
-    const remaining = existing?.identity === noticeIdentity
-      ? existing.paused
-        ? existing.remainingMs
-        : Math.max(0, existing.deadlineAt - now)
-      : dismissAfter;
-    if (noticeTimerPaused) {
-      noticeDeadlineRef.current = {
-        identity: noticeIdentity,
-        deadlineAt: now + remaining,
-        remainingMs: remaining,
-        paused: true,
-      };
-      return;
-    }
-    noticeDeadlineRef.current = {
+    const deadline = advanceNoticeDeadline(noticeDeadlineRef.current, {
       identity: noticeIdentity,
-      deadlineAt: now + remaining,
-      remainingMs: remaining,
-      paused: false,
-    };
+      dismissMs: dismissAfter,
+      paused: noticeTimerPaused,
+      now: Date.now(),
+    });
+    noticeDeadlineRef.current = deadline;
+    if (!deadline || deadline.paused) return;
     const timeout = window.setTimeout(() => {
       captureUsageEvent("notification_interacted", {
         notice_code: noticeUsageCode(presentedInterruption.usageKey),
@@ -3075,7 +3301,7 @@ export default function Workbench() {
         surface: "global",
       }, currentProjectSessionSnapshot().projectId || undefined);
       setInterruption(null);
-    }, remaining);
+    }, deadline.remainingMs);
     return () => window.clearTimeout(timeout);
   }, [currentProjectSessionSnapshot, noticeIdentity, noticeTimerPaused, presentedInterruption]);
 
@@ -3199,7 +3425,7 @@ export default function Workbench() {
     if (selected.length === 0 && issueNotes.length > 0) {
       const needsRemoval = attachmentPlan.overLimit.length > 0
         && attachmentPlan.available === 0;
-      setInterruption({
+      publishInterruption({
         kind: "attachment-rejected",
         detail: `${issueNotes.join("；")}。${
           needsRemoval
@@ -3262,7 +3488,7 @@ export default function Workbench() {
         : settledComments.editSession?.draftAttachments.length ?? 0;
       const needsRemoval = attachmentPlan.overLimit.length > 0
         && currentAttachmentCount >= MAX_COMMENT_ATTACHMENTS;
-      setInterruption({
+      publishInterruption({
         kind: "attachment-batch-partial",
         detail: `${issueNotes.join("；")}。${
           addedAttachmentCount > 0
@@ -3284,8 +3510,8 @@ export default function Workbench() {
     }
   }, [
     currentCommentSessionSnapshot,
+    publishInterruption,
     rememberAttachmentObjectUrl,
-    setInterruption,
     workspaceController,
   ]);
 
@@ -3410,15 +3636,30 @@ export default function Workbench() {
       sourcePath: recentPath || null,
     });
   }, [workspaceController]);
-  const presentWorkbenchTabOutcome = useCallback((outcome: unknown, target?: WorkbenchTab) => {
+  const presentWorkbenchTabOutcome = useCallback((
+    outcome: unknown,
+    target?: WorkbenchTab,
+    retryTarget?: WorkbenchNavigationFailure,
+  ) => {
     if (!outcome || typeof outcome !== "object") return;
     if ((outcome as { status?: string }).status === "succeeded") {
-      setTabSwitchError(null);
+      setNavigationFailure(null);
+      if (retryTarget || target?.kind === "document") {
+        setFileStatusNotice(null);
+      }
       return;
     }
     const result = outcome as { reason?: string; code?: string };
-    if (target?.kind === "document") {
-      setTabSwitchError({
+    if (retryTarget) {
+      setFileStatusNotice(null);
+      setNavigationFailure({
+        ...retryTarget,
+        reason: result.reason || "页面没有打开，原页面仍保留。",
+      });
+    } else if (target?.kind === "document") {
+      setFileStatusNotice(null);
+      setNavigationFailure({
+        kind: "tab",
         tabId: target.tabId,
         title: target.title,
         reason: result.reason || "页面没有打开，原页面仍保留。",
@@ -3467,12 +3708,21 @@ export default function Workbench() {
   ]);
   const openRegisteredWorkbenchProject = useCallback(async (project: RegisteredProject) => {
     if (!navigationCapability || !project.documentId || project.availability !== "ready") return null;
+    const retryTarget: WorkbenchNavigationFailure = {
+      kind: "registered-project",
+      projectId: project.projectId,
+      documentId: project.documentId,
+      title: project.projectName,
+      reason: "",
+    };
+    setNavigationFailure(null);
+    setFileStatusNotice(null);
     const outcome = await navigationCapability.commands.openRegisteredProject({
       projectId: project.projectId,
       documentId: project.documentId,
       title: project.projectName,
     });
-    presentWorkbenchTabOutcome(outcome);
+    presentWorkbenchTabOutcome(outcome, undefined, retryTarget);
     return outcome;
   }, [navigationCapability, presentWorkbenchTabOutcome]);
 
@@ -3554,7 +3804,7 @@ export default function Workbench() {
     await runLocalUserAction({
       kind: "show-source-in-folder",
       invoke: () => showInFolder(activeSourcePath),
-      onFailure: (cause: unknown) => setInterruption({
+      onFailure: (cause: unknown) => publishInterruption({
         kind: "show-in-folder-failed",
         detail: productErrorMessage(
           cause,
@@ -3562,7 +3812,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [currentProjectSessionSnapshot, setInterruption]);
+  }, [currentProjectSessionSnapshot, publishInterruption]);
 
   const openSelectedHtmlInDefaultBrowser = useCallback(async () => {
     if (!workspaceController) return;
@@ -3583,7 +3833,7 @@ export default function Workbench() {
           message: reason,
         });
       },
-      onFailure: (cause: unknown) => setInterruption({
+      onFailure: (cause: unknown) => publishInterruption({
         kind: "open-in-browser-failed",
         detail: productErrorMessage(
           cause,
@@ -3591,7 +3841,7 @@ export default function Workbench() {
         ),
       }),
     });
-  }, [setInterruption, workspaceController]);
+  }, [publishInterruption, workspaceController]);
 
   const handleCanvasChange = useCallback((
     nextHtml: string,
@@ -3681,11 +3931,32 @@ export default function Workbench() {
     };
   }, [exportCurrentHtml]);
 
+  const exportContextKey = `${activeWorkbenchTab?.tabId}:${projectId}:${documentId}:${viewingVersionId}`;
+  const [exportDialog, setExportDialog] = useState({ contextKey: exportContextKey, open: false });
+  if (exportDialog.contextKey !== exportContextKey) {
+    setExportDialog({ contextKey: exportContextKey, open: false });
+  }
+  const requestExportCurrentHtml = useCallback((fromDeferred = false) => {
+    if (isViewTransitioning()) return;
+    if (!fromDeferred && deferEditorCommand("export", () => {
+      deferredEditorReplayRef.current.requestExportCurrentHtml?.();
+    })) return;
+    if (viewMode === "history") { void exportCurrentHtml(); return; }
+    setExportDialog({ contextKey: exportContextKey, open: true });
+  }, [deferEditorCommand, exportContextKey, exportCurrentHtml, isViewTransitioning, viewMode]);
+  useEffect(() => {
+    deferredEditorReplayRef.current.requestExportCurrentHtml = () => requestExportCurrentHtml(true);
+  }, [requestExportCurrentHtml]);
+
   // DocumentWorkflow owns the complete disk-source operation. Workbench sends
   // intent, presents its confirmation request, and renders the phased result.
   const reloadCurrentSource = useCallback(async ({
     fromDeferred = false,
-  }: { fromDeferred?: boolean } = {}) => {
+    announceSuccess = false,
+  }: {
+    fromDeferred?: boolean;
+    announceSuccess?: boolean;
+  } = {}) => {
     const context = captureProjectContext();
     if (!context || projectLoadError || !workspaceController) return false;
     if (requiredWorkspaceController(workspaceController).hasDocumentHistoryAction) return false;
@@ -3693,7 +3964,7 @@ export default function Workbench() {
       !fromDeferred
       && deferEditorCommand(
         "external-refresh",
-        () => deferredEditorReplayRef.current.reloadCurrentSource?.(),
+        () => deferredEditorReplayRef.current.reloadCurrentSource?.({ announceSuccess }),
       )
     ) return false;
     try {
@@ -3719,10 +3990,9 @@ export default function Workbench() {
       if (outcome.status === "stale" || !isCurrentProjectContext(context)) return false;
       if (outcome.status !== "succeeded") throw new Error(outcome.reason);
       setExternalSourcePreview(null);
-      setCanvasMode("edit");
       const restored = outcome.value.page.status === "restored";
       setFileStatusNotice(restored
-        ? "页面已重新加载，可以继续编辑"
+        ? announceSuccess ? "页面已重新加载，可以继续编辑" : null
         : "文件已重新读取，但页面暂时无法编辑，请重试");
       return restored;
     } catch (cause) {
@@ -3802,8 +4072,8 @@ export default function Workbench() {
     runCapability,
   ]);
   useEffect(() => {
-    deferredEditorReplayRef.current.reloadCurrentSource = () => {
-      void reloadCurrentSource({ fromDeferred: true });
+    deferredEditorReplayRef.current.reloadCurrentSource = ({ announceSuccess = false } = {}) => {
+      void reloadCurrentSource({ fromDeferred: true, announceSuccess });
     };
   }, [reloadCurrentSource]);
 
@@ -4085,7 +4355,7 @@ export default function Workbench() {
       }
       if (event.key.toLowerCase() === "e" && event.shiftKey) {
         event.preventDefault();
-        void exportCurrentHtml();
+        requestExportCurrentHtml();
       } else if (event.key.toLowerCase() === "s" && !event.shiftKey) {
         event.preventDefault();
         requestUserFlush();
@@ -4093,7 +4363,7 @@ export default function Workbench() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [exportCurrentHtml, requestSourceHistoryAction, requestUserFlush]);
+  }, [requestExportCurrentHtml, requestSourceHistoryAction, requestUserFlush]);
 
   const updateFocusedComment = useCallback((commentId: string | null) => {
     commentCanvasPort.setFocusedCommentId(commentId);
@@ -5600,6 +5870,9 @@ export default function Workbench() {
     ) {
       const requestId = presentedInterruption.actionRequestId;
       void workspaceController.retryExternalOpen({ requestId }).then((outcome) => {
+        if (outcome?.status === "succeeded") {
+          setDismissedExternalAckId(null);
+        }
         const latest = interruptionRef.current;
         if (
           outcome?.status === "succeeded"
@@ -5766,7 +6039,7 @@ export default function Workbench() {
       // successful re-copy from a dead button.
       void (async () => {
         const outcome = await controller.commands.copyHandoff({ run: activeRun });
-        setInterruption({
+        publishInterruption({
           kind: "handoff-recopy",
           succeeded: Boolean(outcome && outcome.status === "succeeded"),
         });
@@ -5783,10 +6056,10 @@ export default function Workbench() {
     activeRun,
     cancelActiveRun,
     openAgentSettings,
+    publishInterruption,
     requestActiveRunEnd,
     resolveAiConflict,
     reviewReadyResult,
-    setInterruption,
   ]);
 
   const aiAssistantEntry = (
@@ -5807,7 +6080,10 @@ export default function Workbench() {
           return;
         }
         setHandoffPreviewOpen(false);
-        setCanvasMode("preview");
+        if (canvasMode !== "preview") {
+          captureEditPresentation();
+          setCanvasMode("preview");
+        }
         revealAiConversation();
       }}
     />
@@ -5827,6 +6103,7 @@ export default function Workbench() {
     invalidateEditCanvasRenderAck,
     commentCanvasPort,
     updateFocusedComment,
+    captureEditPresentation,
     setCanvasMode,
     deferEditorCommand,
     isViewTransitioning,
@@ -5974,14 +6251,6 @@ export default function Workbench() {
       });
     });
   }, [activeWorkbenchTab, navigationCapability, presentWorkbenchTabOutcome, settingsPageActive]);
-  // The cached static tab handoff is diagnostic only. Normal switching keeps
-  // the outgoing final Canvas inert until the incoming final Canvas verifies.
-  const cachedTabHandoffEnabled = typeof window !== "undefined"
-    && window.stemmioRuntime?.diagnostics?.e2eCachedTabHandoff === true;
-  const { visibleCachedSurface, visibleHandoffId, candidateCachedSurface, candidateHandoffId, acceptDisplayReady, updateHandoffScroll, markFirstScroll } = useDocumentSurfaceHandoff({ enabled: cachedTabHandoffEnabled, cache: documentSurfaceCacheSnapshot, tabs: workbenchTabsSnapshot, sourceSha256, canvasAuthority, canvasGeneration, sourceReceipt, navigationReceipt: shellSnapshot?.workbenchNavigation?.receipt || shellSnapshot?.workbenchNavigation?.lastReceipt || null, navigationTransactionId: shellSnapshot?.workbenchNavigation?.transactionId || null, controller: workspaceController });
-  // This is the same complete accepted presentation that the cache component
-  // renders. A hidden candidate alone must never make the Canvas inert.
-  const cachedSurfaceBlocksCanvas = Boolean(visibleCachedSurface && visibleHandoffId);
   const retryProjectHydrationFromCommentRail = useCallback(() => {
     void workspaceController?.retryProjectHydration();
   }, [workspaceController]);
@@ -6082,11 +6351,220 @@ export default function Workbench() {
     && canvasAuthority.generation === canvasGeneration
     && canvasAuthority.renderedSha256 === sourceSha256
   );
+  const displayProofKey = [
+    activeWorkbenchTab?.tabId ?? "",
+    projectId ?? "",
+    documentId ?? "",
+    sourceReceipt?.sessionIncarnation ?? "",
+    sourceReceipt?.sequence ?? "",
+    sourceSha256 ?? "",
+    canvasGeneration,
+    shellSnapshot?.workbenchNavigation?.transactionId
+      || shellSnapshot?.workbenchNavigation?.lastReceipt?.transactionId
+      || "",
+  ].join("\u0000");
+  const [physicalDisplayProof, setPhysicalDisplayProof] = useState<{
+    key: string;
+    evidence: NonNullable<ReturnType<HtmlCanvasEditorHandle["getCurrentDisplayRuntime"]>>;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!activeDocumentCanvasReady) return;
+    let frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      const evidence = editorRef.current?.getCurrentDisplayRuntime();
+      setPhysicalDisplayProof(evidence ? { key: displayProofKey, evidence } : null);
+    });
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [activeDocumentCanvasReady, displayProofKey, editRuntimePhase, editRuntimeSnapshot?.grant]);
+  const currentPhysicalDisplay = physicalDisplayProof?.key === displayProofKey
+    ? physicalDisplayProof.evidence : null;
+  // Canvas verification proves the latest source. The physical frame proof
+  // separately binds a retained author runtime to its settled grant and to
+  // the source's confirmed in-place projection. The grant keeps its original
+  // startup hash when a safe edit changes the source without rerunning scripts.
+  const activeDocumentDisplayReady = Boolean(
+    activeDocumentCanvasReady
+    && editRuntimeSnapshot?.canvasGeneration === canvasGeneration
+    && (sourcePath
+      ? sameLocalSourcePath(editRuntimeSnapshot.sourcePath, sourcePath)
+      : !editRuntimeSnapshot.sourcePath)
+    && (
+      (editRuntimePhase === "settled"
+        && currentPhysicalDisplay?.kind === "runtime"
+        && sameRuntimeGrant(currentPhysicalDisplay.grant, editRuntimeSnapshot.grant))
+      || (editRuntimePhase === "static-fallback"
+        && editRuntimeSnapshot.sourceSha256 === sourceSha256)
+      || (editRuntimePhase === "static"
+        && editRuntimeSnapshot.lastOutcome === "not-candidate"
+        && currentPhysicalDisplay?.kind === "static")
+    )
+  );
   const activeDocumentCanvasFailed = Boolean(
     projectLoadError
     || (canvasAuthority?.status === "failed"
       && canvasAuthority.generation === canvasGeneration)
   );
+  // In-memory renderer documents have no managed source or Edit Runtime
+  // receipt. Preserve their existing immediate mounted-Canvas edit entry.
+  const editTargetReady = sourcePath ? activeDocumentDisplayReady : activeRuntimeCanvasMounted;
+  const [editRevealPreviewIdentity, setEditRevealPreviewIdentity] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (displayedCanvasMode !== "edit" || !activePreviewReady || !activeDocumentDisplayReady) return;
+    let frame = 0;
+    let remainingPaints = 4;
+    const afterPaint = () => {
+      remainingPaints -= 1;
+      if (remainingPaints > 0) frame = window.requestAnimationFrame(afterPaint);
+      else setEditRevealPreviewIdentity(previewIdentity);
+    };
+    frame = window.requestAnimationFrame(afterPaint);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeDocumentDisplayReady, activePreviewReady, displayedCanvasMode, previewIdentity]);
+  const openingTabId = workbenchTabsSnapshot.pendingTabId
+    || (activeWorkbenchTab?.kind === "document" && !activeDocumentCanvasReady
+      ? activeWorkbenchTab.tabId : null);
+  const openingTab = workbenchTabsSnapshot.tabs.find((tab) => tab.tabId === openingTabId);
+  const openingCanvasMode = openingTab?.kind === "document"
+    ? documentSurfaceCacheSnapshot.presentations.find((entry) => entry.tabId === openingTabId)?.canvasMode
+    : undefined;
+  const pendingTabId = workbenchTabsSnapshot.pendingTabId;
+  const pendingMode = openingCanvasMode || "edit";
+  const editContinuityKey = documentRuntimeTabId
+    && activeWorkbenchTab?.tabId === documentRuntimeTabId
+    ? `${documentRuntimeTabId}:${canvasGeneration}` : null;
+  const displayTarget: DisplayTarget = {
+    surface: displayedCanvasMode,
+    identity: displayedCanvasMode === "preview" ? previewIdentity : editHandoffKey,
+    tabId: activeWorkbenchTab?.tabId || null,
+    ...(displayedCanvasMode === "edit" ? { continuityKey: editContinuityKey } : {}),
+    ...(displayedCanvasMode === "preview" && historyPreview ? { historical: true } : {}),
+  };
+  const pendingDisplayTarget: DisplayTarget | null = pendingTabId
+    ? { surface: pendingMode, identity: `pending-tab:${pendingTabId}:${pendingMode}`, tabId: pendingTabId }
+    : null;
+  const displayTargetReady = displayedCanvasMode === "preview"
+    ? activePreviewReady
+    : editTargetReady;
+  const displayTargetFailed = displayedCanvasMode === "preview"
+    ? activePreviewFailed
+    : activeDocumentCanvasFailed;
+  const displayMissingEvidence = displayTargetReady || displayTargetFailed
+    ? []
+    : [displayedCanvasMode === "edit" && activePreviewReady
+      && editRevealPreviewIdentity !== previewIdentity
+      ? "edit-paint-handoff"
+      : displayedCanvasMode === "preview" ? "preview-display" : "edit-display"];
+  const displayHandoffState = useDisplayHandoff({
+    target: displayTarget,
+    pendingTarget: pendingDisplayTarget,
+    intent: {
+      pendingTabId,
+      pendingMode: pendingTabId ? pendingMode : null,
+      currentMode: displayedCanvasMode,
+      sourceAvailable: Boolean(sourcePath) && activeWorkbenchTab?.kind === "document",
+      hasDocumentRuntime: Boolean(documentRuntimeTabId),
+      historyPreview: Boolean(historyPreview),
+      presentedReadyReviewSession: Boolean(presentedReadyReviewSession),
+      previewReady: activePreviewReady,
+      editFailed: activeDocumentCanvasFailed,
+      previewFailed: activePreviewFailed,
+      editRevealSettled: editRevealPreviewIdentity === previewIdentity,
+    },
+    targetReady: displayTargetReady,
+    targetFailed: displayTargetFailed,
+    targetLifecycle: pendingExit ? "closing" : "active",
+    targetMissingEvidence: displayMissingEvidence,
+    retainOutgoing: displayedCanvasMode === "edit"
+      ? !activeDocumentCanvasFailed
+      : !activePreviewReady && !activePreviewFailed,
+    edit: { target: { surface: "edit", identity: editHandoffKey, tabId: activeWorkbenchTab?.tabId || null,
+      continuityKey: editContinuityKey } },
+    preview: { target: { surface: "preview", identity: previewIdentity,
+      tabId: activeWorkbenchTab?.tabId || null,
+      ...(historyPreview ? { historical: true } : {}) } },
+  });
+  const displayHandoff = displayHandoffState.decision;
+  const displayedTabId = !startPageActive && !settingsPageActive && !projectRulesPageActive
+    && displayHandoff.actual?.tabId
+    && workbenchTabsSnapshot.tabs.some((tab) => tab.tabId === displayHandoff.actual?.tabId)
+    ? displayHandoff.actual.tabId
+    : activeWorkbenchTab?.tabId || null;
+  const showingOutgoingDocument = displayedTabId !== activeWorkbenchTab?.tabId
+    && Boolean(displayHandoff.actual);
+  const parkedPreviewLease = Boolean(
+    displayedCanvasMode === "edit"
+    && allowsPreviewLeaseRetention(displayHandoff)
+    && previewLeaseEligible
+    && livePreviewLease
+    && activePreviewReady
+    && previewAck?.attemptId === livePreviewLease.attemptId,
+  );
+  if (previewLease && displayedCanvasMode === "edit"
+    && (!previewLeaseEligible || activePreviewFailed || !allowsPreviewLeaseRetention(displayHandoff)
+      || workbenchTabsSnapshot.pendingTabId)) {
+    setPreviewLease(null);
+  }
+  useEffect(() => {
+    if (!parkedPreviewLease || displayHandoff.phase !== "settled") return undefined;
+    const retainedIdentity = livePreviewLease?.identity;
+    const timer = window.setTimeout(() => {
+      setPreviewLease((current) => current?.identity === retainedIdentity ? null : current);
+    }, PREVIEW_PARK_MS);
+    return () => window.clearTimeout(timer);
+  }, [displayHandoff.phase, livePreviewLease?.identity, parkedPreviewLease]);
+  // An opening target must not make the toolbar announce a different document
+  // or mode from the physical surface that is still on screen.
+  const headerPresentation = showingOutgoingDocument && displayHandoff.actual
+    ? {
+        ...presentation,
+        mode: displayHandoff.actual.surface,
+        edit: { ...presentation.edit, selected: displayHandoff.actual.surface === "edit",
+          enabled: false, reason: "页面正在切换" },
+        preview: { ...presentation.preview, selected: displayHandoff.actual.surface === "preview" },
+        review: { ...presentation.review, selected: false, enabled: false, reason: "页面正在切换" },
+      }
+    : presentation;
+  const activeTabOpening = activeWorkbenchTab?.kind === "document"
+    && !pendingTabId && displayHandoff.phase === "opening";
+  const tabActivity = useMemo(() => {
+    const visibleCurrent = activeWorkbenchTab?.kind === "document"
+      && displayedTabId === activeWorkbenchTab.tabId && !pendingTabId
+      && !showingOutgoingDocument && !projectHydrating && !projectLoadError
+      && (presentation.viewLabel === "当前" || presentation.viewLabel === "审阅");
+    const currentRun = activeRun && activeRun.projectId === projectId
+      && activeRun.documentId === documentId && sameLocalSourcePath(activeRun.sourcePath, sourcePath)
+      ? activeRun : null;
+    const submission = runSnapshot.activeSubmission;
+    return {
+      scopeKey: visibleCurrent
+        ? `${activeWorkbenchTab.tabId}:${projectSnapshot.epoch}:${sourcePath}:${sourceReceipt?.sessionIncarnation}` : null,
+      editRevision,
+      persistedRevision: lastPersistedRevision,
+      commentIds: comments.map((comment) => comment.commentId),
+      busy: persistState === "queued" || persistState === "writing" || isWorkbenchAiWorking({
+        submissionPhase: submission && sameLocalSourcePath(submission.sourcePath, sourcePath) ? submission.phase : undefined,
+        runStatus: currentRun?.status,
+        handoffStatus: currentRun ? currentAgentHandoffStatus : undefined,
+      }),
+    };
+  }, [activeWorkbenchTab, displayedTabId, pendingTabId, showingOutgoingDocument, projectHydrating,
+    projectLoadError, presentation.viewLabel, activeRun, projectId, documentId, sourcePath,
+    runSnapshot.activeSubmission, projectSnapshot.epoch, sourceReceipt?.sessionIncarnation,
+    editRevision, lastPersistedRevision, comments, persistState, currentAgentHandoffStatus]);
+  // Keep the exact loaded Preview iframe in front while the same document's
+  // Edit runtime is preparing. The previous document's Edit frame is never a
+  // valid fallback for this transition. In-memory browser documents have no
+  // DocumentSession/Runtime acknowledgement to wait for and reuse Edit directly.
+  const carryPreviewIntoEdit = displayHandoffState.roles.carryPreviewIntoEdit;
+  const keepPreviewInEdit = carryPreviewIntoEdit
+    || (displayedCanvasMode === "edit" && displayHandoffState.preview.retain)
+    || parkedPreviewLease;
+  const heldEditGeometry = editHandoffGeometry?.key === editHandoffKey
+    ? editHandoffGeometry : null;
+  const editPreviewUnderlay = displayHandoffState.roles.editPreviewUnderlay;
+  const showEditSurface = displayHandoffState.roles.showEditSurface;
   const currentProjectDisplayName = currentProjectNameFromFile(sourcePath, projectName);
   const activeSurfaceProjectName = activeWorkbenchTab?.kind === "project-rules"
     || activeWorkbenchTab?.kind === "history"
@@ -6142,6 +6620,13 @@ export default function Workbench() {
         data-left-sidebar={globalSidebarOpen ? "open" : "collapsed"}
         data-round-state={runInProgress ? "processing" : viewMode}
         data-canvas-mode={displayedCanvasMode}
+        data-document-cache-entry-count={documentSurfaceCacheSnapshot.entries.length}
+        data-document-cache-presentation-count={documentSurfaceCacheSnapshot.presentations.length}
+        data-document-cache-cold-count={documentSurfaceCacheSnapshot.coldTabIds.length}
+        data-document-cache-bytes={documentSurfaceCacheSnapshot.totalBytes}
+        data-document-cache-presentation-bytes={documentSurfaceCacheSnapshot.presentationBytes}
+        data-document-cache-max-entries={documentSurfaceCacheSnapshot.limits.maxEntries}
+        data-document-cache-max-bytes={documentSurfaceCacheSnapshot.limits.maxBytes}
         data-handoff-preview={runInProgress && handoffPreviewOpen ? "true" : undefined}
         data-document-persistence-banner={documentPersistenceBannerVisible ? "true" : undefined}
         data-persist-state={persistState}
@@ -6176,45 +6661,66 @@ export default function Workbench() {
         />
       </div> : null}
       <WorkbenchTooltipHost />
+      {exportDialog.contextKey === exportContextKey && exportDialog.open ? <ExportHtmlDialog
+        canSaveVersion={!showingOutgoingDocument && presentation.actions.exportAndSave.enabled}
+        saveUnavailableReason={showingOutgoingDocument ? "页面正在切换" : presentation.actions.exportAndSave.reason}
+        canExport={!showingOutgoingDocument && presentation.actions.exportHtml.enabled}
+        onClose={() => setExportDialog({ contextKey: exportContextKey, open: false })}
+        onConfirm={(saveVersion) => {
+          setExportDialog({ contextKey: exportContextKey, open: false });
+          void exportCurrentHtml(false, saveVersion);
+        }}
+      /> : null}
       {navigationCapability ? <WorkbenchTabBarContainer
         capability={navigationCapability}
-        presentation={presentation}
+        presentation={headerPresentation}
+        displayedTabId={displayedTabId}
+        activeTabOpening={activeTabOpening}
+        activity={tabActivity}
         onBeforeSelect={rememberWorkbenchTabPresentation}
         onOutcome={presentWorkbenchTabOutcome}
       /> : null}
       {!startPageActive && !settingsPageActive && !projectRulesPageActive ? <>
         <WorkbenchHeaderView
           runInProgress={runInProgress}
-          presentation={presentation}
+          presentation={headerPresentation}
+          previewOpening={!pendingTabId && displayHandoff.target?.surface === "preview"
+            && displayHandoff.phase === "opening"}
           recentRunOutcome={recentRunOutcome}
           terminalRun={terminalRun}
           aiConversationVisible={aiConversation.visible}
-          aiAssistantEntry={aiAssistantEntry}
+          aiAssistantEntry={showingOutgoingDocument ? null : aiAssistantEntry}
           moreMenu={{
+            contextKey: exportContextKey,
             isHistory: presentation.isHistory,
-            canShowInFolder: presentation.actions.showInFolder.enabled,
-            showInFolderUnavailableReason: presentation.actions.showInFolder.reason,
+            canShowInFolder: !showingOutgoingDocument && presentation.actions.showInFolder.enabled,
+            showInFolderUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.showInFolder.reason,
             onShowInFolder: () => void showProjectInFolder(),
-            canOpenInBrowser: presentation.actions.openInBrowser.enabled,
-            openInBrowserUnavailableReason: presentation.actions.openInBrowser.reason,
+            canOpenInBrowser: !showingOutgoingDocument && presentation.actions.openInBrowser.enabled,
+            openInBrowserUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.openInBrowser.reason,
             onOpenInBrowser: () => void openSelectedHtmlInDefaultBrowser(),
-            canExportCurrentHtml: presentation.actions.exportHtml.enabled,
-            exportUnavailableReason: presentation.actions.exportHtml.reason,
-            onExportCurrentHtml: (saveVersion) => void exportCurrentHtml(false, saveVersion),
-            canSaveCurrentVersion: presentation.actions.saveVersion.enabled,
-            saveCurrentVersionUnavailableReason: presentation.actions.saveVersion.reason,
-            exportAndSaveUnavailableReason: presentation.actions.exportAndSave.reason,
+            canExportCurrentHtml: !showingOutgoingDocument && presentation.actions.exportHtml.enabled,
+            exportUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.exportHtml.reason,
+            onExportCurrentHtml: requestExportCurrentHtml,
+            canSaveCurrentVersion: !showingOutgoingDocument && presentation.actions.saveVersion.enabled,
+            saveCurrentVersionUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.saveVersion.reason,
             onSaveCurrentVersion: () => { void workspaceController?.saveCurrentVersion(); },
-            canCreateVersionFromHistory: presentation.actions.createFromHistory.enabled,
-            createVersionFromHistoryUnavailableReason: presentation.actions.createFromHistory.reason,
+            canCreateVersionFromHistory: !showingOutgoingDocument
+              && presentation.actions.createFromHistory.enabled,
+            createVersionFromHistoryUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.createFromHistory.reason,
             onCreateVersionFromHistory: requestHistoryCreation,
-            canOpenPreservedDrafts: presentation.actions.preservedDrafts.enabled,
-            preservedDraftsUnavailableReason: presentation.actions.preservedDrafts.reason,
-            onOpenPreservedDrafts: () => setPreservedDraftDialogOpen(true),
-            canReloadCurrentSource: presentation.actions.reloadSource.enabled,
-            reloadCurrentSourceUnavailableReason: presentation.actions.reloadSource.reason,
+            canReloadCurrentSource: !showingOutgoingDocument
+              && presentation.actions.reloadSource.enabled,
+            reloadCurrentSourceUnavailableReason: showingOutgoingDocument ? "页面正在切换"
+              : presentation.actions.reloadSource.reason,
             onReloadCurrentSource: () => void reloadCurrentSource(),
-            onRetryDynamicContent: canReloadCurrentSource && editRuntimeSnapshot?.retryAvailable
+            onRetryDynamicContent: !showingOutgoingDocument && canReloadCurrentSource
+              && editRuntimeSnapshot?.retryAvailable
               ? () => {
                   void workspaceControllerRef.current?.retryEditAuthorRuntime().then((started) => {
                     if (!started) setFileStatusNotice("暂时无法重新加载，请稍后重试");
@@ -6227,13 +6733,6 @@ export default function Workbench() {
           onOpenReview={() => {
             if (reviewAvailable) void reviewReadyResult();
           }}
-          onRefreshCanvas={() => {
-            if (readyReviewOverlay) {
-              deferredEditorReplayRef.current.reloadReview?.();
-              return;
-            }
-            if (displayedCanvasMode === "preview") interactionPreviewRef.current?.reload();
-          }}
           reopenRecentRunOutcome={reopenRecentRunOutcome}
         />
         <CurrentDraftStatus state={workspaceControllerSnapshot?.version} contextKey={`${projectId}:${documentId}`}
@@ -6241,27 +6740,52 @@ export default function Workbench() {
           onShowFile={(path) => { void showProjectInFolder(path); }} />
       </> : null}
 
-      {tabSwitchError ? <section className="workbench-tab-switch-error" role="alert">
-        <strong>无法打开「{tabSwitchError.title}」</strong>
-        <span>{tabSwitchError.reason}</span>
+      {navigationFailure ? <section className="workbench-tab-switch-error" role="alert">
+        <strong>无法打开「{navigationFailure.title}」</strong>
+        <span>{navigationFailure.reason}</span>
         <button type="button" onClick={() => {
-          const target = navigationCapability?.getSnapshot().tabs?.tabs.find(
-            (tab) => tab.tabId === tabSwitchError.tabId,
-          );
-          if (!target || !navigationCapability) {
-            setTabSwitchError(null);
+          if (!navigationCapability) {
+            setNavigationFailure(null);
             return;
           }
+          const retryTarget = navigationFailure;
+          setNavigationFailure(null);
+          if (retryTarget.kind === "registered-project") {
+            void navigationCapability.commands.openRegisteredProject({
+              projectId: retryTarget.projectId,
+              documentId: retryTarget.documentId,
+              title: retryTarget.title,
+            }).then((outcome) => {
+              presentWorkbenchTabOutcome(outcome, undefined, retryTarget);
+            });
+            return;
+          }
+          const target = navigationCapability.getSnapshot().tabs?.tabs.find(
+            (tab) => tab.tabId === retryTarget.tabId,
+          );
+          if (!target) return;
           rememberWorkbenchTabPresentation(
             navigationCapability.getSnapshot().tabs ?? INITIAL_WORKBENCH_TABS_SNAPSHOT,
           );
-          setTabSwitchError(null);
           void navigationCapability.commands.activateTab(target.tabId).then((outcome) => {
             presentWorkbenchTabOutcome(outcome, target);
           });
         }}>重试打开</button>
-        <button type="button" onClick={() => setTabSwitchError(null)}>关闭</button>
+        <button type="button" onClick={() => setNavigationFailure(null)}>关闭</button>
       </section> : null}
+
+      {pendingExternalAckId && !externalAckVisible && !navigationFailure ? (
+        <section className="workbench-tab-switch-error" role="status">
+          <strong>打开尚未完成</strong>
+          <span>外部 HTML 已处理，但下一个 Finder 请求尚未解锁。</span>
+          <button type="button" onClick={() => {
+            void workspaceController?.retryExternalOpen({ requestId: pendingExternalAckId })
+              .then((outcome) => {
+                if (outcome?.status === "succeeded") setDismissedExternalAckId(null);
+              });
+          }}>继续打开</button>
+        </section>
+      ) : null}
 
       {pendingExit || fileStatusNotice ? (
         <section
@@ -6548,7 +7072,7 @@ export default function Workbench() {
       <div
         id="workbench-content-outlet"
         role="tabpanel"
-        aria-labelledby={`workbench-tab-${activeWorkbenchTab.tabId}`}
+        aria-labelledby={`workbench-tab-${displayedTabId || activeWorkbenchTab.tabId}`}
         ref={reviewStageRef}
         className="review-scroll-stage"
         onWheelCapture={commentCanvasPort.cancelReveal}
@@ -6567,29 +7091,27 @@ export default function Workbench() {
           inert={readyReviewOverlay ? true : undefined}
           aria-hidden={readyReviewOverlay ? true : undefined}
         >
-          <WorkbenchDocumentSurfaceCache
-            snapshot={documentSurfaceCacheSnapshot}
-            visibleTabId={visibleCachedSurface?.tabId || null}
-            visibleSourceSha256={visibleCachedSurface?.sourceSha256 || null}
-            visibleHandoffId={visibleHandoffId}
-            candidateTabId={candidateCachedSurface?.tabId || null}
-            candidateSourceSha256={candidateCachedSurface?.sourceSha256 || null}
-            candidateHandoffId={candidateHandoffId}
-            acceptDisplayReady={acceptDisplayReady}
-            onHandoffScroll={updateHandoffScroll}
-            onFirstScroll={markFirstScroll}
-            height="var(--comment-canvas-height, 760px)"
-          />
           <div
+            ref={editSurfaceRef}
             className="canvas-edit-surface"
             data-testid="workbench-active-document-canvas"
             data-runtime-hot-count={activeRuntimeCanvasMounted ? 1 : 0}
             data-runtime-hot-limit={1}
             data-edit-runtime-phase={editRuntimePhase}
             data-edit-runtime-outcome={editRuntimeSnapshot?.lastOutcome || undefined}
-            hidden={displayedCanvasMode !== "edit"}
-            aria-hidden={displayedCanvasMode !== "edit" || cachedSurfaceBlocksCanvas}
-            inert={cachedSurfaceBlocksCanvas ? true : undefined}
+            data-preview-handoff={displayedCanvasMode === "preview" && showEditSurface ? "true" : undefined}
+            data-preview-underlay={editPreviewUnderlay ? "true" : undefined}
+            style={editPreviewUnderlay && heldEditGeometry ? {
+              width: heldEditGeometry.width,
+              height: heldEditGeometry.height,
+            } : undefined}
+            hidden={!showEditSurface}
+            aria-hidden={!displayHandoffState.roles.editInteractive
+              && !(displayHandoff.phase === "failed" && displayHandoff.target?.surface === "edit")
+              ? true : undefined}
+            inert={!displayHandoffState.roles.editInteractive
+              && !(displayHandoff.phase === "failed" && displayHandoff.target?.surface === "edit")
+              ? true : undefined}
           >
             {!desktopHostReady ? (
               <div className="canvas-loading" role="status">正在识别运行环境…</div>
@@ -6619,9 +7141,13 @@ export default function Workbench() {
                 <WorkbenchActiveDocumentCanvas
                   activeTabId={documentRuntimeTabId}
                   activeSourceSha256={sourceSha256}
-                  activeReady={activeDocumentCanvasReady}
+                  activeReady={editTargetReady}
                   activeFailed={activeDocumentCanvasFailed}
-                  presentationVisible={displayedCanvasMode === "edit"}
+                  handoff={displayHandoffState.edit}
+                  onRetainedChange={(target) => displayHandoffState.reportRetained("edit", target)}
+                  presentationVisible={showEditSurface && (displayedCanvasMode === "edit"
+                    || !activePreviewReady || displayHandoffState.edit.retain)}
+                  foregroundVisible={displayHandoffState.roles.editInteractive}
                   failureMessage={projectLoadError || (activeDocumentCanvasFailed
                     ? "画布核对失败，请重试打开当前稿。"
                     : null)}
@@ -6676,15 +7202,13 @@ export default function Workbench() {
                   onSelect={handleCanvasSelection}
                   onRequestComment={openCommentComposer}
                   onRequestFlush={requestUserFlush}
-                  onRequestExport={() => {
-                    void exportCurrentHtml();
-                  }}
+                  onRequestExport={requestExportCurrentHtml}
                   onRequestHistory={(direction) => {
                     void requestSourceHistoryAction(direction);
                   }}
                   onRequestReload={() => {
                     if (currentProjectSessionSnapshot().sourcePath) {
-                      void reloadCurrentSource();
+                      void reloadCurrentSource({ announceSuccess: true });
                     } else {
                       void openProject();
                     }
@@ -6703,6 +7227,7 @@ export default function Workbench() {
                     || Boolean(projectLoadError)
                     || viewTransitioning
                     || persistState === "conflict"
+                    || Boolean(pendingTabId)
                   }
                   readOnly={viewMode === "history"
                     || runtimeDegradation === "static-preparing"
@@ -6720,12 +7245,26 @@ export default function Workbench() {
               </>
             )}
           </div>
-          {displayedCanvasMode === "preview" && (historyPreview || documentRuntimeTabId) ? (
-            <HtmlInteractionPreview
-              key={`preview-authority-${canvasGeneration}-${historyPreview?.versionId || "current"}`}
+          {previewSurfaceMounted || keepPreviewInEdit ? (
+            <WorkbenchActivePreview
+              identity={previewIdentity}
+              activeReady={activePreviewReady}
+              activeFailed={activePreviewFailed}
+              activeOutcome={previewAck?.identity === previewIdentity ? previewAck.previewResult : undefined}
+              activeDegradationReason={previewAck?.identity === previewIdentity ? previewAck.degradationReason : undefined}
+              activeAttemptId={previewAck?.identity === previewIdentity ? previewAck.attemptId : undefined}
+              handoff={displayHandoffState.preview}
+              onRetainedChange={(target) => displayHandoffState.reportRetained("preview", target)}
+              onPhysicalPresenceChange={onPreviewPhysicalPresenceChange}
+              carryForEdit={keepPreviewInEdit}
+              parked={parkedPreviewLease && !carryPreviewIntoEdit && !displayHandoffState.preview.retain}
+              onRetry={() => interactionPreviewRef.current?.reload()}
+              activeElement={previewSurfaceMounted || parkedPreviewLease ? <HtmlInteractionPreview
+              key={`preview-authority-${previewIdentity}`}
               ref={interactionPreviewRef}
               html={interactionPreviewHtml}
               staticFallbackOnFailure={Boolean(historyPreview)}
+              openReason={previewOpenReason}
               documentKey={historyPreview ? `${pageViewDocumentKey}:${historyPreview.versionId}` : pageViewDocumentKey}
               sourcePath={historyPreview?.sourcePath || sourcePath || undefined}
               height={historyPreview
@@ -6733,8 +7272,7 @@ export default function Workbench() {
                 : "100%"}
               comments={historyPreview ? versions.find((version) => version.id === historyPreview.versionId)?.comments || [] : comments}
               transport="independent-url"
-              onReady={historyPreview ? undefined : handlePreviewReady}
-              presentationCovered={cachedSurfaceBlocksCanvas}
+              onDisplayResult={handlePreviewDisplayResult}
               initialScrollTop={historyPreview ? undefined : activeDocumentPresentation?.scrollTop}
               onScrollTopChange={(scrollTop) => {
                 if (!historyPreview && activeWorkbenchTab.kind === "document") {
@@ -6744,6 +7282,7 @@ export default function Workbench() {
                   );
                 }
               }}
+              /> : null}
             />
           ) : null}
         </section>
@@ -6790,9 +7329,7 @@ export default function Workbench() {
         />
       ) : null}
 
-      {workspaceController && preservedDraftDialogOpen ? <PreservedDraftDialog key={`${projectId}:${documentId}`} open
-        contextKey={`${projectId}:${documentId}`} onClose={() => setPreservedDraftDialogOpen(false)}
-        onLoad={loadPreservedDrafts} onRestore={(recoveryId) => workspaceController.restorePreservedDraft({ recoveryId })} /> : null}
+
       <HistoryCreationDialog
         open={Boolean(historyCreationConfirmation && historyCreationConfirmation === `${activeSurfaceProjectId}:${activeSurfaceDocumentId}:${viewingVersionId}` && viewMode === "history")}
         versionLabel={viewingVersion?.label || "历史版本"}
@@ -6830,6 +7367,7 @@ export default function Workbench() {
       {presentedInterruption && !readyReviewSession ? (
         <NoticeBar
           className="toast"
+          identity={noticeIdentity}
           title={presentedInterruption.title}
           message={presentedInterruption.message}
           tone={presentedInterruption.tone}
@@ -6840,7 +7378,13 @@ export default function Workbench() {
           onAction={presentedInterruption.actionId
             ? handleInterruptionAction
             : undefined}
-          onDismiss={() => setInterruption(null)}
+          onDismiss={() => {
+            if (externalAckVisible && pendingExternalAckId) {
+              setDismissedExternalAckId(pendingExternalAckId);
+            } else {
+              setInterruption(null);
+            }
+          }}
           usageCode={noticeUsageCode(presentedInterruption.usageKey)}
           usageDisposition="inform-in-place"
           usageSurface="global"

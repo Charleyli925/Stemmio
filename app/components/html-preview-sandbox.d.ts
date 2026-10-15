@@ -11,10 +11,6 @@ export function sanitizePreviewDocument(
   source: string,
   baseUrl?: string,
 ): string;
-export function sanitizeScrollableDisplayDocument(
-  source: string,
-  baseUrl?: string,
-): string;
 export function prepareVerifiedFrameDocument(
   source: string,
   verificationToken: string,

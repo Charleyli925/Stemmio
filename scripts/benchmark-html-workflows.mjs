@@ -268,6 +268,12 @@ async function activeProject() {
   return launched.page.evaluate(() => window.stemmioProjects?.getActiveProject());
 }
 
+function activeCanvasEditor() {
+  return launched.page.getByTestId("workbench-active-document-canvas-host")
+    .locator('[data-runtime-hot-active="true"]')
+    .getByTestId("html-canvas-editor");
+}
+
 async function activeContentReady({ expectedStem = "", timeout = 45_000 } = {}) {
   if (expectedStem) {
     await waitUntil(async () => {
@@ -275,9 +281,7 @@ async function activeContentReady({ expectedStem = "", timeout = 45_000 } = {}) 
       return project?.sourcePath && path.basename(project.sourcePath).includes(expectedStem);
     }, { timeout, label: `active project ${expectedStem}` });
   }
-  const editor = launched.page.getByTestId("html-canvas-editor")
-    .filter({ visible: true })
-    .first();
+  const editor = activeCanvasEditor();
   await editor.waitFor({ state: "visible", timeout });
   const iframe = editor.locator('iframe[title*="HTML"]').first();
   await iframe.waitFor({ state: "attached", timeout });
@@ -292,7 +296,7 @@ async function activeContentReady({ expectedStem = "", timeout = 45_000 } = {}) 
   return { editor, iframe };
 }
 
-async function firstUsefulDocumentVisible({ expectedStem = "", timeout = 45_000 } = {}) {
+async function firstUsefulCanvasVisible({ expectedStem = "", timeout = 45_000 } = {}) {
   if (expectedStem) {
     await waitUntil(async () => {
       const project = await activeProject();
@@ -300,17 +304,7 @@ async function firstUsefulDocumentVisible({ expectedStem = "", timeout = 45_000 
     }, { timeout, label: `active project display ${expectedStem}` });
   }
   await waitUntil(async () => {
-    const display = launched.page.getByTestId("html-display-surface")
-      .filter({ visible: true })
-      .first();
-    if (
-      await display.isVisible().catch(() => false)
-      && await display.getAttribute("data-display-ready", { timeout: 50 })
-        .catch(() => null) === "true"
-    ) return true;
-    const editor = launched.page.getByTestId("html-canvas-editor")
-      .filter({ visible: true })
-      .first();
+    const editor = activeCanvasEditor();
     if (!await editor.isVisible().catch(() => false)) return false;
     if (
       await editor.getAttribute("data-render-verified", { timeout: 50 })
@@ -463,11 +457,10 @@ async function renderedSnapshot(frame) {
 
 async function runtimeResourceSnapshot() {
   return launched.page.evaluate(() => {
-    const surfaceCache = document.querySelector(
-      '[data-testid="workbench-document-surface-cache"]',
-    );
+    const main = document.querySelector("main.workbench");
+    const cacheCount = (name) => Number(main?.getAttribute(`data-document-cache-${name}`) || 0);
     const runtimePool = document.querySelector(
-      '[data-testid="workbench-active-document-canvas"]',
+      '[data-testid="workbench-active-document-canvas-host"]',
     );
     const reviewWorkspace = document.querySelector('[data-testid="ai-review-workspace"]');
     const numberAttribute = (element, name) => Number(element?.getAttribute(name) || 0);
@@ -478,13 +471,12 @@ async function runtimeResourceSnapshot() {
         iframeCount: reviewWorkspace?.querySelectorAll("iframe").length || 0,
       },
       documentSurfaceCache: {
-        mounted: Boolean(surfaceCache),
-        surfaceCount: surfaceCache?.querySelectorAll("[data-tab-id]").length || 0,
-        iframeCount: surfaceCache?.querySelectorAll("iframe").length || 0,
-        mountedCount: numberAttribute(surfaceCache, "data-mounted-count"),
-        cacheEntryCount: numberAttribute(surfaceCache, "data-cache-entry-count"),
-        presentationCount: numberAttribute(surfaceCache, "data-presentation-count"),
-        cachedBytes: numberAttribute(surfaceCache, "data-cache-bytes"),
+        entryCount: cacheCount("entry-count"),
+        presentationCount: cacheCount("presentation-count"),
+        coldCount: cacheCount("cold-count"),
+        cachedBytes: cacheCount("bytes"),
+        presentationBytes: cacheCount("presentation-bytes"),
+        limits: { maxEntries: cacheCount("max-entries"), maxBytes: cacheCount("max-bytes") },
       },
       runtimeHot: {
         count: numberAttribute(runtimePool, "data-runtime-hot-count"),
@@ -637,12 +629,12 @@ async function openThroughInput(source, ordinal) {
       return "";
     }, { timeout: 15_000, label: `picker handoff ${source.stem}` });
   }
-  const displayReadyPromise = firstUsefulDocumentVisible({ expectedStem: source.stem })
+  const canvasVisiblePromise = firstUsefulCanvasVisible({ expectedStem: source.stem })
     .then(() => performance.now() - started);
   const editorReadyPromise = activeContentReady({ expectedStem: source.stem })
     .then((value) => ({ ...value, editReadyMs: performance.now() - started }));
-  const [displayReadyMs, { editor, editReadyMs }] = await Promise.all([
-    displayReadyPromise,
+  const [canvasVisibleMs, { editor, editReadyMs }] = await Promise.all([
+    canvasVisiblePromise,
     editorReadyPromise,
   ]);
   const renderedPromise = waitForRenderedContent(
@@ -680,8 +672,8 @@ async function openThroughInput(source, ordinal) {
     ordinal,
     fileName: path.basename(source.original),
     sourceBytes: statSync(source.original).size,
-    visibleMs: round(displayReadyMs),
-    displayReadyMs: round(displayReadyMs),
+    visibleMs: round(canvasVisibleMs),
+    canvasVisibleMs: round(canvasVisibleMs),
     editReadyMs: round(editReadyMs),
     textVisibleMs: rendered.textVisibleMs,
     allChartsReadyMs: rendered.allChartsReadyMs,
@@ -699,7 +691,7 @@ async function openThroughInput(source, ordinal) {
     ordinal: sample.ordinal,
     fileName: sample.fileName,
     visibleMs: sample.visibleMs,
-    displayReadyMs: sample.displayReadyMs,
+    canvasVisibleMs: sample.canvasVisibleMs,
     editReadyMs: sample.editReadyMs,
     textVisibleMs: sample.textVisibleMs,
     allChartsReadyMs: sample.allChartsReadyMs,
@@ -759,25 +751,16 @@ async function requestLocalHtmlOpen(page) {
 
 async function cacheState() {
   return launched.page.evaluate(() => {
-    const root = document.querySelector('[data-testid="workbench-document-surface-cache"]');
-    const runtimePool = document.querySelector('[data-testid="workbench-active-document-canvas"]');
-    const numberAttribute = (name) => Number(root?.getAttribute(name) || 0);
+    const main = document.querySelector("main.workbench");
+    const cacheCount = (name) => Number(main?.getAttribute(`data-document-cache-${name}`) || 0);
+    const runtimePool = document.querySelector('[data-testid="workbench-active-document-canvas-host"]');
     return {
-      surfaceCount: root?.querySelectorAll("[data-tab-id]").length || 0,
-      iframeCount: root?.querySelectorAll("iframe").length || 0,
-      mountedTabIds: [...(root?.querySelectorAll("[data-tab-id]") || [])]
-        .map((entry) => entry.getAttribute("data-tab-id")),
-      visible: root?.getAttribute("data-visible") || null,
-      visibleTabId: root?.getAttribute("data-visible-tab-id") || null,
-      mountedCount: numberAttribute("data-mounted-count"),
-      cacheEntryCount: numberAttribute("data-cache-entry-count"),
-      presentationCount: numberAttribute("data-presentation-count"),
-      coldCount: numberAttribute("data-cold-count"),
-      cachedBytes: numberAttribute("data-cache-bytes"),
-      limits: {
-        maxEntries: numberAttribute("data-max-cache-entries"),
-        maxBytes: numberAttribute("data-max-cache-bytes"),
-      },
+      entryCount: cacheCount("entry-count"),
+      presentationCount: cacheCount("presentation-count"),
+      coldCount: cacheCount("cold-count"),
+      cachedBytes: cacheCount("bytes"),
+      presentationBytes: cacheCount("presentation-bytes"),
+      limits: { maxEntries: cacheCount("max-entries"), maxBytes: cacheCount("max-bytes") },
       runtimeHot: {
         count: Number(runtimePool?.getAttribute("data-runtime-hot-count") || 0),
         limit: Number(runtimePool?.getAttribute("data-runtime-hot-limit") || 0),
@@ -789,14 +772,8 @@ async function cacheState() {
 
 function assertCacheBudget(snapshot, label, { minimumRuntimeHotCount = 0 } = {}) {
   assert(snapshot.limits.maxEntries > 0, `${label}: cache diagnostics are missing`);
-  assert.equal(snapshot.surfaceCount, snapshot.mountedCount, `${label}: handoff DOM count drifted`);
-  assert.equal(snapshot.iframeCount, snapshot.mountedCount, `${label}: handoff iframe count drifted`);
   assert(
-    snapshot.mountedCount <= 2,
-    `${label}: transient handoff surfaces exceeded the overlap budget`,
-  );
-  assert(
-    snapshot.cacheEntryCount <= snapshot.limits.maxEntries,
+    snapshot.entryCount <= snapshot.limits.maxEntries,
     `${label}: retained projections exceeded the entry budget`,
   );
   assert(
@@ -846,7 +823,7 @@ async function switchTo(index) {
   const tabId = String(await tab.getAttribute("id") || "").replace(/^workbench-tab-/u, "");
   const beforeAdds = await launched.page.evaluate(() => Number(window.__qaIframeAdds || 0));
   const beforeRemoves = await launched.page.evaluate(() => Number(window.__qaIframeRemoves || 0));
-  const cacheTimelineStartedAt = await launched.page.evaluate(() => performance.now());
+  const runtimeTimelineStartedAt = await launched.page.evaluate(() => performance.now());
   const started = performance.now();
   await tab.click();
   await waitUntil(
@@ -871,21 +848,13 @@ async function switchTo(index) {
   const elapsedMs = rendered.fullContentReadyMs ?? rendered.observationMs;
   const afterAdds = await launched.page.evaluate(() => Number(window.__qaIframeAdds || 0));
   const afterRemoves = await launched.page.evaluate(() => Number(window.__qaIframeRemoves || 0));
-  const cacheHandoff = await launched.page.evaluate(({ minimumStartTime, expectedTabId }) => {
+  const runtimeHotReadyMs = await launched.page.evaluate(({ minimumStartTime, expectedTabId }) => {
     const matching = (name) => performance.getEntriesByName(name, "mark")
       .filter((entry) => entry.startTime >= minimumStartTime)
       .find((entry) => entry.detail?.tabId === expectedTabId);
-    const visible = matching("stemmio:tab-cache:visible-ready");
-    const scrollable = matching("stemmio:tab-cache:scrollable-ready");
-    const completed = matching("stemmio:tab-cache:handoff-complete");
     const runtimeHot = matching("stemmio:runtime-hot:visible-ready");
-    return {
-      visibleReadyMs: visible ? visible.startTime - minimumStartTime : null,
-      scrollableReadyMs: scrollable ? scrollable.startTime - minimumStartTime : null,
-      handoffCompleteMs: completed ? completed.startTime - minimumStartTime : null,
-      runtimeHotReadyMs: runtimeHot ? runtimeHot.startTime - minimumStartTime : null,
-    };
-  }, { minimumStartTime: cacheTimelineStartedAt, expectedTabId: tabId });
+    return runtimeHot ? runtimeHot.startTime - minimumStartTime : null;
+  }, { minimumStartTime: runtimeTimelineStartedAt, expectedTabId: tabId });
   return {
     index,
     label,
@@ -893,18 +862,9 @@ async function switchTo(index) {
     textVisibleMs: rendered.textVisibleMs,
     allChartsReadyMs: rendered.allChartsReadyMs,
     renderFacts: rendered.snapshot,
-    cachedDisplayReadyMs: cacheHandoff.visibleReadyMs === null
+    runtimeHotReadyMs: runtimeHotReadyMs === null
       ? null
-      : round(cacheHandoff.visibleReadyMs),
-    cachedScrollableReadyMs: cacheHandoff.scrollableReadyMs === null
-      ? null
-      : round(cacheHandoff.scrollableReadyMs),
-    cacheHandoffCompleteMs: cacheHandoff.handoffCompleteMs === null
-      ? null
-      : round(cacheHandoff.handoffCompleteMs),
-    runtimeHotReadyMs: cacheHandoff.runtimeHotReadyMs === null
-      ? null
-      : round(cacheHandoff.runtimeHotReadyMs),
+      : round(runtimeHotReadyMs),
     iframeAdds: afterAdds - beforeAdds,
     iframeRemoves: afterRemoves - beforeRemoves,
   };
@@ -916,15 +876,6 @@ async function runSwitchBatch(label, indices) {
   const elapsed = samples.map((sample) => sample.elapsedMs);
   const summary = {
     ...summarize(elapsed),
-    cachedDisplayReady: summarize(samples
-      .map((sample) => sample.cachedDisplayReadyMs)
-      .filter((value) => value !== null)),
-    cachedScrollableReady: summarize(samples
-      .map((sample) => sample.cachedScrollableReadyMs)
-      .filter((value) => value !== null)),
-    cacheHandoffComplete: summarize(samples
-      .map((sample) => sample.cacheHandoffCompleteMs)
-      .filter((value) => value !== null)),
     runtimeHotReady: summarize(samples
       .map((sample) => sample.runtimeHotReadyMs)
       .filter((value) => value !== null)),
@@ -1150,15 +1101,15 @@ async function exerciseReviewAndAccept() {
     return project?.sourcePath && project.sourcePath !== oldSourcePath
       && await workspace.count() === 0;
   }, { timeout: 45_000, label: "review accepted and new HTML opened" });
-  const acceptDisplayPromise = firstUsefulDocumentVisible({ timeout: 45_000 })
+  const acceptCanvasVisiblePromise = firstUsefulCanvasVisible({ timeout: 45_000 })
     .then(() => performance.now() - acceptStarted);
   const acceptEditorPromise = activeContentReady({ timeout: 45_000 })
     .then(() => performance.now() - acceptStarted);
-  const [acceptDisplayReadyMs, acceptEditReadyMs] = await Promise.all([
-    acceptDisplayPromise,
+  const [acceptCanvasVisibleMs, acceptEditReadyMs] = await Promise.all([
+    acceptCanvasVisiblePromise,
     acceptEditorPromise,
   ]);
-  results.review.acceptDisplayReadyMs = round(acceptDisplayReadyMs);
+  results.review.acceptCanvasVisibleMs = round(acceptCanvasVisibleMs);
   results.review.acceptEditReadyMs = round(acceptEditReadyMs);
   results.review.acceptToNewHtmlMs = round(acceptEditReadyMs);
   results.review.acceptedRendered = await waitForRenderedContent(
@@ -1210,17 +1161,17 @@ async function openAfterAccept(source) {
     const project = await activeProject();
     return project?.sourcePath && project.sourcePath !== beforeOpenSourcePath;
   }, { timeout: 45_000, label: "post-accept active source transition" });
-  const displayPromise = firstUsefulDocumentVisible({
+  const canvasVisiblePromise = firstUsefulCanvasVisible({
     timeout: 45_000,
   }).then(() => performance.now() - started);
   const editorPromise = activeContentReady({ timeout: 45_000 })
     .then((value) => ({ ...value, editReadyMs: performance.now() - started }));
-  const [displayReadyMs, { editor, editReadyMs }] = await Promise.all([
-    displayPromise,
+  const [canvasVisibleMs, { editor, editReadyMs }] = await Promise.all([
+    canvasVisiblePromise,
     editorPromise,
   ]);
-  results.acceptThenOpen.visibleMs = round(displayReadyMs);
-  results.acceptThenOpen.displayReadyMs = round(displayReadyMs);
+  results.acceptThenOpen.visibleMs = round(canvasVisibleMs);
+  results.acceptThenOpen.canvasVisibleMs = round(canvasVisibleMs);
   results.acceptThenOpen.editReadyMs = round(editReadyMs);
   results.acceptThenOpen.rendered = await waitForRenderedContent(
     () => currentEditorFrame(page),
@@ -1397,7 +1348,7 @@ try {
 
   results.openingSummary = {
     visible: summarize(results.opening.map((sample) => sample.visibleMs)),
-    displayReady: summarize(results.opening.map((sample) => sample.displayReadyMs)),
+    canvasVisible: summarize(results.opening.map((sample) => sample.canvasVisibleMs)),
     editReady: summarize(results.opening.map((sample) => sample.editReadyMs)),
     textVisible: summarize(results.opening.map((sample) => sample.textVisibleMs)),
     allChartsReady: summarize(results.opening

@@ -199,6 +199,20 @@
   color: currentcolor;
 }
 
+.canvas-mode-switch button[data-preview-opening="true"] > svg {
+  animation: workbench-preview-opening-spin 850ms linear infinite;
+}
+
+@keyframes workbench-preview-opening-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-mode-switch button[data-preview-opening="true"] > svg {
+    animation: none;
+  }
+}
+
 .toolbar-section-divider {
   width: 1px;
   height: 22px;

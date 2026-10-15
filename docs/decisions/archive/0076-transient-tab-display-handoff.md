@@ -1,6 +1,6 @@
-# ADR 0076: Tab display pages exist only during an explicit handoff
+# ADR 0076: Tab display pages existed only during an explicit handoff
 
-- Status: Accepted
+- Status: Superseded by [ADR 0077](../0077-current-draft-live-canvas-handoff.md) for presentation; data and reading-state limits retained
 - Date: 2026-09-16
 - Scope: document-tab display projections, restart restoration and tab-switch presentation
 - Supersedes: the tab Hot/Warm iframe pool in ADR 0045 and ADR 0048, and the restart/inactive-tab prewarm clauses in ADR 0051; Review analysis and the verified immutable script-byte store are unchanged
@@ -28,20 +28,11 @@ parsed DOM, Preview resource sessions, images, fonts, Canvas or GPU state.
   retry timer, generation or late projection writeback.
 - `DocumentSurfaceCacheSession` may retain at most 20 exact, fully persisted,
   Canvas-verified HTML projections within 32 MiB. These entries are data only;
-  they do not keep iframe, Document or Preview resource sessions alive.
-- Selecting a tab with an exact cached projection may mount a script-disabled
-  `HtmlDisplaySurface` as a temporary handoff cover while the normal
-  Registry/OpenTarget path opens the sole editable document. A rapid reversal
-  may briefly retain the prior cover and the new candidate, so the overlap
-  limit is two. The cover is unmounted after the exact Canvas generation
-  settles, including failure. The settlement is correlated to the navigation
-  receipt's exact `SourceReceipt`; a same-Hash observation from an older or
-  independent Canvas generation cannot retire the cover. Once a candidate is
-  no longer eligible, a late display-ready callback cannot reclaim visibility.
-- `HtmlDisplaySurface` waits for the Preview resource-base decision before it
-  mounts its iframe. That mounted handoff document receives one stable `srcDoc`
-  for its exact `tabId + sourceSha256` presentation key instead of loading once
-  with a fallback base and again with the resolved base.
+  they do not keep an iframe, Document or Preview resource session alive and
+  never mount a temporary tab display.
+- Current-draft presentation is owned by ADR 0077's outgoing/incoming Canvas
+  handoff. The old static display handoff, its readiness callbacks and its
+  diagnostic opt-in are retired.
 - Per-tab `scrollTop`, Canvas mode and bounded `PageViewContext` are stored
   separately from HTML bytes. Closing a tab removes both. HTML eviction keeps
   the light state, but restoration requires the same tab, Project, Document
@@ -65,10 +56,10 @@ parsed DOM, Preview resource sessions, images, fonts, Canvas or GPU state.
 
 - Restart restoration emits no tab-projection prewarm and reaches an exact
   Canvas through the ordinary activation path.
-- Settled active and inactive tabs own zero display-cache iframes; a cached tab
-  switch mounts at least one temporary cover and returns to zero after handoff.
-- Source projections remain within the entry and byte limits, eviction never
-  closes a tab, and at most two handoff pages overlap.
+- Settled active and inactive tabs own zero display-cache iframes, and a tab
+  switch never mounts a static display cover.
+- Source projections remain within the entry and byte limits, and eviction
+  never closes a tab.
 - Reading state survives HTML eviction for the exact source revision and is
   reset when that revision changes.
 - Save, IME, undo/redo, external-change, comment and source identity guards

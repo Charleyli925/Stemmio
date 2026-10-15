@@ -235,3 +235,60 @@
 .rail-comment-composer { min-height: 0; padding-bottom: 10px; }
 .rail-comment-composer .composer-actions { margin-top: 8px; }
 .comment-rail-content > .comment-card { padding-bottom: 10px; }
+
+/* The active composer uses one quiet title and a single target locator. */
+.rail-comment-composer,
+.rail-comment-composer:hover,
+.rail-comment-composer:focus-within,
+.rail-comment-composer[data-focused="true"] {
+  padding: 15px 15px 10px 14px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--indigo);
+  border-radius: 16px;
+  background: var(--paper);
+  box-shadow: 0 12px 28px rgb(28 30 38 / 6%);
+  animation: none;
+}
+
+.rail-comment-composer .composer-target {
+  gap: 5px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.rail-comment-composer .composer-target strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.rail-comment-composer .composer-target span {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 480;
+  line-height: 1.45;
+}
+
+.rail-comment-composer textarea,
+.rail-comment-composer textarea:focus,
+.rail-comment-composer textarea:focus-visible {
+  min-height: 108px;
+  padding: 12px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: none;
+}
+
+.rail-comment-composer textarea:focus-visible {
+  outline: 0;
+}
+
+.rail-comment-composer:focus-within {
+  box-shadow:
+    0 12px 28px rgb(28 30 38 / 6%),
+    0 0 0 2px rgb(90 85 223 / 14%);
+}

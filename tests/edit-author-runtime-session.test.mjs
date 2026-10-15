@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { performance } from "node:perf_hooks";
 
 import {
   EDIT_AUTHOR_RUNTIME_CONTRACT_VERSION,
@@ -777,5 +778,43 @@ test("ordinary, Canvas and SVG scripts use the same preparation owner", async ()
     await flushAsync();
     assert.equal(requests.length, 1);
     assert.equal(session.snapshot.phase, "ready");
+  }
+});
+
+test("runtime diagnostics connect preparation, execution and grant release without source content", async () => {
+  const runtimeSessionId = "f".repeat(32);
+  const session = new EditAuthorRuntimeSession({
+    port: {
+      prepare: async (request) => success(request, { sessionId: runtimeSessionId }),
+      revoke: async () => {},
+    },
+  });
+  session.refresh(input());
+  assert.equal(session.startPreparation(input()), true);
+  await flushAsync();
+  const grant = session.snapshot.grant;
+  assert.ok(grant);
+  assert.equal(beginRuntime(session, grant), true);
+  assert.equal(settleRuntime(session, grant, "ready"), true);
+  session.dispose();
+  await flushAsync();
+
+  const marks = performance.getEntriesByType("mark")
+    .filter((entry) => entry.name.startsWith("stemmio:edit-runtime:"));
+  const prepare = marks.find((entry) => entry.name === "stemmio:edit-runtime:prepare-result"
+    && entry.detail?.runtimeSessionId === runtimeSessionId);
+  const execute = marks.find((entry) => entry.name === "stemmio:edit-runtime:execute-result"
+    && entry.detail?.runtimeSessionId === runtimeSessionId);
+  const released = marks.find((entry) => entry.name === "stemmio:edit-runtime:grant-released"
+    && entry.detail?.runtimeSessionId === runtimeSessionId);
+  assert.ok(prepare?.detail?.attemptId);
+  assert.ok(execute?.detail?.attemptId);
+  assert.equal(prepare.detail.canvasGeneration, execute.detail.canvasGeneration);
+  assert.equal(released?.detail?.canvasGeneration, prepare.detail.canvasGeneration);
+  assert.equal(released?.detail?.actionReason, "session-disposed");
+  assert.equal(released?.detail?.outcome, "released");
+  for (const entry of [prepare, execute, released]) {
+    assert.equal(JSON.stringify(entry.detail).includes("/Users/"), false);
+    assert.equal(JSON.stringify(entry.detail).includes("<script>"), false);
   }
 });

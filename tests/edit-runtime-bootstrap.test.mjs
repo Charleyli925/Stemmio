@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
+
+import { editRuntimeRegistrationProperty } from "../app/domain/edit-runtime-contract.js";
 
 import {
   createEditRuntimeBootstrap,
@@ -43,9 +46,10 @@ test("disposable runtime bootstrap proves the parsed source set before author wo
   assert.match(source, /activation-ready/u);
   assert.match(source, /authorErrorCount/u);
   assert.match(source, /resourceFailureCount/u);
+  assert.match(source, /attemptedScriptCount/u);
   assert.match(source, /elapsedMs/u);
   assert.match(source, /activationReported/u);
-  assert.match(source, /activateAuthorScripts\(asyncSettlements\)/u);
+  assert.match(source, /activateAuthorScripts\(asyncSettlements, activationCounts\)/u);
   assert.ok(
     source.indexOf('dispatchEvent(new Event("DOMContentLoaded"')
       < source.indexOf("Promise.all(asyncSettlements)"),
@@ -69,4 +73,66 @@ test("disposable runtime bootstrap proves the parsed source set before author wo
   assert.doesNotMatch(source, /window\.Worker\s*=/u);
   assert.doesNotMatch(source, /mutationRecordLimit/u);
   assert.doesNotMatch(source, /eval\s*\(/u);
+});
+
+test("partial script activation reports attempts made before replacement fails", async () => {
+  const executionId = "a".repeat(24);
+  const sessionId = "b".repeat(32);
+  const registrationProperty = editRuntimeRegistrationProperty(executionId);
+  let attemptedReplacements = 0;
+  const placeholders = [
+    {
+      isConnected: true,
+      attributes: [],
+      getAttribute: () => null,
+      hasAttribute: () => false,
+      replaceWith: () => {
+        attemptedReplacements += 1;
+        throw new Error("injected replacement failure");
+      },
+    },
+    {
+      isConnected: true,
+      attributes: [],
+      getAttribute: () => null,
+      hasAttribute: () => false,
+      replaceWith: () => { attemptedReplacements += 1; },
+    },
+  ];
+  const outcome = new Promise((resolve) => {
+    const window = {
+      parent: { [registrationProperty]: () => ({ reportActivationOutcome: resolve }) },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const document = {
+      readyState: "complete",
+      documentElement: {
+        nodeType: 1,
+        hasAttribute: () => false,
+        querySelectorAll: () => [],
+      },
+      querySelectorAll: () => placeholders,
+      createElement: () => ({
+        setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
+        addEventListener() {},
+      }),
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    vm.runInNewContext(createEditRuntimeBootstrap({ executionId, sessionId }), {
+      window, document, Node: { ELEMENT_NODE: 1 },
+      Element: class Element {}, HTMLElement: class HTMLElement {},
+      performance: { now: () => 0 }, setTimeout,
+      ErrorEvent: class ErrorEvent {},
+    });
+  });
+  assert.equal(attemptedReplacements, 1);
+  assert.deepEqual({ ...(await outcome) }, {
+    status: "activation-resource-failed",
+    authorErrorCount: 0,
+    resourceFailureCount: 1,
+    attemptedScriptCount: 1,
+    elapsedMs: 0,
+  });
 });

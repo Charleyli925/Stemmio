@@ -18,6 +18,7 @@ type ModeHandlersInput = Readonly<{
   invalidateEditCanvasRenderAck: () => void;
   commentCanvasPort: { setSelection: (selection: null) => void };
   updateFocusedComment: (commentId: string | null) => void;
+  captureEditPresentation: () => void;
   setCanvasMode: (mode: CanvasMode) => void;
   deferEditorCommand: (kind: string, run: () => void) => boolean;
   isViewTransitioning: () => boolean;
@@ -37,6 +38,7 @@ export function createWorkbenchModeHandlers({
   invalidateEditCanvasRenderAck,
   commentCanvasPort,
   updateFocusedComment,
+  captureEditPresentation,
   setCanvasMode,
   deferEditorCommand,
   isViewTransitioning,
@@ -98,6 +100,7 @@ export function createWorkbenchModeHandlers({
       editorRef.current?.applyPageViewContext(null);
       commentCanvasPort.setSelection(null);
       updateFocusedComment(null);
+      captureEditPresentation();
       setCanvasMode("preview");
     };
     if (deferEditorCommand("project-switch", enterPreview)) return;

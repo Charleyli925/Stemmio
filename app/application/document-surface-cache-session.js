@@ -5,31 +5,6 @@ const DEFAULT_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PRESENTATION_CONTEXT_CHARS = 64 * 1024;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
-export function documentSurfaceCacheToken(value) {
-  const tabId = String(value?.tabId || "");
-  const sourceSha256 = String(value?.sourceSha256 || "");
-  if (!tabId || !sourceSha256) return null;
-  return Object.freeze({ tabId, sourceSha256 });
-}
-
-export function sameDocumentSurfaceCacheToken(left, right) {
-  return Boolean(
-    left
-    && right
-    && left.tabId === right.tabId
-    && left.sourceSha256 === right.sourceSha256,
-  );
-}
-
-export function documentSurfaceCacheEntryMatchesToken(entry, token) {
-  return Boolean(
-    entry
-    && token
-    && entry.tabId === token.tabId
-    && entry.sourceSha256 === token.sourceSha256
-  );
-}
-
 function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.values(value).forEach(deepFreeze);
@@ -266,16 +241,6 @@ export class DocumentSurfaceCacheSession {
     );
     this.#publish();
     return this.#snapshot.presentations.find((candidate) => candidate.tabId === id) || null;
-  }
-
-  updatePresentationForToken(token, presentation = {}) {
-    const id = String(token?.tabId || "");
-    const sourceSha256 = String(token?.sourceSha256 || "");
-    const entry = this.#entries.get(id);
-    if (!documentSurfaceCacheEntryMatchesToken(entry, { tabId: id, sourceSha256 })) {
-      return null;
-    }
-    return this.updatePresentation(id, presentation, entry);
   }
 
   remove(tabId) {

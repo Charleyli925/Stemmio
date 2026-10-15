@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -54,7 +53,7 @@ const RAW_PRESENTATION_HTML = `<!doctype html>
 
 const PRESENTATION_HTML = materializeSourceElementIdentity(RAW_PRESENTATION_HTML).html;
 
-const DATA_LINKED_TAB_HTML = `<!doctype html>
+const RAW_DATA_LINKED_TAB_HTML = `<!doctype html>
 <html>
 <head>
   <style>
@@ -81,7 +80,7 @@ const DATA_LINKED_TAB_HTML = `<!doctype html>
 </body>
 </html>`;
 
-const INDEXED_HANDLER_TAB_HTML = `<!doctype html>
+const RAW_INDEXED_HANDLER_TAB_HTML = `<!doctype html>
 <html>
 <head>
   <style>
@@ -112,6 +111,9 @@ const INDEXED_HANDLER_TAB_HTML = `<!doctype html>
   </script>
 </body>
 </html>`;
+
+const DATA_LINKED_TAB_HTML = materializeSourceElementIdentity(RAW_DATA_LINKED_TAB_HTML).html;
+const INDEXED_HANDLER_TAB_HTML = materializeSourceElementIdentity(RAW_INDEXED_HANDLER_TAB_HTML).html;
 
 function sourceNodeId(index, id) {
   const element = index.elements.find(
@@ -363,32 +365,171 @@ test("semantic Tab actions switch only disposable presentation context", () => {
   assert.deepEqual(currentAction.nextContext, action.nextContext);
 });
 
-test("page-view-context does not revive retired tab adapters", () => {
-  const source = readFileSync(
-    new URL("../app/lib/page-view-context.js", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    source,
-    /\bdata-p\b|\bdata-tab\b|resolveDataLinkedTabAction|resolveIndexedHandlerTabAction|SIMPLE_INDEXED_TAB_HANDLER|LEGACY_TAB_/u,
-  );
+test("explicit data-linked tabs switch only the bounded active-class context", () => {
+  const html = DATA_LINKED_TAB_HTML;
+  const index = buildSourceIndex(html);
+  const action = createPagePresentationAction({
+    html,
+    sourceIndex: index,
+    documentKey: "editing:/tmp/legacy-report.html",
+    generation: 4,
+    targetRef: targetRef(index, "legacy-tab-two-label"),
+  });
+
+  assert.ok(action);
+  assert.equal(action.kind, "activate-tab");
+  assert.equal(action.label, "切换到此页签");
+  assert.equal(action.isCurrent, false);
+  assert.equal(index.source, html);
+
+  const resolved = resolvePageViewContext(html, action.nextContext);
+  const stateById = new Map(resolved.entries.map((item) => [
+    (resolved.sourceIndex.byStemmioId.get(item.sourceNodeId) ?? resolved.sourceIndex.byNodeId.get(item.sourceNodeId))?.stableAttributes.id,
+    item.entry,
+  ]));
+  assert.deepEqual(stateById.get("legacy-tab-one")?.classRemove, ["active"]);
+  assert.deepEqual(stateById.get("legacy-tab-two")?.classAdd, ["active"]);
+  assert.deepEqual(stateById.get("legacy-panel-one")?.classRemove, ["active"]);
+  assert.deepEqual(stateById.get("legacy-panel-two")?.classAdd, ["active"]);
+  assert.equal(stateById.size, 4);
+
+  const currentAction = createPagePresentationAction({
+    html,
+    sourceIndex: index,
+    documentKey: "editing:/tmp/legacy-report.html",
+    generation: 99,
+    currentContext: action.nextContext,
+    targetRef: targetRef(index, "legacy-tab-two"),
+  });
+  assert.ok(currentAction);
+  assert.equal(currentAction.label, "当前页签");
+  assert.equal(currentAction.isCurrent, true);
+  assert.deepEqual(currentAction.nextContext, action.nextContext);
 });
 
-test("retired data-linked and indexed-handler tabs stay inert", () => {
+test("constant-index handler tabs switch without evaluating authored code", () => {
+  const html = INDEXED_HANDLER_TAB_HTML;
+  const index = buildSourceIndex(html);
+  const action = createPagePresentationAction({
+    html,
+    sourceIndex: index,
+    documentKey: "editing:/tmp/indexed-report.html",
+    generation: 6,
+    targetRef: targetRef(index, "indexed-tab-two-label"),
+  });
+
+  assert.ok(action);
+  assert.equal(action.kind, "activate-tab");
+  assert.equal(action.label, "切换到此页签");
+  assert.equal(action.isCurrent, false);
+  assert.equal(index.source, html);
+
+  const resolved = resolvePageViewContext(html, action.nextContext);
+  const stateById = new Map(resolved.entries.map((item) => [
+    (resolved.sourceIndex.byStemmioId.get(item.sourceNodeId) ?? resolved.sourceIndex.byNodeId.get(item.sourceNodeId))?.stableAttributes.id,
+    item.entry,
+  ]));
+  assert.deepEqual(stateById.get("indexed-tab-one")?.classRemove, ["active"]);
+  assert.deepEqual(stateById.get("indexed-tab-two")?.classAdd, ["active"]);
+  assert.deepEqual(stateById.get("indexed-panel-one")?.classRemove, ["active"]);
+  assert.deepEqual(stateById.get("indexed-panel-two")?.classAdd, ["active"]);
+  assert.equal(stateById.size, 4);
+
+  const currentAction = createPagePresentationAction({
+    html,
+    sourceIndex: index,
+    documentKey: "editing:/tmp/indexed-report.html",
+    currentContext: action.nextContext,
+    targetRef: targetRef(index, "indexed-tab-two"),
+  });
+  assert.ok(currentAction);
+  assert.equal(currentAction.label, "当前页签");
+  assert.equal(currentAction.isCurrent, true);
+  assert.deepEqual(currentAction.nextContext, action.nextContext);
+});
+
+test("ambiguous data-linked tabs fail closed", () => {
   const cases = [
-    [DATA_LINKED_TAB_HTML, "legacy-tab-two-label"],
-    [DATA_LINKED_TAB_HTML, "legacy-tab-two"],
-    [INDEXED_HANDLER_TAB_HTML, "indexed-tab-two-label"],
-    [INDEXED_HANDLER_TAB_HTML, "indexed-tab-two"],
+    RAW_DATA_LINKED_TAB_HTML.replace(
+      'data-p="legacy-panel-two"',
+      'data-p="legacy-panel-one"',
+    ),
+    RAW_DATA_LINKED_TAB_HTML.replace(
+      'class="report-tab" data-p="legacy-panel-two"',
+      'class="report-tab" data-tab="legacy-panel-two"',
+    ),
+    RAW_DATA_LINKED_TAB_HTML.replace(
+      'class="report-panel"><p>第二页正文',
+      'class="report-panel active"><p>第二页正文',
+    ),
+    RAW_DATA_LINKED_TAB_HTML.replace(
+      'class="report-tab" data-p="legacy-panel-two"',
+      'class="other-tab" data-p="legacy-panel-two"',
+    ),
   ];
 
-  for (const [html, id] of cases) {
+  for (const rawHtml of cases) {
+    const html = materializeSourceElementIdentity(rawHtml).html;
     const index = buildSourceIndex(html);
     assert.equal(createPagePresentationAction({
       html,
       sourceIndex: index,
-      documentKey: "editing:retired-legacy-tabs",
-      targetRef: targetRef(index, id),
+      documentKey: "editing:ambiguous",
+      targetRef: targetRef(index, "legacy-tab-two"),
+    }), null);
+  }
+
+  const onclickOnly = materializeSourceElementIdentity(RAW_DATA_LINKED_TAB_HTML
+    .replace(/ data-p="legacy-panel-one"/u, ' onclick="showOne()"')
+    .replace(/ data-p="legacy-panel-two"/u, ' onclick="showTwo()"')).html;
+  const onclickIndex = buildSourceIndex(onclickOnly);
+  assert.equal(createPagePresentationAction({
+    html: onclickOnly,
+    sourceIndex: onclickIndex,
+    documentKey: "editing:onclick-only",
+    targetRef: targetRef(onclickIndex, "legacy-tab-two"),
+  }), null);
+});
+
+test("ambiguous constant-index handler tabs fail closed", () => {
+  const cases = [
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      'onclick="switchChart(1)"',
+      'onclick="switchChart(0)"',
+    ),
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      'onclick="switchChart(1)"',
+      'onclick="showChart(1)"',
+    ),
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      'onclick="switchChart(1)"',
+      'onclick="switchChart(1); reportClick()"',
+    ),
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      'class="chart-tab" onclick="switchChart(1)"',
+      'class="chart-tab active" onclick="switchChart(1)"',
+    ),
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      'class="chart-panel"><p>第二页正文',
+      'class="chart-panel active"><p>第二页正文',
+    ),
+    RAW_INDEXED_HANDLER_TAB_HTML.replace(
+      "</section>",
+      `<div class="alternate-panel active"><p>另一组第一页</p></div>
+       <div class="alternate-panel"><p>另一组第二页</p></div>
+       <div class="alternate-panel"><p>另一组第三页</p></div>
+       </section>`,
+    ),
+  ];
+
+  for (const rawHtml of cases) {
+    const html = materializeSourceElementIdentity(rawHtml).html;
+    const index = buildSourceIndex(html);
+    assert.equal(createPagePresentationAction({
+      html,
+      sourceIndex: index,
+      documentKey: "editing:indexed-ambiguous",
+      targetRef: targetRef(index, "indexed-tab-two"),
     }), null);
   }
 });

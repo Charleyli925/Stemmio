@@ -22,7 +22,6 @@ const INJECTED_BASE_ATTRIBUTE = "data-html-canvas-injected-base";
 const DISABLED_SCRIPT_ATTRIBUTE = "data-html-canvas-disabled-script";
 const ORIGINAL_SCRIPT_TYPE_ATTRIBUTE = "data-html-canvas-original-script-type";
 const DISABLED_REFRESH_ATTRIBUTE = "data-html-canvas-disabled-refresh";
-const DISPLAY_POLICY_ATTRIBUTE = "data-stemmio-display-policy";
 const MISSING_ATTRIBUTE_VALUE = "__html_canvas_missing__";
 export const EDIT_RUNTIME_CSP = [
   "default-src 'none'",
@@ -91,50 +90,6 @@ export function sanitizePreviewDocument(source, baseUrl) {
     base.setAttribute(INJECTED_BASE_ATTRIBUTE, "true");
     parsed.head.prepend(base);
   }
-  return `${doctypeString(parsed.doctype)}\n${parsed.documentElement.outerHTML}`;
-}
-
-/**
- * Builds a display-only document which still owns its native scroll viewport.
- * The iframe sandbox remains the executable boundary; this policy additionally
- * removes pointer/keyboard activation from authored controls without placing a
- * pointer-events fence over the whole document. Text selection, wheel and
- * trackpad scrolling therefore remain available while the authoritative Canvas
- * is prepared behind the projection.
- */
-export function sanitizeScrollableDisplayDocument(source, baseUrl) {
-  const sanitized = sanitizePreviewDocument(source, baseUrl);
-  if (typeof DOMParser === "undefined") return sanitized;
-  const parsed = new DOMParser().parseFromString(sanitized, "text/html");
-  if (!parsed.documentElement || !parsed.head) return sanitized;
-  parsed.documentElement.setAttribute(DISPLAY_POLICY_ATTRIBUTE, "scroll-only");
-  parsed.querySelectorAll("[contenteditable]").forEach((node) => {
-    node.setAttribute("contenteditable", "false");
-  });
-  parsed.querySelectorAll([
-    "a[href]",
-    "button",
-    "input",
-    "select",
-    "textarea",
-    "form",
-    "[role='button']",
-    "[role='link']",
-    "[tabindex]",
-  ].join(",")).forEach((node) => {
-    node.setAttribute("tabindex", "-1");
-    node.setAttribute("aria-disabled", "true");
-  });
-  const style = parsed.createElement("style");
-  style.setAttribute(DISPLAY_POLICY_ATTRIBUTE, "style");
-  style.textContent = `
-    html, body { overscroll-behavior: contain; }
-    a[href], button, input, select, textarea, form,
-    [role="button"], [role="link"], [contenteditable] {
-      pointer-events: none !important;
-    }
-  `;
-  parsed.head.prepend(style);
   return `${doctypeString(parsed.doctype)}\n${parsed.documentElement.outerHTML}`;
 }
 

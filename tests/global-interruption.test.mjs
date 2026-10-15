@@ -40,14 +40,6 @@ test("project-open recovery preserves only an opaque Prepared request for its ex
   assert.equal(reselect?.actionLabel, "选择 HTML");
   assert.equal(reselect?.actionRequestId, undefined);
 
-  const registered = globalInterruptionPresentation({
-    kind: "project-open-failed",
-    registered: true,
-    detail: "项目目录暂时无法完成安全核对。",
-  });
-  assert.equal(registered?.title, "当前稿未打开");
-  assert.equal(registered?.message, "无法确认项目文件状态，原页面保持不变。");
-  assert.equal(registered?.actionId, null);
 });
 
 test("recovery actions name the destination they actually open", () => {
