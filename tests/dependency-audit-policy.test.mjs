@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   acceptedAdvisories,
@@ -11,6 +12,7 @@ import {
 } from "../scripts/check-dependency-audit.mjs";
 import {
   bareRuntimeModuleName,
+  evaluatePackagedSourceRuntimeClosure,
   importedRuntimeModules,
   requiredRuntimeModuleClosure,
 } from "../scripts/packaged-runtime-closure.mjs";
@@ -60,13 +62,63 @@ test("dependency audit policy rejects new and expired advisories", () => {
   assert.deepEqual(result.expired.map((item) => item.source), ["1"]);
 });
 
-test("the exact packaged ECharts pins have a dated XSS exception", () => {
+test("reviewed dependency exceptions retain their exact scope and expiry", () => {
   assert.deepEqual(acceptedAdvisories, {
     1122144: {
       url: "https://github.com/advisories/GHSA-fgmj-fm8m-jvvx",
       expiresOn: "2026-11-28",
     },
+    1240991: {
+      url: "https://github.com/advisories/GHSA-ch52-4w7c-c8xp",
+      expiresOn: "2026-10-29",
+    },
+    1240992: {
+      url: "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      expiresOn: "2026-10-29",
+    },
+    1241202: {
+      url: "https://github.com/advisories/GHSA-hp3w-g68c-fv3c",
+      expiresOn: "2026-10-29",
+    },
   });
+});
+
+test("the October build-tool exceptions fail closed at their review deadline", () => {
+  const advisories = [1240991, 1240992, 1241202].map((source) => ({
+    source,
+    url: acceptedAdvisories[source].url,
+    severity: "high",
+  }));
+  assert.equal(evaluateAuditReport(report(...advisories), {
+    now: new Date("2026-10-28T23:59:59.999Z"),
+  }).passed, true);
+  const expired = evaluateAuditReport(report(...advisories), {
+    now: new Date("2026-10-29T00:00:00.000Z"),
+  });
+  assert.equal(expired.passed, false);
+  assert.deepEqual(expired.expired.map(({ source }) => source), [
+    "1240991", "1240992", "1241202",
+  ]);
+});
+
+test("temporarily excepted build tools remain development-only and outside packaged imports", async () => {
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const packageLock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
+  const closure = evaluatePackagedSourceRuntimeClosure(root, packageJson, packageLock);
+  assert.equal(closure.passed, true);
+  const resources = evaluatePackagedRuntimeClosure(packageJson, packageLock);
+  for (const name of ["braces", "http-cache-semantics", "sprintf-js"]) {
+    const entries = Object.entries(packageLock.packages).filter(([entry]) => (
+      entry === `node_modules/${name}` || entry.endsWith(`/node_modules/${name}`)
+    ));
+    assert.ok(entries.length > 0, `Reassess the exception when ${name} is removed.`);
+    for (const [entry, metadata] of entries) {
+      assert.equal(metadata.dev, true, `${entry} must remain development-only.`);
+    }
+    assert.equal(closure.requiredModules.includes(name), false, `${name} must not enter packaged imports.`);
+    assert.equal(resources.managedModules.includes(name), false, `${name} must not enter packaged resources.`);
+  }
 });
 
 test("Dependabot keeps coupled React updates together and defers automatic majors", () => {
