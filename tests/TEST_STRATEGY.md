@@ -359,6 +359,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   no-change 可从 workspace 恢复。
   Electron AI 闭环还必须从真实评论附件上传开始，验证 Request 内冻结文件的
   实际字节、manifest Hash 与删除 Draft 原件后的可读性，不得只断言 JSON 元数据。
+  多图评论场景还须在相同隔离 userData 与 managed source 上完整关闭并重启 Electron，
+  比较重启前后的持久 commentId/attachmentId，核对持久附件原始字节，并逐条打开恢复的
+  预览、比对解码像素；随后确认冻结 Request 保留相同评论、附件与归属。
   `ReviewAnalysisSession` 的 Node oracle 另证明确切 key 合并、异步让步、运行中
   取消和按字节 LRU。`review-annotation-fallback` 的 Node oracle 执行生产编排与真实
   canonical fact 累计器，证明 24/25/可合并边界、仅实际溢出类降级、恢复失败继续拒绝、

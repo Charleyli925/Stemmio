@@ -15,6 +15,7 @@ import {
   openRailGlobalCommentComposer,
   path,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   removeSourceFixture,
@@ -27,6 +28,36 @@ import {
   writeFileSync,
   workspaceContainsDraftComment,
 } from "./ai-closed-loop-helpers.mjs";
+
+function readImageCommentIdentities(workspace, attachments) {
+  const persistedComments = managedProjectRoots(workspace).flatMap((projectRoot) => {
+    const draftsRoot = path.join(projectRoot, ".stemmio", "drafts");
+    if (!existsSync(draftsRoot)) return [];
+    return readdirSync(draftsRoot)
+      .filter((name) => name.endsWith(".json"))
+      .flatMap((name) => {
+        const draft = JSON.parse(readFileSync(path.join(draftsRoot, name), "utf8"));
+        return Array.isArray(draft.comments) ? draft.comments : [];
+      });
+  });
+
+  return attachments.map(({ text }) => {
+    const matchingComments = persistedComments.filter((comment) => comment.text === text);
+    if (matchingComments.length !== 1) return null;
+    const [comment] = matchingComments;
+    if (!Array.isArray(comment.attachments) || comment.attachments.length !== 1) return null;
+    const [attachment] = comment.attachments;
+    return {
+      text,
+      commentId: comment.commentId,
+      attachmentId: attachment.attachmentId,
+      fileName: attachment.fileName,
+      relativePath: attachment.relativePath,
+      byteLength: attachment.byteLength,
+      sha256: attachment.sha256,
+    };
+  });
+}
 
 test("opening a pre-v4 project imports its HTML as a new v4 V1", async () => {
   test.setTimeout(120_000);
@@ -316,6 +347,122 @@ test("two image comments keep their attachment identity through AI freeze", asyn
     })).toBeVisible();
     await activeLaunch.page.getByRole("button", { name: "关闭图片预览" }).click();
 
+    const firstProject = await firstLaunch.page.evaluate(
+      async () => window.stemmioProjects?.getActiveProject(),
+    );
+    const managedSourcePath = firstProject?.sourcePath || "";
+    expect(managedSourcePath).not.toBe("");
+    expect(realpathSync(managedSourcePath)).not.toBe(realpathSync(fixture.sourcePath));
+    await expect.poll(
+      () => readImageCommentIdentities(firstLaunch.workspace, attachments).every(Boolean),
+      { timeout: 20_000 },
+    ).toBe(true);
+    const identitiesBeforeRestart = readImageCommentIdentities(
+      firstLaunch.workspace,
+      attachments,
+    );
+    for (const identity of identitiesBeforeRestart) {
+      const expected = attachments.find(({ text }) => text === identity.text);
+      expect(expected).toBeTruthy();
+      expect(identity.commentId).toBeTruthy();
+      expect(identity.attachmentId).toBeTruthy();
+      expect(identity.fileName).toBe(expected.fileName);
+      expect(identity.byteLength).toBe(expected.bytes.byteLength);
+      expect(identity.sha256).toBe(sha256(expected.bytes));
+      expect(identity.relativePath).toBe(
+        `draft/attachments/${identity.commentId}/${identity.attachmentId}-${identity.fileName}`,
+      );
+    }
+
+    await closeStemmioGracefully(firstLaunch.electronApp, firstLaunch.page);
+    expect(workspaceContainsDraftComment(firstLaunch.workspace, attachments[0].text)).toBe(true);
+    expect(workspaceContainsDraftComment(firstLaunch.workspace, attachments[1].text)).toBe(true);
+    activeLaunch = await launchStemmio({
+      activeSourcePath: managedSourcePath,
+      isolatedUserData: firstLaunch.isolatedUserData,
+    });
+    expect(activeLaunch.isolatedUserData).toBe(firstLaunch.isolatedUserData);
+    expect(activeLaunch.workspace).toBe(firstLaunch.workspace);
+    await loadedDiskFrame(activeLaunch.page, managedSourcePath);
+    const restartedProject = await activeLaunch.page.evaluate(
+      async () => window.stemmioProjects?.getActiveProject(),
+    );
+    expect(restartedProject?.projectId).toBe(firstProject.projectId);
+    expect(realpathSync(restartedProject.sourcePath)).toBe(realpathSync(managedSourcePath));
+    await expect.poll(
+      () => readImageCommentIdentities(activeLaunch.workspace, attachments).every(Boolean),
+      { timeout: 20_000 },
+    ).toBe(true);
+    const identitiesAfterRestart = readImageCommentIdentities(
+      activeLaunch.workspace,
+      attachments,
+    );
+    expect(identitiesAfterRestart).toEqual(identitiesBeforeRestart);
+    const managedProjectRoot = managedProjectRoots(activeLaunch.workspace).find((root) => (
+      realpathSync(managedSourcePath).startsWith(`${realpathSync(root)}${path.sep}`)
+    ));
+    expect(managedProjectRoot).toBeTruthy();
+
+    for (const [index, attachment] of attachments.entries()) {
+      const identity = identitiesBeforeRestart[index];
+      const persistedBytes = readFileSync(path.join(
+        managedProjectRoot,
+        ...identity.relativePath.split("/"),
+      ));
+      expect(persistedBytes.equals(attachment.bytes)).toBe(true);
+      const commentCard = activeLaunch.page.locator(".comment-card")
+        .filter({ hasText: attachment.text });
+      await expect(commentCard).toHaveCount(1);
+      await expect(commentCard).toHaveAttribute("data-comment-measure", identity.commentId);
+      const previewButton = commentCard.getByRole("button", {
+        name: `预览图片 ${attachment.fileName}`,
+        exact: true,
+      });
+      await previewButton.scrollIntoViewIfNeeded();
+      await previewButton.click();
+      const previewDialog = activeLaunch.page.getByRole("dialog", {
+        name: `预览图片 ${attachment.fileName}`,
+        exact: true,
+      });
+      await expect(previewDialog).toBeVisible({ timeout: 30_000 });
+      const previewPixels = await previewDialog.locator("img").evaluate(async (
+        image,
+        expectedBytes,
+      ) => {
+        const decodePixels = async (source) => {
+          await source.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = source.naturalWidth;
+          canvas.height = source.naturalHeight;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          if (!context) throw new Error("Could not read decoded attachment preview pixels.");
+          context.drawImage(source, 0, 0);
+          return {
+            width: canvas.width,
+            height: canvas.height,
+            rgba: Array.from(context.getImageData(0, 0, canvas.width, canvas.height).data),
+          };
+        };
+        const expectedUrl = URL.createObjectURL(new Blob(
+          [Uint8Array.from(expectedBytes)],
+          { type: "image/png" },
+        ));
+        try {
+          const expectedImage = new Image();
+          expectedImage.src = expectedUrl;
+          const [actual, expected] = await Promise.all([
+            decodePixels(image),
+            decodePixels(expectedImage),
+          ]);
+          return { actual, expected };
+        } finally {
+          URL.revokeObjectURL(expectedUrl);
+        }
+      }, Array.from(attachment.bytes));
+      expect(previewPixels.actual).toEqual(previewPixels.expected);
+      await activeLaunch.page.getByRole("button", { name: "关闭图片预览" }).click();
+    }
+
     await activeLaunch.page.getByRole("button", { name: /AI 助手/u }).click();
     await chooseClipboardDelivery(activeLaunch.page);
     let promptPath = "";
@@ -341,6 +488,12 @@ test("two image comments keep their attachment identity through AI freeze", asyn
       const attachment = comment.attachments[0];
       const expected = attachments.find((candidate) => candidate.text === comment.text);
       expect(expected).toBeTruthy();
+      const originalIdentity = identitiesBeforeRestart.find(
+        (candidate) => candidate.text === comment.text,
+      );
+      expect(comment.commentId).toBe(originalIdentity.commentId);
+      expect(attachment.attachmentId).toBe(originalIdentity.attachmentId);
+      expect(attachment.relativePath).toBe(originalIdentity.relativePath);
       expect(attachment.relativePath)
         .toMatch(new RegExp(`^draft/attachments/${comment.commentId}/`));
       const instruction = requestRecord.request.taskSpec.instructions.find((candidate) => (
@@ -350,6 +503,7 @@ test("two image comments keep their attachment identity through AI freeze", asyn
       const frozen = frozenAttachments.find((candidate) => (
         candidate.attachmentId === attachment.attachmentId
       ));
+      expect(frozen.attachmentId).toBe(originalIdentity.attachmentId);
       expect(frozen.commentId).toBe(comment.commentId);
       expect(readFileSync(path.join(requestRoot, ...frozen.requestRelativePath.split("/")))
         .equals(expected.bytes)).toBe(true);
