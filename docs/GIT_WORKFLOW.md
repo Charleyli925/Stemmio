@@ -114,6 +114,21 @@ checks are satisfied; an Agent must not poll and later act as a manual merge
 button. The candidate classifier records PR scope and size only as advisory
 information; it never rejects a PR for being large.
 
+Before enabling Auto-merge, the delivering agent must inspect the effective
+`main` branch protection and rulesets and confirm that `release-gate` is required
+and the branch must be up to date. The CLI's `--auto` flag alone is not a waiting
+barrier: without effective protection it can merge immediately. If these
+requirements are absent, keep the PR open and report the missing protection;
+changing repository settings or using a different merge procedure requires
+explicit authorization.
+
+PR #612 exposed this gap on 2026-10-15: all product lanes passed, but the PR had
+already merged when the live-open-PR attestation check ran. The resulting
+`release-gate` and initial `main-integrity` failures remain historical evidence.
+A recovery PR must earn its own complete source gate while
+open, then establish provenance for its new merge commit. It does not repair
+the earlier commit's missing attestation or justify weakening that check.
+
 A later commit on a Ready PR cancels the in-flight stale candidate and
 reruns the complete matrix for the new head. Returning to Draft skips the
 full matrix. `main` accepts the resulting tree only when provenance
