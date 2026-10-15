@@ -432,7 +432,19 @@ test("an unknown Request outcome stays fail-closed and reconciles automatically"
 test("accepted source survives a display verification failure and repairs without adopting twice", {
   tag: ["@smoke-review"],
 }, async ({}, testInfo) => {
-  const fixture = createSourceFixture("accepted-page-recovery.html");
+  const scrollRunway = Array.from({ length: 8 }, (_, index) => (
+    `<p>恢复滚动验证内容 ${index + 1}：已接受的源页面仍保持可用，恢复操作不应改变采用结果。</p>`
+  )).join("\n");
+  const fixture = createSourceFixture("accepted-page-recovery.html", (source) => {
+    const closingMain = "</main>";
+    if (!source.includes(closingMain)) {
+      throw new Error("The accepted-page fixture is missing its main element.");
+    }
+    return source.replace(
+      closingMain,
+      `<section aria-label="Accepted-page recovery scroll runway">${scrollRunway}</section>${closingMain}`,
+    );
+  });
   const launched = await launchStemmio({ activeSourcePath: fixture.sourcePath });
   const decisions = [];
   try {
@@ -471,8 +483,19 @@ test("accepted source survives a display verification failure and repairs withou
     const actions = sidebar.getByTestId("ai-conversation-action-bar");
     await expect(actions).toContainText("已采用，但页面需要恢复");
     const stage = launched.page.locator(".review-scroll-stage");
+    await expect.poll(() => stage.evaluate((element) => (
+      element.scrollHeight - element.clientHeight
+    ))).toBeGreaterThan(800);
     await stage.evaluate((element) => { element.scrollTop = 800; });
     await expect.poll(() => stage.evaluate((element) => element.scrollTop)).toBeGreaterThan(750);
+    await testInfo.attach("accepted-page-scroll-geometry", {
+      body: JSON.stringify(await stage.evaluate((element) => ({
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        scrollTop: element.scrollTop,
+      }))),
+      contentType: "application/json",
+    });
     await expect(actions).toBeInViewport({ ratio: 1 });
     await expect(actions.getByRole("button", { name: "重试恢复页面", exact: true })).toBeInViewport({ ratio: 1 });
     expect(decisions, JSON.stringify(adoptionResponses)).toHaveLength(1);

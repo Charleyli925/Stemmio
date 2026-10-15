@@ -125,7 +125,7 @@ explicit authorization.
 PR #612 exposed this gap on 2026-10-15: all product lanes passed, but the PR had
 already merged when the live-open-PR attestation check ran. The resulting
 `release-gate` and initial `main-integrity` failures remain historical evidence.
-A documentation-only recovery PR must earn its own complete source gate while
+A recovery PR must earn its own complete source gate while
 open, then establish provenance for its new merge commit. It does not repair
 the earlier commit's missing attestation or justify weakening that check.
 
