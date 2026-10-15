@@ -1,8 +1,34 @@
+import { sha256 as digestSha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
 import { createDraftOperationId, isDraftOperationId, rebaseDraftMutation } from "../domain/draft-aggregate.js";
 import { isBridgeRequestError } from "./bridge-client.js";
 import { createCommentWorkflowCodecs } from "./comment-workflow-codecs.js";
 import { isSavableCommentTarget, planCommentCommit } from "./comment/commit-plan.js";
 import { normalizeRuntimeVisualHint } from "../lib/runtime-comment-hint.js";
+
+const ATTACHMENT_ID = /^attachment_[A-Za-z0-9_-]+$/u;
+const COMMENT_ID = /^comment_[A-Za-z0-9_-]+$/u;
+
+function attachmentPathMatchesComment(attachment, commentId) {
+  const safeCommentId = String(commentId || "");
+  const attachmentId = String(attachment?.attachmentId || "");
+  const fileName = String(attachment?.fileName || "");
+  return Boolean(
+    COMMENT_ID.test(safeCommentId)
+    && ATTACHMENT_ID.test(attachmentId)
+    && fileName
+    && fileName !== "."
+    && fileName !== ".."
+    && !/[\\/\u0000-\u001f\u007f]/u.test(fileName)
+    && String(attachment?.relativePath || "")
+      === `draft/attachments/${safeCommentId}/${attachmentId}-${fileName}`
+  );
+}
+
+function attachmentSha256(bytes) {
+  return `sha256:${bytesToHex(digestSha256(bytes))}`;
+}
 
 function commentSourceTarget(target) {
   const sourceTarget = target?.commentAnchor || target || null;
@@ -46,13 +72,27 @@ function sourceDeletionPlan(commentSession, elementIds) {
     && deletedIds.has(commentSession.editSession.commentId)
     ? commentSession.editSession
     : null;
-  const attachments = new Map(
-    [
-      ...deleted.flatMap((comment) => comment.attachments || []),
-      ...(editSession?.draftAttachments || []),
-      ...(composerDiscarded ? commentSession.composerAttachments : []),
-    ].map((attachment) => [attachment.attachmentId, attachment]),
-  );
+  const attachmentOwners = new Map();
+  const attachments = new Map();
+  const addAttachments = (commentId, items) => {
+    for (const attachment of items || []) {
+      const attachmentId = attachment?.attachmentId;
+      if (attachments.has(attachmentId) && attachmentOwners.get(attachmentId) !== commentId) {
+        // An attachment ID shared by different comments is ambiguous; retain
+        // the material for the caller's snapshot but never authorize a
+        // deletion for it.
+        attachmentOwners.set(attachmentId, null);
+      } else if (!attachments.has(attachmentId)) {
+        attachmentOwners.set(attachmentId, commentId);
+      }
+      attachments.set(attachmentId, attachment);
+    }
+  };
+  for (const comment of deleted) addAttachments(comment.commentId, comment.attachments);
+  if (editSession) addAttachments(editSession.commentId, editSession.draftAttachments);
+  if (composerDiscarded) {
+    addAttachments(commentSession.composerCommentId, commentSession.composerAttachments);
+  }
   const newlyDeletedIds = [
     ...deletedIds,
     ...(composerDiscarded && commentSession.composerCommentId
@@ -67,6 +107,7 @@ function sourceDeletionPlan(commentSession, elementIds) {
     composerDiscarded,
     editSession,
     attachments,
+    attachmentOwners,
     comments: commentSession.comments.filter(
       (comment) => !deletedIds.has(comment.commentId),
     ),
@@ -785,7 +826,7 @@ export class CommentWorkflow {
     this.#commentSession.update({ comments: nextComments, editSession: null });
     this.queueDraft();
     for (const attachment of removedAttachments) {
-      void this.deleteAttachment({ attachment, context });
+      void this.deleteAttachment({ attachment, commentId, context });
     }
     return succeeded({
       comment: nextComments.find((comment) => comment.commentId === commentId),
@@ -823,7 +864,7 @@ export class CommentWorkflow {
     });
     this.queueDraft();
     for (const attachment of attachments.values()) {
-      void this.deleteAttachment({ attachment, context });
+      void this.deleteAttachment({ attachment, commentId, context });
     }
     return succeeded({ deleted, editSession, attachments: [...attachments.values()], context });
   }
@@ -851,8 +892,12 @@ export class CommentWorkflow {
         : {}),
     });
     this.queueDraft();
-    for (const attachment of plan.attachments.values()) {
-      void this.deleteAttachment({ attachment, context });
+    for (const [attachmentId, attachment] of plan.attachments) {
+      void this.deleteAttachment({
+        attachment,
+        commentId: plan.attachmentOwners.get(attachmentId),
+        context,
+      });
     }
     return succeeded({
       deleted: plan.deleted,
@@ -982,8 +1027,12 @@ export class CommentWorkflow {
     });
     if (deletion.changed) this.queueDraft();
     const context = copyContext(this.#projectSession.context);
-    for (const attachment of deletion.attachments.values()) {
-      void this.deleteAttachment({ attachment, context });
+    for (const [attachmentId, attachment] of deletion.attachments) {
+      void this.deleteAttachment({
+        attachment,
+        commentId: deletion.attachmentOwners.get(attachmentId),
+        context,
+      });
     }
     return succeeded(Object.freeze({
       commentDeletion: Object.freeze({
@@ -1009,7 +1058,7 @@ export class CommentWorkflow {
     this.#commentSession.clearComposer();
     this.queueDraft();
     for (const attachment of attachments) {
-      void this.deleteAttachment({ attachment, context });
+      void this.deleteAttachment({ attachment, commentId, context });
     }
     return succeeded({ commentId, attachments, context });
   }
@@ -1032,7 +1081,7 @@ export class CommentWorkflow {
     this.#commentSession.setEditSession(null);
     this.queueDraft();
     for (const attachment of stagedAttachments) {
-      void this.deleteAttachment({ attachment, context });
+      void this.deleteAttachment({ attachment, commentId: session.commentId, context });
     }
     return succeeded({ commentId: session.commentId, stagedAttachments, context });
   }
@@ -1052,7 +1101,11 @@ export class CommentWorkflow {
       ),
     );
     this.queueDraft();
-    void this.deleteAttachment({ attachment, context });
+    void this.deleteAttachment({
+      attachment,
+      commentId: this.#commentSession.composerCommentId,
+      context,
+    });
     return succeeded({ attachment, context });
   }
 
@@ -1074,7 +1127,7 @@ export class CommentWorkflow {
       ),
     });
     this.queueDraft();
-    if (!baseline) void this.deleteAttachment({ attachment, context });
+    if (!baseline) void this.deleteAttachment({ attachment, commentId, context });
     return succeeded({ attachment, deleted: !baseline, context });
   }
 
@@ -1127,14 +1180,34 @@ export class CommentWorkflow {
     if (!context || !this.#isCurrentContext(context)) {
       return blocked("ATTACHMENT_CONTEXT_UNAVAILABLE", "当前评论还没有绑定本地项目。");
     }
+    const ownerCommentId = this.#attachmentOwner(attachment);
+    if (!ownerCommentId) {
+      return rejected("ATTACHMENT_IDENTITY_INVALID", "附件身份与所属评论不一致。");
+    }
     const operationId = this.#nextOperationId("attachment-read");
     try {
       const blob = await this.#bridgeClient.attachment(
         context.sourcePath,
         attachment?.relativePath,
       );
-      if (!this.#isCurrentContext(context) || !this.#attachmentExists(attachment)) {
+      if (!blob || typeof blob.arrayBuffer !== "function") {
+        return rejected("ATTACHMENT_READ_INVALID", "附件读取结果无法验证。");
+      }
+      if (!this.#isCurrentContext(context) || !this.#attachmentExists(attachment, ownerCommentId)) {
         return stale(context, operationId);
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (!this.#isCurrentContext(context) || !this.#attachmentExists(attachment, ownerCommentId)) {
+        return stale(context, operationId);
+      }
+      if (
+        bytes.byteLength !== attachment.byteLength
+        || attachmentSha256(bytes) !== attachment.sha256
+      ) {
+        return rejected(
+          "ATTACHMENT_INTEGRITY_MISMATCH",
+          "附件内容与评论记录不一致。",
+        );
       }
       return succeeded(blob);
     } catch (cause) {
@@ -1150,10 +1223,18 @@ export class CommentWorkflow {
     }
   }
 
-  async deleteAttachment({ attachment, context } = {}) {
+  async deleteAttachment({ attachment, commentId, context } = {}) {
     const capturedContext = copyContext(context || this.#projectSession.context);
     if (!capturedContext || !attachment?.relativePath) {
       return blocked("ATTACHMENT_CONTEXT_UNAVAILABLE", "附件没有可验证的项目身份。");
+    }
+    const ownerCommentId = this.#attachmentOwner(
+      attachment,
+      commentId,
+      { allowDetached: true },
+    );
+    if (!ownerCommentId) {
+      return rejected("ATTACHMENT_IDENTITY_INVALID", "附件身份与所属评论不一致。");
     }
     const operationId = this.#nextOperationId("attachment-delete");
     try {
@@ -1275,11 +1356,17 @@ export class CommentWorkflow {
           draftText: String(latest.commentEdit.draftText || ""),
           draftAttachments: Array.isArray(latest.commentEdit.draftAttachments)
             ? latest.commentEdit.draftAttachments
-                .map((attachment) => this.#codecs.attachmentFromRecord(attachment))
+                .map((attachment) => this.#codecs.attachmentFromRecord(
+                  attachment,
+                  String(latest.commentEdit.commentId),
+                ))
                 .filter(Boolean)
             : [],
         }
       : null;
+    const composerCommentId = /^comment_[A-Za-z0-9_-]+$/.test(
+      String(latest.composerCommentId || ""),
+    ) ? String(latest.composerCommentId) : null;
     return {
       comments: rebased.comments,
       deletedCommentIds: operationAlreadyApplied ? [] : rebased.deletedCommentIds,
@@ -1287,12 +1374,13 @@ export class CommentWorkflow {
       composerDraft: typeof latest.composerDraft === "string"
         ? latest.composerDraft
         : "",
-      composerCommentId: /^comment_[A-Za-z0-9_-]+$/.test(
-        String(latest.composerCommentId || ""),
-      ) ? String(latest.composerCommentId) : null,
+      composerCommentId,
       composerAttachments: Array.isArray(latest.composerAttachments)
         ? latest.composerAttachments
-            .map((attachment) => this.#codecs.attachmentFromRecord(attachment))
+            .map((attachment) => this.#codecs.attachmentFromRecord(
+              attachment,
+              composerCommentId,
+            ))
             .filter(Boolean)
         : [],
       composerTarget: this.#codecs.isRecord(latest.composerTarget)
@@ -1527,7 +1615,10 @@ export class CommentWorkflow {
           source: source === "clipboard" ? "clipboard" : "file-picker",
           dataBase64: prepared.dataBase64,
       });
-      const attachment = this.#codecs.attachmentFromRecord(payload?.attachment);
+      const attachment = this.#codecs.attachmentFromRecord(
+        payload?.attachment,
+        target.commentId,
+      );
       if (!attachment || attachment.attachmentId !== attachmentId) {
         return rejected("ATTACHMENT_PAYLOAD_INVALID", "附件已写入，但返回的记录不完整。" );
       }
@@ -1536,11 +1627,11 @@ export class CommentWorkflow {
         generation !== this.#attachmentGeneration
         || !this.#isCurrentAttachmentIdentity(identity)
       ) {
-        await this.deleteAttachment({ attachment, context });
+        await this.deleteAttachment({ attachment, commentId: target.commentId, context });
         return stale(context, operationId);
       }
       if (!this.#appendAttachment(target, attachment)) {
-        await this.deleteAttachment({ attachment, context });
+        await this.deleteAttachment({ attachment, commentId: target.commentId, context });
         return stale(context, operationId);
       }
       this.queueDraft();
@@ -1597,20 +1688,41 @@ export class CommentWorkflow {
     );
   }
 
-  #attachmentExists(attachment) {
+  #attachmentOwner(attachment, expectedCommentId = null, { allowDetached = false } = {}) {
     const attachmentId = attachment?.attachmentId;
-    if (!attachmentId) return false;
-    return Boolean(
-      this.#commentSession.composerAttachments.some(
-        (item) => item.attachmentId === attachmentId,
-      )
-      || this.#commentSession.editSession?.draftAttachments?.some(
-        (item) => item.attachmentId === attachmentId,
-      )
-      || this.#commentSession.comments.some((comment) => (
-        comment.attachments || []
-      ).some((item) => item.attachmentId === attachmentId)),
+    if (!ATTACHMENT_ID.test(String(attachmentId || ""))) return null;
+    const expected = expectedCommentId === null || expectedCommentId === undefined
+      ? null
+      : String(expectedCommentId || "");
+    if (expected && !attachmentPathMatchesComment(attachment, expected)) return null;
+    const owners = new Set();
+    const addOwner = (commentId, items) => {
+      if ((items || []).some((item) => item?.attachmentId === attachmentId)) {
+        owners.add(String(commentId || ""));
+      }
+    };
+    addOwner(
+      this.#commentSession.composerCommentId,
+      this.#commentSession.composerAttachments,
     );
+    addOwner(
+      this.#commentSession.editSession?.commentId,
+      this.#commentSession.editSession?.draftAttachments,
+    );
+    for (const comment of this.#commentSession.comments) {
+      addOwner(comment.commentId, comment.attachments);
+    }
+    if (expected) {
+      if (owners.size > 0 && (owners.size !== 1 || !owners.has(expected))) return null;
+      return owners.size > 0 || allowDetached ? expected : null;
+    }
+    if (owners.size !== 1) return null;
+    const [owner] = owners;
+    return attachmentPathMatchesComment(attachment, owner) ? owner : null;
+  }
+
+  #attachmentExists(attachment, expectedCommentId = null) {
+    return Boolean(this.#attachmentOwner(attachment, expectedCommentId));
   }
 
   #beginUpload(generation) {

@@ -59,6 +59,7 @@ import {
   projectRegistryPath,
 } from "../shared/project-storage-contract.mjs";
 import {
+  assertTaskSpecCommentAttachments,
   assertTaskSpec,
 } from "../shared/task-spec.mjs";
 
@@ -2595,6 +2596,10 @@ export class ProjectFileRepository {
         });
       }
       taskSpec = assertTaskSpec(requestInput.taskSpec, { requireAttachmentResolution: false });
+      assertTaskSpecCommentAttachments(
+        taskSpec,
+        Array.isArray(requestInput.comments) ? requestInput.comments : [],
+      );
     } catch (cause) {
       throw new ProjectFileRepositoryError(
         "TASK_SPEC_INVALID",
@@ -2661,6 +2666,11 @@ export class ProjectFileRepository {
         ...frozenRequest.taskSpec,
         attachments: frozenCommentAttachments.attachments,
       });
+      assertTaskSpecCommentAttachments(
+        frozenRequest.taskSpec,
+        frozenRequest.comments,
+        { requireResolvedAttachments: true },
+      );
     } catch (cause) {
       throw new ProjectFileRepositoryError(
         "TASK_SPEC_INVALID",
@@ -3368,6 +3378,11 @@ export class ProjectFileRepository {
     if (record.request?.taskSpec !== undefined) {
       try {
         assertTaskSpec(record.request.taskSpec);
+        assertTaskSpecCommentAttachments(
+          record.request.taskSpec,
+          Array.isArray(record.request.comments) ? record.request.comments : [],
+          { requireResolvedAttachments: true },
+        );
       } catch (cause) {
         fail("The Request freeze Task Spec is invalid.", {
           cause: cause?.code || null,
@@ -3534,6 +3549,11 @@ export class ProjectFileRepository {
       }
       try {
         assertTaskSpec(record.request.taskSpec);
+        assertTaskSpecCommentAttachments(
+          record.request.taskSpec,
+          Array.isArray(record.request.comments) ? record.request.comments : [],
+          { requireResolvedAttachments: true },
+        );
       } catch (cause) {
         throw new ProjectFileRepositoryError(
           "TASK_SPEC_INVALID",

@@ -1,7 +1,12 @@
 import { loadWorkbenchModel } from "./helpers/workbench-model-loader.mjs";
 const commentModel = await loadWorkbenchModel("comment-model");
-const { commentVisualTarget, rebindTargetsPreservingGlobal } = commentModel;
+const {
+  attachmentFromRecord,
+  commentVisualTarget,
+  rebindTargetsPreservingGlobal,
+} = commentModel;
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { BridgeRequestError } from "../app/application/bridge-client.js";
@@ -84,6 +89,15 @@ function attachment({
     sha256: `sha256:${"b".repeat(64)}`,
     relativePath: `draft/attachments/${commentId}/${attachmentId}-${fileName}`,
     source: "file-picker",
+  };
+}
+
+function attachmentForBytes({ attachmentId, commentId, fileName, bytes }) {
+  const value = Buffer.from(bytes);
+  return {
+    ...attachment({ attachmentId, commentId, fileName }),
+    byteLength: value.byteLength,
+    sha256: `sha256:${createHash("sha256").update(value).digest("hex")}`,
   };
 }
 
@@ -473,6 +487,108 @@ test("attachment batches retain successful files while reporting individual fail
   assert.equal(outcome.value.failures[0].fileName, "bad.bin");
   assert.equal(harness.commentSession.composerAttachments.length, 1);
   assert.equal(harness.commentSession.composerAttachments[0].fileName, "good.png");
+});
+
+test("comment attachment identity and bytes are verified before read or delete", async () => {
+  const bytesA = Buffer.from("comment-a-image");
+  const attachmentA = attachmentForBytes({
+    attachmentId: "attachment_a",
+    commentId: "comment_a",
+    fileName: "a.png",
+    bytes: bytesA,
+  });
+  const attachmentB = attachmentForBytes({
+    attachmentId: "attachment_b",
+    commentId: "comment_b",
+    fileName: "b.png",
+    bytes: "comment-b-image",
+  });
+  const mismatchedPath = { ...attachmentA, relativePath: attachmentB.relativePath };
+  let servedBytes = Buffer.from("wrong-image");
+  let readCalls = 0;
+  const attachmentDeletes = [];
+  const harness = createHarness({
+    bridge: {
+      async attachment() {
+        readCalls += 1;
+        return new Blob([servedBytes]);
+      },
+      async deleteAttachment(input) {
+        attachmentDeletes.push(input);
+        return { ok: true, removed: true };
+      },
+    },
+  });
+  harness.commentSession.setComments([
+    {
+      commentId: "comment_a",
+      sourceAnchor: target("target_a"),
+      text: "评论 A",
+      attachments: [attachmentA],
+    },
+    {
+      commentId: "comment_b",
+      sourceAnchor: target("target_b"),
+      text: "评论 B",
+      attachments: [attachmentB],
+    },
+  ]);
+
+  const mismatchedRead = await harness.workflow.readAttachment({ attachment: mismatchedPath });
+  assert.equal(mismatchedRead.status, "rejected");
+  assert.equal(mismatchedRead.code, "ATTACHMENT_IDENTITY_INVALID");
+  assert.equal(readCalls, 0);
+
+  const mismatchedBytes = await harness.workflow.readAttachment({ attachment: attachmentA });
+  assert.equal(mismatchedBytes.status, "rejected");
+  assert.equal(mismatchedBytes.code, "ATTACHMENT_INTEGRITY_MISMATCH");
+  servedBytes = bytesA;
+  const verified = await harness.workflow.readAttachment({ attachment: attachmentA });
+  assert.equal(verified.status, "succeeded");
+  assert.deepEqual(
+    Buffer.from(await verified.value.arrayBuffer()),
+    bytesA,
+  );
+
+  const mismatchedDelete = await harness.workflow.deleteAttachment({
+    attachment: mismatchedPath,
+    commentId: "comment_a",
+  });
+  assert.equal(mismatchedDelete.status, "rejected");
+  assert.equal(mismatchedDelete.code, "ATTACHMENT_IDENTITY_INVALID");
+  assert.equal(attachmentDeletes.length, 0);
+
+  const deleted = await harness.workflow.deleteAttachment({
+    attachment: attachmentA,
+    commentId: "comment_a",
+  });
+  assert.equal(deleted.status, "succeeded");
+  assert.equal(attachmentDeletes.length, 1);
+  assert.equal(attachmentDeletes[0].relativePath, attachmentA.relativePath);
+});
+
+test("comment attachment codec binds canonical paths while preserving legacy records", () => {
+  const canonical = attachment({
+    attachmentId: "attachment_codec",
+    commentId: "comment_codec",
+    fileName: "reference-image.v1.png",
+  });
+  const otherCommentPath = attachment({
+    attachmentId: "attachment_other",
+    commentId: "comment_other",
+    fileName: "reference-image.v1.png",
+  }).relativePath;
+  assert.ok(attachmentFromRecord(canonical, "comment_codec"));
+  assert.equal(
+    attachmentFromRecord({ ...canonical, relativePath: otherCommentPath }, "comment_codec"),
+    null,
+  );
+  assert.ok(
+    attachmentFromRecord(
+      { ...canonical, relativePath: "attachments/reference-image.v1.png" },
+      "comment_codec",
+    ),
+  );
 });
 
 test("a stale upload result is compensated against its captured project identity", async () => {

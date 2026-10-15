@@ -201,6 +201,31 @@ export function persistedAttachment(
   };
 }
 
+const ATTACHMENT_ID = /^attachment_[A-Za-z0-9_-]+$/u;
+const COMMENT_ID = /^comment_[A-Za-z0-9_-]+$/u;
+
+function safeAttachmentFileName(fileName: string): boolean {
+  return Boolean(
+    fileName
+    && fileName !== "."
+    && fileName !== ".."
+    && !/[\\/\u0000-\u001f\u007f]/u.test(fileName),
+  );
+}
+
+function canonicalAttachmentPath(
+  commentId: string,
+  attachmentId: string,
+  fileName: string,
+): string {
+  return `draft/attachments/${commentId}/${attachmentId}-${fileName}`;
+}
+
+function legacyAttachmentPath(relativePath: string, fileName: string): boolean {
+  return relativePath === `attachments/${fileName}`
+    && safeAttachmentFileName(fileName);
+}
+
 function commentAttachmentFingerprint(
   attachments: readonly CommentAttachment[],
 ): string {
@@ -221,6 +246,7 @@ export function commentEditSessionHasChanges(
 
 export function attachmentFromRecord(
   value: unknown,
+  expectedCommentId?: string | null,
 ): CommentAttachment | null {
   if (!isRecord(value)) return null;
   const attachmentId = String(value.attachmentId || "");
@@ -228,9 +254,24 @@ export function attachmentFromRecord(
   const relativePath = String(value.relativePath || "");
   const sha256 = String(value.sha256 || "");
   const byteLength = Number(value.byteLength || 0);
+  const pathMatch = /^draft\/attachments\/(comment_[A-Za-z0-9_-]+)\/([^/]+)$/u
+    .exec(relativePath);
+  const pathCommentId = pathMatch?.[1] || "";
+  const isCanonicalPath = Boolean(
+    pathMatch
+    && relativePath === canonicalAttachmentPath(pathCommentId, attachmentId, fileName)
+    && (expectedCommentId === undefined
+      || String(expectedCommentId || "") === pathCommentId),
+  );
+  // Historical comment records used a flat `attachments/<file>` path. Keep
+  // decoding and round-tripping those records, but the workflow's read/delete
+  // boundary rejects them because they carry no comment binding.
+  const isLegacyPath = legacyAttachmentPath(relativePath, fileName);
   if (
-    !/^attachment_[A-Za-z0-9_-]+$/.test(attachmentId)
+    !ATTACHMENT_ID.test(attachmentId)
     || !fileName
+    || !safeAttachmentFileName(fileName)
+    || (!isCanonicalPath && !isLegacyPath)
     || !relativePath
     || !/^sha256:[a-f0-9]{64}$/.test(sha256)
     || !Number.isSafeInteger(byteLength)
@@ -510,7 +551,7 @@ export function commentsFromRecords(raw: unknown): CommentItem[] {
       ...(Array.isArray(value.attachments)
         ? {
             attachments: value.attachments
-              .map(attachmentFromRecord)
+              .map((attachment) => attachmentFromRecord(attachment, commentId))
               .filter((item): item is CommentAttachment => Boolean(item)),
           }
         : {}),

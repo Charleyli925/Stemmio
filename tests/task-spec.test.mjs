@@ -10,6 +10,7 @@ import {
   TASK_SCOPE_WHOLE_PAGE,
   TASK_SPEC_SCHEMA_VERSION,
   assertTaskSpec,
+  assertTaskSpecCommentAttachments,
   compileTaskSpec,
 } from "../shared/task-spec.mjs";
 
@@ -40,6 +41,28 @@ function comment(text, targetValue = target(), attachments = []) {
     text,
     target: targetValue,
     attachments,
+  };
+}
+
+function pairedComments() {
+  const firstTarget = target({ targetId: "target_first", label: "第一处" });
+  const secondTarget = target({ targetId: "target_second", label: "第二处" });
+  return {
+    comments: [
+      {
+        commentId: "comment_first",
+        text: "处理第一处。",
+        target: firstTarget,
+        attachments: [{ attachmentId: "attachment_first" }],
+      },
+      {
+        commentId: "comment_second",
+        text: "处理第二处。",
+        target: secondTarget,
+        attachments: [{ attachmentId: "attachment_second" }],
+      },
+    ],
+    targets: [firstTarget, secondTarget],
   };
 }
 
@@ -138,6 +161,58 @@ test("Task Spec keeps attachment references unresolved until Request bytes freez
   );
   assert.doesNotThrow(
     () => assertTaskSpec(pending, { requireAttachmentResolution: false }),
+  );
+});
+
+test("Task Spec binds each instruction refs set to its own comment", () => {
+  const { comments, targets } = pairedComments();
+  const pending = compileTaskSpec({ comments, targets });
+  assert.doesNotThrow(() => assertTaskSpecCommentAttachments(pending, comments));
+
+  const swapped = structuredClone(pending);
+  [
+    swapped.instructions[0].attachmentRefs,
+    swapped.instructions[1].attachmentRefs,
+  ] = [
+    swapped.instructions[1].attachmentRefs,
+    swapped.instructions[0].attachmentRefs,
+  ];
+  assert.throws(
+    () => assertTaskSpecCommentAttachments(swapped, comments),
+    (error) => error?.code === "TASK_SPEC_INVALID",
+  );
+});
+
+test("resolved Task Spec attachments retain their comment binding", () => {
+  const { comments, targets } = pairedComments();
+  const valid = compileTaskSpec({
+    comments,
+    targets,
+    attachments: [
+      {
+        attachmentId: "attachment_first",
+        commentId: "comment_first",
+        fileName: "first.txt",
+        kind: "file",
+      },
+      {
+        attachmentId: "attachment_second",
+        commentId: "comment_second",
+        fileName: "second.txt",
+        kind: "file",
+      },
+    ],
+  });
+  assert.deepEqual(
+    valid.attachments.map((attachment) => attachment.commentId),
+    ["comment_first", "comment_second"],
+  );
+
+  const swapped = structuredClone(valid);
+  swapped.attachments[0].commentId = "comment_second";
+  assert.throws(
+    () => assertTaskSpec(swapped),
+    (error) => error?.code === "TASK_SPEC_INVALID",
   );
 });
 

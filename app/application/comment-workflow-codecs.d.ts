@@ -7,7 +7,10 @@ export type CommentWorkflowCodecs = Readonly<{
   persistedTargetRef(value: unknown): Record<string, unknown>;
   commentsFromRecords(value: unknown): unknown[];
   changesFromDraftRecords(value: unknown): unknown[];
-  attachmentFromRecord(value: unknown): Record<string, unknown> | null;
+  attachmentFromRecord(
+    value: unknown,
+    expectedCommentId?: string | null,
+  ): Record<string, unknown> | null;
   selectionFromRecord(value: unknown): Record<string, unknown> | null;
   independentCommentTarget(
     target: Record<string, unknown>,

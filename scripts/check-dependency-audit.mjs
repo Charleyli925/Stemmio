@@ -18,6 +18,18 @@ export const acceptedAdvisories = Object.freeze({
     url: "https://github.com/advisories/GHSA-fgmj-fm8m-jvvx",
     expiresOn: "2026-11-28",
   }),
+  1240991: Object.freeze({
+    url: "https://github.com/advisories/GHSA-ch52-4w7c-c8xp",
+    expiresOn: "2026-10-29",
+  }),
+  1240992: Object.freeze({
+    url: "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+    expiresOn: "2026-10-29",
+  }),
+  1241202: Object.freeze({
+    url: "https://github.com/advisories/GHSA-hp3w-g68c-fv3c",
+    expiresOn: "2026-10-29",
+  }),
 });
 
 export function evaluateAuditReport(report, {

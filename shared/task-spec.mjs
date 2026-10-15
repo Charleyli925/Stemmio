@@ -34,6 +34,7 @@ const INSTRUCTION_KEYS = new Set([
 const INSTRUCTION_ID = /^instruction_[A-Za-z0-9_-]+$/u;
 const TARGET_ID = /^target_[A-Za-z0-9_-]+$/u;
 const ATTACHMENT_ID = /^attachment_[A-Za-z0-9_-]+$/u;
+const COMMENT_ID = /^comment_[A-Za-z0-9_-]+$/u;
 
 const STRICT_SOURCE_SCOPE = /(?:不得|不允许|严禁|不要|不)(?:修改|改动|重写)(?:任何)?(?:评论)?目标(?:之外|以外)的(?:源码|代码)|(?:only\s+(?:edit|modify)\s+(?:source\s+)?inside|do\s+not\s+(?:edit|modify)\s+(?:source\s+)?outside)\s+(?:the\s+)?targets?/iu;
 const ACCEPTANCE_SIGNAL = /(?:验收|完成标准|必须|务必|确保|应当|需要保持|不得|不能|不应|不要改变|不影响|不新增|不溢出)/u;
@@ -153,6 +154,134 @@ function instructionFromComment(comment, index) {
   };
 }
 
+function commentIdFromInstruction(instruction) {
+  const instructionId = String(instruction?.instructionId || "");
+  if (!INSTRUCTION_ID.test(instructionId)) {
+    throw taskSpecError("Task Spec instruction identity is invalid.");
+  }
+  return `comment_${instructionId.replace(/^instruction_/u, "")}`;
+}
+
+function attachmentIdsForComment(comment, index) {
+  if (comment?.attachments === undefined) return [];
+  if (!Array.isArray(comment.attachments)) {
+    throw taskSpecError(`comments[${index}].attachments must be an array.`);
+  }
+  const ids = comment.attachments.map((attachment, attachmentIndex) => {
+    const attachmentId = String(attachment?.attachmentId || "");
+    if (!ATTACHMENT_ID.test(attachmentId)) {
+      throw taskSpecError(
+        `comments[${index}].attachments[${attachmentIndex}] has an invalid attachment identity.`,
+      );
+    }
+    return attachmentId;
+  });
+  if (new Set(ids).size !== ids.length) {
+    throw taskSpecError(`comments[${index}].attachments contains duplicates.`);
+  }
+  return ids;
+}
+
+function sameAttachmentIds(left, right) {
+  if (left.length !== right.length) return false;
+  const expected = [...left].sort();
+  const actual = [...right].sort();
+  return expected.every((value, index) => value === actual[index]);
+}
+
+/**
+ * Bind each generated instruction's attachment references to its source
+ * comment. The frozen Task Spec carries the comment identity on every
+ * resolved attachment, so a valid global attachment ID alone cannot move an
+ * attachment from one comment's instruction to another.
+ */
+export function assertTaskSpecCommentAttachments(
+  value,
+  comments,
+  { requireResolvedAttachments = false } = {},
+) {
+  if (!isRecord(value) || !Array.isArray(comments)) {
+    throw taskSpecError("Task Spec comment bindings are invalid.");
+  }
+  const commentsById = new Map();
+  const commentAttachmentIds = new Map();
+  const attachmentOwnerById = new Map();
+  for (const [index, comment] of comments.entries()) {
+    const commentId = String(comment?.commentId || "");
+    if (!COMMENT_ID.test(commentId) || commentsById.has(commentId)) {
+      throw taskSpecError(`comments[${index}].commentId is invalid or duplicated.`);
+    }
+    commentsById.set(commentId, comment);
+    const attachmentIds = attachmentIdsForComment(comment, index);
+    for (const attachmentId of attachmentIds) {
+      if (attachmentOwnerById.has(attachmentId)) {
+        throw taskSpecError(`Attachment ${attachmentId} belongs to more than one comment.`);
+      }
+      attachmentOwnerById.set(attachmentId, commentId);
+    }
+    commentAttachmentIds.set(commentId, attachmentIds);
+  }
+
+  const instructions = Array.isArray(value.instructions) ? value.instructions : [];
+  const instructionsByCommentId = new Map();
+  for (const instruction of instructions) {
+    const commentId = commentIdFromInstruction(instruction);
+    if (!COMMENT_ID.test(commentId) || instructionsByCommentId.has(commentId)) {
+      throw taskSpecError("Task Spec instruction identities are not comment-bound.");
+    }
+    instructionsByCommentId.set(commentId, instruction);
+  }
+  if (instructionsByCommentId.size !== commentsById.size) {
+    throw taskSpecError("Task Spec instructions do not match frozen comments.");
+  }
+  for (const [commentId, expectedIds] of commentAttachmentIds) {
+    const instruction = instructionsByCommentId.get(commentId);
+    if (!instruction || !sameAttachmentIds(
+      expectedIds,
+      Array.isArray(instruction.attachmentRefs) ? instruction.attachmentRefs : [],
+    )) {
+      throw taskSpecError(
+        `Task Spec instruction for ${commentId} does not match its comment attachments.`,
+      );
+    }
+  }
+
+  const attachments = Array.isArray(value.attachments) ? value.attachments : [];
+  if (!requireResolvedAttachments) return value;
+  const expectedAttachmentIds = new Set(
+    [...commentAttachmentIds.values()].flat(),
+  );
+  const seenAttachmentIds = new Set();
+  for (const attachment of attachments) {
+    if (!isRecord(attachment)) {
+      throw taskSpecError("Task Spec contains an invalid attachment binding.");
+    }
+    const attachmentId = String(attachment.attachmentId || "");
+    const commentId = String(attachment.commentId || "");
+    if (
+      !ATTACHMENT_ID.test(attachmentId)
+      || seenAttachmentIds.has(attachmentId)
+      || !COMMENT_ID.test(commentId)
+      || !commentsById.has(commentId)
+      || !commentAttachmentIds.get(commentId)?.includes(attachmentId)
+    ) {
+      throw taskSpecError("Task Spec attachment is bound to the wrong comment.");
+    }
+    const instruction = instructionsByCommentId.get(commentId);
+    if (!instruction || !instruction.attachmentRefs?.includes(attachmentId)) {
+      throw taskSpecError("Task Spec attachment is not referenced by its comment instruction.");
+    }
+    seenAttachmentIds.add(attachmentId);
+  }
+  if (requireResolvedAttachments && (
+    seenAttachmentIds.size !== expectedAttachmentIds.size
+    || [...expectedAttachmentIds].some((attachmentId) => !seenAttachmentIds.has(attachmentId))
+  )) {
+    throw taskSpecError("Task Spec resolved attachments do not match frozen comments.");
+  }
+  return value;
+}
+
 export function compileTaskSpec({
   comments = [],
   targets = [],
@@ -171,7 +300,10 @@ export function compileTaskSpec({
     instructionTexts.flatMap((text) => exactMatchingClauses(text, NON_GOAL_SIGNAL)),
   )];
   const scopePolicy = scopePolicyFor(comments, targets);
-  return assertTaskSpec({
+  for (const [index, comment] of comments.entries()) {
+    attachmentIdsForComment(comment, index);
+  }
+  const compiled = assertTaskSpec({
     taskSchemaVersion: TASK_SPEC_SCHEMA_VERSION,
     objective,
     scopePolicy,
@@ -181,6 +313,8 @@ export function compileTaskSpec({
     targets: structuredClone(targets),
     attachments: structuredClone(attachments),
   }, { requireAttachmentResolution: attachments.length > 0 });
+  assertTaskSpecCommentAttachments(compiled, comments);
+  return compiled;
 }
 
 export function assertTaskSpec(value, { requireAttachmentResolution = true } = {}) {
@@ -258,6 +392,24 @@ export function assertTaskSpec(value, { requireAttachmentResolution = true } = {
       && attachmentRefs.some((attachmentRef) => !attachmentIds.has(attachmentRef))
     ) {
       throw taskSpecError(`taskSpec.instructions[${index}] references an unknown attachment.`);
+    }
+    if (requireAttachmentResolution) {
+      const instructionCommentId = commentIdFromInstruction({ instructionId });
+      for (const attachmentRef of attachmentRefs) {
+        const attachment = value.attachments.find(
+          (item) => item.attachmentId === attachmentRef,
+        );
+        if (
+          !attachment
+          || (attachment.commentId !== undefined
+            && (!COMMENT_ID.test(String(attachment.commentId || ""))
+              || String(attachment.commentId) !== instructionCommentId))
+        ) {
+          throw taskSpecError(
+            `taskSpec.instructions[${index}] references an attachment from another comment.`,
+          );
+        }
+      }
     }
     return {
       instructionId,

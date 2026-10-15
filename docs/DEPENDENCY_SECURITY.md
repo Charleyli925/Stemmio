@@ -19,6 +19,40 @@ reachability.
 
 ## Reviewed fixes
 
+### October 15 build-tool review
+
+The dependency baseline accepts only the following additional advisories until
+**2026-10-29 00:00 UTC**. They remain development-only in the lockfile and are
+absent from both the source-derived packaged runtime closure and copied package
+resources. The audit-policy tests enforce that boundary and the expiry; a new
+advisory or an expired exception still fails. These exceptions are not fixes
+and do not authorize adding the packages to the application runtime.
+
+| Dependency / advisory | Reviewed call path and residual risk |
+| --- | --- |
+| `braces` 3.0.3 — [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) | ESLint root-directory globs and vinext's dynamic-import build plugin consume repository source/configuration patterns. User HTML does not enter this build path. Crafted source can still exhaust the build process stack; build/CI availability risk is accepted for this limited period. |
+| `http-cache-semantics` 4.2.0 — [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) | The builder's `@electron/get` uses Got without enabling its HTTP response cache; the claimed cross-user shared-cache scenario is not active on this path. Electron's separate URL/file artifact cache retains checksum validation. Registry 4.3.0 is not treated as a confirmed security fix merely because it falls outside the advisory range. |
+| `sprintf-js` 1.1.3 — [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c) | The optional builder download chain reaches `roarr` through `global-agent`, whose reviewed log messages use fixed format strings and structured fields. No externally supplied format-string path was found; the upstream unbounded-precision DoS remains unfixed. |
+
+The review used the locked package sources, existing build configuration and
+the upstream advisories. No compatible parent upgrade removes these three
+paths. Reassess before the deadline or when their callers, dependency role,
+cache options or logging formats change. CI executes repository code and is
+not assumed to be free of credentials; the absence of a packaged-runtime path
+does not remove build-time risk. Electron checksum verification protects binary
+artifact integrity, not execution of vulnerable build dependencies.
+
+The same remediation updates Next and its ESLint config to 16.3.8, the
+Cloudflare Vite plugin to 1.64.0 with Wrangler 4.151.0 and its selected
+Miniflare/workerd closure, existing fast-uri and Sharp overrides to 3.1.8 and
+0.35.5, and source-map-js to 1.2.2. Brace Expansion stays on each consumer's
+existing major: 1.1.21 for minimatch 3, 2.1.7 for minimatch 5/9, and 5.0.12 for
+minimatch 10. The paired Cloudflare update carries its upstream-selected
+Miniflare prerelease; source, browser and desktop validation must use this
+exact lockfile. No other dependency PR is implicitly adopted by this change.
+
+### Earlier remediation
+
 The 2026-09-29 audit remediation updates the existing same-major overrides
 for `fast-uri` from 3.1.6 to 3.1.7 and for `undici` from 7.29.0/6.28.0 to
 7.29.1/6.28.1. These patch releases address GHSA-qw65-cvwx-89v3,

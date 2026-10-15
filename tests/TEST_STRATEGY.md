@@ -200,17 +200,19 @@ CI 可重试一次）。DOM 编辑兼容性扫描、Browser 三分片、native E
   reconciliation、late read/write stale fence、run lock、dispose timer fence 与显式还原先退役原生输入节点。`ProjectRulesSession` 只验证 working copy/composition/save projection；Workbench 只转发规则工作流 intent，长期规则页的正文草稿留在编辑器本地，保存状态仍来自工作流快照。
 - `CommentWorkflow`：fake Bridge、RecoveryStore 和现有 Comment/Draft Session 证明
   lazy registration、单次 Draft 持久化、附件部分成功、跨项目迟到上传补偿、编辑取消
-  仅删除 staged 附件，以及 unknown Draft POST 只通过 authority query 收敛而不重复
-  mutation。Workbench 只保留 File、Object URL 和焦点映射；Browser memory
-  附件不得调用 Bridge。
+  仅删除 staged 附件、评论附件归属与 canonical path 的读删校验、读取字节的
+  byteLength/SHA-256 完整性校验，以及 unknown Draft POST 只通过 authority query
+  收敛而不重复 mutation。Workbench 只保留 File、Object URL 和焦点映射；Browser
+  memory 附件不得调用 Bridge。
 - `ProjectFileRepository` Request freeze：Node 集成覆盖附件-only 评论、多评论多附件的
-  独立字节副本、annotations/requirements/instruction/manifest 的 attachmentId 对齐、
-  Draft 原件删除后的继续读取，以及缺失、篡改、长度超限、目录、软链接和路径逃逸在
-  `request.json`/Runtime authority 发布前失败。Agent Policy 必须按 manifest 读取真实附件
-  字节，而不是只接受附件元数据。Request 级 failpoint 矩阵还要覆盖附件写完、完整
-  bundle/marker 就绪、staging 目录发布、Runtime 写入和最终准备；前置失败不得留下
-  public Request，模拟进程中断后 `recoverProject` 必须校验 marker、逐文件 Hash 并恢复
-  Runtime，而不是重复复制附件或产生孤儿目录。
+  独立字节副本、每条 `instruction_<commentId suffix>` 与所属评论的 attachmentId
+  精确对齐、冻结 attachment.commentId 对齐、annotations/requirements/instruction/manifest
+  的 attachmentId 对齐、Draft 原件删除后的继续读取，以及缺失、篡改、长度超限、目录、
+  软链接和路径逃逸在 `request.json`/Runtime authority 发布前失败。Agent Policy 必须按
+  manifest 读取真实附件字节，而不是只接受附件元数据。Request 级 failpoint 矩阵还要覆盖
+  附件写完、完整 bundle/marker 就绪、staging 目录发布、Runtime 写入和最终准备；前置
+  失败不得留下 public Request，模拟进程中断后 `recoverProject` 必须校验 marker、逐文件
+  Hash 和评论/Task Spec 绑定并恢复 Runtime，而不是重复复制附件或产生孤儿目录。
 - `RunSession`：纯 Node 测试证明单一 locator entry 同时投影 run、background result、
   handoff、copied/recovered marker 与 outcome，active 只从 locator key 投影；覆盖 A/B
   文档、同项目多 Working Copy、同 document 新轮原子替换和旧轮 late writer 拒绝、
@@ -357,6 +359,9 @@ Workbench 只确认已提交 loading surface、传入窄 port 并消费快照。
   no-change 可从 workspace 恢复。
   Electron AI 闭环还必须从真实评论附件上传开始，验证 Request 内冻结文件的
   实际字节、manifest Hash 与删除 Draft 原件后的可读性，不得只断言 JSON 元数据。
+  多图评论场景还须在相同隔离 userData 与 managed source 上完整关闭并重启 Electron，
+  比较重启前后的持久 commentId/attachmentId，核对持久附件原始字节，并逐条打开恢复的
+  预览、比对解码像素；随后确认冻结 Request 保留相同评论、附件与归属。
   `ReviewAnalysisSession` 的 Node oracle 另证明确切 key 合并、异步让步、运行中
   取消和按字节 LRU。`review-annotation-fallback` 的 Node oracle 执行生产编排与真实
   canonical fact 累计器，证明 24/25/可合并边界、仅实际溢出类降级、恢复失败继续拒绝、
