@@ -127,7 +127,7 @@
     "temp-file": "3.4.0",
     "typescript": "5.9.3",
     "vinext": "0.0.45",
-    "vite": "8.2.2",
+    "vite": "8.3.5",
     "wrangler": "4.151.0"
   },
   "overrides": {
