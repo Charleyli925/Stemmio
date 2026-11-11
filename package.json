@@ -122,7 +122,7 @@
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.8",
     "playwright": "^1.61.1",
-    "react-server-dom-webpack": "19.2.8",
+    "react-server-dom-webpack": "19.3.1",
     "tailwindcss": "4.3.3",
     "temp-file": "3.4.0",
     "typescript": "5.9.3",
